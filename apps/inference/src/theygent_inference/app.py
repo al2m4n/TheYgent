@@ -22,9 +22,16 @@ from theygent_inference.clock import Clock
 from theygent_inference.credentials import CredentialResolutionError, resolve_credential
 from theygent_inference.eviction import EvictionPolicy, ResourceProbe
 from theygent_inference.gateway import Gateway, merge_params
-from theygent_inference.launcher import EngineLauncher, LlamaCppLauncher
+from theygent_inference.launcher import (
+    EngineLauncher,
+    EngineUnavailableError,
+    LlamaCppLauncher,
+    ManagedLauncherSet,
+    MlxLauncher,
+)
 from theygent_inference.manager import EngineManager, NoCapacityError, NotManagedError, Upstream
 from theygent_inference.registry import Registry, UnknownLogicalId
+from theygent_inference.vllm_engine import VllmLauncher
 
 _REAP_INTERVAL_SEC = 30.0
 
@@ -44,6 +51,12 @@ def _openai_error(message: str, *, status: int, type_: str, code: str) -> JSONRe
     )
 
 
+def _engine_unavailable(exc: Exception) -> JSONResponse:
+    # The model is registered but its engine isn't installed/ready on this host
+    # (e.g. an `mlx` model on a box without mlx-lm, or `vllm` without CUDA).
+    return _openai_error(str(exc), status=503, type_="server_error", code="engine_unavailable")
+
+
 def create_app(
     *,
     launcher: EngineLauncher | None = None,
@@ -54,7 +67,16 @@ def create_app(
     enable_reaper: bool = True,
 ) -> FastAPI:
     registry = Registry()
-    engine_launcher = launcher or LlamaCppLauncher()
+    # One launcher per managed engine, behind a single dispatcher so the manager stays
+    # engine-agnostic (MLX/vLLM added with zero EngineManager changes). Tests inject a
+    # single fake launcher that serves every binding.
+    engine_launcher = launcher or ManagedLauncherSet(
+        {
+            "llamacpp": LlamaCppLauncher(),
+            "mlx": MlxLauncher(),
+            "vllm": VllmLauncher(),
+        }
+    )
     manager = EngineManager(
         registry,
         engine_launcher,
@@ -121,6 +143,12 @@ def create_app(
     async def list_models() -> dict[str, Any]:
         return {"models": [_model_view(lid) for lid in registry.ids()]}
 
+    @app.get("/admin/engines")
+    async def list_engines() -> dict[str, Any]:
+        # Running managed engines + resident state (§9.1.2). Count-based arbitration,
+        # so no RAM/VRAM bytes yet — maxResident is the ceiling the policy enforces.
+        return {"maxResident": manager.max_resident, "resident": manager.resident_engines()}
+
     @app.get("/admin/models/{logical_id}")
     async def get_model(logical_id: str) -> Response:
         if registry.get(logical_id) is None:
@@ -156,7 +184,10 @@ def create_app(
                 code="model_not_found",
             )
         if isinstance(binding, ManagedBinding):
-            caps = await manager.capabilities(logical_id)
+            try:
+                caps = await manager.capabilities(logical_id)
+            except EngineUnavailableError as exc:
+                return _engine_unavailable(exc)
         else:
             # Reachable upstreams aren't probed locally in M1; advertise defaults.
             caps = Capabilities()
@@ -173,7 +204,12 @@ def create_app(
                 code="model_not_found",
             )
         if isinstance(binding, ManagedBinding):
-            await manager.warm(logical_id)
+            try:
+                await manager.warm(logical_id)
+            except EngineUnavailableError as exc:
+                return _engine_unavailable(exc)
+            except NoCapacityError as exc:
+                return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")
         return JSONResponse(_model_view(logical_id))
 
     @app.post("/admin/models/{logical_id}:evict")
@@ -194,12 +230,20 @@ def create_app(
 
     @app.get("/readyz")
     async def readyz() -> Response:
+        body: dict[str, Any] = {}
+        # Per-engine breakdown when the launcher is the dispatcher (the real app):
+        # one engine missing (e.g. vLLM on a Mac) must not make the service not-ready.
+        if isinstance(engine_launcher, ManagedLauncherSet):
+            body["engines"] = {
+                name: {"ready": r.ready, "reason": r.reason}
+                for name, r in engine_launcher.readiness().items()
+            }
         if engine_launcher.ready:
-            return JSONResponse({"status": "ready"})
-        return JSONResponse(
-            status_code=503,
-            content={"status": "not-ready", "reason": engine_launcher.not_ready_reason},
-        )
+            body["status"] = "ready"
+            return JSONResponse(body)
+        body["status"] = "not-ready"
+        body["reason"] = engine_launcher.not_ready_reason
+        return JSONResponse(status_code=503, content=body)
 
     # ── data plane: /v1/* (OpenAI-compatible) ───────────────────────────
 
@@ -240,6 +284,8 @@ def create_app(
         # 200 followed by a broken stream.
         try:
             await manager.warm(req.model)
+        except EngineUnavailableError as exc:
+            return _engine_unavailable(exc)
         except NoCapacityError as exc:
             return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")
         except NotManagedError:  # pragma: no cover - guarded by isinstance above

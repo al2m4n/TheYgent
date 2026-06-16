@@ -92,3 +92,8 @@ class Capabilities(_Wire):
     structured_output: bool = False
     vision: bool = False
     max_context: int | None = None
+    #: True when some fields are conservative/inferred rather than probed from the
+    #: engine (e.g. MLX exposes no capability endpoint — same posture as the M1
+    #: chat_template_caps follow-up). A consumer should treat such a report as
+    #: best-effort, not authoritative.
+    approximate: bool = False

@@ -24,8 +24,11 @@ FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 
 
-def _build_fake_app() -> FastAPI:
+def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
     app = FastAPI()
+    # Records what the upstream actually received, so a test can prove the credential
+    # resolved locally and reached only this user-configured endpoint.
+    captured: dict[str, object] = {"authorization": None}
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -37,6 +40,7 @@ def _build_fake_app() -> FastAPI:
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
+        captured["authorization"] = request.headers.get("authorization")
         body = await request.json()
         model = body.get("model", "fake")
         if body.get("stream"):
@@ -83,7 +87,7 @@ def _build_fake_app() -> FastAPI:
             }
         )
 
-    return app
+    return app, captured
 
 
 def _dumps(obj: object) -> str:
@@ -94,7 +98,8 @@ def _dumps(obj: object) -> str:
 
 class _ThreadedServer:
     def __init__(self) -> None:
-        config = uvicorn.Config(_build_fake_app(), host="127.0.0.1", port=0, log_level="warning")
+        app, self.captured = _build_fake_app()
+        config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
 
@@ -126,6 +131,11 @@ class FakeUpstreamHandle:
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def last_authorization(self) -> object:
+        """The Authorization header this upstream last received (None if none)."""
+        return self._server.captured["authorization"]
 
     async def health(self) -> bool:
         try:
