@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import socket
 
 import pytest
 from fastapi.testclient import TestClient
@@ -36,9 +37,21 @@ _skip = pytest.mark.skipif(
 )
 
 
+def _port_closed(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return False
+    except OSError:
+        return True
+
+
 @_skip
 def test_real_vllm_full_loop() -> None:  # pragma: no cover - never runs on a non-CUDA host
-    # UNVERIFIED until executed on a CUDA host. Mirrors the MLX/llama.cpp loop shape.
+    # UNVERIFIED until executed on a CUDA host. Complete (not stubbed) so the rented-GPU
+    # session is "set env, run, watch green" — same rigor as the MLX proof: lazy-spawn,
+    # stream REAL non-empty tokens, evict releases the process/port.
+    import json
+
     app = create_app(max_resident=1, enable_reaper=False)
     with TestClient(app) as client:
         client.put(
@@ -51,11 +64,35 @@ def test_real_vllm_full_loop() -> None:  # pragma: no cover - never runs on a no
                 "lifecycle": {"keepWarm": False, "idleTimeoutSec": 900, "priority": 1},
             },
         )
-        resp = client.post(
+
+        saw_done, content = False, ""
+        with client.stream(
+            "POST",
             "/v1/chat/completions",
-            json={"model": "gpu", "messages": [{"role": "user", "content": "hi"}]},
-        )
-        assert resp.status_code == 200
-        assert app.state.manager.state("gpu")["resident"] is True
+            json={
+                "model": "gpu",
+                "messages": [{"role": "user", "content": "Say hello in one word."}],
+                "stream": True,
+            },
+        ) as resp:
+            assert resp.status_code == 200
+            assert resp.headers["content-type"].startswith("text/event-stream")
+            for line in resp.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[len("data:") :].strip()
+                if payload == "[DONE]":
+                    saw_done = True
+                    continue
+                delta = json.loads(payload)["choices"][0]["delta"]
+                content += delta.get("content") or ""
+        assert saw_done
+        assert content.strip(), "expected real generated text from vLLM"
+
+        state = app.state.manager.state("gpu")
+        assert state["resident"] is True
+        port = int(state["baseUrl"].rsplit(":", 1)[1])
+
         assert client.post("/admin/models/gpu:evict").status_code == 200
         assert app.state.manager.state("gpu")["resident"] is False
+        assert _port_closed(port)
