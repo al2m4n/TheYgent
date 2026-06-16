@@ -1,0 +1,21 @@
+[tool.uv.workspace]
+members = ["apps/*", "packages/*"]
+
+# ── Shared toolchain config (theygent-stack.md §6: uv · Ruff · ty) ──
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration: opt-in tests that spawn a real llama-server (needs THEYGENT_GGUF_PATH + binary)",
+]
+addopts = "-m 'not integration'"

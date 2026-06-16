@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # Gates PRs: lint, format, type-check (ty non-blocking, §6 hedge), fast suite.
+  fast:
+    name: fast suite (gates)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: ruff lint
+        run: uv run ruff check .
+      - name: ruff format
+        run: uv run ruff format --check .
+      - name: ty type-check (non-blocking)
+        run: uv run ty check apps/inference packages/ir
+        continue-on-error: true
+      - name: pytest (fast suite — everything real except the weights)
+        run: uv run --package theygent-inference pytest apps/inference/tests -m "not integration"
+
+  # Non-blocking (mirrors the ty hedge): runs the real llama-server loop against a
+  # tiny GGUF. Job-level continue-on-error so a slow/flaky model fetch never blocks
+  # a merge. Cache the GGUF so we don't re-download 101MB every run; the test skips
+  # clean when THEYGENT_GGUF_PATH is unset (cache miss + fetch failure).
+  integration:
+    name: integration (non-blocking, real llama-server)
+    runs-on: macos-14
+    continue-on-error: true
+    env:
+      GGUF_DIR: ${{ github.workspace }}/.gguf-cache
+      GGUF_FILE: SmolLM2-135M-Instruct-Q4_K_M.gguf
+      GGUF_URL: https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - name: install llama.cpp
+        run: brew install llama.cpp
+      - name: cache tiny GGUF
+        id: gguf
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.GGUF_DIR }}
+          # Key pins the exact model+quant (URL-pinned); bump the suffix to refresh.
+          key: gguf-smollm2-135m-q4km-v1
+      - name: fetch GGUF on cache miss (best-effort)
+        if: steps.gguf.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: |
+          mkdir -p "$GGUF_DIR"
+          curl -L --fail -o "$GGUF_DIR/$GGUF_FILE" "$GGUF_URL"
+      - name: integration tests (skips clean if the model is absent)
+        run: |
+          MODEL="$GGUF_DIR/$GGUF_FILE"
+          if [ -f "$MODEL" ]; then
+            export THEYGENT_GGUF_PATH="$MODEL"
+          else
+            echo "GGUF absent — integration tests will skip"
+          fi
+          uv run --package theygent-inference pytest apps/inference/tests -m integration

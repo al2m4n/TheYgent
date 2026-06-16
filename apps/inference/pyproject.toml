@@ -1,0 +1,34 @@
+[project]
+name = "theygent-inference"
+version = "0.1.0"
+description = "theygent inference plane — engine manager + L0 gateway (LiteLLM-based)"
+requires-python = ">=3.12"
+dependencies = [
+    "theygent-ir",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "litellm>=1.40",
+    "httpx>=0.27",
+    "psutil>=5.9",
+]
+
+[project.scripts]
+theygent-inference = "theygent_inference.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/theygent_inference"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "ty>=0.0.1a1",
+]
+
+[tool.uv.sources]
+theygent-ir = { workspace = true }
