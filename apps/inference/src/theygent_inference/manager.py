@@ -159,6 +159,27 @@ class EngineManager:
         """Total successful launches — lets tests assert laziness and re-spawn."""
         return self._spawn_count
 
+    @property
+    def max_resident(self) -> int:
+        return self._max_resident
+
+    def resident_engines(self) -> list[dict[str, Any]]:
+        """Currently-resident managed engines (the /admin/engines view). We track
+        count + priority, not RAM/VRAM bytes (count-based arbitration in M1/M2)."""
+        return [
+            {
+                "logicalId": lid,
+                "engine": e.binding.binding,
+                "model": e.binding.model,
+                "baseUrl": e.handle.base_url,
+                "inflight": e.inflight,
+                "draining": e.draining,
+                "priority": e.priority,
+            }
+            for lid, e in self._resident.items()
+            if not e.terminated
+        ]
+
     # ── internals (all callers hold self._lock unless noted) ────────────
 
     async def _acquire(self, logical_id: str) -> _Resident:

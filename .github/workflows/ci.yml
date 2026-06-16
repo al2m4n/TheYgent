@@ -47,6 +47,8 @@ jobs:
       # pre-installed taps (we only need the core llama.cpp formula).
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_ENV_HINTS: "1"
+      # macos-14 is Apple Silicon, so the MLX (Tier A) real path runs here too.
+      THEYGENT_MLX_MODEL: mlx-community/Qwen2.5-0.5B-Instruct-4bit
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -55,6 +57,10 @@ jobs:
       - run: uv sync
       - name: install llama.cpp
         run: brew install llama.cpp
+      - name: install mlx-lm (isolated tool, mlx_lm.server on PATH)
+        run: |
+          uv tool install mlx-lm
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: cache tiny GGUF
         id: gguf
         uses: actions/cache@v4
@@ -68,12 +74,39 @@ jobs:
         run: |
           mkdir -p "$GGUF_DIR"
           curl -L --fail -o "$GGUF_DIR/$GGUF_FILE" "$GGUF_URL"
-      - name: integration tests (skips clean if the model is absent)
+      - name: cache the MLX model (HF hub)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-${{ env.THEYGENT_MLX_MODEL }}-v1
+      - name: integration tests (real llama.cpp + MLX; each skips clean if absent)
         run: |
           MODEL="$GGUF_DIR/$GGUF_FILE"
           if [ -f "$MODEL" ]; then
             export THEYGENT_GGUF_PATH="$MODEL"
           else
-            echo "GGUF absent — integration tests will skip"
+            echo "GGUF absent — llama.cpp integration will skip"
           fi
+          # THEYGENT_MLX_MODEL is set in job env; the MLX test gates on mlx_lm.server too.
           uv run --package theygent-inference pytest apps/inference/tests -m integration
+
+  # TODO: vLLM real-path job — UNVERIFIED until run on a CUDA host (brief §3).
+  # We don't have a CUDA runner, so this is intentionally NOT wired. To enable it,
+  # add a GPU runner (self-hosted NVIDIA or a cloud GPU box) and a job like:
+  #
+  #   vllm-cuda:
+  #     name: integration (vLLM, real CUDA)
+  #     runs-on: [self-hosted, linux, gpu, cuda]   # a runner we do not have yet
+  #     continue-on-error: true
+  #     env:
+  #       THEYGENT_VLLM_CUDA: "1"
+  #       THEYGENT_VLLM_MODEL: Qwen/Qwen2.5-0.5B-Instruct
+  #     steps:
+  #       - uses: actions/checkout@v4
+  #       - uses: astral-sh/setup-uv@v5
+  #       - run: uv sync
+  #       - run: pip install vllm            # CUDA build
+  #       - run: uv run --package theygent-inference pytest apps/inference/tests -m integration
+  #
+  # Do NOT satisfy this with vllm-metal on a Mac runner — that is MLX underneath and
+  # proves nothing about the CUDA slot (a false green; see vllm_engine.py).
