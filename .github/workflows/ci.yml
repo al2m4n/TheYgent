@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# Run JS-based actions on Node 24 (the v4/v5 actions still ship a Node 20 runtime;
+# this is GitHub's documented opt-in, applied workflow-wide so we don't chase tags).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   # Gates PRs: lint, format, type-check (ty non-blocking, §6 hedge), fast suite.
   fast:
@@ -38,6 +43,10 @@ jobs:
       GGUF_DIR: ${{ github.workspace }}/.gguf-cache
       GGUF_FILE: SmolLM2-135M-Instruct-Q4_K_M.gguf
       GGUF_URL: https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q4_K_M.gguf
+      # Quiet brew's auto-update churn and the tap-trust hints from the runner's
+      # pre-installed taps (we only need the core llama.cpp formula).
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
