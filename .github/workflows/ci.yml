@@ -15,6 +15,12 @@ jobs:
   fast:
     name: fast suite (gates)
     runs-on: ubuntu-latest
+    env:
+      # The control-plane fast suite runs against a REAL ephemeral Postgres via
+      # testcontainers (M4 §6) — ubuntu runners ship a working Docker daemon, so no
+      # `services:` block is needed. Disable Ryuk: the fixture stops its own container and
+      # Ryuk's reaper callback is a known source of CI flakiness.
+      TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -51,6 +57,10 @@ jobs:
       HOMEBREW_NO_ENV_HINTS: "1"
       # macos-14 is Apple Silicon, so the MLX (Tier A) real path runs here too.
       THEYGENT_MLX_MODEL: mlx-community/Qwen2.5-0.5B-Instruct-4bit
+      # M4: the control-plane integration tests need a REAL Postgres + real migrations.
+      # macOS runners have no Docker (so no testcontainers) — use a brew-installed PG over
+      # a local trust-auth DSN (superuser = the `runner` OS user). Tests skip if unset.
+      DATABASE_URL: postgresql+asyncpg://runner@127.0.0.1:5432/theygent
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -81,6 +91,16 @@ jobs:
         with:
           path: ~/.cache/huggingface/hub
           key: hf-${{ env.THEYGENT_MLX_MODEL }}-v1
+      - name: start Postgres (brew; macOS runners have no Docker for testcontainers)
+        run: |
+          brew install postgresql@16
+          brew services start postgresql@16
+          PGBIN="$(brew --prefix postgresql@16)/bin"
+          for i in $(seq 1 30); do
+            if "$PGBIN/pg_isready" -h 127.0.0.1 -q; then break; fi
+            sleep 1
+          done
+          "$PGBIN/createdb" -h 127.0.0.1 theygent
       - name: integration tests (real llama.cpp + MLX; each skips clean if absent)
         run: |
           MODEL="$GGUF_DIR/$GGUF_FILE"
