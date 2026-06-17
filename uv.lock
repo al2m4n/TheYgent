@@ -1643,6 +1643,7 @@ source = { editable = "apps/inference" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "huggingface-hub" },
     { name = "litellm" },
     { name = "psutil" },
     { name = "theygent-ir" },
@@ -1661,6 +1662,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "huggingface-hub", specifier = ">=0.23" },
     { name = "litellm", specifier = ">=1.40" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "theygent-ir", editable = "packages/ir" },

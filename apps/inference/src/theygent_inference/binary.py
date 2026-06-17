@@ -21,6 +21,17 @@ import sys
 ENV_VAR = "THEYGENT_LLAMACPP_BIN"
 
 
+def _module_importable(module: str) -> bool:
+    """True if ``module`` can be resolved. ``importlib.util.find_spec`` imports the
+    parent package for a dotted name (e.g. ``mlx_lm.server`` imports ``mlx_lm``); a
+    missing parent raises ``ModuleNotFoundError`` rather than returning ``None``, so we
+    must catch it and treat the engine module as simply absent (the not-found path)."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
 class EngineBinaryNotFound(RuntimeError):
     """An engine's server binary/module could not be resolved on this host."""
 
@@ -55,7 +66,7 @@ def resolve_engine_command(
     if found:
         return [found]
 
-    if module is not None and importlib.util.find_spec(module) is not None:
+    if module is not None and _module_importable(module):
         return [sys.executable, "-m", module]
 
     raise not_found_cls(

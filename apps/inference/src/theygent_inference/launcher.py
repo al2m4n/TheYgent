@@ -204,6 +204,19 @@ def _hf_hub_dir() -> str:
     return os.path.expanduser("~/.cache/huggingface/hub")
 
 
+def _fetch_hf_config(model: str) -> str | None:
+    """Path to ``config.json`` for an HF repo, fetching just that file if not cached.
+
+    Reads from the same HF hub cache the engine uses; downloads only the small config
+    (never weights). Returns None on any failure (offline, hub error, no such file)."""
+    try:
+        from huggingface_hub import hf_hub_download
+
+        return hf_hub_download(repo_id=model, filename="config.json")
+    except Exception:
+        return None
+
+
 def _read_model_max_context(model: str, source: str) -> int | None:
     """Real max context from the model's ``config.json`` (max_position_embeddings).
 
@@ -218,6 +231,13 @@ def _read_model_max_context(model: str, source: str) -> int | None:
     else:  # hf
         repo = "models--" + model.replace("/", "--")
         candidates += glob.glob(os.path.join(_hf_hub_dir(), repo, "snapshots", "*", "config.json"))
+        if not candidates:
+            # mlx_lm.server fetches weights lazily (on first completion), so the local
+            # snapshot can be absent at probe time and /health already 200s. Pull just
+            # config.json — tiny metadata, not weights — so the REAL max context is
+            # available without forcing a generation. Best-effort: None if offline.
+            if fetched := _fetch_hf_config(model):
+                candidates.append(fetched)
     for path in candidates:
         try:
             with open(path) as fh:
