@@ -2,6 +2,10 @@
 
 ``THEYGENT_INFERENCE_URL`` points at the inference plane's OpenAI-compatible data-plane
 root (must include ``/v1``). The control-plane talks to it only over HTTP (§3.1).
+
+``DATABASE_URL`` is the Postgres store (async DSN, ``postgresql+asyncpg://…`` — M4 §1.4);
+the control-plane fails readiness if it is unset/unreachable. Apply migrations first with
+``uv run --package theygent-control-plane alembic upgrade head``.
 """
 
 from __future__ import annotations

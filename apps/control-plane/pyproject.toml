@@ -8,6 +8,11 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-ulid>=2",
+    # M4: Postgres is the control-plane store (stack §3). Async engine + asyncpg driver
+    # (§1.2); Alembic owns the schema — no create_all anywhere, incl. tests (§0).
+    "sqlalchemy[asyncio]>=2",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
 ]
 
 [project.scripts]
@@ -27,6 +32,9 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.5",
     "ty>=0.0.1a1",
+    # §6: the fast suite runs against a REAL ephemeral Postgres (never SQLite), through
+    # real Alembic migrations. Needs Docker locally; skips clean when absent.
+    "testcontainers[postgresql]>=4",
 ]
 
 [tool.uv.sources]

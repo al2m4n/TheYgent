@@ -156,22 +156,23 @@ def test_healthz(client: TestClient) -> None:
 async def test_concurrent_runs_stay_independent(fake_inference: FakeInference) -> None:
     # Two genuinely overlapping runs (asyncio.gather, real HTTP to the fake) must get
     # distinct run ids and independent status — neither's created->completed transition
-    # clobbers the other. The Run is about to become the spine everything hangs off, so
-    # prove independence before it does.
+    # clobbers the other. The Run is the spine everything hangs off, and it is now SHARED
+    # state in Postgres (not process-local), so prove independence against the real DB.
     app = create_app(inference_base_url=fake_inference.v1_url)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        body = {"input": "hi", "model": "triage-fast", "stream": False}
-        r1, r2 = await asyncio.gather(ac.post("/runs", json=body), ac.post("/runs", json=body))
+    # Drive the lifespan so the async engine/sessionmaker exist (ASGITransport won't).
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            body = {"input": "hi", "model": "triage-fast", "stream": False}
+            r1, r2 = await asyncio.gather(ac.post("/runs", json=body), ac.post("/runs", json=body))
 
-    assert r1.status_code == r2.status_code == 200
-    assert r1.json()["runId"] != r2.json()["runId"]
-    # Both completed independently; the shared in-memory registry kept them separate.
-    assert r1.json()["status"] == "completed"
-    assert r2.json()["status"] == "completed"
+            assert r1.status_code == r2.status_code == 200
+            assert r1.json()["runId"] != r2.json()["runId"]
+            # Both completed independently; shared Postgres state kept them separate.
+            assert r1.json()["status"] == "completed"
+            assert r2.json()["status"] == "completed"
 
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        g1, g2 = await asyncio.gather(
-            ac.get(f"/runs/{r1.json()['runId']}"), ac.get(f"/runs/{r2.json()['runId']}")
-        )
-    assert g1.json()["status"] == "completed" and g2.json()["status"] == "completed"
+            g1, g2 = await asyncio.gather(
+                ac.get(f"/runs/{r1.json()['runId']}"), ac.get(f"/runs/{r2.json()['runId']}")
+            )
+        assert g1.json()["status"] == "completed" and g2.json()["status"] == "completed"

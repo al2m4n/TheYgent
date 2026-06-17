@@ -46,6 +46,9 @@ def _build_app(mode: str, captured: dict[str, object]) -> FastAPI:
         # Prove the control-plane forwards the run-id header and the logical id verbatim.
         captured["run_id_header"] = request.headers.get("x-theygent-run-id")
         captured["model"] = body.get("model")
+        # Capture the full messages array so thread-replay tests can assert the prior
+        # turns (in order) were prepended to the new input (M4 §6).
+        captured["messages"] = body.get("messages")
 
         if mode == "error_503":
             return JSONResponse(
@@ -128,7 +131,11 @@ class FakeInference:
     """A real OpenAI-compatible HTTP server on an ephemeral port (context manager)."""
 
     def __init__(self, mode: str = "normal") -> None:
-        self.captured: dict[str, object] = {"run_id_header": None, "model": None}
+        self.captured: dict[str, object] = {
+            "run_id_header": None,
+            "model": None,
+            "messages": None,
+        }
         app = _build_app(mode, self.captured)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
         self._server = uvicorn.Server(config)
