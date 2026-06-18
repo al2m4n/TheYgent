@@ -30,13 +30,25 @@ from typing import Any
 from fastapi import Depends, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import APIConnectionError, APIStatusError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
+from theygent_ir import (
+    GraphValidationError,
+    content_hash,
+    parse_document,
+    validate_graph,
+)
 
 from theygent_control_plane import db
 from theygent_control_plane.run import Run
 from theygent_control_plane.store import RunStore
+from theygent_control_plane.walker import (
+    EngineNameNotAllowed,
+    WalkContext,
+    llm_models,
+    walk,
+)
 
 logger = logging.getLogger("theygent.control_plane")
 
@@ -56,6 +68,17 @@ class RunRequest(BaseModel):
     stream: bool = True
     # Opt-in conversational memory (§4): None -> one-shot (M3 behavior, nothing persisted
     # to a thread); given (existing or new) -> prior turns replayed, this turn appended.
+    thread_id: str | None = None
+
+
+class GraphRunRequest(BaseModel):
+    # The §8.2 envelope, inline for M5 (no registry yet — M5 §7). Kept as a raw dict so the
+    # control-plane owns the 400 shape when it fails IR validation, rather than FastAPI's
+    # generic 422. ``input`` binds to the graph's input boundary node; ``thread_id`` reuses M4
+    # thread memory through the graph path unchanged. Snake_case request fields, matching /runs.
+    ir: dict[str, Any]
+    input: str
+    stream: bool = True
     thread_id: str | None = None
 
 
@@ -285,6 +308,172 @@ def create_app(
         if run is None:
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
+
+    # ── theygent-native API: /graphs/runs (M5 — the IR walker) ───────────
+    # The first consumer of the IR seam: validate an IRDocument, walk it node by node, and
+    # produce a Run exactly as /runs does — but IR-driven (m5.md §1). A graph run is still a
+    # Run, so GET /runs/{id} is unchanged. /runs itself is untouched (§7).
+
+    @app.post("/graphs/runs", dependencies=[Depends(require_auth)])
+    async def create_graph_run(req: GraphRunRequest) -> Any:
+        # 1. Validate the IR — Pydantic envelope (§8.2) then semantic graph checks (§5). Either
+        #    failure is a 400 with a precise message; NO Run is created (§3.1/§6).
+        try:
+            ir = parse_document(req.ir)
+            validate_graph(ir)
+        except (ValidationError, GraphValidationError) as exc:
+            return _error(str(exc), status=400, code="invalid_ir")
+
+        # 2. Resolve every llm node's model up front and reject an engine-name binding before
+        #    anything is created or sent — the §8.4/§3.2 logical-id invariant on the graph path.
+        try:
+            llms = llm_models(ir)
+        except EngineNameNotAllowed as exc:
+            return _error(str(exc), status=400, code="engine_name_not_allowed")
+
+        # The trivial M5 graph has exactly one llm node; record its resolved logical id as the
+        # Run's model so GET /runs/{id} stays meaningful (no llm node -> empty, an inert graph).
+        run_model = llms[0][1] if llms else ""
+        chash = content_hash(ir)
+
+        # 3. Create + persist the Run (M4) with the graph's identity recorded (§4).
+        async with tx() as session:
+            if req.thread_id:
+                await store.ensure_thread(session, req.thread_id)
+            run = await store.create_run(
+                session,
+                model=run_model,
+                thread_id=req.thread_id,
+                params=None,
+                graph_id=ir.id,
+                graph_version=ir.version,
+                content_hash=chash,
+            )
+
+        # 4. Thread memory (M4) is unchanged through the graph path: prior turns replay into the
+        #    llm node's messages (the walker prepends ctx.prior_messages).
+        prior: list[dict[str, Any]] = []
+        if req.thread_id:
+            async with tx() as session:
+                prior = list(await store.load_thread_messages(session, req.thread_id))
+        logger.info(
+            "graph_run.created",
+            extra={
+                "run_id": run.id,
+                "graph_id": run.graph_id,
+                "graph_version": run.graph_version,
+                "content_hash": run.content_hash,
+                "thread_id": run.thread_id,
+            },
+        )
+
+        ctx = WalkContext(
+            gateway=gw,
+            run_id=run.id,
+            prior_messages=prior,
+            extra_headers=_headers(run),
+        )
+        if req.stream:
+            return await _stream_graph(ir, run, req.input, ctx)
+        return await _complete_graph(ir, run, req.input, ctx)
+
+    async def _stream_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
+        # Prime the walker before committing to a 200 SSE response: a pre-stream error (503/404
+        # raised by the llm node's open_stream) surfaces as a clean status, never a 200-then-
+        # broken-stream (mirrors /runs' _stream_run).
+        walker = walk(ir, user_input, ctx)
+        try:
+            primed = [await anext(walker)]
+        except StopAsyncIteration:
+            primed = []
+        except APIStatusError as exc:
+            status, code, message = _map_inference_error(exc)
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            logger.warning("graph_run.failed", extra={"run_id": run.id, "code": code})
+            return _error(message, status=status, code=code, run_id=run.id)
+        except APIConnectionError as exc:
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(
+                "inference plane unreachable",
+                status=503,
+                code="inference_unreachable",
+                run_id=run.id,
+            )
+
+        async def gen() -> AsyncIterator[str]:
+            async with tx() as s:
+                await store.set_status(s, run.id, "streaming")
+            yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
+            output = ""
+            try:
+                for delta in primed:
+                    output += delta.content
+                    yield _sse("delta", {"runId": run.id, "delta": delta.content})
+                async for delta in walker:
+                    output += delta.content
+                    yield _sse("delta", {"runId": run.id, "delta": delta.content})
+            except Exception as exc:  # inference died mid-walk (§4): fail cleanly, no turn.
+                async with tx() as s:
+                    await store.set_status(s, run.id, "failed", error=str(exc))
+                logger.warning("graph_run.failed_midstream", extra={"run_id": run.id})
+                yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
+                yield "data: [DONE]\n\n"
+                return
+            # Success only: complete the run AND append the turn pair in ONE transaction (§4).
+            async with tx() as s:
+                await store.set_status(s, run.id, "completed")
+                if run.thread_id:
+                    await store.append_turn(
+                        s,
+                        thread_id=run.thread_id,
+                        run_id=run.id,
+                        user_content=user_input,
+                        assistant_content=output,
+                    )
+            logger.info("graph_run.completed", extra={"run_id": run.id})
+            yield _sse("run", {"runId": run.id, "status": "completed"})
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    async def _complete_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
+        output = ""
+        try:
+            async for delta in walk(ir, user_input, ctx):
+                output += delta.content
+        except APIStatusError as exc:
+            status, code, message = _map_inference_error(exc)
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            return _error(message, status=status, code=code, run_id=run.id)
+        except APIConnectionError as exc:
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(
+                "inference plane unreachable",
+                status=503,
+                code="inference_unreachable",
+                run_id=run.id,
+            )
+        except Exception as exc:  # mid-walk drop on the non-stream path: fail cleanly, no turn.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(str(exc), status=502, code="inference_error", run_id=run.id)
+
+        async with tx() as s:
+            await store.set_status(s, run.id, "completed")
+            if run.thread_id:
+                await store.append_turn(
+                    s,
+                    thread_id=run.thread_id,
+                    run_id=run.id,
+                    user_content=user_input,
+                    assistant_content=output,
+                )
+        logger.info("graph_run.completed", extra={"run_id": run.id})
+        return {"runId": run.id, "status": "completed", "output": output}
 
     # ── liveness / readiness ─────────────────────────────────────────────
 

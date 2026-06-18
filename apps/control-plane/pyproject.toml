@@ -5,6 +5,9 @@ description = "theygent control-plane — the cockpit API. M3: owns a single run
 requires-python = ">=3.12"
 dependencies = [
     "theygent-gateway-client",
+    # M5: the control-plane imports the Agent Graph IR for the first time (m5.md §2) — the
+    # walker validates + executes an IRDocument. The IR package stays pure (no engine SDK).
+    "theygent-ir",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-ulid>=2",
@@ -39,3 +42,4 @@ dev = [
 
 [tool.uv.sources]
 theygent-gateway-client = { workspace = true }
+theygent-ir = { workspace = true }
