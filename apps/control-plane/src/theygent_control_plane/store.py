@@ -32,6 +32,9 @@ def _to_run(row: RunRow) -> Run:
         # DB columns are untyped str; the lifecycle is constrained at write time.
         status=cast(RunStatus, row.status),
         model=row.model,
+        graph_id=row.graph_id,
+        graph_version=row.graph_version,
+        content_hash=row.content_hash,
         created_at=row.created_at,
         updated_at=row.updated_at,
         error=row.error,
@@ -48,8 +51,19 @@ class RunStore:
         model: str,
         thread_id: str | None,
         params: dict | None,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        content_hash: str | None = None,
     ) -> Run:
-        run = Run(model=model, thread_id=thread_id)
+        # Graph fields default to None so the /runs path is unchanged; /graphs/runs passes them
+        # (the IR's id/version/contentHash — M5 §4).
+        run = Run(
+            model=model,
+            thread_id=thread_id,
+            graph_id=graph_id,
+            graph_version=graph_version,
+            content_hash=content_hash,
+        )
         session.add(
             RunRow(
                 id=run.id,
@@ -57,6 +71,9 @@ class RunStore:
                 status=run.status,
                 model=model,
                 params=params or None,
+                graph_id=graph_id,
+                graph_version=graph_version,
+                content_hash=content_hash,
                 error=None,
                 created_at=run.created_at,
                 updated_at=run.updated_at,

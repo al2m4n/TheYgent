@@ -50,6 +50,12 @@ class RunRow(Base):
     status: Mapped[str] = mapped_column(String)  # created|streaming|completed|failed
     model: Mapped[str] = mapped_column(String)  # logical id (never an engine name)
     params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # M5 graph run (deliberate contract extension — m5.md §3.4): NULL for a non-graph /runs
+    # run, populated for /graphs/runs. graph_id+graph_version = the IR registry coordinate
+    # (§8.2); content_hash = its content-addressed identity (recorded, not yet gated on — §3.3).
+    graph_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    graph_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)

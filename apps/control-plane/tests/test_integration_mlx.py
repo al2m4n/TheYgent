@@ -185,6 +185,101 @@ def _real_inference_plane():
             proc.kill()
 
 
+def _trivial_ir(model_id: str) -> dict:
+    """The m5.md §4 trivial graph (input -> llm -> output), bound to a registered logical id."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_01J9X8MLXDEMO",
+        "name": "trivial-llm",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": model_id, "params": {"maxTokens": 16}}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {"model": "default", "messages": [{"role": "user", "content": "$input"}]},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_llm",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_llm",
+                "sourceHandle": "ok",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+
+
+@_skip
+def test_two_turn_thread_against_real_mlx_via_graph() -> None:
+    # The demoable M5 proof (m5.md §6): the two-turn thread, end to end across real Postgres AND
+    # a real model — but driven by POST /graphs/runs with the trivial IR instead of /runs. Real
+    # model recall through a real graph. The logical id "local" is registered on the inference
+    # plane, so the graph's models["default"].model = "local" resolves at the seam unchanged.
+    db_url = _prepare_db()
+    thread_id = str(ULID())
+    ir = _trivial_ir("local")
+    with _real_inference_plane() as base:
+        app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+        with TestClient(app) as client:
+
+            def ask(text: str) -> dict:
+                r = client.post(
+                    "/graphs/runs",
+                    json={"ir": ir, "input": text, "stream": False, "thread_id": thread_id},
+                )
+                assert r.status_code == 200, r.text
+                return r.json()
+
+            turn1 = ask("Remember this fact: my favorite fruit is banana. Reply with just: OK")
+            assert turn1["status"] == "completed"
+            turn2 = ask("What is my favorite fruit? Answer with one word.")
+            assert turn2["status"] == "completed"
+            assert turn2["output"].strip(), "expected real generated text from MLX"
+
+            # The Run records the graph's identity (content-addressed — §4).
+            got = client.get(f"/runs/{turn2['runId']}").json()
+            assert got["graph_id"] == "agt_01J9X8MLXDEMO"
+            assert got["content_hash"].startswith("sha256:")
+
+    rows = asyncio.run(fetch_messages(db_url, thread_id))
+    assert [p for _, _, p in rows] == [0, 1, 2, 3]
+    assert [role for role, _, _ in rows] == ["user", "assistant", "user", "assistant"]
+    assert rows[0][1].startswith("Remember this fact")
+    assert rows[2][1].startswith("What is my favorite fruit")
+    # Turn 2 saw turn 1 (replayed from Postgres) through the graph path: the model recalls it.
+    assert "banana" in turn2["output"].lower()
+
+
 @_skip
 def test_two_turn_thread_against_real_mlx() -> None:
     # The thing the fast suite can't give: a two-turn thread end to end across real

@@ -34,6 +34,8 @@ jobs:
       - name: ty type-check (non-blocking)
         run: uv run ty check apps/inference apps/control-plane packages/ir packages/gateway-client
         continue-on-error: true
+      - name: pytest ir (pure-unit — graph validation, content-hash, topo order)
+        run: uv run --package theygent-ir pytest packages/ir/tests
       - name: pytest inference (fast suite — everything real except the weights)
         run: uv run --package theygent-inference pytest apps/inference/tests -m "not integration"
       - name: pytest control-plane (fast suite — real HTTP seam, fake model)

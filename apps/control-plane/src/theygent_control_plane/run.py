@@ -35,12 +35,21 @@ class Run(BaseModel):
     ``model`` is the **logical** model id forwarded to inference (never an engine name —
     §3.2). ``thread_id`` is ``None`` for a one-shot run. The status lifecycle is
     ``created`` -> ``streaming`` -> ``completed`` | ``failed``.
+
+    M5 adds three nullable graph fields — a *deliberate* contract extension (m5.md §3.4 /
+    §8 step 4), the second after M4's ``thread_id``. They are ``None`` for a non-graph
+    ``/runs`` run and populated for a ``/graphs/runs`` run: ``graph_id`` + ``graph_version``
+    are the IR's registry coordinate (§8.2), ``content_hash`` its content-addressed identity.
+    Recorded now (not gated on yet — §3.3) so the field is correct when the registry consumes it.
     """
 
     id: str = Field(default_factory=new_ulid)
     thread_id: str | None = None
     status: RunStatus = "created"
     model: str
+    graph_id: str | None = None
+    graph_version: str | None = None
+    content_hash: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
     error: str | None = None
