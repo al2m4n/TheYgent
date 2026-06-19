@@ -27,8 +27,8 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +41,7 @@ from theygent_ir import (
 )
 
 from theygent_control_plane import db
+from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
 from theygent_control_plane.run import Run
 from theygent_control_plane.store import RunStore
 from theygent_control_plane.tools import DEFAULT_REGISTRY
@@ -50,6 +51,7 @@ from theygent_control_plane.walker import (
     WalkContext,
     WalkResult,
     llm_models,
+    mcp_tool_nodes,
     tool_nodes,
     walk,
 )
@@ -119,9 +121,14 @@ def create_app(
     inference_base_url: str,
     gateway: GatewayClient | None = None,
     database_url: str | None = None,
+    mcp_manager: McpManager | None = None,
 ) -> FastAPI:
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
+    # The MCP server registry/connections (m7.md §3.2). App-scoped: created once, connections are
+    # lazy (no I/O at construction), torn down at shutdown. `mcp_manager` lets tests inject a
+    # manager with a fake client factory.
+    mcp = mcp_manager or McpManager()
     # Resolved at startup, not import, so importing the factory has no side effects and a
     # missing DATABASE_URL fails loudly in the lifespan rather than silently.
     db_url = database_url or os.environ.get("DATABASE_URL")
@@ -137,12 +144,14 @@ def create_app(
         try:
             yield
         finally:
+            await mcp.close_all()  # tear down every live MCP connection (m7.md §3.2)
             await gw.aclose()
             await engine.dispose()
 
     app = FastAPI(title="theygent control-plane", lifespan=lifespan)
     app.state.gateway = gw
     app.state.store = store
+    app.state.mcp = mcp
 
     # Auth placeholder so RBAC slots in later without reshaping handlers (§7) — a no-op
     # dependency today; build nothing now.
@@ -345,6 +354,25 @@ def create_app(
                     code="tool_not_found",
                 )
 
+        # 2c. mcp_tool nodes (m7.md §4): the server must be registered (400, no Run). The tool is
+        #     checked against the server's cached capability list ONLY if it's already connected;
+        #     otherwise the IR is accepted and the runtime handler binds err on a miss (lazy).
+        for node, server_name, mcp_tool_name in mcp_tool_nodes(ir):
+            if server_name not in mcp:
+                return _error(
+                    f"node {node.id!r}: unknown MCP server {server_name!r}",
+                    status=400,
+                    code="mcp_server_not_found",
+                )
+            cached = mcp.cached_tools(server_name)
+            if cached is not None and mcp_tool_name not in {t.name for t in cached}:
+                return _error(
+                    f"node {node.id!r}: MCP server {server_name!r} does not expose tool "
+                    f"{mcp_tool_name!r}",
+                    status=400,
+                    code="mcp_tool_not_found",
+                )
+
         # The trivial M5 graph has exactly one llm node; record its resolved logical id as the
         # Run's model so GET /runs/{id} stays meaningful (no llm node -> empty, an inert graph).
         run_model = llms[0][1] if llms else ""
@@ -386,6 +414,7 @@ def create_app(
             run_id=run.id,
             prior_messages=prior,
             extra_headers=_headers(run),
+            mcp=mcp,
         )
         if req.stream:
             return await _stream_graph(ir, run, req.input, ctx)
@@ -499,6 +528,87 @@ def create_app(
         logger.info("graph_run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
 
+    # ── management plane: /admin/mcp/* (M7 — MCP server registry) ─────────
+    # theygent-native management surface (like the inference plane's /admin/*). Servers connect
+    # lazily; registration is pure metadata. `env` stays in the user's trust domain (§10) — it is
+    # passed into the spawned subprocess, never logged with values, never resolved in the cloud.
+
+    def _mcp_view(name: str) -> dict[str, Any]:
+        cfg = mcp.config(name)
+        assert cfg is not None
+        # `env` keys are listed but VALUES are never echoed back (sovereignty §10).
+        return {
+            "name": name,
+            "transport": cfg.transport,
+            "command": cfg.command,
+            "args": cfg.args,
+            "envKeys": sorted(cfg.env or {}),
+            "connected": mcp.is_connected(name),
+        }
+
+    @app.put("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
+    async def put_mcp_server(name: str, request: Request) -> Any:
+        raw = await request.json()
+        try:
+            cfg = McpServerConfig.model_validate(raw)
+        except ValidationError as exc:
+            return _error(
+                f"invalid MCP server config: {exc}", status=422, code="invalid_mcp_config"
+            )
+        await mcp.register(name, cfg)
+        return JSONResponse(_mcp_view(name))
+
+    @app.get("/admin/mcp/servers", dependencies=[Depends(require_auth)])
+    async def list_mcp_servers() -> Any:
+        return {"servers": mcp.states()}
+
+    @app.get("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
+    async def get_mcp_server(name: str) -> Any:
+        if name not in mcp:
+            return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
+        return JSONResponse(_mcp_view(name))
+
+    @app.delete("/admin/mcp/servers/{name}", status_code=204, dependencies=[Depends(require_auth)])
+    async def delete_mcp_server(name: str) -> Response:
+        if name not in mcp:
+            return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
+        await mcp.remove(name)
+        return Response(status_code=204)
+
+    @app.get("/admin/mcp/servers/{name}/tools", dependencies=[Depends(require_auth)])
+    async def get_mcp_tools(name: str) -> Any:
+        # Capability probe: connects if needed (lazy), returns the cached tool list. A server that
+        # won't spawn is a clean 503, never a 500 (mirrors engine_unavailable).
+        if name not in mcp:
+            return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
+        try:
+            tools = await mcp.list_tools(name)
+        except McpConnectionError as exc:
+            return _error(str(exc), status=503, code="mcp_unavailable")
+        return {
+            "tools": [
+                {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                for t in tools
+            ]
+        }
+
+    @app.post("/admin/mcp/servers/{name}:warm", dependencies=[Depends(require_auth)])
+    async def warm_mcp_server(name: str) -> Any:
+        if name not in mcp:
+            return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
+        try:
+            await mcp.warm(name)
+        except McpConnectionError as exc:
+            return _error(str(exc), status=503, code="mcp_unavailable")
+        return JSONResponse(_mcp_view(name))
+
+    @app.post("/admin/mcp/servers/{name}:close", dependencies=[Depends(require_auth)])
+    async def close_mcp_server(name: str) -> Any:
+        if name not in mcp:
+            return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
+        await mcp.close(name)
+        return JSONResponse(_mcp_view(name))
+
     # ── liveness / readiness ─────────────────────────────────────────────
 
     @app.get("/healthz")
@@ -524,7 +634,11 @@ def create_app(
                 status_code=503,
                 content={"status": "not-ready", "reason": f"inference plane unreachable: {exc}"},
             )
-        return JSONResponse({"status": "ready"})
+        # MCP is informational only (m7.md §7): a registered-but-unconnected server does NOT make
+        # the control-plane not-ready — connections are lazy, so "ready" means "can start", not
+        # "every external dependency is up". An unspawnable server surfaces as a clean error at the
+        # node invocation, never here.
+        return JSONResponse({"status": "ready", "mcp": {"servers": mcp.states()}})
 
     return app
 

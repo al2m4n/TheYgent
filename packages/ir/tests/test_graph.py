@@ -267,3 +267,30 @@ def test_content_hash_stable_under_config_key_reorder() -> None:
     cfg = doc["nodes"][1]["config"]
     doc["nodes"][1]["config"] = {"messages": cfg["messages"], "model": cfg["model"]}  # reordered
     assert content_hash(parse_document(doc)) == h
+
+
+# ── M7 node type: mcp_tool config + taxonomy ──────────────────────────────────
+
+
+def test_mcp_tool_config_validates() -> None:
+    from theygent_ir import McpToolConfig
+
+    cfg = McpToolConfig.model_validate({"server": "fs", "tool": "read_file", "args": {"p": "$in"}})
+    assert (cfg.server, cfg.tool) == ("fs", "read_file")
+    assert McpToolConfig.model_validate({"server": "fs", "tool": "ls"}).args == {}  # args optional
+
+
+def test_mcp_tool_must_be_activity() -> None:
+    doc = _trivial()
+    doc["nodes"][1]["type"] = "mcp_tool"
+    doc["nodes"][1]["kind"] = "orchestration"  # wrong for mcp_tool (it's an activity — §8.1)
+    with pytest.raises(GraphValidationError, match="must have kind 'activity'"):
+        validate_graph(parse_document(doc))
+
+
+def test_mcp_tool_config_shape_validated() -> None:
+    doc = _trivial()
+    doc["nodes"][1]["type"] = "mcp_tool"
+    doc["nodes"][1]["config"] = {"server": "fs"}  # missing required 'tool'
+    with pytest.raises(GraphValidationError, match="invalid config"):
+        validate_graph(parse_document(doc))

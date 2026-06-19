@@ -62,9 +62,12 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
 
 #: The node ``type``s the walker actually executes. Every other known ``type`` is a valid IR
 #: shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is an
-#: additive walker handler, not a refactor. M5 shipped ``input``/``output``/``llm``; M6 adds
-#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node) — m6.md §0.
-EXECUTABLE_TYPES: frozenset[str] = frozenset({"input", "output", "llm", "tool", "router"})
+#: additive walker handler, not a refactor. M5 shipped ``input``/``output``/``llm``; M6 added
+#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node); M7 adds
+#: ``mcp_tool`` (an external MCP server's tool, same contract over a new transport) — m7.md §0.
+EXECUTABLE_TYPES: frozenset[str] = frozenset(
+    {"input", "output", "llm", "tool", "router", "mcp_tool"}
+)
 
 
 class _Wire(BaseModel):
@@ -239,12 +242,25 @@ class RouterConfig(_Wire):
     select: str
 
 
+class McpToolConfig(_Wire):
+    """``mcp_tool`` activity node config (§8.5 / m7.md §2). ``server`` is the **logical name** of a
+    registered MCP server (resolved by the control-plane's MCP manager at runtime — same logical-id
+    discipline as model bindings and the M6 tool registry); ``tool`` is a tool that server exposes;
+    ``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool``. The IR seam matches a
+    local tool — only the transport (an external MCP process) differs."""
+
+    server: str
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
 _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "llm": LlmConfig,
     "input": InputConfig,
     "output": OutputConfig,
     "tool": ToolConfig,
     "router": RouterConfig,
+    "mcp_tool": McpToolConfig,
 }
 
 _IR_ADAPTER: TypeAdapter[IRDocument] = TypeAdapter(IRDocument)
