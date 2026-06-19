@@ -43,10 +43,14 @@ from theygent_ir import (
 from theygent_control_plane import db
 from theygent_control_plane.run import Run
 from theygent_control_plane.store import RunStore
+from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
+    RouterError,
     WalkContext,
+    WalkResult,
     llm_models,
+    tool_nodes,
     walk,
 )
 
@@ -331,6 +335,16 @@ def create_app(
         except EngineNameNotAllowed as exc:
             return _error(str(exc), status=400, code="engine_name_not_allowed")
 
+        # 2b. Resolve every tool node's name against the registry up front (m6.md §5): an unknown
+        #     tool is a 400 here, before a Run exists — never a runtime surprise inside the walker.
+        for node, tool_name in tool_nodes(ir):
+            if tool_name not in DEFAULT_REGISTRY:
+                return _error(
+                    f"node {node.id!r}: unknown tool {tool_name!r}",
+                    status=400,
+                    code="tool_not_found",
+                )
+
         # The trivial M5 graph has exactly one llm node; record its resolved logical id as the
         # Run's model so GET /runs/{id} stays meaningful (no llm node -> empty, an inert graph).
         run_model = llms[0][1] if llms else ""
@@ -378,10 +392,11 @@ def create_app(
         return await _complete_graph(ir, run, req.input, ctx)
 
     async def _stream_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
-        # Prime the walker before committing to a 200 SSE response: a pre-stream error (503/404
-        # raised by the llm node's open_stream) surfaces as a clean status, never a 200-then-
-        # broken-stream (mirrors /runs' _stream_run).
-        walker = walk(ir, user_input, ctx)
+        # Prime the walker before committing to a 200 SSE response: a pre-stream error (a 503/404
+        # from the llm node's open_stream, or a RouterError from a router that runs before any
+        # llm) surfaces as a clean status, never a 200-then-broken-stream (mirrors /runs).
+        result = WalkResult()
+        walker = walk(ir, user_input, ctx, result)
         try:
             primed = [await anext(walker)]
         except StopAsyncIteration:
@@ -401,27 +416,31 @@ def create_app(
                 code="inference_unreachable",
                 run_id=run.id,
             )
+        except RouterError as exc:  # router failed before any stream committed: clean status.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(str(exc), status=422, code="router_error", run_id=run.id)
 
         async def gen() -> AsyncIterator[str]:
             async with tx() as s:
                 await store.set_status(s, run.id, "streaming")
             yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
-            output = ""
             try:
                 for delta in primed:
-                    output += delta.content
                     yield _sse("delta", {"runId": run.id, "delta": delta.content})
                 async for delta in walker:
-                    output += delta.content
                     yield _sse("delta", {"runId": run.id, "delta": delta.content})
-            except Exception as exc:  # inference died mid-walk (§4): fail cleanly, no turn.
+            except Exception as exc:  # inference died / router failed mid-walk: fail cleanly.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
                 logger.warning("graph_run.failed_midstream", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
                 yield "data: [DONE]\n\n"
                 return
-            # Success only: complete the run AND append the turn pair in ONE transaction (§4).
+            # Success only: complete the run AND append the turn pair in ONE transaction (§4). The
+            # assistant turn is the run's canonical output (the output node's value — m6.md §4),
+            # which equals the streamed llm text for a trivial graph but may be a tool result.
+            output = _coerce_output(result.output)
             async with tx() as s:
                 await store.set_status(s, run.id, "completed")
                 if run.thread_id:
@@ -439,10 +458,10 @@ def create_app(
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     async def _complete_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
-        output = ""
+        result = WalkResult()
         try:
-            async for delta in walk(ir, user_input, ctx):
-                output += delta.content
+            async for _delta in walk(ir, user_input, ctx, result):
+                pass  # non-stream: drain the deltas; the canonical output is result.output.
         except APIStatusError as exc:
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
@@ -457,11 +476,16 @@ def create_app(
                 code="inference_unreachable",
                 run_id=run.id,
             )
+        except RouterError as exc:  # router named a missing handle / no handle field (§3.2).
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(str(exc), status=422, code="router_error", run_id=run.id)
         except Exception as exc:  # mid-walk drop on the non-stream path: fail cleanly, no turn.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
             return _error(str(exc), status=502, code="inference_error", run_id=run.id)
 
+        output = _coerce_output(result.output)
         async with tx() as s:
             await store.set_status(s, run.id, "completed")
             if run.thread_id:
@@ -507,3 +531,16 @@ def create_app(
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _coerce_output(value: Any) -> str:
+    """The run's output as a string for the wire + thread storage (M6). A graph's output node may
+    bind a non-string value (e.g. ``http_fetch``'s ``{status, body, headers}``); serialize it so
+    the ``output`` field and the ``assistant`` turn stay strings. A trivial M5 graph binds the llm
+    text, which passes through unchanged — backward-compatible."""
+
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)

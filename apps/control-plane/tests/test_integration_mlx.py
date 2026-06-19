@@ -32,6 +32,7 @@ from pathlib import Path
 import httpx
 import pytest
 from _db import fetch_messages, truncate
+from _http import ThreadedHTTP
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
@@ -320,3 +321,149 @@ def test_two_turn_thread_against_real_mlx() -> None:
     # recalls the fact. Tiny model + non-blocking job, so this is the soft end of the proof;
     # the persistence/replay wiring above is the hard, deterministic part.
     assert "banana" in turn2["output"].lower()
+
+
+def _agent_http_ir() -> dict:
+    """The M6 agent shape (m6.md §6): input(decision) -> router -> tool(http_fetch) -> llm -> out.
+
+    The route is driven by the JSON the *input* carries (``$in.handle``), not by the tiny model's
+    text — so the router selection is deterministic while every other hop is genuinely real: a real
+    outbound HTTP GET to a threaded local server (the tool), then real MLX summarizing the fetched
+    body (the llm). Real-MLX-as-router is the §8 hand-drive demo, where flaky tiny-model JSON is
+    acceptable; an automated test must not hinge on it."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_01J9X8MLXAGENT",
+        "name": "agent-router-tool",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": "local", "params": {"maxTokens": 24}}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_route",
+                "type": "router",
+                "kind": "orchestration",
+                "config": {"select": "$in.handle"},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "yes", "type": "any"}, {"id": "no", "type": "any"}],
+                },
+            },
+            {
+                "id": "n_fetch",
+                "type": "tool",
+                "kind": "activity",
+                "config": {"tool": "http_fetch", "args": {"url": "$in.payload.url"}},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {
+                    "model": "default",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "Reply with one word naming the capital city in: $input",
+                        }
+                    ],
+                },
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+            {
+                "id": "n_no",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_route",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_route",
+                "sourceHandle": "yes",
+                "target": "n_fetch",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e3",
+                "source": "n_fetch",
+                "sourceHandle": "ok",
+                "target": "n_llm",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e4",
+                "source": "n_llm",
+                "sourceHandle": "ok",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e5",
+                "source": "n_route",
+                "sourceHandle": "no",
+                "target": "n_no",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+
+
+@_skip
+def test_agent_router_tool_against_real_mlx() -> None:
+    # The demoable M6 proof (m6.md §6/§8): a graph that is recognizably an *agent* — router +
+    # real outbound HTTP fetch + real MLX — end to end, persisted as a Run. The threaded local
+    # HTTP server returns a known body; the model reads the fetched body and answers from it.
+    db_url = _prepare_db()
+    with (
+        _real_inference_plane() as base,
+        ThreadedHTTP(body="The capital of France is Paris.") as url,
+    ):
+        app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+        with TestClient(app) as client:
+            decision = json.dumps({"handle": "yes", "payload": {"url": url}})
+            r = client.post(
+                "/graphs/runs", json={"ir": _agent_http_ir(), "input": decision, "stream": False}
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["status"] == "completed"
+            # Real MLX read the real fetched body and answered from it (soft end — tiny model).
+            assert body["output"].strip(), "expected real generated text from MLX"
+            assert "paris" in body["output"].lower()
+
+            got = client.get(f"/runs/{body['runId']}").json()
+            assert got["graph_id"] == "agt_01J9X8MLXAGENT"
+            assert got["content_hash"].startswith("sha256:")

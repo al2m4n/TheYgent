@@ -60,10 +60,11 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     "map": "orchestration",
 }
 
-#: The node ``type``s the M5 walker actually executes. Every other known ``type`` is a valid
-#: IR shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is
-#: an additive walker handler, not a refactor (M5 §7).
-EXECUTABLE_TYPES: frozenset[str] = frozenset({"input", "output", "llm"})
+#: The node ``type``s the walker actually executes. Every other known ``type`` is a valid IR
+#: shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is an
+#: additive walker handler, not a refactor. M5 shipped ``input``/``output``/``llm``; M6 adds
+#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node) — m6.md §0.
+EXECUTABLE_TYPES: frozenset[str] = frozenset({"input", "output", "llm", "tool", "router"})
 
 
 class _Wire(BaseModel):
@@ -219,10 +220,31 @@ class OutputConfig(_Wire):
     output)."""
 
 
+class ToolConfig(_Wire):
+    """``tool`` activity node config (§8.3 / m6.md §2/§3.1). ``tool`` is a logical name resolved
+    against the control-plane's in-code tool registry (membership is checked there, not here —
+    ``packages/ir`` stays pure). ``args`` is an arg template: each value is either a literal or a
+    ``$in``-reference (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) the walker
+    resolves against upstream data before invoking the callable."""
+
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class RouterConfig(_Wire):
+    """``router`` orchestration node config (§8.3 / m6.md §3.2). ``select`` is a ``$in``-reference
+    that must resolve to the **name of one of this node's outgoing handles** — handle-name routing,
+    not an expression DSL. The walker follows only the edge(s) from the selected handle."""
+
+    select: str
+
+
 _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "llm": LlmConfig,
     "input": InputConfig,
     "output": OutputConfig,
+    "tool": ToolConfig,
+    "router": RouterConfig,
 }
 
 _IR_ADAPTER: TypeAdapter[IRDocument] = TypeAdapter(IRDocument)

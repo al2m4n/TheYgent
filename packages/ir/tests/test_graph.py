@@ -208,3 +208,62 @@ def test_unknown_envelope_key_rejected() -> None:
     doc["surprise"] = True  # extra="forbid": an IR typo fails loudly (§3.1)
     with pytest.raises(ValidationError):
         parse_document(doc)
+
+
+# ── M6 node types: tool + router config + taxonomy ────────────────────────────
+
+
+def test_tool_and_router_configs_validate() -> None:
+    from theygent_ir import RouterConfig, ToolConfig
+
+    assert ToolConfig.model_validate({"tool": "echo", "args": {"x": "$in"}}).tool == "echo"
+    assert ToolConfig.model_validate({"tool": "echo"}).args == {}  # args optional
+    assert RouterConfig.model_validate({"select": "$in.handle"}).select == "$in.handle"
+
+
+def test_router_must_be_orchestration() -> None:
+    doc = _trivial()
+    doc["nodes"][1]["type"] = "router"  # kind is still 'activity' (wrong for router — §8.1)
+    with pytest.raises(GraphValidationError, match="must have kind 'orchestration'"):
+        validate_graph(parse_document(doc))
+
+
+def test_tool_must_be_activity() -> None:
+    doc = _trivial()
+    doc["nodes"][1]["type"] = "tool"
+    doc["nodes"][1]["kind"] = "boundary"  # wrong for tool
+    with pytest.raises(GraphValidationError, match="must have kind 'activity'"):
+        validate_graph(parse_document(doc))
+
+
+def test_tool_config_shape_validated() -> None:
+    doc = _trivial()
+    doc["nodes"][1]["type"] = "tool"  # kind 'activity' is correct for tool
+    doc["nodes"][1]["config"] = {"args": {}}  # missing required 'tool'
+    with pytest.raises(GraphValidationError, match="invalid config"):
+        validate_graph(parse_document(doc))
+
+
+def test_content_hash_changes_when_node_added() -> None:
+    base = _trivial()
+    h = content_hash(parse_document(base))
+    doc = _trivial()
+    doc["nodes"].append(
+        {
+            "id": "n_route",
+            "type": "router",
+            "kind": "orchestration",
+            "config": {"select": "$in.handle"},
+            "ports": {"in": [{"id": "in", "type": "any"}], "out": [{"id": "yes", "type": "any"}]},
+        }
+    )
+    assert content_hash(parse_document(doc)) != h
+
+
+def test_content_hash_stable_under_config_key_reorder() -> None:
+    base = _trivial()
+    h = content_hash(parse_document(base))
+    doc = _trivial()
+    cfg = doc["nodes"][1]["config"]
+    doc["nodes"][1]["config"] = {"messages": cfg["messages"], "model": cfg["model"]}  # reordered
+    assert content_hash(parse_document(doc)) == h
