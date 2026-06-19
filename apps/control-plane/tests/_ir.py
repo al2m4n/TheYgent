@@ -171,6 +171,51 @@ def tool_http_ir(url: str) -> dict[str, Any]:
     return tool_ok_err_ir("http_fetch", {"url": url})
 
 
+def mcp_tool_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """input → mcp_tool(<server>, <tool>, <args>) → output. The single-ok-path MCP graph
+    (m7.md §8) — same IR shape as a local tool, only the node type differs."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_mcp",
+                "mcp_tool",
+                "activity",
+                config={"server": server, "tool": tool, "args": args},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_mcp"), _edge("e2", "n_mcp", "ok", "n_out")],
+    )
+
+
+def mcp_tool_ok_err_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """input → mcp_tool(<server>, <tool>, <args>) → {ok: n_ok, err: n_err}. For asserting the
+    err branch on a tool-level error / transport failure (m7.md §8)."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_mcp",
+                "mcp_tool",
+                "activity",
+                config={"server": server, "tool": tool, "args": args},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_ok", "output", "boundary", ins=["in"]),
+            _node("n_err", "output", "boundary", ins=["in"]),
+        ],
+        [
+            _edge("e1", "n_in", "out", "n_mcp"),
+            _edge("e2", "n_mcp", "ok", "n_ok"),
+            _edge("e3", "n_mcp", "err", "n_err"),
+        ],
+    )
+
+
 def router_ir(decision: Any) -> dict[str, Any]:
     """input → tool(echo, {value: <decision>}) → router(select $in.handle) → {yes: out_yes,
     no: out_no}. echo emits the literal decision object (network-free); the router branches on

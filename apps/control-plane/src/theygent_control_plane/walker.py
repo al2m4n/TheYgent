@@ -39,12 +39,19 @@ from theygent_ir import (
     Edge,
     IRDocument,
     LlmConfig,
+    McpToolConfig,
     Node,
     RouterConfig,
     ToolConfig,
     topological_order,
 )
 
+from theygent_control_plane.mcp import (
+    McpConnectionError,
+    McpManager,
+    McpResult,
+    McpToolNotFound,
+)
 from theygent_control_plane.tools import DEFAULT_REGISTRY, ToolRegistry
 
 logger = logging.getLogger("theygent.control_plane.walker")
@@ -100,6 +107,9 @@ class WalkContext:
     prior_messages: list[dict[str, Any]] = field(default_factory=list)
     extra_headers: Mapping[str, str] = field(default_factory=dict)
     tools: ToolRegistry = field(default_factory=lambda: DEFAULT_REGISTRY)
+    # The MCP server registry/connections (app-scoped; the control-plane passes its instance). A
+    # fresh empty manager by default — fine for graphs with no mcp_tool node.
+    mcp: McpManager = field(default_factory=McpManager)
 
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
@@ -154,6 +164,19 @@ def tool_nodes(ir: IRDocument) -> list[tuple[Node, str]]:
         for node in ir.nodes
         if node.type == "tool"
     ]
+
+
+def mcp_tool_nodes(ir: IRDocument) -> list[tuple[Node, str, str]]:
+    """Every ``mcp_tool`` node with its (server name, tool name), in document order. The
+    control-plane checks server membership up front (→ 400 ``mcp_server_not_found``, no Run) and —
+    if that server is already connected — the tool against its cached capability list (m7.md §4)."""
+
+    out: list[tuple[Node, str, str]] = []
+    for node in ir.nodes:
+        if node.type == "mcp_tool":
+            cfg = McpToolConfig.model_validate(node.config)
+            out.append((node, cfg.server, cfg.tool))
+    return out
 
 
 def _render_messages(config: LlmConfig, input_value: Any) -> list[dict[str, str]]:
@@ -306,8 +329,10 @@ async def walk(
                     yield delta
             elif node.type == "tool":
                 await _walk_tool(node, ir, ctx, values, skipped, live_handles)
+            elif node.type == "mcp_tool":
+                await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
             else:
-                # agent / mcp_tool / rag / retriever / memory / code — deferred (§7).
+                # agent / rag / retriever / memory / code — deferred (§7).
                 raise NotImplementedError(
                     f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
                 )
@@ -434,6 +459,81 @@ async def _walk_tool(
     live_handles[node.id] = _success_handles(node)
     for handle in live_handles[node.id]:
         values[(node.id, handle)] = value
+
+
+async def invoke_mcp_tool(
+    server: str, tool: str, args: dict[str, Any], ctx: WalkContext
+) -> McpResult:
+    """THE single chokepoint every ``mcp_tool`` invocation passes through (m7.md §3 governance
+    note). This is the future governance attach-point — policy-as-code and audit logging hook in
+    HERE, observing the *invocation* (which server, which tool, the arg shape), never the contents
+    the server returns (the §10 redaction posture). M7 records the seam; the L2 policy layer is a
+    separate, evidence-driven milestone. For now it simply forwards to the MCP manager."""
+
+    return await ctx.mcp.call_tool(server, tool, args)
+
+
+async def _walk_mcp_tool(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Invoke an external MCP server's tool — the same ok/err contract as a local ``tool`` (m7.md
+    §4), only the transport differs. Template ``args`` with the M6 ``$in`` resolver, call through
+    the ``invoke_mcp_tool`` chokepoint, bind the result to ``ok``. A tool-level error
+    (``McpResult.is_error``), a transport failure after one reconnect-retry, an unknown tool, or an
+    unresolvable arg ref all bind ``err`` and the run continues.
+
+    **The err payload must be actionable**, not just present: the message names the *server* and the
+    *kind* of failure (connection vs the server's own tool error vs unknown tool), so the agent
+    reading ``err`` can decide its next move ("the file server is down" vs "that tool doesn't
+    exist"). A bare OS error or stack blob would pass "err bound" but fail that bar."""
+
+    config = McpToolConfig.model_validate(node.config)
+    server, tool = config.server, config.tool
+    input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
+    result: McpResult | None = None
+    try:
+        args = {k: _resolve_ref(v, input_value) for k, v in config.args.items()}
+        result = await invoke_mcp_tool(server, tool, args, ctx)
+        if result.is_error:  # the server reported a tool-level error (its own message)
+            error_message = f"mcp server {server!r} tool {tool!r} error: {_stringify(result.value)}"
+        else:
+            error_message = None
+    except McpConnectionError as exc:  # the server is unreachable, even after the reconnect-retry
+        error_message = f"mcp server {server!r} unavailable (connection failed): {exc}"
+    except McpToolNotFound as exc:  # the connected server doesn't expose this tool (already named)
+        error_message = str(exc)
+    except Exception as exc:  # a bad arg ref or other invocation failure
+        error_message = f"mcp server {server!r} tool {tool!r} failed: {exc}"
+
+    if error_message is not None:
+        live_handles[node.id] = _error_handles(node)
+        for handle in live_handles[node.id]:
+            values[(node.id, handle)] = error_message
+        logger.info(
+            "graph.mcp_error",
+            extra={
+                "run_id": ctx.run_id,
+                "node_id": node.id,
+                "server": server,
+                "tool": tool,
+                "error": error_message,
+            },
+        )
+        return
+
+    assert result is not None
+    live_handles[node.id] = _success_handles(node)
+    for handle in live_handles[node.id]:
+        values[(node.id, handle)] = result.value
+
+
+def _stringify(value: Any) -> str:
+    return value if isinstance(value, str) else json.dumps(value)
 
 
 def _walk_router(

@@ -26,6 +26,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -43,6 +44,7 @@ pytestmark = pytest.mark.integration
 
 _MLX_MODEL = os.environ.get("THEYGENT_MLX_MODEL")
 _HAVE_MLX = bool(shutil.which("mlx_lm.server") or os.environ.get("THEYGENT_MLX_BIN"))
+_HAVE_NPX = bool(shutil.which("npx"))
 # M4: the real cross-process proof now includes real Postgres. On the macOS MLX job (no
 # Docker, so no testcontainers) the DB comes from a brew-installed PG via DATABASE_URL.
 _DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -467,3 +469,139 @@ def test_agent_router_tool_against_real_mlx() -> None:
             got = client.get(f"/runs/{body['runId']}").json()
             assert got["graph_id"] == "agt_01J9X8MLXAGENT"
             assert got["content_hash"].startswith("sha256:")
+
+
+def _fs_agent_ir(read_tool: str) -> dict:
+    """input(absolute path) → mcp_tool(fs, <read_tool>, {path: $in}) → llm(read it) → output.
+
+    The M7 demo shape (m7.md §6/§8): a real external MCP server reads a real file, then a real model
+    reasons over the contents. The path comes from the input (deterministic); the read-tool name is
+    discovered from the server's capability list (it differs across server-filesystem versions)."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_01J9X8MCPDEMO",
+        "name": "fs-read-agent",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": "local", "params": {"maxTokens": 24}}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_read",
+                "type": "mcp_tool",
+                "kind": "activity",
+                "config": {"server": "fs", "tool": read_tool, "args": {"path": "$in"}},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {
+                    "model": "default",
+                    "messages": [
+                        {"role": "user", "content": "Name the fruit mentioned, one word: $input"}
+                    ],
+                },
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_read",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_read",
+                "sourceHandle": "ok",
+                "target": "n_llm",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e3",
+                "source": "n_llm",
+                "sourceHandle": "ok",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+
+
+@pytest.mark.skipif(
+    not _HAVE_NPX or not _MLX_MODEL or not _HAVE_MLX or not _DATABASE_URL,
+    reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
+)
+def test_agent_reads_file_via_real_mcp_and_mlx() -> None:
+    # The demoable M7 proof (m7.md §6/§8): a real agent reads a real file through the official
+    # filesystem MCP server, then a real MLX model answers from its contents — the first time the
+    # platform is *useful*. Skips clean if the MCP server can't be fetched/spawned.
+    db_url = _prepare_db()
+    with tempfile.TemporaryDirectory() as tmp:
+        # Resolve symlinks (macOS /var -> /private/var): the server's allowed-dir check compares
+        # realpaths, so both the registration dir and the read path must be resolved or it denies.
+        root = os.path.realpath(tmp)
+        note = Path(root) / "note.txt"
+        note.write_text("Project status: the secret fruit is banana. All systems nominal.")
+        with _real_inference_plane() as base:
+            app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+            with TestClient(app) as client:
+                reg = client.put(
+                    "/admin/mcp/servers/fs",
+                    json={
+                        "transport": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", root],
+                    },
+                )
+                assert reg.status_code == 200, reg.text
+                # Capability probe also drives the (slow, network) connect; skip clean if the
+                # server can't be fetched/spawned (no network in CI — m7.md §8).
+                tools_resp = client.get("/admin/mcp/servers/fs/tools")
+                if tools_resp.status_code == 503:
+                    pytest.skip("filesystem MCP server unavailable (npx fetch/spawn failed)")
+                names = [t["name"] for t in tools_resp.json()["tools"]]
+                read_tool = next(
+                    (n for n in ("read_text_file", "read_file", "read_media_file") if n in names),
+                    None,
+                )
+                assert read_tool, f"no read tool exposed by server-filesystem: {names}"
+
+                r = client.post(
+                    "/graphs/runs",
+                    json={"ir": _fs_agent_ir(read_tool), "input": str(note), "stream": False},
+                )
+                assert r.status_code == 200, r.text
+                body = r.json()
+                assert body["status"] == "completed", body
+                # Real MLX read the real file (via real MCP) and answered from it — soft end (tiny
+                # model); the read + persist wiring is the hard, deterministic part.
+                assert body["output"].strip(), "expected real generated text from MLX"
+                assert "banana" in body["output"].lower()
+
+                got = client.get(f"/runs/{body['runId']}").json()
+                assert got["graph_id"] == "agt_01J9X8MCPDEMO"
