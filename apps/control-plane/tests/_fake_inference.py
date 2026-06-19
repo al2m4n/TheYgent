@@ -10,6 +10,10 @@ Selectable ``mode`` exercises the control-plane's error paths:
   * ``error_503``      — 503 engine_unavailable (engine not ready)
   * ``error_404``      — 404 model_not_found (unknown logical id)
   * ``drop_midstream`` — stream a chunk then drop the connection mid-stream
+
+An optional ``response`` overrides the streamed/returned content (default ``"hello world"``).
+M6 uses it to make an ``llm`` node emit a deterministic routing decision (e.g. a JSON
+``{"handle": "yes", ...}``) so the combined ``llm → router`` graph is fully deterministic.
 """
 
 from __future__ import annotations
@@ -26,8 +30,9 @@ FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 
 
-def _build_app(mode: str, captured: dict[str, object]) -> FastAPI:
+def _build_app(mode: str, captured: dict[str, object], response: str | None) -> FastAPI:
     app = FastAPI()
+    content = response if response is not None else FULL_MESSAGE
 
     @app.get("/readyz")
     async def readyz() -> dict[str, str]:
@@ -76,7 +81,7 @@ def _build_app(mode: str, captured: dict[str, object]) -> FastAPI:
         model = body.get("model", "fake")
         if body.get("stream"):
             return StreamingResponse(
-                _stream(model, drop=mode == "drop_midstream"),
+                _stream(model, drop=mode == "drop_midstream", content=content),
                 media_type="text/event-stream",
             )
         return JSONResponse(
@@ -88,7 +93,7 @@ def _build_app(mode: str, captured: dict[str, object]) -> FastAPI:
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": FULL_MESSAGE},
+                        "message": {"role": "assistant", "content": content},
                         "finish_reason": "stop",
                     }
                 ],
@@ -99,8 +104,10 @@ def _build_app(mode: str, captured: dict[str, object]) -> FastAPI:
     return app
 
 
-async def _stream(model: str, *, drop: bool):
-    for i, piece in enumerate(_CHUNKS):
+async def _stream(model: str, *, drop: bool, content: str = FULL_MESSAGE):
+    # Default content streams in two chunks (proves reassembly); a custom response streams whole.
+    chunks = _CHUNKS if content == FULL_MESSAGE else [content]
+    for i, piece in enumerate(chunks):
         delta = {"content": piece}
         if i == 0:
             delta["role"] = "assistant"
@@ -130,13 +137,13 @@ async def _stream(model: str, *, drop: bool):
 class FakeInference:
     """A real OpenAI-compatible HTTP server on an ephemeral port (context manager)."""
 
-    def __init__(self, mode: str = "normal") -> None:
+    def __init__(self, mode: str = "normal", response: str | None = None) -> None:
         self.captured: dict[str, object] = {
             "run_id_header": None,
             "model": None,
             "messages": None,
         }
-        app = _build_app(mode, self.captured)
+        app = _build_app(mode, self.captured, response)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
