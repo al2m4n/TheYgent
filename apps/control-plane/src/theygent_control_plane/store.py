@@ -16,12 +16,20 @@ from __future__ import annotations
 
 from typing import cast
 
-from sqlalchemy import func, insert, select
+from sqlalchemy import func, insert, select, tuple_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from theygent_control_plane.models import MessageRow, RunRow, ThreadRow
-from theygent_control_plane.run import Run, RunStatus, new_ulid, now
+from theygent_control_plane.run import (
+    Run,
+    RunStatus,
+    ThreadDetail,
+    ThreadMessage,
+    ThreadSummary,
+    new_ulid,
+    now,
+)
 
 
 def _to_run(row: RunRow) -> Run:
@@ -85,6 +93,120 @@ class RunStore:
     async def get_run(self, session: AsyncSession, run_id: str) -> Run | None:
         row = await session.get(RunRow, run_id)
         return _to_run(row) if row is not None else None
+
+    async def list_runs(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[Run]:
+        """Recent runs, newest first (M8 §1.1) — the cockpit home page.
+
+        Keyset pagination on ``(created_at, id)`` DESC: ``before`` is a run id cursor; rows
+        strictly older than that run are returned. A read-only list over already-persisted
+        rows — it adds no contract, it surfaces one (M8 §2). An unknown ``before`` id is
+        ignored (treated as no cursor), never an error.
+        """
+        stmt = select(RunRow).order_by(RunRow.created_at.desc(), RunRow.id.desc()).limit(limit)
+        if before is not None:
+            anchor = await session.get(RunRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(RunRow.created_at, RunRow.id) < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_run(row) for row in rows]
+
+    async def list_threads(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[ThreadSummary]:
+        """Recent threads, newest-activity first (M8 §1.3).
+
+        Each summary carries the message count, last-activity instant, and the first user
+        message preview (always ``position == 0`` — turns are appended as user/assistant
+        pairs, so the very first user turn is position 0). ``before`` is a thread id cursor
+        on ``(created_at, id)`` DESC, mirroring ``list_runs``.
+        """
+        counts = (
+            select(
+                MessageRow.thread_id.label("thread_id"),
+                func.count().label("message_count"),
+                func.max(MessageRow.created_at).label("last_message_at"),
+            )
+            .group_by(MessageRow.thread_id)
+            .subquery()
+        )
+        first_user = (
+            select(MessageRow.thread_id.label("thread_id"), MessageRow.content.label("preview"))
+            .where(MessageRow.position == 0)
+            .subquery()
+        )
+        stmt = (
+            select(
+                ThreadRow.id,
+                ThreadRow.created_at,
+                ThreadRow.updated_at,
+                func.coalesce(counts.c.message_count, 0).label("message_count"),
+                func.coalesce(counts.c.last_message_at, ThreadRow.updated_at).label(
+                    "last_activity"
+                ),
+                first_user.c.preview,
+            )
+            .outerjoin(counts, counts.c.thread_id == ThreadRow.id)
+            .outerjoin(first_user, first_user.c.thread_id == ThreadRow.id)
+            .order_by(ThreadRow.created_at.desc(), ThreadRow.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            anchor = await session.get(ThreadRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(ThreadRow.created_at, ThreadRow.id) < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).all()
+        return [
+            ThreadSummary(
+                id=row.id,
+                created_at=row.created_at,
+                last_activity=row.last_activity,
+                message_count=int(row.message_count),
+                preview=row.preview,
+            )
+            for row in rows
+        ]
+
+    async def get_thread(self, session: AsyncSession, thread_id: str) -> ThreadDetail | None:
+        """A thread and its messages in ``position`` order (M8 §1.3 thread detail)."""
+        thread = await session.get(ThreadRow, thread_id)
+        if thread is None:
+            return None
+        rows = (
+            await session.execute(
+                select(
+                    MessageRow.id,
+                    MessageRow.run_id,
+                    MessageRow.role,
+                    MessageRow.content,
+                    MessageRow.position,
+                    MessageRow.created_at,
+                )
+                .where(MessageRow.thread_id == thread_id)
+                .order_by(MessageRow.position)
+            )
+        ).all()
+        return ThreadDetail(
+            id=thread.id,
+            created_at=thread.created_at,
+            updated_at=thread.updated_at,
+            messages=[
+                ThreadMessage(
+                    id=row.id,
+                    run_id=row.run_id,
+                    role=row.role,
+                    content=row.content,
+                    position=row.position,
+                    created_at=row.created_at,
+                )
+                for row in rows
+            ],
+        )
 
     async def set_status(
         self,

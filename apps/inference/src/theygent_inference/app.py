@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 from theygent_ir import Capabilities, ManagedBinding, parse_registration
@@ -57,6 +59,18 @@ def _engine_unavailable(exc: Exception) -> JSONResponse:
     return _openai_error(str(exc), status=503, type_="server_error", code="engine_unavailable")
 
 
+def _cockpit_cors_origins() -> list[str]:
+    # The M8 cockpit SPA calls the management plane (/admin/models, /admin/engines) DIRECTLY
+    # from the browser — the inference plane is user-controlled and reachable, not proxied
+    # through the control-plane (the two-plane split). So the browser needs CORS for the dev
+    # origin here too, symmetric with the control-plane's. Narrow dev-origin only (never `*`);
+    # override via THEYGENT_CORS_ORIGINS (comma-separated). Empty list disables it entirely.
+    raw = os.environ.get("THEYGENT_CORS_ORIGINS")
+    if raw is not None:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return ["http://localhost:5173", "http://127.0.0.1:5173"]
+
+
 def create_app(
     *,
     launcher: EngineLauncher | None = None,
@@ -65,6 +79,7 @@ def create_app(
     policy: EvictionPolicy | None = None,
     max_resident: int = 2,
     enable_reaper: bool = True,
+    cors_origins: list[str] | None = None,
 ) -> FastAPI:
     registry = Registry()
     # One launcher per managed engine, behind a single dispatcher so the manager stays
@@ -109,6 +124,14 @@ def create_app(
             await manager.shutdown()
 
     app = FastAPI(title="theygent inference plane", lifespan=lifespan)
+    _origins = cors_origins if cors_origins is not None else _cockpit_cors_origins()
+    if _origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_origins,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
     app.state.registry = registry
     app.state.manager = manager
     app.state.gateway = gateway

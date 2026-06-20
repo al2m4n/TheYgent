@@ -172,3 +172,10 @@ cython_debug/
 *.bin
 *.mlx
 models/
+
+# Node / pnpm (TS apps — M8 cockpit)
+node_modules/
+.pnpm-store/
+
+# The `lib/` rule above is a Python build-dir pattern; apps/web/src/lib is real TS source.
+!apps/web/src/lib/
