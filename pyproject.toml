@@ -1,5 +1,7 @@
 [tool.uv.workspace]
 members = ["apps/*", "packages/*"]
+# apps/web is the TS cockpit (pnpm workspace, M8) — not a Python package.
+exclude = ["apps/web"]
 
 # ── Shared toolchain config (theygent-stack.md §6: uv · Ruff · ty) ──
 

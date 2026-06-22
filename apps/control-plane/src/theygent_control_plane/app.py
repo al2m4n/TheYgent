@@ -27,7 +27,8 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ValidationError
@@ -116,12 +117,26 @@ def _map_inference_error(exc: APIStatusError) -> tuple[int, str, str]:
     return status, code, message
 
 
+def _default_cors_origins() -> list[str]:
+    # M8 §3.3 / §6: the cockpit SPA is served by Vite on its own port (never bundled into
+    # this app), so the browser needs CORS for the dev origin. Single-user localhost only —
+    # not a public CORS posture. Override via THEYGENT_CORS_ORIGINS (comma-separated).
+    raw = os.environ.get("THEYGENT_CORS_ORIGINS")
+    if raw:
+        return [o.strip() for o in raw.split(",") if o.strip()]
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+
+
 def create_app(
     *,
     inference_base_url: str,
     gateway: GatewayClient | None = None,
     database_url: str | None = None,
     mcp_manager: McpManager | None = None,
+    cors_origins: list[str] | None = None,
 ) -> FastAPI:
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
@@ -149,6 +164,12 @@ def create_app(
             await engine.dispose()
 
     app = FastAPI(title="theygent control-plane", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins if cors_origins is not None else _default_cors_origins(),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.gateway = gw
     app.state.store = store
     app.state.mcp = mcp
@@ -315,12 +336,43 @@ def create_app(
         logger.info("run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
 
+    @app.get("/runs", dependencies=[Depends(require_auth)])
+    async def list_runs(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        # M8 §2: the one sanctioned cockpit-driven backend addition — a thin, read-only,
+        # paginated list over already-persisted runs (newest first). Additive, not a reshape;
+        # /runs/{id} and POST /runs are untouched. NOT an aggregation/summary endpoint (§6).
+        runs = await store.list_runs(session, limit=limit, before=before)
+        return {"runs": [r.model_dump(mode="json") for r in runs]}
+
     @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
     async def get_run(run_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         run = await store.get_run(session, run_id)
         if run is None:
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
+
+    @app.get("/threads", dependencies=[Depends(require_auth)])
+    async def list_threads(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        # M8 §2: read-only paginated thread list (newest activity first). Same additive shape
+        # as GET /runs. No new memory write surface — M4's §7 "no standalone memory resource"
+        # still holds for writes; this only *reads* what runs already persisted.
+        threads = await store.list_threads(session, limit=limit, before=before)
+        return {"threads": [t.model_dump(mode="json") for t in threads]}
+
+    @app.get("/threads/{thread_id}", dependencies=[Depends(require_auth)])
+    async def get_thread(thread_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        thread = await store.get_thread(session, thread_id)
+        if thread is None:
+            return _error(f"unknown thread {thread_id!r}", status=404, code="thread_not_found")
+        return thread.model_dump(mode="json")
 
     # ── theygent-native API: /graphs/runs (M5 — the IR walker) ───────────
     # The first consumer of the IR seam: validate an IRDocument, walk it node by node, and

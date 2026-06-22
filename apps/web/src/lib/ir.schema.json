@@ -1,0 +1,352 @@
+{
+  "$defs": {
+    "BuiltinTool": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "builtin",
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "title": "BuiltinTool",
+      "type": "object"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "description": "A directed connection (\u00a78.3). ``channel: data`` passes a value along the edge;\n``channel: control`` is pure sequencing. ``condition`` is reserved for router-driven\nedges (the first ``orchestration`` node, deferred \u2014 M5 \u00a77).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "sourceHandle": {
+          "title": "Sourcehandle",
+          "type": "string"
+        },
+        "target": {
+          "title": "Target",
+          "type": "string"
+        },
+        "targetHandle": {
+          "title": "Targethandle",
+          "type": "string"
+        },
+        "channel": {
+          "default": "data",
+          "enum": [
+            "data",
+            "control"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "sourceHandle",
+        "target",
+        "targetHandle"
+      ],
+      "title": "Edge",
+      "type": "object"
+    },
+    "McpTool": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "mcp",
+          "title": "Kind",
+          "type": "string"
+        },
+        "server": {
+          "title": "Server",
+          "type": "string"
+        },
+        "tool": {
+          "title": "Tool",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "server",
+        "tool"
+      ],
+      "title": "McpTool",
+      "type": "object"
+    },
+    "ModelBinding": {
+      "additionalProperties": false,
+      "description": "A logical model the graph's nodes reference by key (\u00a78.4) \u2014 the sovereignty dial.\n\nNodes never hardcode a provider; they name a key in ``IRDocument.models`` and the\n``binding`` resolves at runtime through the L0 gateway. ``binding`` names only the engines\ntheygent manages (``mlx``/``vllm``/``llamacpp``) plus the catch-all ``openai-compatible``;\n``source`` (where the *weights* come from) is orthogonal and never an engine.\n\n``model`` is the id forwarded to the inference seam. M5 has no registry/lifecycle manager\n(M5 \u00a77), so the walker forwards ``model`` as the logical id the inference plane already\nknows (the \u00a79.1.1 logical-id invariant still holds \u2014 an engine name here is rejected at\nthe seam). ``source`` is optional: it answers a lifecycle question (fetch the weights from\nwhere?) that only matters once theygent manages the engine, which M5 does not \u2014 so the\ntrivial M5 graph omits it, while a \u00a78.4 document that includes it still validates.",
+      "properties": {
+        "binding": {
+          "enum": [
+            "mlx",
+            "vllm",
+            "llamacpp",
+            "openai-compatible"
+          ],
+          "title": "Binding",
+          "type": "string"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "enum": [
+                "hf",
+                "local-path",
+                "url"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        },
+        "params": {
+          "additionalProperties": true,
+          "title": "Params",
+          "type": "object"
+        }
+      },
+      "required": [
+        "binding",
+        "model"
+      ],
+      "title": "ModelBinding",
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "description": "One graph node (\u00a78.3). ``id`` is stable \u2014 it is what an OTel span binds to later\n(M5 stamps it on per-node logs, the attach-point). ``config`` is ``type``-specific and\nvalidated against a per-``type`` schema in ``validate_graph`` \u2014 Pydantic at the boundary,\nnot a free-form dict the walker trusts blindly.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "activity",
+            "orchestration",
+            "boundary"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "config": {
+          "additionalProperties": true,
+          "title": "Config",
+          "type": "object"
+        },
+        "ports": {
+          "$ref": "#/$defs/Ports"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "kind"
+      ],
+      "title": "Node",
+      "type": "object"
+    },
+    "Port": {
+      "additionalProperties": false,
+      "description": "A declared (not inferred) connection point, so the compiler can type-check edges\n(\u00a78.3). ``type`` is advisory in M5 (``any``/``error``); real port typing lands with the\nnode types that need it.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "type": {
+          "default": "any",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Port",
+      "type": "object"
+    },
+    "Ports": {
+      "additionalProperties": false,
+      "properties": {
+        "in": {
+          "items": {
+            "$ref": "#/$defs/Port"
+          },
+          "title": "In",
+          "type": "array"
+        },
+        "out": {
+          "items": {
+            "$ref": "#/$defs/Port"
+          },
+          "title": "Out",
+          "type": "array"
+        }
+      },
+      "title": "Ports",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A saved agent \u2014 one JSON document (\u00a78.2). ``id`` + ``version`` is the registry\ncoordinate; ``content_hash`` (computed over the view-stripped graph) gives content-addressed\ndeploys. ``view`` is the React-Flow layer and is **never** hashed (\u00a78.6).",
+  "properties": {
+    "schemaVersion": {
+      "title": "Schemaversion",
+      "type": "string"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "contentHash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Contenthash"
+    },
+    "models": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ModelBinding"
+      },
+      "title": "Models",
+      "type": "object"
+    },
+    "tools": {
+      "additionalProperties": {
+        "discriminator": {
+          "mapping": {
+            "builtin": "#/$defs/BuiltinTool",
+            "mcp": "#/$defs/McpTool"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/BuiltinTool"
+          },
+          {
+            "$ref": "#/$defs/McpTool"
+          }
+        ]
+      },
+      "title": "Tools",
+      "type": "object"
+    },
+    "nodes": {
+      "items": {
+        "$ref": "#/$defs/Node"
+      },
+      "title": "Nodes",
+      "type": "array"
+    },
+    "edges": {
+      "items": {
+        "$ref": "#/$defs/Edge"
+      },
+      "title": "Edges",
+      "type": "array"
+    },
+    "view": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "View"
+    },
+    "metadata": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Metadata"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "version"
+  ],
+  "title": "IRDocument",
+  "type": "object"
+}

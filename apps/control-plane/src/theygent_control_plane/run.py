@@ -53,3 +53,38 @@ class Run(BaseModel):
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
     error: str | None = None
+
+
+# ── Read models for the cockpit list views (M8 §1.1/§1.3) ────────────────────
+# Read-only projections the list endpoints return; like ``Run`` they are domain shapes the
+# store maps rows onto (§1.3), never ORM rows. They add no write path — the cockpit only
+# reads existing persisted state (M8 §2).
+
+
+class ThreadSummary(BaseModel):
+    """One row of the threads list — aggregates over a thread's messages."""
+
+    id: str
+    created_at: datetime
+    last_activity: datetime
+    message_count: int
+    # First user message (thread message at ``position == 0``); ``None`` for an empty thread.
+    preview: str | None = None
+
+
+class ThreadMessage(BaseModel):
+    id: str
+    run_id: str
+    role: str  # user | assistant
+    content: str
+    position: int
+    created_at: datetime
+
+
+class ThreadDetail(BaseModel):
+    """A thread with its messages in ``position`` order (thread detail view)."""
+
+    id: str
+    created_at: datetime
+    updated_at: datetime
+    messages: list[ThreadMessage] = Field(default_factory=list)
