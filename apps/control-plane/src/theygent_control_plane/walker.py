@@ -23,6 +23,14 @@ handle-name branching). M6 introduces **conditional execution**: a ``router`` se
 handle and a ``tool`` takes its ``ok`` or ``err`` handle, so edges from the un-taken handle(s) are
 not traversed and downstream nodes with no live inbound ``data`` edge are *skipped* (logged, not
 executed). See ``apps/control-plane/CLAUDE.md`` for the two recorded M6 forks.
+
+M10 closes the dominant expressiveness gap (F2.1): a node may now declare **more than one** named
+in-port, each fed by a distinct upstream ``data`` edge, addressed in templates as ``$in.<port>``
+(``$in`` stays sugar for the default port ``in``). The only walker change is in-port *collection*
+(``_collect_in_ports`` gathers the named producers instead of assuming one) and *resolution*
+(``_resolve_in`` is port-first); dispatch-by-``kind`` and every handler are otherwise untouched,
+and the determinism boundary (§8.1) is unmoved — multi-input is binding + addressing, not a new
+``kind``, node type, or I/O (m10.md §1.2/§3).
 """
 
 from __future__ import annotations
@@ -208,20 +216,38 @@ def mcp_tool_nodes(ir: IRDocument) -> list[tuple[Node, str, str]]:
     return out
 
 
-# ── value references + inline templating: $in / $in.a.b (every substituting node) ──
+# ── value references + inline templating: $in / $in.<port> / $in.<port>.<path> ──
 #
-# M9 Part A (m9.md §1): ONE token language across every node type that substitutes —
-# ``$in`` (the whole in-port value) and ``$in.a.b`` (a path into it). The ``tool``/``mcp_tool``/
-# ``router`` nodes use it as a whole-value reference (``_resolve_ref``); the ``llm`` node uses it
-# inline inside ``messages`` content (``_render_template``). ``$in`` is the exact semantic of the
-# llm node's old ``$input``, renamed — and now field-aware too. An unresolved token is a loud
-# :class:`TemplateError`, never a silent literal pass-through; ``$$`` escapes a literal ``$``.
+# M10 (m10.md §1.2): ONE token language across every substituting node, addressed **port-first**.
+# A node declares its in-ports (``ports.in``); each is fed by one ``data`` edge. The token selects
+# a port by name:
+#   ``$in``                  → the default in-port named ``in`` (M9 parity sugar)
+#   ``$in.<port>``           → the whole value on that named in-port
+#   ``$in.<port>.<path>``    → drill into that port's value (M9's field-drilling lives here now)
+# The first segment after ``$in.`` is ALWAYS a port name, resolved port-first with a LOUD error on
+# a miss — never a silent literal pass-through, never silently reinterpreted as a field of ``in``.
+# ``$$`` escapes a literal ``$``. The ``tool``/``mcp_tool``/``router`` nodes use it as a whole-value
+# reference (``_resolve_ref``); the ``llm`` node uses it inline in ``messages`` content
+# (``_render_template``). Both go through ``_resolve_in`` so a port resolves identically on both.
+
+
+@dataclass(frozen=True)
+class _PortInputs:
+    """The named-in-port map a node resolves ``$in`` tokens against (m10.md §3). ``values`` holds
+    the value on each *live, fed* in-port (keyed by port id); ``declared`` is every in-port the node
+    declares — so an addressed-but-absent port resolves to ``None`` (an unfed optional port or a
+    dead branch this run), while an addressed-but-**undeclared** port is a loud error."""
+
+    values: Mapping[str, Any]
+    declared: frozenset[str]
 
 
 class _RefError(ValueError):
-    """A ``$in``-reference couldn't be resolved against the upstream value (missing key / not a
-    dict). Internal — the router maps it to :class:`RouterError`, a tool maps it to an ``err``
-    binding, the llm template maps it to :class:`TemplateError`."""
+    """A ``$in``-reference couldn't be resolved: an unknown in-port, a bare ``$in`` on a node with
+    no default ``in`` port, or a ``$in.<port>.<path>`` drill into a field that doesn't exist.
+    Carries a full, user-facing message (the node, the token, the available ports/fields). Internal
+    — the router maps it to :class:`RouterError`, a tool/mcp_tool maps it to an ``err`` binding, the
+    llm template maps it to :class:`TemplateError`."""
 
 
 def _parse_if_json(value: Any) -> Any:
@@ -252,25 +278,74 @@ def _resolve_path(input_value: Any, parts: list[str]) -> Any:
     return cur
 
 
-def _resolve_ref(ref: Any, input_value: Any) -> Any:
-    """Resolve one arg/select value against the node's in-port value (m6.md §2/§3.2). ``$in`` is
-    the whole value; ``$in.a.b`` traverses a path into it (parsing JSON strings as it goes). Any
-    non-``$in`` value (a literal string, dict, number) is returned unchanged — so an arg like
-    ``{"value": {"handle": "yes"}}`` is a literal, not a reference. No expression language, no
-    code execution (§7): just a value reference."""
+def _resolve_in(parts: list[str], ports: _PortInputs, node_id: str) -> Any:
+    """Resolve a ``$in`` token's segments **port-first** (m10.md §1.2). ``parts`` is everything
+    after ``$in`` (``$in`` → ``[]``, ``$in.file`` → ``["file"]``, ``$in.in.body`` → ``["in",
+    "body"]``). Bare ``$in`` is the default port ``in``; otherwise the first segment is a port
+    name and the rest drills into that port's value. An undeclared port, or a bare ``$in`` with no
+    ``in`` port, raises :class:`_RefError` with a precise message — never a silent ``None`` or
+    literal.
+
+    **Absent / optional ports (decision D1 — theygent-m10-decisions.md):** an in-port whose value
+    is *absent* — declared but unfed (a ``required: false`` port, or one fed only by a dead branch),
+    OR fed with an explicit ``null`` — resolves to the canonical **absent** value (``None``) for
+    BOTH the whole value (``$in.<port>``) and any drill into it (``$in.<port>.<path>``). Drilling
+    **short-circuits** to absent — it does *not* error on the missing path, because optional absence
+    is author-sanctioned, not the silent-nonsense M10 kills (an *undeclared* port still errors
+    above). ``absent`` is rendered per consumption site: ``""`` inline (``_stringify_token`` of
+    ``None``), JSON ``null`` in structured args (``_resolve_ref`` returns ``None``). **Fed-with-null
+    collapses to absent deliberately** (D1): a port producing ``null`` is indistinguishable from an
+    unfed optional port. The resolver does not re-check requiredness — a *required* unfed port was
+    rejected at validation (``graph.py``), so it trusts the load-time guarantee. A *present*
+    (non-null) value drills per M9's field-path semantics, unchanged: a missing field on a present
+    value is still a loud error."""
+
+    if not parts:  # bare $in → the default in-port named ``in`` (M9 parity sugar)
+        if "in" not in ports.declared:
+            raise _RefError(
+                f"node {node_id!r}: bare $in needs a default in-port named 'in', but this node's "
+                f"in-ports are {sorted(ports.declared)} — address one as $in.<port>"
+            )
+        return ports.values.get("in")  # absent (None) if the default port is optional + unfed (D1)
+    port = parts[0]
+    if port not in ports.declared:
+        hint = f"; did you mean $in.in.{port}?" if "in" in ports.declared else ""
+        raise _RefError(
+            f"node {node_id!r}: no in-port named {port!r}; in-ports: {sorted(ports.declared)}{hint}"
+        )
+    port_value = ports.values.get(port)
+    # D1: an absent port value (unfed optional / dead branch, OR fed-with-null — they collapse)
+    # resolves to absent for the whole value AND any drill. Never an error — that is the point of an
+    # optional port. Only an UNDECLARED port (handled above) errors.
+    if port_value is None:
+        return None
+    if not parts[1:]:  # $in.<port> — the whole, present value
+        return port_value
+    # A present, non-null value: drilling defers to M9's field-path semantics (a missing field on a
+    # present value is still a loud error — M10 does not redefine drill-miss-on-a-present-value).
+    try:
+        return _resolve_path(port_value, parts[1:])
+    except _RefError as exc:
+        raise _RefError(
+            f"node {node_id!r}: cannot resolve $in.{'.'.join(parts)}: no field "
+            f"{exc.args[0]!r} in in-port {port!r}; {_available_fields(port_value)}"
+        ) from exc
+
+
+def _resolve_ref(ref: Any, ports: _PortInputs, node_id: str) -> Any:
+    """Resolve one arg/select value against the node's in-port map (m10.md §1.2). ``$in`` is the
+    default in-port's whole value; ``$in.<port>`` selects a named in-port; ``$in.<port>.<path>``
+    drills into it (parsing JSON strings as it descends). Any non-``$in`` value (a literal string,
+    dict, number) is returned unchanged — so an arg like ``{"value": {"handle": "yes"}}`` is a
+    literal, not a reference. No expression language, no code execution (§7): just a port ref."""
 
     if not isinstance(ref, str):
         return ref
     if ref == "$in":
-        return input_value
+        return _resolve_in([], ports, node_id)
     if not ref.startswith("$in."):
         return ref
-    try:
-        return _resolve_path(input_value, ref[len("$in.") :].split("."))
-    except _RefError as exc:
-        raise _RefError(
-            f"cannot resolve {ref!r}: no key {exc.args[0]!r} in upstream value"
-        ) from exc
+    return _resolve_in(ref[len("$in.") :].split("."), ports, node_id)
 
 
 #: A substitution token in a content string: ``$$`` (escapes a literal ``$``) or ``$<expr>`` where
@@ -298,12 +373,13 @@ def _stringify_token(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value)
 
 
-def _render_template(content: str, input_value: Any, node_id: str) -> str:
-    """Substitute ``$in`` / ``$in.field`` tokens in one content string against the node's in-port
-    value (m9.md §1.1). ``$$`` is a literal ``$``. An unknown root (anything but ``$in``, e.g. the
-    removed ``$input``) or an unresolvable ``$in.field`` raises :class:`TemplateError` naming the
-    node, the token, and the available fields — the F1.1-class fix: no silent literal, no green run
-    with nonsense (m9.md §1.2)."""
+def _render_template(content: str, ports: _PortInputs, node_id: str) -> str:
+    """Substitute ``$in`` / ``$in.<port>`` / ``$in.<port>.<field>`` tokens in one content string
+    against the node's in-port map (m10.md §1.2). ``$$`` is a literal ``$``. An unknown root
+    (anything but ``$in``, e.g. the removed ``$input``), an undeclared in-port, or an unresolvable
+    drill raises :class:`TemplateError` naming the node, the token, and the available ports/fields —
+    the F1.1-class fix extended to ports: no silent literal, no green run with nonsense
+    (m10.md §1.2, §6)."""
 
     def _sub(match: re.Match[str]) -> str:
         if match.group(0) == "$$":
@@ -313,28 +389,25 @@ def _render_template(content: str, input_value: Any, node_id: str) -> str:
         if parts[0] != "in":
             raise TemplateError(
                 f"node {node_id!r}: unknown template token '${expr}' — the substitution token is "
-                f"$in (the whole in-port value) or $in.field (a field of it); "
-                f"{_available_fields(input_value)}"
+                f"$in (the default in-port), $in.<port> (a named in-port), or $in.<port>.<field> "
+                f"(a field of it); this node's in-ports are {sorted(ports.declared)}"
             )
         try:
-            value = _resolve_path(input_value, parts[1:])
+            value = _resolve_in(parts[1:], ports, node_id)
         except _RefError as exc:
-            raise TemplateError(
-                f"node {node_id!r}: cannot resolve '${expr}': no field {exc.args[0]!r} in the "
-                f"in-port value; {_available_fields(input_value)}"
-            ) from exc
+            raise TemplateError(str(exc)) from exc
         return _stringify_token(value)
 
     return _TEMPLATE_TOKEN.sub(_sub, content)
 
 
-def _render_messages(node: Node, config: LlmConfig, input_value: Any) -> list[dict[str, str]]:
-    """Render every ``messages`` content field through the unified ``$in`` template (m9.md §1.1).
-    Replaces M5's literal ``$input`` swap: ``$in`` is the whole in-port value (exact parity), and
-    ``$in.field`` now drills into it when the upstream value is an object."""
+def _render_messages(node: Node, config: LlmConfig, ports: _PortInputs) -> list[dict[str, str]]:
+    """Render every ``messages`` content field through the port-addressed ``$in`` template (m10.md
+    §1.2). One llm node can now compose several upstreams in one prompt — ``$in.file`` AND
+    ``$in.question`` — because the token addresses the node's named in-ports, not a single value."""
 
     return [
-        {"role": msg.role, "content": _render_template(msg.content, input_value, node.id)}
+        {"role": msg.role, "content": _render_template(msg.content, ports, node.id)}
         for msg in config.messages
     ]
 
@@ -381,25 +454,53 @@ def _is_skipped(
     return not any(_edge_live(e, skipped, live_handles) for e in inbound)
 
 
-def _incoming_value(
+def _collect_in_ports(
     node: Node,
     edges: list[Edge],
     values: dict[tuple[str, str], Any],
     skipped: set[str],
     live_handles: dict[str, set[str]],
-) -> Any:
-    """The value on a node's in-port: the value carried by its first *live* inbound ``data`` edge
-    (§8.7 step 3). Dead edges (from an un-taken branch) are ignored, so a node fed by two branches
-    reads whichever one actually ran."""
+) -> _PortInputs:
+    """Gather a node's in-port map: every *live* inbound ``data`` edge keyed by its
+    ``targetHandle`` (m10.md §3 in-port collection). This is the only M10 generalisation of the
+    walker — collecting **several** named producers instead of assuming one. Dead edges (an
+    un-taken branch this run) are ignored, so a port fed only by a dead branch is absent (resolves
+    to ``None``). Validation already rejected two ``data`` edges to one port, so no override
+    ambiguity. ``declared`` carries every in-port the node declares, so ``$in.<port>`` can tell an
+    undeclared port (loud error) from a declared-but-absent one (``None``)."""
 
+    collected: dict[str, Any] = {}
     for edge in edges:
         if (
             edge.target == node.id
             and edge.channel == "data"
             and _edge_live(edge, skipped, live_handles)
         ):
-            return values.get((edge.source, edge.source_handle))
-    return None
+            collected[edge.target_handle] = values.get((edge.source, edge.source_handle))
+    return _PortInputs(values=collected, declared=frozenset(p.id for p in node.ports.in_))
+
+
+def _single_in_value(ports: _PortInputs, node: Node) -> Any:
+    """The one value a **single-value consumer** takes: the run output (``output`` boundary) or the
+    value a ``router`` forwards along its chosen branch. These nodes consume ONE upstream value, so
+    they must declare exactly one in-port. More than one is an ambiguous binding — *which* port is
+    the output / the forwarded value? — and is a **loud** error (m10.md §1.3), the same
+    no-silent-nonsense rule as the unknown-port path, never a silent pick of the default port.
+
+    Multi-input (``$in.<port>``) is for the value-**producing** nodes — ``llm``/``tool``/
+    ``mcp_tool`` — which READ several ports into their own output; ``output``/``router`` consume a
+    single value. (A ``router`` that needs to branch on one of several inputs is the deferred
+    multi-port-router fork, not a silent default-port pick — m10.md §1.3/§4.)"""
+
+    declared = node.ports.in_
+    if len(declared) > 1:
+        raise TemplateError(
+            f"node {node.id!r}: a single-value consumer ({node.type}) takes exactly one in-port "
+            f"value, but declares {len(declared)} in-ports "
+            f"{sorted(p.id for p in declared)} — wire exactly one, or compose multiple upstreams "
+            f"in a value-producing node (llm/tool/mcp_tool) via $in.<port>"
+        )
+    return ports.values.get(declared[0].id) if declared else None
 
 
 async def walk(
@@ -506,7 +607,8 @@ def _walk_boundary(
         # The output node's in-port value IS the run's canonical output (m6.md §4) — read from a
         # live edge, so a routed run returns whichever branch actually produced it.
         live_handles[node.id] = set()
-        value = _incoming_value(node, ir.edges, values, skipped, live_handles)
+        ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+        value = _single_in_value(ports, node)
         if result is not None:
             result.output = value
             result.output_produced = True  # an output node ran (m9.md §2.4)
@@ -528,9 +630,10 @@ async def _walk_llm(
 ) -> AsyncIterator[Delta]:
     config = LlmConfig.model_validate(node.config)
     model_id, params = resolve_model(ir, config)
-    input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
-    # Naive full replay (M4 §4): prior thread turns verbatim, then this turn's rendered prompt.
-    messages = [*ctx.prior_messages, *_render_messages(node, config, input_value)]
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    # Naive full replay (M4 §4): prior thread turns verbatim, then this turn's rendered prompt. The
+    # prompt may compose several in-ports (M10) — $in.file AND $in.question — via the port map.
+    messages = [*ctx.prior_messages, *_render_messages(node, config, ports)]
 
     # open_stream sends the request and validates status, so a pre-stream 503/404 raises here —
     # before any delta — letting the control-plane surface a clean status (mirrors /runs).
@@ -586,10 +689,10 @@ async def _walk_tool(
     is a normal return value, bound to ``ok``; only transport failures raise.)"""
 
     config = ToolConfig.model_validate(node.config)
-    input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
     try:
         fn = ctx.tools.get(config.tool)
-        args = {k: _resolve_ref(v, input_value) for k, v in config.args.items()}
+        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
         value = await fn(**args)
     except Exception as exc:  # tool failed: structured err output, run continues (§4).
         live_handles[node.id] = _error_handles(node)
@@ -644,10 +747,10 @@ async def _walk_mcp_tool(
 
     config = McpToolConfig.model_validate(node.config)
     server, tool = config.server, config.tool
-    input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
     result: McpResult | None = None
     try:
-        args = {k: _resolve_ref(v, input_value) for k, v in config.args.items()}
+        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
         result = await invoke_mcp_tool(server, tool, args, ctx)
         if result.is_error:  # the server reported a tool-level error (its own message)
             error_message = f"mcp server {server!r} tool {tool!r} error: {_stringify(result.value)}"
@@ -707,9 +810,9 @@ def _walk_router(
     run, clear reason) — no fallback guessing."""
 
     config = RouterConfig.model_validate(node.config)
-    input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
     try:
-        selected = _resolve_ref(config.select, input_value)
+        selected = _resolve_ref(config.select, ports, node.id)
     except _RefError as exc:
         raise RouterError(f"router {node.id!r}: {exc}") from exc
 
@@ -720,4 +823,4 @@ def _walk_router(
             f"not one of its out-handles {sorted(out_ids)}"
         )
     live_handles[node.id] = {selected}
-    values[(node.id, selected)] = input_value
+    values[(node.id, selected)] = _single_in_value(ports, node)

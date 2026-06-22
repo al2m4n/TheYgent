@@ -179,3 +179,17 @@ node_modules/
 
 # The `lib/` rule above is a Python build-dir pattern; apps/web/src/lib is real TS source.
 !apps/web/src/lib/
+
+# Node / Frontend build artifacts
+node_modules/
+dist/
+.vite/
+.turbo/
+*.tsbuildinfo
+
+# pnpm
+pnpm-lock.yaml
+
+# Vite
+.env.local
+.env.*.local

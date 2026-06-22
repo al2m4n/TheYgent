@@ -328,7 +328,7 @@ def test_two_turn_thread_against_real_mlx() -> None:
 def _agent_http_ir() -> dict:
     """The M6 agent shape (m6.md §6): input(decision) -> router -> tool(http_fetch) -> llm -> out.
 
-    The route is driven by the JSON the *input* carries (``$in.handle``), not by the tiny model's
+    The route is driven by the JSON the *input* carries (``$in.in.handle``), not by the tiny model's
     text — so the router selection is deterministic while every other hop is genuinely real: a real
     outbound HTTP GET to a threaded local server (the tool), then real MLX summarizing the fetched
     body (the llm). Real-MLX-as-router is the §8 hand-drive demo, where flaky tiny-model JSON is
@@ -351,7 +351,7 @@ def _agent_http_ir() -> dict:
                 "id": "n_route",
                 "type": "router",
                 "kind": "orchestration",
-                "config": {"select": "$in.handle"},
+                "config": {"select": "$in.in.handle"},
                 "ports": {
                     "in": [{"id": "in", "type": "any"}],
                     "out": [{"id": "yes", "type": "any"}, {"id": "no", "type": "any"}],
@@ -361,7 +361,7 @@ def _agent_http_ir() -> dict:
                 "id": "n_fetch",
                 "type": "tool",
                 "kind": "activity",
-                "config": {"tool": "http_fetch", "args": {"url": "$in.payload.url"}},
+                "config": {"tool": "http_fetch", "args": {"url": "$in.in.payload.url"}},
                 "ports": {
                     "in": [{"id": "in", "type": "any"}],
                     "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
@@ -605,3 +605,178 @@ def test_agent_reads_file_via_real_mcp_and_mlx() -> None:
 
                 got = client.get(f"/runs/{body['runId']}").json()
                 assert got["graph_id"] == "agt_01J9X8MCPDEMO"
+
+
+def _fs_qa_agent_ir(read_tool: str) -> dict:
+    """The M10 acceptance demo (m10.md §5 integration / §7 step 6): the first agent M9 could NOT
+    express. The run input is an object ``{path, question}``; it fans out to a real MCP file read
+    (``$in.in.path``) and an ``echo`` carrying the question (``$in.in.question``); the ``llm`` node
+    declares TWO in-ports — ``file`` and ``question`` — and composes ``$in.file`` AND
+    ``$in.question`` into one prompt. The answer is determined by file∩question: the model must read
+    the file (via the ``mcp_tool`` port) to know the facts AND parse the question to pick the right
+    one. ``read_tool`` is discovered from the server's caps (it varies across server-filesystem)."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_01J9X8MULTIIN",
+        "name": "ask-about-file",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": "local", "params": {"maxTokens": 24}}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_read",
+                "type": "mcp_tool",
+                "kind": "activity",
+                "config": {"server": "fs", "tool": read_tool, "args": {"path": "$in.in.path"}},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_q",
+                "type": "tool",
+                "kind": "activity",
+                "config": {"tool": "echo", "args": {"value": "$in.in.question"}},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {
+                    "model": "default",
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Using ONLY the file below, answer the question with a single "
+                                "word.\n\nFILE:\n$in.file\n\nQUESTION: $in.question"
+                            ),
+                        }
+                    ],
+                },
+                "ports": {
+                    "in": [{"id": "file", "type": "any"}, {"id": "question", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_read",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_q",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e3",
+                "source": "n_read",
+                "sourceHandle": "ok",
+                "target": "n_llm",
+                "targetHandle": "file",
+                "channel": "data",
+            },
+            {
+                "id": "e4",
+                "source": "n_q",
+                "sourceHandle": "ok",
+                "target": "n_llm",
+                "targetHandle": "question",
+                "channel": "data",
+            },
+            {
+                "id": "e5",
+                "source": "n_llm",
+                "sourceHandle": "ok",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+
+
+@pytest.mark.skipif(
+    not _HAVE_NPX or not _MLX_MODEL or not _HAVE_MLX or not _DATABASE_URL,
+    reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
+)
+def test_multi_input_file_and_question_against_real_mcp_and_mlx() -> None:
+    # THE M10 closure proof (m10.md §5 integration): a graph reads a file on one in-port AND takes a
+    # question on another, composes BOTH into one real MLX prompt, and the answer is determined by
+    # file∩question — visibly using file content it could only have gotten via the mcp_tool port.
+    # The deterministic half (the rendered prompt carries both values, in the right slots) is pinned
+    # exactly in the fast suite (test_multi_input.py); this is the real-path behavioral half. Skips
+    # clean if the MCP server can't be fetched/spawned.
+    db_url = _prepare_db()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.realpath(tmp)  # macOS /var -> /private/var: the server compares realpaths
+        note = Path(root) / "facts.txt"
+        # Three distinct facts; the question selects ONE. Answering "blue" (not "banana"/"fox")
+        # requires BOTH the file (to know blue) AND the question (to pick color) — the composition.
+        note.write_text("secret color: blue\nsecret fruit: banana\nsecret animal: fox\n")
+        with _real_inference_plane() as base:
+            app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+            with TestClient(app) as client:
+                reg = client.put(
+                    "/admin/mcp/servers/fs",
+                    json={
+                        "transport": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", root],
+                    },
+                )
+                assert reg.status_code == 200, reg.text
+                tools_resp = client.get("/admin/mcp/servers/fs/tools")
+                if tools_resp.status_code == 503:
+                    pytest.skip("filesystem MCP server unavailable (npx fetch/spawn failed)")
+                names = [t["name"] for t in tools_resp.json()["tools"]]
+                read_tool = next(
+                    (n for n in ("read_text_file", "read_file", "read_media_file") if n in names),
+                    None,
+                )
+                assert read_tool, f"no read tool exposed by server-filesystem: {names}"
+
+                run_input = {"path": str(note), "question": "What is the secret color?"}
+                r = client.post(
+                    "/graphs/runs",
+                    json={"ir": _fs_qa_agent_ir(read_tool), "input": run_input, "stream": False},
+                )
+                assert r.status_code == 200, r.text
+                body = r.json()
+                assert body["status"] == "completed", body
+                # The real MLX answer is determined by the file AND the question composed into one
+                # prompt: it picks "blue" (the color), proving both in-ports reached the model.
+                out = body["output"].lower()
+                assert out.strip(), "expected real generated text from MLX"
+                assert "blue" in out, (
+                    f"answer should use the file's color fact via composition: {out!r}"
+                )
+
+                got = client.get(f"/runs/{body['runId']}").json()
+                assert got["graph_id"] == "agt_01J9X8MULTIIN"

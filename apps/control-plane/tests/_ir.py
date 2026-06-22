@@ -217,9 +217,10 @@ def mcp_tool_ok_err_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str
 
 
 def router_ir(decision: Any) -> dict[str, Any]:
-    """input → tool(echo, {value: <decision>}) → router(select $in.handle) → {yes: out_yes,
+    """input → tool(echo, {value: <decision>}) → router(select $in.in.handle) → {yes: out_yes,
     no: out_no}. echo emits the literal decision object (network-free); the router branches on
-    its ``handle`` (m6.md §5). ``decision`` is e.g. {"handle": "yes", "payload": 42}."""
+    its ``handle`` (m6.md §5). ``decision`` is e.g. {"handle": "yes", "payload": 42}. The select is
+    port-addressed (M10): ``$in.in.handle`` = default in-port ``in`` → drill ``handle``."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -235,7 +236,7 @@ def router_ir(decision: Any) -> dict[str, Any]:
                 "n_route",
                 "router",
                 "orchestration",
-                config={"select": "$in.handle"},
+                config={"select": "$in.in.handle"},
                 ins=["in"],
                 outs=["yes", "no"],
             ),
@@ -274,8 +275,8 @@ def llm_ir(content: str) -> dict[str, Any]:
 
 def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
     """input → tool(echo, {value: <value>}) → llm(<content>) → output. echo emits the literal
-    object ``value`` (network-free), so the llm's in-port is an OBJECT and ``content`` can drill
-    into it with ``$in.field`` (m9.md §1.1, the field-aware llm template)."""
+    object ``value`` (network-free), so the llm's default in-port ``in`` is an OBJECT and
+    ``content`` can drill into it with ``$in.in.field`` (M10: port-addressed, field-aware)."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -303,6 +304,133 @@ def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
             _edge("e3", "n_llm", "ok", "n_out"),
         ],
         models=_DEFAULT_MODEL,
+    )
+
+
+def two_input_llm_ir(content: str, file_value: Any, question_value: Any) -> dict[str, Any]:
+    """The F2.1 headline (m10.md §0): input fans out to two echo tools emitting ``file_value`` and
+    ``question_value`` (network-free); BOTH feed one ``llm`` node on DISTINCT in-ports ``file`` and
+    ``question``; ``content`` composes ``$in.file`` AND ``$in.question`` in one prompt — the thing
+    no M9 graph could express. Each echo's own in-port is fed by ``n_in`` (so its required in-port
+    is connected); its literal arg makes the two upstream values distinct and deterministic."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_file",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": file_value}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_q",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": question_value}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_llm",
+                "llm",
+                "activity",
+                config={"model": "default", "messages": [{"role": "user", "content": content}]},
+                ins=["file", "question"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [
+            _edge("e1", "n_in", "out", "n_file"),
+            _edge("e2", "n_in", "out", "n_q"),
+            _edge("e3", "n_file", "ok", "n_llm", "file"),
+            _edge("e4", "n_q", "ok", "n_llm", "question"),
+            _edge("e5", "n_llm", "ok", "n_out"),
+        ],
+        models=_DEFAULT_MODEL,
+    )
+
+
+def output_multi_inport_ir() -> dict[str, Any]:
+    """input fans out to two echo tools → an OUTPUT node declaring TWO in-ports [a, b]. A
+    single-value consumer with >1 in-port is ambiguous — *which* value is the run output? — so the
+    walker rejects it LOUDLY rather than silently picking one (m10.md §1.3, the #2 seam). Validation
+    PASSES (each port fed exactly once); the ambiguity is a walk-time error, not a wiring error."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_a",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": "A"}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_b",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": "B"}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["a", "b"]),
+        ],
+        [
+            _edge("e1", "n_in", "out", "n_a"),
+            _edge("e2", "n_in", "out", "n_b"),
+            _edge("e3", "n_a", "ok", "n_out", "a"),
+            _edge("e4", "n_b", "ok", "n_out", "b"),
+        ],
+    )
+
+
+def router_multi_inport_ir(decision: Any) -> dict[str, Any]:
+    """input fans out to two echo tools → a ROUTER declaring TWO in-ports [a, b]. A router forwards
+    a single value along its chosen branch, so >1 in-port is ambiguous → loud walk-time error
+    (m10.md §1.3). ``select`` reads ``$in.a.handle`` (which resolves fine over the port map), then
+    the forward rejects the multi-port shape — proving the addressing/forward split."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_a",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": decision}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_b",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": "x"}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_route",
+                "router",
+                "orchestration",
+                config={"select": "$in.a.handle"},
+                ins=["a", "b"],
+                outs=["yes", "no"],
+            ),
+            _node("n_yes", "output", "boundary", ins=["in"]),
+            _node("n_no", "output", "boundary", ins=["in"]),
+        ],
+        [
+            _edge("e1", "n_in", "out", "n_a"),
+            _edge("e2", "n_in", "out", "n_b"),
+            _edge("e3", "n_a", "ok", "n_route", "a"),
+            _edge("e4", "n_b", "ok", "n_route", "b"),
+            _edge("e5", "n_route", "yes", "n_yes"),
+            _edge("e6", "n_route", "no", "n_no"),
+        ],
     )
 
 
@@ -346,7 +474,7 @@ def agent_ir() -> dict[str, Any]:
                 "n_route",
                 "router",
                 "orchestration",
-                config={"select": "$in.handle"},
+                config={"select": "$in.in.handle"},
                 ins=["in"],
                 outs=["yes", "no"],
             ),
@@ -354,7 +482,7 @@ def agent_ir() -> dict[str, Any]:
                 "n_tool",
                 "tool",
                 "activity",
-                config={"tool": "echo", "args": {"value": "$in.payload"}},
+                config={"tool": "echo", "args": {"value": "$in.in.payload"}},
                 ins=["in"],
                 outs=["ok", "err"],
             ),

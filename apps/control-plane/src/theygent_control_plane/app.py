@@ -85,8 +85,15 @@ class GraphRunRequest(BaseModel):
     # control-plane owns the 400 shape when it fails IR validation, rather than FastAPI's
     # generic 422. ``input`` binds to the graph's input boundary node; ``thread_id`` reuses M4
     # thread memory through the graph path unchanged. Snake_case request fields, matching /runs.
+    #
+    # **M10 deliberate contract extension (graph path only):** ``input`` is ``Any``, not ``str``.
+    # A multi-input agent's run input is naturally an OBJECT (e.g. ``{"path": ..., "question":
+    # ...}``) that downstream nodes select from with ``$in.in.<field>`` — typing it ``str`` would
+    # 422 exactly the multi-input agents M10 exists to enable. The walker already binds any value
+    # to the input boundary node; only this request type blocked it. ``/runs`` (a single prompt =
+    # a chat message = a string) is intentionally NOT widened.
     ir: dict[str, Any]
-    input: str
+    input: Any = None
     stream: bool = True
     thread_id: str | None = None
 
@@ -530,7 +537,7 @@ def create_app(
             return await _stream_graph(ir, run, req.input, ctx)
         return await _complete_graph(ir, run, req.input, ctx)
 
-    async def _stream_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
+    async def _stream_graph(ir: Any, run: Run, user_input: Any, ctx: WalkContext) -> Any:
         # Prime the walker before committing to a 200 SSE response: a pre-stream error (a 503/404
         # from the llm node's open_stream, or a RouterError from a router that runs before any
         # llm) surfaces as a clean status, never a 200-then-broken-stream (mirrors /runs).
@@ -589,7 +596,7 @@ def create_app(
                             s,
                             thread_id=run.thread_id,
                             run_id=run.id,
-                            user_content=user_input,
+                            user_content=_coerce_output(user_input),
                             assistant_content=output,
                         )
                 terminal = True
@@ -613,7 +620,7 @@ def create_app(
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
-    async def _complete_graph(ir: Any, run: Run, user_input: str, ctx: WalkContext) -> Any:
+    async def _complete_graph(ir: Any, run: Run, user_input: Any, ctx: WalkContext) -> Any:
         result = WalkResult()
         try:
             async for _delta in walk(ir, user_input, ctx, result):
@@ -655,7 +662,7 @@ def create_app(
                     s,
                     thread_id=run.thread_id,
                     run_id=run.id,
-                    user_content=user_input,
+                    user_content=_coerce_output(user_input),
                     assistant_content=output,
                 )
         logger.info("graph_run.completed", extra={"run_id": run.id})

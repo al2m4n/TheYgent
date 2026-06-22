@@ -18,7 +18,14 @@ from _http import ThreadedHTTP
 from _ir import agent_ir, router_ir, tool_echo_ir, tool_http_ir, tool_ok_err_ir
 from fastapi.testclient import TestClient
 from theygent_control_plane.app import create_app
-from theygent_control_plane.walker import _resolve_ref
+from theygent_control_plane.walker import _PortInputs, _resolve_ref
+
+
+def _ports(values: dict, declared: list[str] | None = None) -> _PortInputs:
+    """A node's in-port map for the unit tests: declared ports default to the fed ones."""
+    return _PortInputs(
+        values=values, declared=frozenset(declared if declared is not None else values)
+    )
 
 
 def _post(client: TestClient, ir: dict, *, input_: str = "go", stream: bool = False):
@@ -89,32 +96,42 @@ def test_tool_not_found_rejected_at_validation(client: TestClient) -> None:
     assert "runId" not in resp.json()
 
 
-# ── $in / $in.a.b value references (the shared tool-arg + router-select resolver) ─────
-# The load-bearing invariant: a missing path ERRORS clearly, it never silently returns None
-# that then surprises a downstream node. Pinned at the unit level here and end-to-end below.
+# ── $in.<port> / $in.<port>.<path> value references (shared tool-arg + router-select resolver) ──
+# The load-bearing invariant: an undeclared port or a missing path ERRORS clearly, it never
+# silently returns None that then surprises a downstream node. Port-first (M10 §1.2). Pinned at the
+# unit level here and end-to-end below.
 
 
-def test_resolve_ref_nested_paths_and_passthrough() -> None:
-    assert _resolve_ref("$in", {"a": 1}) == {"a": 1}  # whole value
-    assert _resolve_ref("$in.a.b", {"a": {"b": 42}}) == 42  # nested traversal
-    # A JSON string is parsed mid-traversal (the llm-output-feeds-router/tool case).
-    assert _resolve_ref("$in.payload.url", '{"payload": {"url": "http://x"}}') == "http://x"
-    assert _resolve_ref("hello", {"a": 1}) == "hello"  # non-$in literal passes through
-    assert _resolve_ref({"k": "v"}, "ignored") == {"k": "v"}  # non-str literal passes through
+def test_resolve_ref_port_addressing_and_passthrough() -> None:
+    assert _resolve_ref("$in", _ports({"in": {"a": 1}}), "n") == {
+        "a": 1
+    }  # default port whole value
+    # $in.<port> selects a named in-port; $in.<port>.<path> drills into it.
+    p = _ports({"file": {"body": "x"}, "question": "why?"})
+    assert _resolve_ref("$in.question", p, "n") == "why?"
+    assert _resolve_ref("$in.file.body", p, "n") == "x"  # nested traversal into a port
+    # A JSON-string port value is parsed mid-traversal (the llm-output-feeds-router/tool case).
+    js = _ports({"in": '{"payload": {"url": "http://x"}}'})
+    assert _resolve_ref("$in.in.payload.url", js, "n") == "http://x"
+    assert (
+        _resolve_ref("hello", _ports({"in": 1}), "n") == "hello"
+    )  # non-$in literal passes through
+    assert _resolve_ref({"k": "v"}, _ports({}), "n") == {"k": "v"}  # non-str literal passes through
 
 
-def test_resolve_ref_missing_path_raises_clearly() -> None:
-    # The case easy to miss: intermediate key exists, final key absent — must RAISE, not None.
-    with pytest.raises(ValueError, match=r"cannot resolve '\$in.a.missing': no key 'missing'"):
-        _resolve_ref("$in.a.missing", {"a": {"b": 1}})
-    # Traversing into a non-dict (a is a scalar) — must raise, not None.
+def test_resolve_ref_errors_are_loud_and_precise() -> None:
+    # An undeclared port → loud error naming the available ports (never a silent None).
+    with pytest.raises(ValueError, match=r"no in-port named 'ghost'"):
+        _resolve_ref("$in.ghost", _ports({"file": 1}), "n")
+    # Intermediate port exists, final field absent — must RAISE, not None.
+    with pytest.raises(ValueError, match=r"no field 'missing' in in-port 'file'"):
+        _resolve_ref("$in.file.missing", _ports({"file": {"b": 1}}), "n")
+    # Drilling into a non-dict port value (a scalar) — must raise, not None.
     with pytest.raises(ValueError, match="cannot resolve"):
-        _resolve_ref("$in.a.b", {"a": 7})
-    # Top-level key missing, and a None input — both raise, never silently None.
-    with pytest.raises(ValueError, match="cannot resolve"):
-        _resolve_ref("$in.handle", {"payload": 1})
-    with pytest.raises(ValueError, match="cannot resolve"):
-        _resolve_ref("$in.handle", None)
+        _resolve_ref("$in.file.b", _ports({"file": 7}), "n")
+    # Bare $in with no default `in` port → loud error naming the ports.
+    with pytest.raises(ValueError, match=r"bare \$in needs a default in-port named 'in'"):
+        _resolve_ref("$in", _ports({"file": 1}), "n")
 
 
 # ── router ────────────────────────────────────────────────────────────────────
@@ -163,7 +180,7 @@ def test_router_nested_missing_path_fails_clearly(client: TestClient) -> None:
     # run with a clear reason — never resolve to None and route on it (no silent foot-gun).
     doc = router_ir({"deep": {"other": 1}})
     doc["nodes"][2]["config"]["select"] = (
-        "$in.deep.missing"  # n_route; "deep" exists, "missing" not
+        "$in.in.deep.missing"  # n_route; in-port `in` → "deep" exists, "missing" not
     )
     resp = _post(client, doc)
     assert resp.status_code == 422
@@ -178,7 +195,9 @@ def test_tool_missing_arg_ref_binds_err_branch(
     # A tool arg that references a missing path is an unresolved-input failure: it binds the err
     # handle with the clear message and the run continues (§4) — the err branch runs, the ok
     # branch is skipped. The downstream node never receives a surprise None.
-    doc = tool_ok_err_ir("echo", {"value": "$in.missing"})  # input "go" is a str, has no ".missing"
+    doc = tool_ok_err_ir(
+        "echo", {"value": "$in.in.missing"}
+    )  # input "go" str: in-port `in` has no .missing
     with caplog.at_level(logging.INFO, logger="theygent.control_plane.walker"):
         body = _post(client, doc).json()
     assert body["status"] == "completed"

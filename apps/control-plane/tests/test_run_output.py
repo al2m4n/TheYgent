@@ -69,11 +69,11 @@ def test_unthreaded_graph_run_output_persists(client: TestClient) -> None:
 
 
 def test_empty_output_from_upstream_error_is_legible(client: TestClient, pg_url: str) -> None:
-    # §2.4: a tool errors (an unresolvable $in.field arg), its `err` handle is wired NOWHERE, and
-    # its `ok` path to the output is therefore skipped — nothing reaches the output boundary. The
-    # run must NOT report a bare green completed with error null; it carries an honest reason that
-    # names the failing node.
-    ir = tool_unhandled_err_ir("echo", {"value": "$in.nope"})
+    # §2.4: a tool errors (an unresolvable $in.in.<field> arg — the str input has no such field),
+    # its `err` handle is wired NOWHERE, and its `ok` path to the output is therefore skipped —
+    # nothing reaches the output boundary. The run must NOT report a bare green completed with error
+    # null; it carries an honest reason that names the failing node.
+    ir = tool_unhandled_err_ir("echo", {"value": "$in.in.nope"})
     created = client.post("/graphs/runs", json={"ir": ir, "input": "go", "stream": False}).json()
     run_id = created["runId"]
     row = asyncio.run(get_run_row(pg_url, run_id))

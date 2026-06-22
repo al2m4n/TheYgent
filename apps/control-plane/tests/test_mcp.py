@@ -162,10 +162,12 @@ def test_mcp_tool_error_binds_err(client: TestClient, caplog: pytest.LogCaptureF
 
 
 def test_arg_templating_through_mcp(client: TestClient) -> None:
-    # $in.a.b reference resolution (M6) proved through the mcp_tool path (m7.md §8).
+    # $in.<port>.<field> reference resolution proved through the mcp_tool path (m7.md §8 / M10).
     _register(client)
     body = _run(
-        client, mcp_tool_ir("fake", "echo", {"value": "$in.payload"}), input_='{"payload": "deep"}'
+        client,
+        mcp_tool_ir("fake", "echo", {"value": "$in.in.payload"}),
+        input_='{"payload": "deep"}',
     )
     assert body["status"] == "completed"
     assert body["output"] == "deep"
