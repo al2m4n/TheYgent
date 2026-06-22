@@ -50,6 +50,9 @@ class Run(BaseModel):
     graph_id: str | None = None
     graph_version: str | None = None
     content_hash: str | None = None
+    # M9 §2.2: the run's final output, persisted on success so GET /runs/{id} can return it for an
+    # un-threaded run too (not only the live SSE stream). None until a terminal output is reached.
+    output: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
     error: str | None = None

@@ -6,10 +6,10 @@
 
 import { useSyncExternalStore } from "react";
 import { ApiError, streamRun } from "./api";
-import type { DeltaFrame, RunFrame, RunStatus } from "./types";
+import type { DeltaFrame, ReasoningFrame, RunFrame, RunStatus } from "./types";
 
 export interface TimelineEntry {
-  /** SSE event name: "run" | "delta" | sentinel. */
+  /** SSE event name: "run" | "delta" | "reasoning" | sentinel. */
   event: string;
   detail: string;
   ts: number;
@@ -19,6 +19,8 @@ export interface LiveRun {
   runId: string;
   status: RunStatus;
   output: string;
+  /** A reasoning model's streamed thinking (event: reasoning). Progress only — never the answer. */
+  reasoning: string;
   model?: string;
   error?: string;
   done: boolean;
@@ -52,10 +54,7 @@ function patch(runId: string, next: Partial<LiveRun>) {
  * as the backend's first `run` frame arrives, so the caller can navigate. A pre-stream error
  * (400/404/503 before any frame) rejects, exactly as the backend surfaces it (M3/M5).
  */
-export async function startLiveRun(
-  path: "/runs" | "/graphs/runs",
-  body: unknown,
-): Promise<string> {
+export async function startLiveRun(path: "/runs" | "/graphs/runs", body: unknown): Promise<string> {
   const handle = await streamRun(path, body);
 
   return new Promise<string>((resolve, reject) => {
@@ -65,7 +64,7 @@ export async function startLiveRun(
       try {
         for await (const ev of handle.events) {
           if (ev.data === "[DONE]") continue;
-          let payload: RunFrame | DeltaFrame;
+          let payload: RunFrame | DeltaFrame | ReasoningFrame;
           try {
             payload = JSON.parse(ev.data);
           } catch {
@@ -79,6 +78,7 @@ export async function startLiveRun(
               runId,
               status: "streaming",
               output: "",
+              reasoning: "",
               done: false,
               timeline: [],
               abort: handle.abort,
@@ -92,6 +92,12 @@ export async function startLiveRun(
               output: cur.output + d.delta,
               timeline: [...cur.timeline, { event: "delta", detail: d.delta, ts: Date.now() }],
             });
+          } else if (ev.event === "reasoning") {
+            // The model's thinking — accumulate separately so it's visible progress, never the
+            // answer. Keeps the stream from looking frozen during a long reasoning phase.
+            const r = payload as ReasoningFrame;
+            const cur = runs.get(runId)!;
+            patch(runId, { reasoning: cur.reasoning + r.reasoning });
           } else if (ev.event === "run") {
             const r = payload as RunFrame;
             const cur = runs.get(runId)!;

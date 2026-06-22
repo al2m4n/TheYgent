@@ -17,14 +17,14 @@ const DEFAULT_IR = `{
   "name": "cockpit-demo",
   "version": "0.1.0",
   "models": {
-    "default": { "binding": "mlx", "model": "triage-fast", "params": { "maxTokens": 256 } }
+    "default": { "binding": "mlx", "model": "triage-fast", "params": { "maxTokens": 2048 } }
   },
   "tools": {},
   "nodes": [
     { "id": "n_in", "type": "input", "kind": "boundary",
       "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] } },
     { "id": "n_llm", "type": "llm", "kind": "activity",
-      "config": { "model": "default", "messages": [{ "role": "user", "content": "$input" }] },
+      "config": { "model": "default", "messages": [{ "role": "user", "content": "$in" }] },
       "ports": { "in": [{ "id": "in", "type": "any" }],
                  "out": [{ "id": "ok", "type": "any" }, { "id": "err", "type": "error" }] } },
     { "id": "n_out", "type": "output", "kind": "boundary",
@@ -87,6 +87,10 @@ export function Compose() {
         runId = await startLiveRun("/runs", {
           input,
           model,
+          // A generous default so a reasoning model (which spends tokens "thinking" before it
+          // answers) isn't truncated to an empty answer out of the box. /runs params pass through
+          // to the inference seam as-is, so this is snake_case (the graph IR uses camelCase).
+          params: { max_tokens: 2048 },
           stream: true,
           thread_id: threadId || null,
         });

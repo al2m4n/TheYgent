@@ -33,7 +33,7 @@ const FAILING_IR = JSON.stringify(
         id: "n_llm",
         type: "llm",
         kind: "activity",
-        config: { model: "default", messages: [{ role: "user", content: "$input" }] },
+        config: { model: "default", messages: [{ role: "user", content: "$in" }] },
         ports: {
           in: [{ id: "in", type: "any" }],
           out: [

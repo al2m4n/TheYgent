@@ -33,7 +33,7 @@ _TRIVIAL: dict[str, Any] = {
             "id": "n_llm",
             "type": "llm",
             "kind": "activity",
-            "config": {"model": "default", "messages": [{"role": "user", "content": "$input"}]},
+            "config": {"model": "default", "messages": [{"role": "user", "content": "$in"}]},
             "ports": {
                 "in": [{"id": "in", "type": "any"}],
                 "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
@@ -251,6 +251,82 @@ def router_ir(decision: Any) -> dict[str, Any]:
     )
 
 
+def llm_ir(content: str) -> dict[str, Any]:
+    """input → llm(<content>) → output. The llm's in-port carries the raw run input string, so
+    ``content`` exercises the unified ``$in`` template against a string value (m9.md §1)."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_llm",
+                "llm",
+                "activity",
+                config={"model": "default", "messages": [{"role": "user", "content": content}]},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_llm"), _edge("e2", "n_llm", "ok", "n_out")],
+        models=_DEFAULT_MODEL,
+    )
+
+
+def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
+    """input → tool(echo, {value: <value>}) → llm(<content>) → output. echo emits the literal
+    object ``value`` (network-free), so the llm's in-port is an OBJECT and ``content`` can drill
+    into it with ``$in.field`` (m9.md §1.1, the field-aware llm template)."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_obj",
+                "tool",
+                "activity",
+                config={"tool": "echo", "args": {"value": value}},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node(
+                "n_llm",
+                "llm",
+                "activity",
+                config={"model": "default", "messages": [{"role": "user", "content": content}]},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [
+            _edge("e1", "n_in", "out", "n_obj"),
+            _edge("e2", "n_obj", "ok", "n_llm"),
+            _edge("e3", "n_llm", "ok", "n_out"),
+        ],
+        models=_DEFAULT_MODEL,
+    )
+
+
+def tool_unhandled_err_ir(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """input → tool(<tool>) → output, with the tool's ``err`` handle wired NOWHERE. When the tool
+    errors, its ``ok`` edge to ``output`` is dead and nothing reaches the output boundary — the
+    m9.md §2.4 "empty output from an upstream error" case (no green run masquerading as success)."""
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_tool",
+                "tool",
+                "activity",
+                config={"tool": tool, "args": args},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_tool"), _edge("e2", "n_tool", "ok", "n_out")],
+    )
+
+
 def agent_ir() -> dict[str, Any]:
     """The motivating agent shape (m6.md §6): input → llm → router → {yes: tool→out, no: out}.
     The llm emits a routing decision (deterministic via the fake's ``response``); the router
@@ -262,7 +338,7 @@ def agent_ir() -> dict[str, Any]:
                 "n_llm",
                 "llm",
                 "activity",
-                config={"model": "default", "messages": [{"role": "user", "content": "$input"}]},
+                config={"model": "default", "messages": [{"role": "user", "content": "$in"}]},
                 ins=["in"],
                 outs=["ok", "err"],
             ),

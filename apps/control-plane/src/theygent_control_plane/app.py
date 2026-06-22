@@ -20,6 +20,7 @@ response. ``create_app`` takes ``database_url`` + ``inference_base_url`` (or inj
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import logging
@@ -44,11 +45,12 @@ from theygent_ir import (
 from theygent_control_plane import db
 from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
 from theygent_control_plane.run import Run
-from theygent_control_plane.store import RunStore
+from theygent_control_plane.store import McpStore, RunStore
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
     RouterError,
+    TemplateError,
     WalkContext,
     WalkResult,
     llm_models,
@@ -140,6 +142,7 @@ def create_app(
 ) -> FastAPI:
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
+    mcp_store = McpStore()
     # The MCP server registry/connections (m7.md §3.2). App-scoped: created once, connections are
     # lazy (no I/O at construction), torn down at shutdown. `mcp_manager` lets tests inject a
     # manager with a fake client factory.
@@ -156,6 +159,17 @@ def create_app(
         engine = db.create_engine(db_url)
         app.state.engine = engine
         app.state.sessionmaker = db.create_sessionmaker(engine)
+        # M9 §2.1 (F5.2): sweep runs left non-terminal by a crash to `failed` before serving, so a
+        # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
+        async with app.state.sessionmaker() as session, session.begin():
+            swept = await store.reconcile_orphaned_runs(session)
+        if swept:
+            logger.warning("run.reconciled_orphans", extra={"count": swept})
+        # M9 §2.3 (F6.1): rehydrate persisted MCP registrations into the in-memory manager so they
+        # survive a restart. Registration only — connections stay lazy (re-established on next use).
+        async with app.state.sessionmaker() as session:
+            for name, cfg in await mcp_store.list_servers(session):
+                await mcp.register(name, cfg)
         try:
             yield
         finally:
@@ -195,6 +209,17 @@ def create_app(
         # Request identity, not OTel (§5): forward an opaque run id so the inference call
         # is correlatable. No OTel SDK — just a header.
         return {_RUN_ID_HEADER: run.id}
+
+    async def _terminalize_interrupted(run_id: str) -> None:
+        # A streaming response was cancelled (client disconnected) before reaching a terminal state.
+        # Fail the run if it's still active so it never lingers as a `streaming` zombie. Status-
+        # guarded (fail_if_active) so a late cancel can't overwrite a real completed/failed outcome.
+        async with tx() as s:
+            changed = await store.fail_if_active(
+                s, run_id, "interrupted: client disconnected mid-stream"
+            )
+        if changed:
+            logger.warning("run.interrupted", extra={"run_id": run_id})
 
     # ── theygent-native API: /runs ───────────────────────────────────────
 
@@ -262,41 +287,69 @@ def create_app(
             )
 
         async def gen() -> AsyncIterator[str]:
-            async with tx() as s:
-                await store.set_status(s, run.id, "streaming")
-            yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
-            output = ""
+            terminal = False
             try:
+                async with tx() as s:
+                    await store.set_status(s, run.id, "streaming")
+                yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
+                output = ""
+                finish_reason: str | None = None
                 async for chunk in upstream:
-                    delta = chunk.choices[0].delta if chunk.choices else None
-                    content = getattr(delta, "content", None) if delta else None
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                    delta = choice.delta
+                    if delta is None:
+                        continue
+                    # A reasoning model streams `reasoning_content` (its thinking) before `content`
+                    # (its answer). Forward the thinking as visible progress so it doesn't look
+                    # frozen, but NEVER into `output` — only `content` is the answer.
+                    reasoning = getattr(delta, "reasoning_content", None)
+                    if reasoning:
+                        yield _sse("reasoning", {"runId": run.id, "reasoning": reasoning})
+                    content = getattr(delta, "content", None)
                     if content:
                         output += content
                         yield _sse("delta", {"runId": run.id, "delta": content})
+                # Success: mark completed AND append the turn pair in ONE transaction (§4). M9 §2.2
+                # persists the output; an empty answer (model hit its token cap before producing
+                # content) is surfaced honestly and contributes no thread turn (no blank assistant).
+                empty_reason = _empty_output_reason(output, finish_reason)
+                async with tx() as s:
+                    await store.set_status(
+                        s, run.id, "completed", output=output, error=empty_reason
+                    )
+                    if run.thread_id and empty_reason is None:
+                        await store.append_turn(
+                            s,
+                            thread_id=run.thread_id,
+                            run_id=run.id,
+                            user_content=user_input,
+                            assistant_content=output,
+                        )
+                terminal = True
+                logger.info("run.completed", extra={"run_id": run.id})
+                yield _sse("run", {"runId": run.id, "status": "completed"})
+                yield "data: [DONE]\n\n"
             except Exception as exc:  # inference died mid-stream (§4): fail cleanly.
                 # A failed run contributes no turns — write nothing to the thread, so it
                 # never holds a dangling user turn with no answer. The run row records it.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
+                terminal = True
                 logger.warning("run.failed_midstream", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
                 yield "data: [DONE]\n\n"
-                return
-            # Success only: mark completed AND append the turn pair in ONE transaction (§4)
-            # — the user+assistant messages and the run state land together or not at all.
-            async with tx() as s:
-                await store.set_status(s, run.id, "completed")
-                if run.thread_id:
-                    await store.append_turn(
-                        s,
-                        thread_id=run.thread_id,
-                        run_id=run.id,
-                        user_content=user_input,
-                        assistant_content=output,
-                    )
-            logger.info("run.completed", extra={"run_id": run.id})
-            yield _sse("run", {"runId": run.id, "status": "completed"})
-            yield "data: [DONE]\n\n"
+            finally:
+                # The client disconnected/aborted mid-stream: the generator is cancelled and neither
+                # branch above ran, so terminalize the run instead of leaving a `streaming` zombie
+                # until the next restart's reconcile sweep. Shielded so the DB write completes
+                # despite the cancellation; status-guarded so it can't clobber a real outcome.
+                if not terminal:
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(_terminalize_interrupted(run.id))
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -322,16 +375,21 @@ def create_app(
                 run_id=run.id,
             )
 
-        output = completion.choices[0].message.content if completion.choices else ""
+        choice = completion.choices[0] if completion.choices else None
+        output = (choice.message.content if choice else "") or ""
+        finish_reason = choice.finish_reason if choice else None
+        # An empty answer (model hit its token cap before producing content) is surfaced honestly
+        # and contributes no thread turn — same posture as the streaming path (m9.md §2.4 spirit).
+        empty_reason = _empty_output_reason(output, finish_reason)
         async with tx() as s:
-            await store.set_status(s, run.id, "completed")
-            if run.thread_id:
+            await store.set_status(s, run.id, "completed", output=output, error=empty_reason)
+            if run.thread_id and empty_reason is None:
                 await store.append_turn(
                     s,
                     thread_id=run.thread_id,
                     run_id=run.id,
                     user_content=user_input,
-                    assistant_content=output or "",
+                    assistant_content=output,
                 )
         logger.info("run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
@@ -501,40 +559,57 @@ def create_app(
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
             return _error(str(exc), status=422, code="router_error", run_id=run.id)
+        except TemplateError as exc:  # a bad $in token in an llm node (m9.md §1.2): clean status.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(str(exc), status=422, code="template_error", run_id=run.id)
 
         async def gen() -> AsyncIterator[str]:
-            async with tx() as s:
-                await store.set_status(s, run.id, "streaming")
-            yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
+            terminal = False
             try:
+                async with tx() as s:
+                    await store.set_status(s, run.id, "streaming")
+                yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
                 for delta in primed:
-                    yield _sse("delta", {"runId": run.id, "delta": delta.content})
+                    yield _graph_delta_sse(run.id, delta)
                 async for delta in walker:
-                    yield _sse("delta", {"runId": run.id, "delta": delta.content})
+                    yield _graph_delta_sse(run.id, delta)
+                # Success: complete the run AND append the turn pair in ONE transaction (§4). The
+                # assistant turn is the run's canonical output (the output node's value — m6.md §4),
+                # which equals the streamed llm text for a trivial graph but may be a tool result.
+                # M9 §2.2 persists the output; §2.4 surfaces an honest empty-output reason.
+                output = _coerce_output(result.output)
+                async with tx() as s:
+                    await store.set_status(
+                        s, run.id, "completed", output=output, error=result.empty_reason
+                    )
+                    # No turn for an empty output (§2.4) — never store a blank assistant turn.
+                    if run.thread_id and result.empty_reason is None:
+                        await store.append_turn(
+                            s,
+                            thread_id=run.thread_id,
+                            run_id=run.id,
+                            user_content=user_input,
+                            assistant_content=output,
+                        )
+                terminal = True
+                logger.info("graph_run.completed", extra={"run_id": run.id})
+                yield _sse("run", {"runId": run.id, "status": "completed"})
+                yield "data: [DONE]\n\n"
             except Exception as exc:  # inference died / router failed mid-walk: fail cleanly.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
+                terminal = True
                 logger.warning("graph_run.failed_midstream", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
                 yield "data: [DONE]\n\n"
-                return
-            # Success only: complete the run AND append the turn pair in ONE transaction (§4). The
-            # assistant turn is the run's canonical output (the output node's value — m6.md §4),
-            # which equals the streamed llm text for a trivial graph but may be a tool result.
-            output = _coerce_output(result.output)
-            async with tx() as s:
-                await store.set_status(s, run.id, "completed")
-                if run.thread_id:
-                    await store.append_turn(
-                        s,
-                        thread_id=run.thread_id,
-                        run_id=run.id,
-                        user_content=user_input,
-                        assistant_content=output,
-                    )
-            logger.info("graph_run.completed", extra={"run_id": run.id})
-            yield _sse("run", {"runId": run.id, "status": "completed"})
-            yield "data: [DONE]\n\n"
+            finally:
+                # Client disconnected mid-stream: terminalize so the run isn't a `streaming` zombie
+                # (mirrors /runs; shielded + status-guarded). The walker is in-process, so a cancel
+                # also stops the underlying inference call when the generator is closed.
+                if not terminal:
+                    with contextlib.suppress(Exception):
+                        await asyncio.shield(_terminalize_interrupted(run.id))
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -561,6 +636,10 @@ def create_app(
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
             return _error(str(exc), status=422, code="router_error", run_id=run.id)
+        except TemplateError as exc:  # a bad $in token in an llm node (m9.md §1.2): clean status.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            return _error(str(exc), status=422, code="template_error", run_id=run.id)
         except Exception as exc:  # mid-walk drop on the non-stream path: fail cleanly, no turn.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
@@ -568,8 +647,10 @@ def create_app(
 
         output = _coerce_output(result.output)
         async with tx() as s:
-            await store.set_status(s, run.id, "completed")
-            if run.thread_id:
+            # M9 §2.2: persist the output; §2.4: an honest reason when an upstream error left the
+            # output empty (no turn appended for an empty output).
+            await store.set_status(s, run.id, "completed", output=output, error=result.empty_reason)
+            if run.thread_id and result.empty_reason is None:
                 await store.append_turn(
                     s,
                     thread_id=run.thread_id,
@@ -608,6 +689,9 @@ def create_app(
                 f"invalid MCP server config: {exc}", status=422, code="invalid_mcp_config"
             )
         await mcp.register(name, cfg)
+        # M9 §2.3: persist the registration so it survives a restart (the manager is in-memory).
+        async with tx() as s:
+            await mcp_store.upsert_server(s, name, cfg)
         return JSONResponse(_mcp_view(name))
 
     @app.get("/admin/mcp/servers", dependencies=[Depends(require_auth)])
@@ -625,6 +709,9 @@ def create_app(
         if name not in mcp:
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
         await mcp.remove(name)
+        # M9 §2.3: drop the persisted registration too, so a delete also survives a restart.
+        async with tx() as s:
+            await mcp_store.delete_server(s, name)
         return Response(status_code=204)
 
     @app.get("/admin/mcp/servers/{name}/tools", dependencies=[Depends(require_auth)])
@@ -697,6 +784,31 @@ def create_app(
 
 def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _graph_delta_sse(run_id: str, delta: Any) -> str:
+    """Relay one walker ``Delta`` to SSE, routing a model's *thinking* to ``event: reasoning`` and
+    its *answer* to ``event: delta`` — the same split the prompt-run path makes (so a reasoning node
+    in a graph streams visible progress and the cockpit never looks frozen)."""
+    if getattr(delta, "kind", "content") == "reasoning":
+        return _sse("reasoning", {"runId": run_id, "reasoning": delta.content})
+    return _sse("delta", {"runId": run_id, "delta": delta.content})
+
+
+def _empty_output_reason(output: str, finish_reason: str | None) -> str | None:
+    """An honest reason when a run completed but produced no answer, else ``None`` (m9.md §2.4
+    spirit, extended to the inference layer). A blank ``content`` with ``finish_reason == 'length'``
+    means the model hit its token cap before answering — classically a reasoning model that spent
+    the whole budget on its hidden ``reasoning_content``. Surfacing this stops an empty completion
+    from masquerading as a clean success (and tells the user the concrete fix: raise maxTokens)."""
+    if output.strip():
+        return None
+    if finish_reason == "length":
+        return (
+            "output empty: the model hit the token limit (finish_reason=length) before producing "
+            "any content — raise maxTokens (a reasoning model can spend the whole budget thinking)"
+        )
+    return f"output empty: the model produced no content (finish_reason={finish_reason})"
 
 
 def _coerce_output(value: Any) -> str:

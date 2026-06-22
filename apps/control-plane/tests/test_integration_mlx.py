@@ -208,7 +208,7 @@ def _trivial_ir(model_id: str) -> dict:
                 "id": "n_llm",
                 "type": "llm",
                 "kind": "activity",
-                "config": {"model": "default", "messages": [{"role": "user", "content": "$input"}]},
+                "config": {"model": "default", "messages": [{"role": "user", "content": "$in"}]},
                 "ports": {
                     "in": [{"id": "in", "type": "any"}],
                     "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
@@ -376,7 +376,7 @@ def _agent_http_ir() -> dict:
                     "messages": [
                         {
                             "role": "user",
-                            "content": "Reply with one word naming the capital city in: $input",
+                            "content": "Reply with one word naming the capital city in: $in",
                         }
                     ],
                 },
@@ -508,7 +508,7 @@ def _fs_agent_ir(read_tool: str) -> dict:
                 "config": {
                     "model": "default",
                     "messages": [
-                        {"role": "user", "content": "Name the fruit mentioned, one word: $input"}
+                        {"role": "user", "content": "Name the fruit mentioned, one word: $in"}
                     ],
                 },
                 "ports": {

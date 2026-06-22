@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
@@ -80,8 +81,12 @@ def create_app(
     max_resident: int = 2,
     enable_reaper: bool = True,
     cors_origins: list[str] | None = None,
+    state_path: Path | None = None,
 ) -> FastAPI:
-    registry = Registry()
+    # M9 §2.3: persist the logical-model registry LOCALLY to the inference plane (never the
+    # control-plane's Postgres — the plane boundary). `state_path=None` keeps it in-memory (the
+    # fast suite never touches disk); the real entrypoint passes a path under the plane's state dir.
+    registry = Registry(state_path)
     # One launcher per managed engine, behind a single dispatcher so the manager stays
     # engine-agnostic (MLX/vLLM added with zero EngineManager changes). Tests inject a
     # single fake launcher that serves every binding.

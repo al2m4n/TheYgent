@@ -14,13 +14,14 @@ No summarization, no token-budget truncation, no vector retrieval — full repla
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
-from sqlalchemy import func, insert, select, tuple_
+from sqlalchemy import CursorResult, delete, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from theygent_control_plane.models import MessageRow, RunRow, ThreadRow
+from theygent_control_plane.mcp import McpServerConfig
+from theygent_control_plane.models import McpServerRow, MessageRow, RunRow, ThreadRow
 from theygent_control_plane.run import (
     Run,
     RunStatus,
@@ -43,6 +44,7 @@ def _to_run(row: RunRow) -> Run:
         graph_id=row.graph_id,
         graph_version=row.graph_version,
         content_hash=row.content_hash,
+        output=row.output,
         created_at=row.created_at,
         updated_at=row.updated_at,
         error=row.error,
@@ -215,15 +217,56 @@ class RunStore:
         status: RunStatus,
         *,
         error: str | None = None,
+        output: str | None = None,
     ) -> Run:
         row = await session.get(RunRow, run_id)
         if row is None:  # pragma: no cover - the run is always created first
             raise KeyError(run_id)
         row.status = status
         row.error = error
+        # M9 §2.2: persist the final output on completion. Only written when provided (an empty
+        # string IS a real terminal output and is stored; None means "don't touch", so a `streaming`
+        # or `failed` transition leaves it NULL).
+        if output is not None:
+            row.output = output
         row.updated_at = now()
         await session.flush()
         return _to_run(row)
+
+    async def fail_if_active(self, session: AsyncSession, run_id: str, reason: str) -> bool:
+        """Terminalize one run to ``failed`` ONLY if it's still non-terminal (``created``/
+        ``streaming``). Used when a streaming response is cancelled (client disconnected) so the run
+        never lingers as a zombie until the next restart's reconcile sweep. The status guard makes
+        it race-safe: a run that already reached ``completed``/``failed`` is left untouched, so a
+        late cancellation after a successful commit can't overwrite the real outcome. Returns
+        whether it changed anything."""
+        result = await session.execute(
+            update(RunRow)
+            .where(RunRow.id == run_id, RunRow.status.in_(("created", "streaming")))
+            .values(status="failed", error=reason, updated_at=now())
+        )
+        return bool(cast("CursorResult[Any]", result).rowcount)
+
+    async def reconcile_orphaned_runs(self, session: AsyncSession) -> int:
+        """Sweep runs left non-terminal by a control-plane crash to a terminal ``failed`` state
+        (M9 §2.1 / finding F5.2). The in-process M5 walker can't resume an in-flight run, but a
+        zombie stuck at ``streaming``/``created`` forever — ``error`` null, ``updated_at`` frozen —
+        is unacceptable: it lies about being alive. This is the cheap honest mitigation (not
+        resume-after-crash — that's the durable-runtime fork, §4). A distinct reason string keeps
+        an interrupted run distinguishable from a real inference failure. Returns the count swept.
+
+        Run once at startup, before serving requests. Bulk UPDATE (no per-row domain mapping): the
+        caller owns the transaction (§1.2), exactly like every other store method."""
+        result = await session.execute(
+            update(RunRow)
+            .where(RunRow.status.in_(("created", "streaming")))
+            .values(
+                status="failed",
+                error="interrupted: control-plane restarted while run was in-flight",
+                updated_at=now(),
+            )
+        )
+        return cast("CursorResult[Any]", result).rowcount or 0
 
     async def ensure_thread(self, session: AsyncSession, thread_id: str) -> None:
         """Idempotently create the thread row (existing or new — §4). ON CONFLICT DO
@@ -298,3 +341,64 @@ class RunStore:
                 },
             ],
         )
+
+
+def _to_mcp_config(row: McpServerRow) -> McpServerConfig:
+    """Map a persistence row to the manager's domain config (§1.3). ``transport`` defaults to the
+    only M7 value (``stdio``) — the column round-trips it but the model pins the Literal."""
+    return McpServerConfig(
+        command=row.command,
+        args=list(row.args or []),
+        env=dict(row.env) if row.env else None,
+        cwd=row.cwd,
+    )
+
+
+class McpStore:
+    """Postgres persistence for MCP server registrations (M9 §2.3 / F6.1).
+
+    Same M4 discipline as ``RunStore``: stateless ops over a caller-provided session, domain/ORM
+    split (the manager's ``McpServerConfig`` is the domain shape; ``McpServerRow`` never leaks out).
+    Persists the *registration* only — the live connection/process handle is the manager's, lazy
+    and never stored. Distinct from the inference-plane model registry, which persists locally to
+    the inference plane, never here (the plane boundary — theygent-stack.md §10)."""
+
+    async def upsert_server(
+        self, session: AsyncSession, name: str, config: McpServerConfig
+    ) -> None:
+        """Insert or replace a registration (PUT is idempotent — m7.md §3.2)."""
+        ts = now()
+        values = {
+            "name": name,
+            "transport": config.transport,
+            "command": config.command,
+            "args": config.args,
+            "env": config.env,
+            "cwd": config.cwd,
+            "created_at": ts,
+            "updated_at": ts,
+        }
+        await session.execute(
+            pg_insert(McpServerRow)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[McpServerRow.name],
+                set_={
+                    "transport": config.transport,
+                    "command": config.command,
+                    "args": config.args,
+                    "env": config.env,
+                    "cwd": config.cwd,
+                    "updated_at": ts,
+                },
+            )
+        )
+
+    async def delete_server(self, session: AsyncSession, name: str) -> None:
+        await session.execute(delete(McpServerRow).where(McpServerRow.name == name))
+
+    async def list_servers(self, session: AsyncSession) -> list[tuple[str, McpServerConfig]]:
+        """Every persisted registration, for rehydration on startup (m7.md §3.2 — connections stay
+        lazy; this restores the *registry*, not the live connections)."""
+        rows = (await session.execute(select(McpServerRow))).scalars().all()
+        return [(row.name, _to_mcp_config(row)) for row in rows]

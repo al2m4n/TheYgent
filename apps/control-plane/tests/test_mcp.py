@@ -209,3 +209,40 @@ def test_readyz_ready_with_unconnected_server(client: TestClient) -> None:
     body = resp.json()
     assert body["status"] == "ready"
     assert any(s["name"] == "fake" and not s["connected"] for s in body["mcp"]["servers"])
+
+
+# ── M9 §2.3: registry persists across restart (finding F6.1) ───────────────────
+
+
+def test_mcp_registration_persists_across_restart(fake_inference, pg_url: str) -> None:
+    # Before M9 the McpManager was in-memory: every restart lost the registration. Now it persists
+    # to Postgres and rehydrates on startup (connections stay lazy — only registration survives).
+    from theygent_control_plane.app import create_app
+
+    app1 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    with TestClient(app1) as c1:
+        assert _register(c1, name="fs-local").status_code == 200
+        assert any(s["name"] == "fs-local" for s in c1.get("/admin/mcp/servers").json()["servers"])
+
+    # Simulate a restart: new app + manager, SAME database. The registration is rehydrated.
+    app2 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    with TestClient(app2) as c2:
+        servers = c2.get("/admin/mcp/servers").json()["servers"]
+        assert any(s["name"] == "fs-local" for s in servers)
+        # And it round-tripped enough to be usable — the command/args came back (not connected).
+        detail = c2.get("/admin/mcp/servers/fs-local").json()
+        assert detail["command"] and not detail["connected"]
+
+
+def test_mcp_deletion_persists_across_restart(fake_inference, pg_url: str) -> None:
+    from theygent_control_plane.app import create_app
+
+    app1 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    with TestClient(app1) as c1:
+        _register(c1, name="gone")
+        assert c1.delete("/admin/mcp/servers/gone").status_code == 204
+
+    app2 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    with TestClient(app2) as c2:
+        servers = c2.get("/admin/mcp/servers").json()["servers"]
+        assert not any(s["name"] == "gone" for s in servers)  # the delete survived too
