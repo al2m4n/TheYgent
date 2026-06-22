@@ -134,10 +134,17 @@ ToolBinding = Annotated[BuiltinTool | McpTool, Field(discriminator="kind")]
 class Port(_Wire):
     """A declared (not inferred) connection point, so the compiler can type-check edges
     (§8.3). ``type`` is advisory in M5 (``any``/``error``); real port typing lands with the
-    node types that need it."""
+    node types that need it.
+
+    ``required`` is meaningful for **in**-ports (M10 §3): a required in-port must be fed by a
+    ``data`` edge or the graph fails validation; ``required: false`` declares an in-port that may
+    be left unfed and resolves to ``null`` at runtime. The default is required, so an unfed input
+    is a loud validation error rather than a silent ``None`` — the multi-input analogue of M9's
+    no-silent-pass-through rule. (Ignored on out-ports.)"""
 
     id: str
     type: str = "any"
+    required: bool = True
 
 
 class Ports(_Wire):
@@ -206,14 +213,19 @@ class _Message(_Wire):
 
 class LlmConfig(_Wire):
     """``llm`` node config: a single model call, no tool loop (§8.3). ``model`` names a key in
-    ``IRDocument.models``; ``messages`` is the prompt template — ``$in`` in a content field is
-    substituted with the value threaded into the node's in-port at walk time, and ``$in.field``
-    drills into it when that value is an object. This is the ONE substitution token language shared
-    with ``tool``/``mcp_tool``/``router`` (m9.md §1.1); an unknown token fails loudly, never silent
-    literal pass-through. (``$input`` was the M5 spelling, renamed to ``$in`` in M9 — m9.md §1.)"""
+    ``IRDocument.models``; ``messages`` is the prompt template — content fields use the ONE
+    port-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``
+    (§8.5 / m10.md §1.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named
+    in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown
+    port or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,
+    renamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name — see m10.md.)"""
 
     model: str
     messages: list[_Message]
+    # ``messages`` content uses the §8.5 token grammar: ``$in`` (default in-port ``in``),
+    # ``$in.<port>`` (a named in-port — so one llm node can compose ``$in.file`` AND
+    # ``$in.question``), ``$in.<port>.<field>`` (drill into it). Unknown port / unknown token →
+    # loud error (m10.md §1.2). The token lives inside the opaque content string — no schema change.
 
 
 class InputConfig(_Wire):
@@ -292,7 +304,10 @@ def validate_graph(ir: IRDocument) -> None:
       2. per-``type`` ``config`` validates (M5: ``input``/``output``/``llm``);
       3. ``llm`` nodes reference a declared model key (§8.4);
       4. every edge references existing nodes *and* declared handles;
-      5. no node with a required in-port is left disconnected;
+      4b. no in-port is fed by more than one ``data`` edge (M10 §3 — an ambiguous multi-input
+          binding: which upstream value would ``$in.<port>`` mean?);
+      5. every *required* in-port is fed by a ``data`` edge (M10 §3 — per-port, not per-node:
+          a multi-input node must have each required port wired);
       6. no cycle among ``data`` edges (M5 has no ``loop``/``map`` — §7).
     """
 
@@ -338,15 +353,33 @@ def validate_graph(ir: IRDocument) -> None:
                 f"edge {edge.id!r}: {edge.target!r} has no in-port {edge.target_handle!r}"
             )
 
-    # 5: no disconnected required in-port. An ``input`` boundary legitimately has no inbound
-    # edge; every other node that declares in-ports must be fed, or the walker would read an
-    # unbound value.
-    fed: set[str] = {e.target for e in ir.edges}
+    # 4b: at most one ``data`` edge may target a given in-port. Two would be an ambiguous
+    # multi-input binding (M10 §3) — ``$in.<port>`` could mean either upstream value — so reject
+    # it statically. ``control`` edges impose no value and are unconstrained.
+    fed_ports: set[tuple[str, str]] = set()
+    for edge in ir.edges:
+        if edge.channel != "data":
+            continue
+        key = (edge.target, edge.target_handle)
+        if key in fed_ports:
+            raise GraphValidationError(
+                f"node {edge.target!r}: in-port {edge.target_handle!r} is fed by more than one "
+                f"data edge (ambiguous multi-input binding)"
+            )
+        fed_ports.add(key)
+
+    # 5: every REQUIRED in-port must be fed by a ``data`` edge (M10 §3 — per-port, not per-node).
+    # An ``input`` boundary legitimately has no inbound edge; an in-port declared ``required:
+    # false`` may be unfed (resolves to null at runtime). Without this the walker would read an
+    # unbound port — the silent ``None`` M9 was written to forbid.
     for node in ir.nodes:
         if node.type == "input":
             continue
-        if node.ports.in_ and node.id not in fed:
-            raise GraphValidationError(f"node {node.id!r}: required in-port is not connected")
+        for port in node.ports.in_:
+            if port.required and (node.id, port.id) not in fed_ports:
+                raise GraphValidationError(
+                    f"node {node.id!r}: required in-port {port.id!r} is not connected"
+                )
 
     # 6: cycle detection (Kahn over data + control edges; both impose ordering).
     topological_order(ir)

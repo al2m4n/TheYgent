@@ -218,7 +218,7 @@ def test_tool_and_router_configs_validate() -> None:
 
     assert ToolConfig.model_validate({"tool": "echo", "args": {"x": "$in"}}).tool == "echo"
     assert ToolConfig.model_validate({"tool": "echo"}).args == {}  # args optional
-    assert RouterConfig.model_validate({"select": "$in.handle"}).select == "$in.handle"
+    assert RouterConfig.model_validate({"select": "$in.in.handle"}).select == "$in.in.handle"
 
 
 def test_router_must_be_orchestration() -> None:
@@ -253,7 +253,7 @@ def test_content_hash_changes_when_node_added() -> None:
             "id": "n_route",
             "type": "router",
             "kind": "orchestration",
-            "config": {"select": "$in.handle"},
+            "config": {"select": "$in.in.handle"},
             "ports": {"in": [{"id": "in", "type": "any"}], "out": [{"id": "yes", "type": "any"}]},
         }
     )
@@ -294,3 +294,143 @@ def test_mcp_tool_config_shape_validated() -> None:
     doc["nodes"][1]["config"] = {"server": "fs"}  # missing required 'tool'
     with pytest.raises(GraphValidationError, match="invalid config"):
         validate_graph(parse_document(doc))
+
+
+# ── M10: multi-input (named in-ports, port-addressed) ─────────────────────────
+
+
+def _two_input_doc() -> dict:
+    """input fans out to two echo tools → one llm with in-ports [file, question] → output. The
+    minimal multi-input graph (m10.md §3): the llm reads two distinct upstreams on two in-ports."""
+
+    def ports(ins: list[str], outs: list[str]) -> dict:
+        return {
+            "in": [{"id": i, "type": "any"} for i in ins],
+            "out": [{"id": o, "type": "error" if o == "err" else "any"} for o in outs],
+        }
+
+    def edge(eid: str, src: str, sh: str, tgt: str, th: str) -> dict:
+        return {
+            "id": eid,
+            "source": src,
+            "sourceHandle": sh,
+            "target": tgt,
+            "targetHandle": th,
+            "channel": "data",
+        }
+
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_mi",
+        "name": "multi-input",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": "triage-fast", "params": {}}},
+        "tools": {},
+        "nodes": [
+            {"id": "n_in", "type": "input", "kind": "boundary", "ports": ports([], ["out"])},
+            {
+                "id": "n_file",
+                "type": "tool",
+                "kind": "activity",
+                "config": {"tool": "echo", "args": {"value": "f"}},
+                "ports": ports(["in"], ["ok", "err"]),
+            },
+            {
+                "id": "n_q",
+                "type": "tool",
+                "kind": "activity",
+                "config": {"tool": "echo", "args": {"value": "q"}},
+                "ports": ports(["in"], ["ok", "err"]),
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {
+                    "model": "default",
+                    "messages": [{"role": "user", "content": "$in.file $in.question"}],
+                },
+                "ports": ports(["file", "question"], ["ok", "err"]),
+            },
+            {"id": "n_out", "type": "output", "kind": "boundary", "ports": ports(["in"], [])},
+        ],
+        "edges": [
+            edge("e1", "n_in", "out", "n_file", "in"),
+            edge("e2", "n_in", "out", "n_q", "in"),
+            edge("e3", "n_file", "ok", "n_llm", "file"),
+            edge("e4", "n_q", "ok", "n_llm", "question"),
+            edge("e5", "n_llm", "ok", "n_out", "in"),
+        ],
+    }
+
+
+def test_two_input_node_validates_and_orders() -> None:
+    # A node with two in-ports, each fed by one data edge, is a first-class valid shape (m10.md §2).
+    ir = parse_document(_two_input_doc())
+    validate_graph(ir)
+    order = [n.id for n in topological_order(ir)]
+    assert order.index("n_llm") > order.index("n_file")
+    assert order.index("n_llm") > order.index("n_q")  # runs after BOTH producers
+
+
+def test_duplicate_data_edge_to_one_in_port_rejected() -> None:
+    # Two data edges into the `file` port is an ambiguous multi-input binding (m10.md §3).
+    doc = _two_input_doc()
+    doc["edges"].append(
+        {
+            "id": "e6",
+            "source": "n_q",
+            "sourceHandle": "ok",
+            "target": "n_llm",
+            "targetHandle": "file",
+            "channel": "data",
+        }
+    )
+    with pytest.raises(GraphValidationError, match="ambiguous multi-input binding"):
+        validate_graph(parse_document(doc))
+
+
+def test_unfed_required_in_port_rejected_per_port() -> None:
+    # Per-port required check: drop the `question` feed; `file` is still fed but the node fails
+    # because a REQUIRED in-port dangles (m10.md §3 — per-port, not per-node).
+    doc = _two_input_doc()
+    doc["edges"] = [e for e in doc["edges"] if e["id"] != "e4"]  # remove n_q -> n_llm.question
+    with pytest.raises(GraphValidationError, match="required in-port 'question' is not connected"):
+        validate_graph(parse_document(doc))
+
+
+def test_optional_in_port_may_be_unfed() -> None:
+    # An in-port declared `required: false` may dangle and resolve to null at runtime (m10.md §3).
+    doc = _two_input_doc()
+    doc["edges"] = [e for e in doc["edges"] if e["id"] != "e4"]
+    # mark the `question` in-port optional (it's the 2nd in-port of n_llm, index 1).
+    doc["nodes"][3]["ports"]["in"][1]["required"] = False
+    validate_graph(parse_document(doc))  # no raise
+
+
+def test_edge_to_undeclared_in_port_rejected() -> None:
+    # An edge targeting an in-port the node never declared is caught by the handle check (§3).
+    doc = _two_input_doc()
+    doc["edges"][3]["targetHandle"] = "ghost"  # e4 -> n_llm.ghost (no such in-port)
+    with pytest.raises(GraphValidationError, match="no in-port"):
+        validate_graph(parse_document(doc))
+
+
+def test_content_hash_stable_across_port_required_default() -> None:
+    # The M10→M11 hinge (m11.md §1.1 makes hash agreement load-bearing): the registry must hash
+    # byte-for-byte like the walker, over view-stripped canonical JSON, forever. M10 introduced
+    # `Port.required: bool = True` INSIDE the hashed region — so an IR that OMITS `required` MUST
+    # hash identically to one that writes `required: true`, or two "identical" agents mint two
+    # versions. Canonicalization materializes the default, so omitted == explicit-true.
+    base = _trivial()
+    h = content_hash(parse_document(base))
+    explicit = copy.deepcopy(base)
+    for node in explicit["nodes"]:
+        for port in node["ports"]["in"] + node["ports"]["out"]:
+            port["required"] = True  # write the default explicitly on every port
+    assert content_hash(parse_document(explicit)) == h
+
+    # ...while an explicit `required: false` IS a real content change and MUST move the hash.
+    optional = copy.deepcopy(base)
+    optional["nodes"][2]["ports"]["in"][0]["required"] = False  # output's in-port made optional
+    assert content_hash(parse_document(optional)) != h

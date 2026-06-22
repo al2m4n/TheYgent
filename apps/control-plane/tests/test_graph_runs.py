@@ -186,6 +186,23 @@ def test_content_hash_recorded_and_stable(client: TestClient) -> None:
     assert _recorded_hash(client, changed) != h1
 
 
+def test_recorded_hash_is_the_ir_function_and_default_fills(client: TestClient) -> None:
+    # Decision D2 (theygent-m10-decisions.md): the Run's recorded contentHash is byte-identical to
+    # the IR package's content_hash for the same document — ONE function, so the future registry
+    # (M11) and the walker can never disagree. And it canonicalizes the DEFAULT-FILLED model: an IR
+    # that omits Port.required hashes identically to one that writes `required: true`.
+    from theygent_ir import content_hash, parse_document
+
+    doc = trivial_ir()
+    assert _recorded_hash(client, doc) == content_hash(parse_document(doc))
+
+    explicit = trivial_ir()
+    for node in explicit["nodes"]:
+        for port in node["ports"]["in"] + node["ports"]["out"]:
+            port["required"] = True
+    assert _recorded_hash(client, explicit) == _recorded_hash(client, doc)
+
+
 def test_thread_memory_across_graph_runs(client: TestClient, fake_inference: FakeInference) -> None:
     # M4 thread replay, now through the graph path (§6): run #2 in the same thread sees run #1.
     thread_id = str(ULID())
