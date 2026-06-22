@@ -17,6 +17,9 @@ export interface Run {
   created_at: string;
   updated_at: string;
   error: string | null;
+  // M9 §2.2: the run's final output, persisted regardless of threading (so a one-shot run's
+  // answer survives the stream/tab). Null until a terminal output is reached.
+  output: string | null;
 }
 
 export interface ThreadSummary {
@@ -116,4 +119,11 @@ export interface RunFrame {
 export interface DeltaFrame {
   runId: string;
   delta: string;
+}
+
+// A reasoning model streams its hidden "thinking" before the answer (event: reasoning). Shown as
+// progress so a thinking model doesn't look frozen; never the answer.
+export interface ReasoningFrame {
+  runId: string;
+  reasoning: string;
 }

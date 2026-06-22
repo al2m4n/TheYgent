@@ -83,7 +83,7 @@ def test_graph_non_stream_accumulates(client: TestClient, fake_inference: FakeIn
     body = _graph_run(client, stream=False)
     assert body["status"] == "completed"
     assert body["output"] == FULL_MESSAGE
-    # $input was substituted with the run input before reaching the wire.
+    # $in was substituted with the run input before reaching the wire.
     assert fake_inference.captured["messages"] == [
         {"role": "user", "content": "name three EU capitals"}
     ]

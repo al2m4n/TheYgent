@@ -46,7 +46,7 @@ def _trivial() -> dict:
                 "id": "n_llm",
                 "type": "llm",
                 "kind": "activity",
-                "config": {"model": "default", "messages": [{"role": "user", "content": "$input"}]},
+                "config": {"model": "default", "messages": [{"role": "user", "content": "$in"}]},
                 "ports": {
                     "in": [{"id": "in", "type": "any"}],
                     "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],

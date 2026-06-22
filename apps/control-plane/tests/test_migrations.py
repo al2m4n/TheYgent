@@ -56,7 +56,7 @@ async def _tables(url: str) -> set[str]:
     try:
         rows = await conn.fetch(
             "SELECT to_regclass('public.' || t) AS reg "
-            "FROM unnest(ARRAY['thread', 'run', 'message']) AS t"
+            "FROM unnest(ARRAY['thread', 'run', 'message', 'mcp_server']) AS t"
         )
         return {r["reg"] for r in rows if r["reg"] is not None}
     finally:
@@ -76,11 +76,16 @@ def test_migration_round_trip(pg_url: str) -> None:
         # can't pass vacuously on an empty/no-op chain (the round-trip must exercise 0001).
         assert asyncio.run(_tables(scratch)) == set()  # scratch starts bare
         command.upgrade(cfg, "head")
-        assert asyncio.run(_tables(scratch)) == {"thread", "run", "message"}  # built
+        assert asyncio.run(_tables(scratch)) == {"thread", "run", "message", "mcp_server"}  # built
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
         command.upgrade(cfg, "head")
-        assert asyncio.run(_tables(scratch)) == {"thread", "run", "message"}  # rebuilt
+        assert asyncio.run(_tables(scratch)) == {
+            "thread",
+            "run",
+            "message",
+            "mcp_server",
+        }  # rebuilt
     finally:
         if previous is None:
             os.environ.pop("DATABASE_URL", None)

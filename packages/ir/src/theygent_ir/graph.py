@@ -206,8 +206,11 @@ class _Message(_Wire):
 
 class LlmConfig(_Wire):
     """``llm`` node config: a single model call, no tool loop (§8.3). ``model`` names a key in
-    ``IRDocument.models``; ``messages`` is the prompt template — ``$input`` in a content field
-    is substituted with the value threaded into the node's in-port at walk time."""
+    ``IRDocument.models``; ``messages`` is the prompt template — ``$in`` in a content field is
+    substituted with the value threaded into the node's in-port at walk time, and ``$in.field``
+    drills into it when that value is an object. This is the ONE substitution token language shared
+    with ``tool``/``mcp_tool``/``router`` (m9.md §1.1); an unknown token fails loudly, never silent
+    literal pass-through. (``$input`` was the M5 spelling, renamed to ``$in`` in M9 — m9.md §1.)"""
 
     model: str
     messages: list[_Message]

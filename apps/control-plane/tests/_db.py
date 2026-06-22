@@ -18,7 +18,33 @@ def plain_dsn(url: str) -> str:
 async def truncate(url: str) -> None:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
-        await conn.execute("TRUNCATE message, run, thread RESTART IDENTITY CASCADE")
+        await conn.execute("TRUNCATE message, run, thread, mcp_server RESTART IDENTITY CASCADE")
+    finally:
+        await conn.close()
+
+
+async def seed_run(url: str, run_id: str, status: str, *, model: str = "triage-fast") -> None:
+    """Insert a run row directly in a given lifecycle state (M9 §2.1 reconciliation tests need a
+    run stuck at ``streaming`` as if a crash left it there — the app would never create one)."""
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        await conn.execute(
+            "INSERT INTO run (id, status, model, created_at, updated_at) "
+            "VALUES ($1, $2, $3, now(), now())",
+            run_id,
+            status,
+            model,
+        )
+    finally:
+        await conn.close()
+
+
+async def get_run_row(url: str, run_id: str) -> dict[str, object] | None:
+    """(status, error, output) for a run, read straight from Postgres."""
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        row = await conn.fetchrow("SELECT status, error, output FROM run WHERE id = $1", run_id)
+        return dict(row) if row is not None else None
     finally:
         await conn.close()
 

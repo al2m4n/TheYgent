@@ -74,14 +74,30 @@ class RouterError(RuntimeError):
     guessing — the control-plane maps it to a failed run with a clear reason."""
 
 
+class TemplateError(ValueError):
+    """A substitutable field referenced a ``$``-token that couldn't be resolved (m9.md §1.2): an
+    unknown token (anything not rooted at ``$in``, e.g. the removed ``$input`` or a typo ``$nope``)
+    or a ``$in.field`` path that doesn't exist in the in-port value. The whole point of M9 Part A is
+    that this fails LOUDLY — naming the node, the token, and the available fields — instead of
+    passing through as literal text and producing a green run with nonsense output. The
+    control-plane maps it to a failed run with a clear reason, exactly like :class:`RouterError`."""
+
+
 @dataclass(frozen=True)
 class Delta:
     """One streamed token piece, tagged with the node that produced it. The control-plane's SSE
-    relay turns a ``Delta`` into ``event: delta`` / ``data: {runId, delta}`` — the *same* shape
-    ``/runs`` emits, so a graph run is indistinguishable on the wire from a prompt run."""
+    relay turns a ``content`` ``Delta`` into ``event: delta`` / ``data: {runId, delta}`` — the
+    *same* shape ``/runs`` emits, so a graph run is indistinguishable on the wire from a prompt run.
+
+    ``kind`` separates the model's *answer* (``content``) from its *thinking* (``reasoning`` — a
+    reasoning model's ``reasoning_content``). Only ``content`` accumulates into the run's output; a
+    ``reasoning`` delta is streamed as visible progress (``event: reasoning``) so a thinking model
+    that spends many tokens reasoning before answering doesn't look frozen, and is never mistaken
+    for the answer."""
 
     node_id: str
     content: str
+    kind: str = "content"
 
 
 @dataclass
@@ -90,9 +106,22 @@ class WalkResult:
     bound from the executed ``output`` boundary node's in-port (m6.md §4). M5's output equalled the
     streamed ``llm`` text; M6's may be a ``tool`` result that never streamed, so the canonical
     output is the output node's value, not the accumulated deltas. The control-plane reads it after
-    the walk to populate the non-stream response and the thread's assistant turn."""
+    the walk to populate the non-stream response and the thread's assistant turn.
+
+    ``output_produced`` is True iff an ``output`` boundary node actually executed (vs. being skipped
+    because its inbound branch was dead) — it disambiguates a legitimately ``None`` output from "no
+    output node ran at all". ``empty_reason`` is set (m9.md §2.4) when NO output was produced AND an
+    upstream node short-circuited to its ``err`` handle: the run reached no output because of a
+    handled-but-unconsumed error, so the control-plane surfaces an honest reason instead of a green
+    ``completed`` with ``output: ""`` and ``error: null``. ``truncated_empty_nodes`` records ``llm``
+    nodes that ended with empty ``content`` and ``finish_reason == 'length'`` — the model spent its
+    whole token budget (often a reasoning model thinking) and produced no answer; if that empties
+    the final output, ``empty_reason`` names it so the run is legible rather than a green blank."""
 
     output: Any = None
+    output_produced: bool = False
+    empty_reason: str | None = None
+    truncated_empty_nodes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -179,25 +208,20 @@ def mcp_tool_nodes(ir: IRDocument) -> list[tuple[Node, str, str]]:
     return out
 
 
-def _render_messages(config: LlmConfig, input_value: Any) -> list[dict[str, str]]:
-    """Substitute the ``$input`` placeholder with the value threaded into the node's in-port. The
-    llm template is deliberately the simplest thing that runs the trivial graph — a literal
-    ``$input`` swap; a real expression language is a later, evidence-driven addition."""
-
-    rendered: list[dict[str, str]] = []
-    for msg in config.messages:
-        content = msg.content.replace("$input", "" if input_value is None else str(input_value))
-        rendered.append({"role": msg.role, "content": content})
-    return rendered
-
-
-# ── value references: $in / $in.a.b (tool args + router select) ───────────────
+# ── value references + inline templating: $in / $in.a.b (every substituting node) ──
+#
+# M9 Part A (m9.md §1): ONE token language across every node type that substitutes —
+# ``$in`` (the whole in-port value) and ``$in.a.b`` (a path into it). The ``tool``/``mcp_tool``/
+# ``router`` nodes use it as a whole-value reference (``_resolve_ref``); the ``llm`` node uses it
+# inline inside ``messages`` content (``_render_template``). ``$in`` is the exact semantic of the
+# llm node's old ``$input``, renamed — and now field-aware too. An unresolved token is a loud
+# :class:`TemplateError`, never a silent literal pass-through; ``$$`` escapes a literal ``$``.
 
 
 class _RefError(ValueError):
     """A ``$in``-reference couldn't be resolved against the upstream value (missing key / not a
     dict). Internal — the router maps it to :class:`RouterError`, a tool maps it to an ``err``
-    binding."""
+    binding, the llm template maps it to :class:`TemplateError`."""
 
 
 def _parse_if_json(value: Any) -> Any:
@@ -213,6 +237,21 @@ def _parse_if_json(value: Any) -> Any:
     return value
 
 
+def _resolve_path(input_value: Any, parts: list[str]) -> Any:
+    """Walk a ``$in.a.b`` path (``parts == ["a", "b"]``) into the in-port value, parsing JSON
+    strings as it descends. An empty path is the whole value. Raises :class:`_RefError` naming the
+    missing key when a step can't be taken — the shared core of the whole-value ``_resolve_ref`` and
+    the inline ``_render_template`` so the two surfaces resolve ``$in`` identically (m9.md §1.1)."""
+
+    cur = input_value
+    for key in parts:
+        cur = _parse_if_json(cur)
+        if not isinstance(cur, dict) or key not in cur:
+            raise _RefError(key)
+        cur = cur[key]
+    return cur
+
+
 def _resolve_ref(ref: Any, input_value: Any) -> Any:
     """Resolve one arg/select value against the node's in-port value (m6.md §2/§3.2). ``$in`` is
     the whole value; ``$in.a.b`` traverses a path into it (parsing JSON strings as it goes). Any
@@ -226,13 +265,78 @@ def _resolve_ref(ref: Any, input_value: Any) -> Any:
         return input_value
     if not ref.startswith("$in."):
         return ref
-    cur = input_value
-    for key in ref[len("$in.") :].split("."):
-        cur = _parse_if_json(cur)
-        if not isinstance(cur, dict) or key not in cur:
-            raise _RefError(f"cannot resolve {ref!r}: no key {key!r} in upstream value")
-        cur = cur[key]
-    return cur
+    try:
+        return _resolve_path(input_value, ref[len("$in.") :].split("."))
+    except _RefError as exc:
+        raise _RefError(
+            f"cannot resolve {ref!r}: no key {exc.args[0]!r} in upstream value"
+        ) from exc
+
+
+#: A substitution token in a content string: ``$$`` (escapes a literal ``$``) or ``$<expr>`` where
+#: ``<expr>`` is a dotted identifier path (``in``, ``in.body``, but also a bare ``input``/``nope``
+#: so the renderer can reject an unknown root with a precise message rather than skip past it).
+_TEMPLATE_TOKEN = re.compile(r"\$\$|\$([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)")
+
+
+def _available_fields(input_value: Any) -> str:
+    """A human hint for a TemplateError: the top-level fields of the in-port value if it's an
+    object, else a note that it isn't one (so ``$in.body`` against a bare string is legible)."""
+
+    parsed = _parse_if_json(input_value)
+    if isinstance(parsed, dict):
+        return f"available fields: {', '.join(sorted(parsed))}" if parsed else "the object is empty"
+    return f"the in-port value is a {type(parsed).__name__}, not an object with fields"
+
+
+def _stringify_token(value: Any) -> str:
+    """Render a resolved token value into the surrounding text: ``None`` is empty (parity with the
+    old ``$input`` swap), a string is itself, anything else is JSON (so ``$in.obj`` is legible)."""
+
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else json.dumps(value)
+
+
+def _render_template(content: str, input_value: Any, node_id: str) -> str:
+    """Substitute ``$in`` / ``$in.field`` tokens in one content string against the node's in-port
+    value (m9.md §1.1). ``$$`` is a literal ``$``. An unknown root (anything but ``$in``, e.g. the
+    removed ``$input``) or an unresolvable ``$in.field`` raises :class:`TemplateError` naming the
+    node, the token, and the available fields — the F1.1-class fix: no silent literal, no green run
+    with nonsense (m9.md §1.2)."""
+
+    def _sub(match: re.Match[str]) -> str:
+        if match.group(0) == "$$":
+            return "$"
+        expr = match.group(1)
+        parts = expr.split(".")
+        if parts[0] != "in":
+            raise TemplateError(
+                f"node {node_id!r}: unknown template token '${expr}' — the substitution token is "
+                f"$in (the whole in-port value) or $in.field (a field of it); "
+                f"{_available_fields(input_value)}"
+            )
+        try:
+            value = _resolve_path(input_value, parts[1:])
+        except _RefError as exc:
+            raise TemplateError(
+                f"node {node_id!r}: cannot resolve '${expr}': no field {exc.args[0]!r} in the "
+                f"in-port value; {_available_fields(input_value)}"
+            ) from exc
+        return _stringify_token(value)
+
+    return _TEMPLATE_TOKEN.sub(_sub, content)
+
+
+def _render_messages(node: Node, config: LlmConfig, input_value: Any) -> list[dict[str, str]]:
+    """Render every ``messages`` content field through the unified ``$in`` template (m9.md §1.1).
+    Replaces M5's literal ``$input`` swap: ``$in`` is the whole in-port value (exact parity), and
+    ``$in.field`` now drills into it when the upstream value is an object."""
+
+    return [
+        {"role": msg.role, "content": _render_template(msg.content, input_value, node.id)}
+        for msg in config.messages
+    ]
 
 
 # ── conditional dataflow: edge liveness, node skipping (m6.md §4) ─────────────
@@ -325,7 +429,7 @@ async def walk(
             _walk_boundary(node, ir, input_value, values, skipped, live_handles, result)
         elif node.kind == "activity":
             if node.type == "llm":
-                async for delta in _walk_llm(node, ir, ctx, values, skipped, live_handles):
+                async for delta in _walk_llm(node, ir, ctx, values, skipped, live_handles, result):
                     yield delta
             elif node.type == "tool":
                 await _walk_tool(node, ir, ctx, values, skipped, live_handles)
@@ -344,6 +448,31 @@ async def walk(
                 raise NotImplementedError(
                     f"orchestration node {node.id!r} (type {node.type!r}) is not implemented yet"
                 )
+
+    # m9.md §2.4: if the walk finished with NO output node having run, and some node short-circuited
+    # to its `err` handle, the run reached no output *because* of that handled-but-unconsumed error
+    # (its `ok` path to the output was skipped). Surface an honest reason so the control-plane
+    # doesn't report a green `completed` masquerading as success. This does NOT change the M6
+    # error-as-structured-output contract: wiring `err` somewhere is still how you handle an error.
+    if result is not None and result.empty_reason is None:
+        if not result.output_produced:
+            errored = [
+                node.id
+                for node in ir.nodes
+                if node.id not in skipped
+                and live_handles.get(node.id)
+                and live_handles[node.id] <= _error_handles(node)
+            ]
+            if errored:
+                result.empty_reason = f"output empty: upstream error on node {errored[0]!r}"
+        elif _is_blank(result.output) and result.truncated_empty_nodes:
+            # Output ran but is blank because an llm spent its whole budget (reasoning model
+            # thinking, or maxTokens too low) and produced no content. Name it, not a green blank.
+            result.empty_reason = (
+                f"output empty: node {result.truncated_empty_nodes[0]!r} hit the token limit "
+                "(finish_reason=length) before producing content — raise maxTokens (a reasoning "
+                "model can spend the whole budget thinking)"
+            )
 
 
 def _log_node(ctx: WalkContext, node: Node, *, skipped: bool) -> None:
@@ -380,6 +509,7 @@ def _walk_boundary(
         value = _incoming_value(node, ir.edges, values, skipped, live_handles)
         if result is not None:
             result.output = value
+            result.output_produced = True  # an output node ran (m9.md §2.4)
     else:
         # human / subgraph — deferred (§7).
         raise NotImplementedError(
@@ -394,12 +524,13 @@ async def _walk_llm(
     values: dict[tuple[str, str], Any],
     skipped: set[str],
     live_handles: dict[str, set[str]],
+    result: WalkResult | None = None,
 ) -> AsyncIterator[Delta]:
     config = LlmConfig.model_validate(node.config)
     model_id, params = resolve_model(ir, config)
     input_value = _incoming_value(node, ir.edges, values, skipped, live_handles)
     # Naive full replay (M4 §4): prior thread turns verbatim, then this turn's rendered prompt.
-    messages = [*ctx.prior_messages, *_render_messages(config, input_value)]
+    messages = [*ctx.prior_messages, *_render_messages(node, config, input_value)]
 
     # open_stream sends the request and validates status, so a pre-stream 503/404 raises here —
     # before any delta — letting the control-plane surface a clean status (mirrors /runs).
@@ -407,12 +538,31 @@ async def _walk_llm(
         model=model_id, messages=messages, params=params, extra_headers=ctx.extra_headers
     )
     output = ""
+    finish_reason: str | None = None
     async for chunk in upstream:
-        delta = chunk.choices[0].delta if chunk.choices else None
-        content = getattr(delta, "content", None) if delta else None
+        if not chunk.choices:
+            continue
+        choice = chunk.choices[0]
+        if choice.finish_reason:
+            finish_reason = choice.finish_reason
+        delta = choice.delta
+        if delta is None:
+            continue
+        # A reasoning model emits `reasoning_content` (its thinking) before `content` (its answer).
+        # Stream the thinking as visible progress so the model doesn't look frozen, but NEVER fold
+        # it into the output — only `content` is the answer (the binding downstream nodes read).
+        reasoning = getattr(delta, "reasoning_content", None)
+        if reasoning:
+            yield Delta(node_id=node.id, content=reasoning, kind="reasoning")
+        content = getattr(delta, "content", None)
         if content:
             output += content
             yield Delta(node_id=node.id, content=content)
+
+    # An empty answer with finish_reason=length means the budget ran out before any content (often
+    # a reasoning model that spent it all thinking). Record it so the run is legible, not a blank.
+    if result is not None and finish_reason == "length" and not output.strip():
+        result.truncated_empty_nodes.append(node.id)
 
     # Activate the success handles and bind the full text, so downstream data edges pick it by
     # ``sourceHandle`` (e.g. "ok"). An llm error raises mid-stream (failed run) — it never binds.
@@ -534,6 +684,13 @@ async def _walk_mcp_tool(
 
 def _stringify(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value)
+
+
+def _is_blank(value: Any) -> bool:
+    """True if the run's final output carries nothing meaningful — ``None`` or whitespace-only
+    text. Used to decide whether a truncated-empty llm should surface an honest reason (a non-string
+    value like a tool dict is never blank)."""
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def _walk_router(

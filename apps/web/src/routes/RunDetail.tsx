@@ -33,17 +33,26 @@ export function RunDetail() {
   const status = live ? live.status : run.status;
   const isStreaming = !!live && !live.done;
 
-  // Persisted output (M8 §1.2): the run row has no output field, so for a terminal run we
-  // reconstruct it from the thread's assistant turns produced by this run. One-shot
-  // (un-threaded) terminal runs persist no output — a recorded API rough edge (see CLAUDE.md).
-  const persistedOutput = thread?.messages
-    ?.filter((m) => m.run_id === run.id && m.role === "assistant")
-    .map((m) => m.content)
-    .join("\n");
+  // Persisted output: M9 §2.2 persists `run.output` for EVERY run (threaded or not), so a terminal
+  // run's answer is read straight from the row. Fall back to the thread's assistant turns only for
+  // older runs persisted before the output column existed (output === null).
+  const persistedOutput =
+    run.output ??
+    thread?.messages
+      ?.filter((m) => m.run_id === run.id && m.role === "assistant")
+      .map((m) => m.content)
+      .join("\n");
 
-  // A live run's accumulated text stays visible after it completes (it isn't persisted for a
-  // one-shot run); only fall back to the reconstructed thread output when there's no stream.
+  // A live run's accumulated text stays visible after it completes; otherwise use the persisted
+  // output from the run row.
   const output = live ? live.output : persistedOutput;
+
+  // A reasoning model streams its thinking live (event: reasoning). Show it as progress so a long
+  // thinking phase doesn't look frozen; it is never the answer.
+  const reasoning = live?.reasoning;
+  // M9 §2.4 / the empty-output reason: a `completed` run can carry an honest note (e.g. the model
+  // hit its token limit before answering). Treat error-on-completed as a note, not a failure.
+  const isNote = !!run.error && status === "completed";
 
   return (
     <div className="space-y-4">
@@ -82,10 +91,29 @@ export function RunDetail() {
         {run.content_hash && <Detail label="Content hash" value={run.content_hash} />}
       </Card>
 
-      {run.error && (
-        <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
-          <span className="font-semibold">Error:</span> {run.error}
-        </div>
+      {run.error &&
+        (isNote ? (
+          <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-300">
+            <span className="font-semibold">Note:</span> {run.error}
+          </div>
+        ) : (
+          <div className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+            <span className="font-semibold">Error:</span> {run.error}
+          </div>
+        ))}
+
+      {reasoning && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-slate-300">
+            Thinking
+            {isStreaming && <span className="ml-2 text-xs text-amber-400">reasoning…</span>}
+          </h2>
+          <Card className="p-4">
+            <pre className="mono whitespace-pre-wrap break-words text-sm text-slate-400">
+              {reasoning}
+            </pre>
+          </Card>
+        </section>
       )}
 
       <section className="space-y-2">
@@ -101,9 +129,9 @@ export function RunDetail() {
             </pre>
           ) : (
             <p className="text-sm text-slate-500">
-              {threadId
-                ? "No output recorded for this run."
-                : "Output is not persisted for one-shot (un-threaded) runs — re-run in a thread, or watch it live from the composer."}
+              {isNote
+                ? "The model returned no answer (see the note above)."
+                : "No output recorded for this run."}
             </p>
           )}
         </Card>

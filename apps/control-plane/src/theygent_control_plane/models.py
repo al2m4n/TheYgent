@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Integer, String
+from sqlalchemy import ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -57,6 +57,10 @@ class RunRow(Base):
     graph_version: Mapped[str | None] = mapped_column(String, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
+    # M9 §2.2 (F5.3): the run's final accumulated output, durable regardless of threading. NULL
+    # for a run that never reached a terminal output (e.g. a failed run). TEXT — outputs can be
+    # large; kept on the run row (M4 §1.3 domain/ORM split still holds via the `Run` entity).
+    output: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 
@@ -80,3 +84,22 @@ class MessageRow(Base):
     # colliding position would fail loudly here instead of silently losing a turn (the
     # one race shared Postgres state introduced that a single-instance dict could not).
     __table_args__ = (Index("ix_message_thread_position", "thread_id", "position", unique=True),)
+
+
+class McpServerRow(Base):
+    """A persisted MCP server registration (M9 §2.3 / F6.1) — the *registration*, never the live
+    process handle. The domain shape is the manager's ``McpServerConfig`` (mcp/client.py); this row
+    is the persistence shape, mapped in ``store.py`` (M4 §1.3). ``env`` (the user's secrets/paths)
+    is stored so the registration round-trips a restart — distinct from logging it (the §10
+    sovereignty rule forbids logging values, which ``_mcp_view`` honours, not storing them here)."""
+
+    __tablename__ = "mcp_server"
+
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    transport: Mapped[str] = mapped_column(String)  # "stdio" (M7's only transport)
+    command: Mapped[str] = mapped_column(String)
+    args: Mapped[list] = mapped_column(JSONB)
+    env: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    cwd: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
