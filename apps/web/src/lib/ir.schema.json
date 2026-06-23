@@ -13,10 +13,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "kind",
-        "ref"
-      ],
+      "required": ["kind", "ref"],
       "title": "BuiltinTool",
       "type": "object"
     },
@@ -46,10 +43,7 @@
         },
         "channel": {
           "default": "data",
-          "enum": [
-            "data",
-            "control"
-          ],
+          "enum": ["data", "control"],
           "title": "Channel",
           "type": "string"
         },
@@ -66,13 +60,7 @@
           "title": "Condition"
         }
       },
-      "required": [
-        "id",
-        "source",
-        "sourceHandle",
-        "target",
-        "targetHandle"
-      ],
+      "required": ["id", "source", "sourceHandle", "target", "targetHandle"],
       "title": "Edge",
       "type": "object"
     },
@@ -93,11 +81,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "kind",
-        "server",
-        "tool"
-      ],
+      "required": ["kind", "server", "tool"],
       "title": "McpTool",
       "type": "object"
     },
@@ -106,12 +90,7 @@
       "description": "A logical model the graph's nodes reference by key (\u00a78.4) \u2014 the sovereignty dial.\n\nNodes never hardcode a provider; they name a key in ``IRDocument.models`` and the\n``binding`` resolves at runtime through the L0 gateway. ``binding`` names only the engines\ntheygent manages (``mlx``/``vllm``/``llamacpp``) plus the catch-all ``openai-compatible``;\n``source`` (where the *weights* come from) is orthogonal and never an engine.\n\n``model`` is the id forwarded to the inference seam. M5 has no registry/lifecycle manager\n(M5 \u00a77), so the walker forwards ``model`` as the logical id the inference plane already\nknows (the \u00a79.1.1 logical-id invariant still holds \u2014 an engine name here is rejected at\nthe seam). ``source`` is optional: it answers a lifecycle question (fetch the weights from\nwhere?) that only matters once theygent manages the engine, which M5 does not \u2014 so the\ntrivial M5 graph omits it, while a \u00a78.4 document that includes it still validates.",
       "properties": {
         "binding": {
-          "enum": [
-            "mlx",
-            "vllm",
-            "llamacpp",
-            "openai-compatible"
-          ],
+          "enum": ["mlx", "vllm", "llamacpp", "openai-compatible"],
           "title": "Binding",
           "type": "string"
         },
@@ -122,11 +101,7 @@
         "source": {
           "anyOf": [
             {
-              "enum": [
-                "hf",
-                "local-path",
-                "url"
-              ],
+              "enum": ["hf", "local-path", "url"],
               "type": "string"
             },
             {
@@ -142,10 +117,7 @@
           "type": "object"
         }
       },
-      "required": [
-        "binding",
-        "model"
-      ],
+      "required": ["binding", "model"],
       "title": "ModelBinding",
       "type": "object"
     },
@@ -162,11 +134,7 @@
           "type": "string"
         },
         "kind": {
-          "enum": [
-            "activity",
-            "orchestration",
-            "boundary"
-          ],
+          "enum": ["activity", "orchestration", "boundary"],
           "title": "Kind",
           "type": "string"
         },
@@ -191,11 +159,7 @@
           "$ref": "#/$defs/Ports"
         }
       },
-      "required": [
-        "id",
-        "type",
-        "kind"
-      ],
+      "required": ["id", "type", "kind"],
       "title": "Node",
       "type": "object"
     },
@@ -213,9 +177,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "id"
-      ],
+      "required": ["id"],
       "title": "Port",
       "type": "object"
     },
@@ -341,12 +303,7 @@
       "title": "Metadata"
     }
   },
-  "required": [
-    "schemaVersion",
-    "id",
-    "name",
-    "version"
-  ],
+  "required": ["schemaVersion", "id", "name", "version"],
   "title": "IRDocument",
   "type": "object"
 }

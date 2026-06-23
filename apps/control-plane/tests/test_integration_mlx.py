@@ -780,3 +780,72 @@ def test_multi_input_file_and_question_against_real_mcp_and_mlx() -> None:
 
                 got = client.get(f"/runs/{body['runId']}").json()
                 assert got["graph_id"] == "agt_01J9X8MULTIIN"
+
+
+@pytest.mark.skipif(
+    not _HAVE_NPX or not _MLX_MODEL or not _HAVE_MLX or not _DATABASE_URL,
+    reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
+)
+def test_save_agent_then_invoke_by_id_across_restart() -> None:
+    # THE M11 closure proof (m11.md §6 integration / §8 step 9): save the M10 file+question agent
+    # under a name, invoke it BY ID (never pasting the IR), get a real MLX answer; then "restart"
+    # control-plane (a fresh app on the same Postgres) and invoke it AGAIN — it still resolves and
+    # runs. The first time the platform has *agents*, not graph paste-ins. Skips clean if the MCP
+    # server can't be fetched/spawned.
+    db_url = _prepare_db()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = os.path.realpath(tmp)  # macOS /var -> /private/var: the server compares realpaths
+        note = Path(root) / "facts.txt"
+        note.write_text("secret color: blue\nsecret fruit: banana\nsecret animal: fox\n")
+        with _real_inference_plane() as base:
+            # Register the MCP server + discover the read tool through the FIRST app instance.
+            app1 = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+            with TestClient(app1) as client:
+                reg = client.put(
+                    "/admin/mcp/servers/fs",
+                    json={
+                        "transport": "stdio",
+                        "command": "npx",
+                        "args": ["-y", "@modelcontextprotocol/server-filesystem", root],
+                    },
+                )
+                assert reg.status_code == 200, reg.text
+                tools_resp = client.get("/admin/mcp/servers/fs/tools")
+                if tools_resp.status_code == 503:
+                    pytest.skip("filesystem MCP server unavailable (npx fetch/spawn failed)")
+                names = [t["name"] for t in tools_resp.json()["tools"]]
+                read_tool = next(
+                    (n for n in ("read_text_file", "read_file", "read_media_file") if n in names),
+                    None,
+                )
+                assert read_tool, f"no read tool exposed by server-filesystem: {names}"
+
+                # SAVE the agent once (the IR is pasted exactly here, and never again).
+                ir = _fs_qa_agent_ir(read_tool)
+                created = client.post("/agents", json={"ir": ir, "name": "ask-about-file"})
+                assert created.status_code == 201, created.text
+                agent_id = created.json()["id"]
+
+                # INVOKE BY ID — no IR in the body, just the input.
+                run_input = {"path": str(note), "question": "What is the secret color?"}
+                r1 = client.post(
+                    f"/agents/{agent_id}/runs", json={"input": run_input, "stream": False}
+                )
+                assert r1.status_code == 200, r1.text
+                assert r1.json()["status"] == "completed"
+                assert "blue" in r1.json()["output"].lower()
+                assert client.get(f"/runs/{r1.json()['runId']}").json()["graph_id"] == agent_id
+
+            # "RESTART": a fresh app on the same Postgres. The saved agent (and the persisted MCP
+            # registration) rehydrate; invoking by id still works — never touching the IR JSON.
+            app2 = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
+            with TestClient(app2) as client:
+                assert client.get(f"/agents/{agent_id}").status_code == 200
+                run_input = {"path": str(note), "question": "What is the secret animal?"}
+                r2 = client.post(
+                    f"/agents/{agent_id}/runs", json={"input": run_input, "stream": False}
+                )
+                assert r2.status_code == 200, r2.text
+                assert r2.json()["status"] == "completed"
+                # A different question over the SAME saved agent → the animal fact this time.
+                assert "fox" in r2.json()["output"].lower()

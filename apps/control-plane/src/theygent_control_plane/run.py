@@ -13,7 +13,7 @@ horizontally-scaled control-plane instances (§5/§8).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from ulid import ULID
@@ -91,3 +91,62 @@ class ThreadDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     messages: list[ThreadMessage] = Field(default_factory=list)
+
+
+# ── Agent registry domain entities (M11 §2/§3) ───────────────────────────────
+# Like ``Run``, these are domain shapes the store maps rows onto (§1.3) — never ORM rows. The
+# registry stores the canonical §8.2 IR document; it invents no "agent format" (M11 §0/§7). The
+# IR is the source of truth for ``id`` (the §8.2 agent id) and ``version`` (semver), so a stored
+# agent and the Run it produces agree byte-for-byte on ``graph_id``/``graph_version``/``hash``
+# (§1.1). ``AgentVersion`` is the lean per-version metadata (no IR payload — it lists fast);
+# ``StoredVersion`` carries the full IR + view, returned for a single version and used to resolve
+# an invoke-by-reference run.
+
+
+class AgentVersion(BaseModel):
+    """One immutable version's metadata — no IR payload (the list/detail views show coordinates,
+    not the document). ``content_hash`` is the §8.2 content-addressed key; ``seq`` is the
+    monotonic-per-agent ordering (M4 §3), newest first in the listings."""
+
+    version: str
+    content_hash: str
+    seq: int
+    created_at: datetime
+
+
+class AgentSummary(BaseModel):
+    """One row of the agents list (M8 §2 list shape) — newest agent first. Carries the latest
+    version coordinate + a count so the cockpit row reads "name, latest version, hash, count"
+    without a second call (client-side composition; no aggregating endpoint — M11 §5)."""
+
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    latest_version: str | None = None
+    latest_content_hash: str | None = None
+    version_count: int = 0
+
+
+class AgentDetail(BaseModel):
+    """An agent and its versions, newest first (GET /agents/{id} — M11 §3)."""
+
+    id: str
+    name: str
+    created_at: datetime
+    updated_at: datetime
+    versions: list[AgentVersion] = Field(default_factory=list)
+
+
+class StoredVersion(BaseModel):
+    """A resolved version with its full IR (+ view) — returned by GET /agents/{id}/versions/{ver}
+    and the value an invoke-by-reference run resolves to before walking it (M11 §3/§5). The ``ir``
+    the canonical, view-stripped §8.2 document; ``view`` is the stored-but-never-hashed layout."""
+
+    agent_id: str
+    version: str
+    content_hash: str
+    seq: int
+    created_at: datetime
+    ir: dict[str, Any]
+    view: dict[str, Any] | None = None

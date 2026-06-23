@@ -2,8 +2,10 @@
 // JSON error shaping, and SSE streaming. Every view calls through here — never `fetch`
 // directly — so the later real-auth milestone is a one-file change, not an audit.
 
-import { readSSE, type SSEEvent } from "./sse";
+import { type SSEEvent, readSSE } from "./sse";
 import type {
+  AgentDetail,
+  AgentSummary,
   Capabilities,
   EnginesView,
   McpServerSummary,
@@ -11,6 +13,7 @@ import type {
   McpToolView,
   ModelView,
   Run,
+  StoredVersion,
   ThreadDetail,
   ThreadSummary,
 } from "./types";
@@ -57,11 +60,7 @@ async function toError(res: Response): Promise<ApiError> {
   return new ApiError(message, res.status, code);
 }
 
-async function request<T>(
-  base: string,
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+async function request<T>(base: string, path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${base}${path}`, {
     ...init,
     headers: {
@@ -102,6 +101,38 @@ export const api = {
   },
 
   getThread: (id: string) => request<ThreadDetail>(CONTROL_PLANE_URL, `/threads/${id}`),
+
+  // ── control-plane: agent registry (M11) ───────────────────────────────────
+
+  listAgents: (params: { limit?: number; before?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.before) q.set("before", params.before);
+    const qs = q.toString();
+    return request<{ agents: AgentSummary[] }>(
+      CONTROL_PLANE_URL,
+      `/agents${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.agents);
+  },
+
+  getAgent: (id: string) => request<AgentDetail>(CONTROL_PLANE_URL, `/agents/${id}`),
+
+  getAgentVersion: (id: string, version: string) =>
+    request<StoredVersion>(CONTROL_PLANE_URL, `/agents/${id}/versions/${version}`),
+
+  // Create a new agent + its first version from an IR (the agent id/version come FROM the IR).
+  createAgent: (body: { ir: unknown; name?: string }) =>
+    request<AgentDetail>(CONTROL_PLANE_URL, "/agents", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Add a new immutable version to an existing agent (the IR's version is the new coordinate).
+  addAgentVersion: (id: string, body: { ir: unknown }) =>
+    request<AgentDetail>(CONTROL_PLANE_URL, `/agents/${id}/versions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // ── inference plane: model + engine registry ──────────────────────────────
 
@@ -179,7 +210,8 @@ export interface StreamHandle {
  * first event, exactly as the backend surfaces 503/404/400 before the 200 SSE (M3/M5).
  */
 export async function streamRun(
-  path: "/runs" | "/graphs/runs",
+  // /runs, /graphs/runs, or M11's /agents/{id}/runs (invoke-by-reference) — all share the SSE shape.
+  path: string,
   body: unknown,
 ): Promise<StreamHandle> {
   const controller = new AbortController();

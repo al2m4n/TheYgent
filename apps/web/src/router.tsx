@@ -1,4 +1,5 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { AgentDetail, AgentsList } from "./routes/Agents";
 import { Compose } from "./routes/Compose";
 import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
@@ -39,6 +40,16 @@ const registriesRoute = createRoute({
   path: "/registries",
   component: Registries,
 });
+const agentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/agents",
+  component: AgentsList,
+});
+const agentDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/agents/$agentId",
+  component: AgentDetail,
+});
 
 const routeTree = rootRoute.addChildren([
   runsRoute,
@@ -47,6 +58,8 @@ const routeTree = rootRoute.addChildren([
   threadDetailRoute,
   composeRoute,
   registriesRoute,
+  agentsRoute,
+  agentDetailRoute,
 ]);
 
 export const router = createRouter({ routeTree });

@@ -7,7 +7,7 @@ import { Button, Card, ErrorBanner, Field, Input, Select, Textarea } from "../co
 import { ApiError } from "../lib/api";
 import { validateIR } from "../lib/ir-validate";
 import { startLiveRun } from "../lib/live";
-import { useModels, useThreads } from "../queries";
+import { useAgentMutations, useModels, useThreads } from "../queries";
 
 // A known-good trivial IR (input → llm → output) so graph mode starts runnable. Mirrors the
 // m5.md §4 envelope; the user edits `models.default.model` to a registered logical id.
@@ -74,6 +74,41 @@ export function Compose() {
   const [graphInput, setGraphInput] = useState("");
   const irIssues = useMemo(() => validateIR(ir).issues, [ir]);
   const irBlocking = irIssues.some((i) => i.severity === "error");
+
+  // M11 "Save as agent": persist the IR currently in the editor as a saved, versioned agent. A new
+  // agent id → create; an existing id → add a version (the IR's `version` is the new coordinate).
+  const { create, addVersion } = useAgentMutations();
+  const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const saving = create.isPending || addVersion.isPending;
+
+  async function saveAsAgent() {
+    setSaveMsg(null);
+    setError(null);
+    let doc: { id?: string; version?: string };
+    try {
+      doc = JSON.parse(ir);
+    } catch {
+      setError("IR is not valid JSON");
+      return;
+    }
+    try {
+      try {
+        const detail = await create.mutateAsync({ ir: doc });
+        setSaveMsg(`Saved "${detail.name}" v${detail.versions[0]?.version} (new agent)`);
+      } catch (e) {
+        // An existing agent id → add a version instead (the saved-agent loop's natural second save).
+        if (e instanceof ApiError && e.code === "agent_exists" && doc.id) {
+          const detail = await addVersion.mutateAsync({ id: doc.id, ir: doc });
+          const latest = detail.versions[0]?.version;
+          setSaveMsg(`Added version v${latest} to "${detail.name}"`);
+        } else {
+          throw e;
+        }
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? `${e.code}: ${e.message}` : String((e as Error).message));
+    }
+  }
 
   const extensions = useMemo(() => [json(), irLinter()], []);
 
@@ -218,8 +253,16 @@ export function Compose() {
           >
             {submitting ? "Starting…" : "Run & stream"}
           </Button>
+          {mode === "graph" && (
+            <Button variant="secondary" disabled={saving || irBlocking} onClick={saveAsAgent}>
+              {saving ? "Saving…" : "Save as agent"}
+            </Button>
+          )}
           {mode === "graph" && irBlocking && (
             <span className="text-xs text-rose-400">fix the IR errors to run</span>
+          )}
+          {mode === "graph" && saveMsg && (
+            <span className="text-xs text-emerald-400">{saveMsg}</span>
           )}
         </div>
       </Card>

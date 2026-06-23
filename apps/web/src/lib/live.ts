@@ -54,7 +54,7 @@ function patch(runId: string, next: Partial<LiveRun>) {
  * as the backend's first `run` frame arrives, so the caller can navigate. A pre-stream error
  * (400/404/503 before any frame) rejects, exactly as the backend surfaces it (M3/M5).
  */
-export async function startLiveRun(path: "/runs" | "/graphs/runs", body: unknown): Promise<string> {
+export async function startLiveRun(path: string, body: unknown): Promise<string> {
   const handle = await streamRun(path, body);
 
   return new Promise<string>((resolve, reject) => {

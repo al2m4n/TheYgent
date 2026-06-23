@@ -46,6 +46,45 @@ export interface ThreadDetail {
   messages: ThreadMessage[];
 }
 
+// ── control-plane /agents/* (snake_case — the run surface convention) ────────
+// M11: a saved agent has a stable id + immutable, content-addressed versions, invoked by
+// reference. The registry stores the canonical §8.2 IR; these are its read shapes.
+
+export interface AgentVersionMeta {
+  version: string;
+  content_hash: string;
+  seq: number;
+  created_at: string;
+}
+
+export interface AgentSummary {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  latest_version: string | null;
+  latest_content_hash: string | null;
+  version_count: number;
+}
+
+export interface AgentDetail {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  versions: AgentVersionMeta[]; // newest first
+}
+
+export interface StoredVersion {
+  agent_id: string;
+  version: string;
+  content_hash: string;
+  seq: number;
+  created_at: string;
+  ir: Record<string, unknown>;
+  view: Record<string, unknown> | null;
+}
+
 // ── inference plane /admin/* (camelCase) ────────────────────────────────────
 
 export interface Capabilities {
