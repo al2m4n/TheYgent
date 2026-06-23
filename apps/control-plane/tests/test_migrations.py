@@ -102,7 +102,7 @@ def test_migration_round_trip(pg_url: str) -> None:
         }  # built
         # Column-level proof for the M12-added run columns (a column add/drop is invisible to the
         # table-set check above, so the round-trip could silently regress without this).
-        assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))
+        assert {"trigger_id", "completed_at", "awaiting_node"} <= asyncio.run(_run_columns(scratch))
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
         command.upgrade(cfg, "head")
@@ -138,6 +138,10 @@ def test_trigger_migration_single_step_down_up(pg_url: str) -> None:
         command.upgrade(cfg, "head")
         assert "trigger" in asyncio.run(_tables(scratch))
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))
+        # Peel off any migrations stacked above 0006 (M14's 0007 adds run.awaiting_node) so the `-1`
+        # step below still isolates 0006 itself — the M12 §5 single-revision round-trip stays exact.
+        command.downgrade(cfg, "0006_trigger")
+        assert "awaiting_node" not in asyncio.run(_run_columns(scratch))
         # One step back: 0006 down. trigger table gone; the two run columns gone; run itself stays.
         command.downgrade(cfg, "-1")
         assert "trigger" not in asyncio.run(_tables(scratch))

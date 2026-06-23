@@ -65,8 +65,12 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
 #: additive walker handler, not a refactor. M5 shipped ``input``/``output``/``llm``; M6 added
 #: ``tool`` (first non-llm activity) and ``router`` (first orchestration node); M7 adds
 #: ``mcp_tool`` (an external MCP server's tool, same contract over a new transport) — m7.md §0.
+#: M14 adds ``human``/``subgraph`` (``boundary``) and ``loop``/``map`` (``orchestration``) — the
+#: four additive-lowering types. They run ONLY on the durable runtime (each lowers onto a DBOS
+#: primitive: ``recv`` / child workflow / bounded inline repetition / durable-queue fan-out);
+#: the interactive M5 walker still raises ``NotImplementedError`` for them (m14.md §0/§1).
 EXECUTABLE_TYPES: frozenset[str] = frozenset(
-    {"input", "output", "llm", "tool", "router", "mcp_tool"}
+    {"input", "output", "llm", "tool", "router", "mcp_tool", "human", "subgraph", "loop", "map"}
 )
 
 
@@ -269,6 +273,87 @@ class McpToolConfig(_Wire):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+# ── M14 the additive-lowering tier (m14.md §1) — config shapes only ───────────
+#
+# Four node types whose ``kind`` is ``boundary`` (``human``/``subgraph``) or ``orchestration``
+# (``loop``/``map``). The IR package owns their *shape*; the lowering onto DBOS primitives lives in
+# the control-plane's durable compiler (the ``dbos`` import never reaches here). ``subgraph``/
+# ``loop``/``map`` all compose a SAVED, PINNED agent as their body (never inline IR — m14.md §1.2 /
+# the Do-NOT): the unit of composition/repetition/fan-out is one saved-agent invocation, which the
+# durable runtime already runs as ``theygent_run``. The pin is part of ``config`` and therefore part
+# of the hashed IR, so it is **frozen into the parent's contentHash** — composition is immutable
+# even when the child agent publishes a new version (m14.md §1.2).
+
+
+class HumanConfig(_Wire):
+    """``human`` boundary node config (m14.md §1.1) — a durable wait for external input. The node
+    lowers onto ``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while
+    paused; ``POST /runs/{id}/resume`` (→ ``DBOS.send``) delivers the awaited input and the workflow
+    resumes from the checkpoint. ``prompt`` describes what input is expected (advisory);
+    ``input_schema`` is the awaited input's declared shape (advisory in M14 — resume records it,
+    doesn't enforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever)
+    bounds the wait; on timeout the node fails honestly (``on_timeout='fail'``, the default →
+    ``failed`` run, M9) or binds the declared ``default`` (``on_timeout='default'``)."""
+
+    prompt: str | None = None
+    input_schema: dict[str, Any] | None = None
+    timeout: float | None = None
+    on_timeout: Literal["fail", "default"] = "fail"
+    default: Any = None
+
+
+class SubgraphConfig(_Wire):
+    """``subgraph`` boundary node config (m14.md §1.2) — an agent calls another SAVED agent, run as
+    a DBOS child workflow (independently durable + resumable). ``agent`` is the child's §8.2 id; the
+    node pins it with EXACTLY ONE of ``version`` / ``content_hash`` (validated in
+    ``validate_graph``) and the pin is frozen into the parent's contentHash, so composition is
+    immutable. ``max_depth`` bounds recursion (the ``subgraph`` analogue of ``loop``'s
+    ``max_iterations``): exceeding it fails honestly, preventing unbounded / mutually-recursive
+    expansion. The parent's in-port value is the child's run input (M10 named ports); the child's
+    output binds the node's success handle."""
+
+    agent: str
+    version: str | None = None
+    content_hash: str | None = None
+    max_depth: int = 8
+
+
+class LoopConfig(_Wire):
+    """``loop`` orchestration node config (m14.md §1.3) — bounded, deterministic agentic repetition
+    (think→act→observe). Each iteration runs the pinned ``agent`` (a SAVED agent, child workflow);
+    the previous iteration's output feeds the next as input. ``max_iterations`` is **REQUIRED** (no
+    unbounded loops — the termination + determinism guarantee). ``condition`` (optional) is a
+    ``$in``-reference over the iteration output (the same port-addressed grammar the router uses —
+    m14.md §1.3 "reuse the router expression evaluator"): the loop **stops early** when it resolves
+    truthy. The loop control is deterministic orchestration with NO I/O — it reads journaled child
+    results, never calls inference, so a crash mid-loop resumes at the last completed iteration (no
+    completed iteration re-runs). ``max_depth`` bounds nesting as in ``subgraph``."""
+
+    agent: str
+    version: str | None = None
+    content_hash: str | None = None
+    max_iterations: int
+    condition: str | None = None
+    max_depth: int = 8
+
+
+class MapConfig(_Wire):
+    """``map`` orchestration node config (m14.md §1.4) — durable fan-out/join over a collection. The
+    in-port value must be a list; one task (the pinned ``agent`` run as a child workflow) is
+    enqueued on a DBOS durable queue per element, then all results are durably awaited — so a crash
+    mid-fan-out resumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are
+    in flight at once (``None`` = unbounded). ``on_error`` is the partial-failure policy:
+    ``fail_fast`` (default — any element error fails the map) vs ``collect`` (gather successes +
+    per-element errors). ``max_depth`` bounds nesting as in ``subgraph``."""
+
+    agent: str
+    version: str | None = None
+    content_hash: str | None = None
+    concurrency: int | None = None
+    on_error: Literal["fail_fast", "collect"] = "fail_fast"
+    max_depth: int = 8
+
+
 _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "llm": LlmConfig,
     "input": InputConfig,
@@ -276,7 +361,17 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "tool": ToolConfig,
     "router": RouterConfig,
     "mcp_tool": McpToolConfig,
+    "human": HumanConfig,
+    "subgraph": SubgraphConfig,
+    "loop": LoopConfig,
+    "map": MapConfig,
 }
+
+#: The M14 node types that compose a saved, pinned agent body (m14.md §1.2). Each must pin EXACTLY
+#: ONE of ``version`` / ``content_hash`` — an unbounded "latest" body would let composition
+#: silently drift, the same immutability discipline triggers hold (M12 §1.1). Validated in
+#: ``validate_graph``.
+_PINNED_BODY_TYPES: frozenset[str] = frozenset({"subgraph", "loop", "map"})
 
 _IR_ADAPTER: TypeAdapter[IRDocument] = TypeAdapter(IRDocument)
 
@@ -334,6 +429,25 @@ def validate_graph(ir: IRDocument) -> None:
             if isinstance(cfg, LlmConfig) and cfg.model not in ir.models:
                 raise GraphValidationError(
                     f"node {node.id!r}: references undeclared model {cfg.model!r}"
+                )
+            # M14 §1.2: a subgraph/loop/map composes a SAVED, PINNED agent — exactly one of
+            # version / content_hash, so composition is immutable (never silently "latest"). The
+            # pin is part of config, hence frozen into the parent's contentHash.
+            if node.type in _PINNED_BODY_TYPES:
+                version = getattr(cfg, "version", None)
+                chash = getattr(cfg, "content_hash", None)
+                if bool(version) == bool(chash):
+                    raise GraphValidationError(
+                        f"node {node.id!r}: a {node.type!r} body must pin EXACTLY ONE of `version` "
+                        f"or `contentHash` (m14.md §1.2 — composition is immutable, never 'latest')"
+                    )
+            # M14 §1.3: a loop is bounded — max_iterations is required (Pydantic) AND must be ≥ 1
+            # (no unbounded/zero-iteration loop). This is the termination + determinism guarantee.
+            if isinstance(cfg, LoopConfig) and cfg.max_iterations < 1:
+                raise GraphValidationError(
+                    f"node {node.id!r}: loop `maxIterations` must be >= 1 "
+                    f"(got {cfg.max_iterations}) — an unbounded or zero-iteration loop is "
+                    "rejected (m14.md §1.3)"
                 )
 
     # 4: edges reference existing nodes + declared handles.

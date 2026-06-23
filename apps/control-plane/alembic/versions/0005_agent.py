@@ -55,7 +55,7 @@ def upgrade() -> None:
         sa.Column("agent_id", sa.String(), sa.ForeignKey("agent.id"), nullable=False),
         sa.Column("version", sa.String(), nullable=False),
         sa.Column("content_hash", sa.String(), nullable=False),
-        # The canonical, view-stripped §8.2 IR document, and the (never-hashed) view block beside it.
+        # The canonical, view-stripped §8.2 IR document; the (never-hashed) view block alongside.
         sa.Column("ir", postgresql.JSONB(), nullable=False),
         sa.Column("view", postgresql.JSONB(), nullable=True),
         # Monotonic per agent; THE ordering key (M4 §3 — not ULID/timestamp).

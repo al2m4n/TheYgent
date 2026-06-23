@@ -68,6 +68,10 @@ class RunRow(Base):
     # for a run that never reached a terminal output (e.g. a failed run). TEXT — outputs can be
     # large; kept on the run row (M4 §1.3 domain/ORM split still holds via the `Run` entity).
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # M14 §1.1: the node id a `waiting` run is paused at (a `human` node's DBOS.recv checkpoint).
+    # NULL except while status == 'waiting'. Additive, like M5's graph_id / M12's trigger_id — the
+    # bookkeeping POST /runs/{id}/resume reads to find the node (schema + delivery), not an FK.
+    awaiting_node: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
     # M12 §9 evidence gate (m13.md §1.2): a real terminal-completion instant, so duration is

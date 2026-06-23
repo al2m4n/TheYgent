@@ -90,6 +90,13 @@ class RunRequest(BaseModel):
     thread_id: str | None = None
 
 
+class ResumeRunRequest(BaseModel):
+    # M14 §1.1: deliver the awaited input to a `waiting` run paused at a `human` node. `input` is
+    # the human's response (Any — like a graph run input, it may be an object the agent drills).
+    # Durable mode only: the resume maps to DBOS.send to the checkpointed workflow.
+    input: Any = None
+
+
 class GraphRunRequest(BaseModel):
     # The §8.2 envelope, inline for M5 (no registry yet — M5 §7). Kept as a raw dict so the
     # control-plane owns the 400 shape when it fails IR validation, rather than FastAPI's
@@ -620,6 +627,68 @@ def create_app(
         if run is None:
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
+
+    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_token)])
+    async def resume_run(run_id: str, req: ResumeRunRequest) -> Any:
+        # M14 §1.1: the durable human-in-the-loop entry. Deliver the awaited input to a `waiting`
+        # run → DBOS.send to the checkpointed workflow, which resumes from the recv point (even
+        # across a worker restart). Token-authed like /invoke — an unattended control surface.
+        # Durable mode only; non-durable runs can't durably wait, so resume is a 400 there (honest).
+        runtime = getattr(app.state, "durable_runtime", None)
+        if runtime is None:
+            return _error(
+                "resume requires durable mode (the human node lowers onto DBOS.recv/send)",
+                status=400,
+                code="durable_required",
+            )
+        async with tx() as session:
+            run = await store.get_run(session, run_id)
+        if run is None:
+            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
+        if run.status != "waiting":
+            return _error(
+                f"run {run_id!r} is {run.status!r}, not waiting — nothing to resume",
+                status=409,
+                code="run_not_waiting",
+            )
+        # Validate the awaited input against the human node's declared schema (m14.md §1.1).
+        # Advisory in M14: resolve the run's pinned IR, find the waiting node, and — if it declares
+        # an input_schema with required keys — require the input to carry them. A loud 422 beats a
+        # silently-wrong resume; richer JSON-Schema validation is a later additive tightening.
+        invalid = await _validate_resume_input(run, req.input)
+        if invalid is not None:
+            return invalid
+        await runtime.resume(run_id, req.input)
+        logger.info("run.resumed", extra={"run_id": run_id, "node_id": run.awaiting_node})
+        return JSONResponse(
+            {"runId": run_id, "status": "resuming", "awaitingNode": run.awaiting_node},
+            status_code=202,
+        )
+
+    async def _validate_resume_input(run: Run, value: Any) -> JSONResponse | None:
+        # Resolve the run's pinned IR (content_hash > version) and find the awaiting human node; if
+        # it declares input_schema.required, the delivered value must be an object with those keys.
+        if not run.graph_id or not run.awaiting_node:  # pragma: no cover - waiting implies both set
+            return None
+        ir, err = await _resolve_agent_ir(
+            run.graph_id, version=run.graph_version, content_hash_pin=run.content_hash
+        )
+        if err is not None or ir is None:  # pragma: no cover - the run's pin was valid at create
+            return None
+        node = next((n for n in ir.nodes if n.id == run.awaiting_node), None)
+        if node is None or node.type != "human":  # pragma: no cover - awaiting_node is a human node
+            return None
+        schema = (node.config or {}).get("inputSchema") or (node.config or {}).get("input_schema")
+        required = schema.get("required") if isinstance(schema, dict) else None
+        if isinstance(required, list) and required:
+            if not isinstance(value, dict) or any(k not in value for k in required):
+                return _error(
+                    f"resume input does not match node {run.awaiting_node!r} schema: requires "
+                    f"keys {sorted(required)}",
+                    status=422,
+                    code="resume_schema_mismatch",
+                )
+        return None
 
     @app.get("/threads", dependencies=[Depends(require_auth)])
     async def list_threads(
