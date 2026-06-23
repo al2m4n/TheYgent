@@ -22,13 +22,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
@@ -44,9 +46,16 @@ from theygent_ir import (
 )
 
 from theygent_control_plane import db
+from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
 from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
-from theygent_control_plane.run import Run
-from theygent_control_plane.store import AgentStore, McpStore, RunStore, VersionConflict
+from theygent_control_plane.run import Run, Trigger, TriggerKind
+from theygent_control_plane.store import (
+    AgentStore,
+    McpStore,
+    RunStore,
+    TriggerStore,
+    VersionConflict,
+)
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
@@ -128,6 +137,39 @@ class AgentRunRequest(BaseModel):
     stream: bool = True
 
 
+class InvokeRequest(BaseModel):
+    # M12 §3.1: the token-authed, cockpit-free sibling of AgentRunRequest. Same resolution (pinned
+    # content_hash > version > latest) and the same shared run path; the only differences are the
+    # auth gate (§1.3) and the default — ``stream`` defaults to ``False`` because the caller is a
+    # program awaiting a result or a ``run_id`` to poll, not a browser holding an SSE session open.
+    input: Any = None
+    version: str | None = None
+    content_hash: str | None = None
+    thread_id: str | None = None
+    stream: bool = False
+
+
+class CreateTriggerRequest(BaseModel):
+    # M12 §1.2/§3: register a non-interactive entry point for a saved agent. A trigger ALWAYS pins
+    # (§1.1) — exactly one of ``version`` / ``content_hash`` — so an unattended deploy runs an
+    # immutable artifact. ``config`` carries the kind-specific knobs (a cron expression for
+    # ``schedule``, a signing ``secret`` for ``webhook``, an optional ``input`` template). NO inline
+    # IR is ever accepted (§1.1): a trigger references a saved agent by id, never a pasted graph.
+    agent_id: str
+    kind: TriggerKind
+    version: str | None = None
+    content_hash: str | None = None
+    config: dict[str, Any] = {}
+    enabled: bool = True
+
+
+class UpdateTriggerRequest(BaseModel):
+    # M12 §3 PATCH: enable/disable or edit config only. The pin + kind are immutable (changing them
+    # would change *which immutable artifact* runs — a re-pin is a new trigger, §1.1 discipline).
+    enabled: bool | None = None
+    config: dict[str, Any] | None = None
+
+
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "code": code}
     body: dict[str, Any] = {"error": error}
@@ -156,6 +198,43 @@ def _map_inference_error(exc: APIStatusError) -> tuple[int, str, str]:
     return status, code, message
 
 
+class AuthError(Exception):
+    """An unattended-surface auth failure (M12 §1.3). Carries the house error fields so the
+    registered handler maps it to ``{error:{message,code}}`` — kept distinct from FastAPI's own
+    ``HTTPException`` so it never collides with framework 4xx handling."""
+
+    def __init__(self, message: str, *, code: str = "unauthorized", status: int = 401) -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.status = status
+
+
+def _bearer_token(authorization: str | None) -> str | None:
+    """Extract the token from an ``Authorization: Bearer <token>`` header, or ``None`` if absent /
+    malformed / a non-bearer scheme. The presence check is separate from the constant-time compare
+    so a missing header and a wrong token are indistinguishable to the caller (both → 401)."""
+    if not authorization:
+        return None
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = value.strip()
+    return token or None
+
+
+def _verify_signature(secret: str, raw: bytes, provided: str | None) -> bool:
+    """Verify an inbound webhook signature (M12 §3.3): HMAC-SHA256 of the RAW request body keyed by
+    the per-webhook secret, constant-time compared. Accepts ``sha256=<hex>`` (the GitHub-style
+    convention real senders emit) or a bare hex digest — shaped to what real callers send, not one
+    SDK's idea of it. Any absence/mismatch is a clean ``False`` → 401, never an exception."""
+    if not provided:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
+    candidate = provided.split("=", 1)[1] if provided.startswith("sha256=") else provided
+    return hmac.compare_digest(candidate.strip(), expected)
+
+
 def _default_cors_origins() -> list[str]:
     # M8 §3.3 / §6: the cockpit SPA is served by Vite on its own port (never bundled into
     # this app), so the browser needs CORS for the dev origin. Single-user localhost only —
@@ -176,11 +255,20 @@ def create_app(
     database_url: str | None = None,
     mcp_manager: McpManager | None = None,
     cors_origins: list[str] | None = None,
+    invoke_token: str | None = None,
+    start_dispatcher: bool = True,
+    dispatcher_interval_s: float = 5.0,
 ) -> FastAPI:
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
     mcp_store = McpStore()
     agents = AgentStore()
+    triggers = TriggerStore()
+    # M12 §1.3: the first real auth — a single per-deploy bearer token gating the unattended invoke
+    # + webhook-management surfaces. NOT RBAC/SSO/multi-user (those are far later, §4). Resolved at
+    # construction so a test can inject one and the env drives production. When UNSET, the deploy
+    # surfaces are closed (deny-by-default): an unattended entry point with no token is never open.
+    token = invoke_token if invoke_token is not None else os.environ.get("THEYGENT_INVOKE_TOKEN")
     # The MCP server registry/connections (m7.md §3.2). App-scoped: created once, connections are
     # lazy (no I/O at construction), torn down at shutdown. `mcp_manager` lets tests inject a
     # manager with a fake client factory.
@@ -208,9 +296,25 @@ def create_app(
         async with app.state.sessionmaker() as session:
             for name, cfg in await mcp_store.list_servers(session):
                 await mcp.register(name, cfg)
+        # M12 §3: the in-process schedule dispatcher over the persisted trigger registry. Schedules
+        # "rehydrate" for free — the dispatcher re-reads enabled schedules from Postgres every tick,
+        # so a fresh instance picks up every persisted definition with no in-memory restore. The
+        # background loop is gated (start_dispatcher) so the fast suite drives `tick` deterministic-
+        # ally while production runs the clock; the dispatcher object exists either way (tests reach
+        # it).
+        dispatcher = ScheduleDispatcher(
+            sessionmaker=app.state.sessionmaker,
+            store=triggers,
+            fire=fire,
+            interval_s=dispatcher_interval_s,
+        )
+        app.state.dispatcher = dispatcher
+        if start_dispatcher:
+            dispatcher.start()
         try:
             yield
         finally:
+            await dispatcher.stop()  # cancel the schedule loop (M12 §3); in-process, no drain
             await mcp.close_all()  # tear down every live MCP connection (m7.md §3.2)
             await gw.aclose()
             await engine.dispose()
@@ -225,11 +329,36 @@ def create_app(
     app.state.gateway = gw
     app.state.store = store
     app.state.mcp = mcp
+    app.state.triggers = triggers
+    app.state.invoke_token = token
 
     # Auth placeholder so RBAC slots in later without reshaping handlers (§7) — a no-op
-    # dependency today; build nothing now.
+    # dependency today; build nothing now. The cockpit/management surfaces stay open on
+    # single-user localhost; only the *unattended* surfaces (§1.3) get a real check below.
     async def require_auth() -> None:
         return None
+
+    @app.exception_handler(AuthError)
+    async def _on_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
+        # Map the auth failure to the house error shape (`{error:{message,code}}`), not FastAPI's
+        # default `{detail}` — so an unauthenticated invoke reads like every other 4xx in the API.
+        return _error(exc.message, status=exc.status, code=exc.code)
+
+    async def require_token(authorization: str | None = Header(default=None)) -> None:
+        # M12 §1.3: the minimum real auth — a single bearer token gating the unattended invoke +
+        # webhook-management surfaces. Constant-time compare; deny-by-default when no token is
+        # configured (an open unattended entry point is never the safe default). NOT RBAC/SSO.
+        #
+        # Attach-point for M11 §1.3 workspace/owner scoping WITHOUT a reshape: this dependency is
+        # the ONE place resolving a credential to authority — no handler outside it checks auth. The
+        # single global token is the degenerate single-tenant case of a future token→workspace
+        # lookup; scoping lands by making THIS function resolve the bearer to a principal (and the
+        # `agent`/`trigger` tables gain the deferred `workspace_id` column), so the call sites
+        # (`Depends(require_token)`) and the firing path stay shaped as they are. Build only the
+        # token now (no speculative principal that nothing consumes — that would erode the seam).
+        presented = _bearer_token(authorization)
+        if not token or presented is None or not hmac.compare_digest(presented, token):
+            raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
 
     async def get_session() -> AsyncIterator[AsyncSession]:
         # Request-scoped session for read handlers (§1.2). Writes that outlive the handler
@@ -493,14 +622,20 @@ def create_app(
         )
 
     async def _execute_ir_run(
-        ir: IRDocument, *, input_value: Any, thread_id: str | None, stream: bool
+        ir: IRDocument,
+        *,
+        input_value: Any,
+        thread_id: str | None,
+        stream: bool,
+        trigger_id: str | None = None,
     ) -> Any:
-        """Run a *validated* IRDocument through the M5 walker — the one execution path both
-        /graphs/runs (inline IR) and /agents/{id}/runs (saved IR) use (m11.md §3/§5). Assumes the IR
-        is already shape/graph-valid; performs the up-front engine/tool/MCP membership checks (which
-        depend on live control-plane state, so they run per-invocation, not at store time), creates
-        the Run with the graph's recorded identity (§4), and streams/completes. No new execution
-        code — M11 only changes where the IR is sourced."""
+        """Run a *validated* IRDocument through the M5 walker — the one execution path /graphs/runs
+        (inline IR), /agents/{id}/runs + /agents/{id}/invoke (saved IR), and the M12 trigger
+        ``fire`` seam all use (m11.md §3/§5, m12.md §3). Assumes the IR is shape/graph-valid; runs
+        the up-front engine/tool/MCP membership checks (which depend on live control-plane state, so
+        they run per-invocation, not at store time), creates the Run with the graph's recorded
+        identity (§4) and the firing ``trigger_id`` (M12 §2, None = interactive), and
+        streams/completes. No new execution code — only new *initiators*."""
 
         # Resolve every llm node's model up front and reject an engine-name binding before anything
         # is created or sent — the §8.4/§3.2 logical-id invariant on the graph path.
@@ -557,6 +692,7 @@ def create_app(
                 graph_id=ir.id,
                 graph_version=ir.version,
                 content_hash=chash,
+                trigger_id=trigger_id,
             )
 
         # Thread memory (M4) is unchanged through the graph path: prior turns replay into the llm
@@ -840,29 +976,32 @@ def create_app(
             )
         return sv.model_dump(mode="json")
 
-    @app.post("/agents/{agent_id}/runs", dependencies=[Depends(require_auth)])
-    async def run_agent(agent_id: str, req: AgentRunRequest) -> Any:
-        # Invoke-by-reference (m11.md §3/§5): resolve the agent's IR (pinned contentHash > pinned
-        # version > latest), then run it through the EXISTING walker path (_execute_ir_run) — same
-        # SSE relay, same Run row (recording the agent's graph_id/graph_version/contentHash), same
-        # thread memory. The only new thing is *where the IR came from*: the registry, not the body.
+    async def _resolve_agent_ir(
+        agent_id: str, *, version: str | None, content_hash_pin: str | None
+    ) -> tuple[IRDocument | None, JSONResponse | None]:
+        """Resolve a saved agent's IR by reference (m11.md §3/§5): pinned ``content_hash`` >
+        pinned ``version`` > latest. A dangling pin (typo'd hash, missing version) or unknown agent
+        is a clean **404**, never a 500/hang — an unattended M12 trigger with a stale pin must fail
+        honestly (m11.md §1 review #2 / m12.md §1.1). Returns ``(ir, None)`` on success or
+        ``(None, error_response)``; the one resolver shared by /agents/{id}/runs, the unattended
+        /agents/{id}/invoke, ``fire`` (triggers), and trigger creation."""
         async with tx() as session:
             agent_exists = await agents.get_agent(session, agent_id) is not None
-            if req.content_hash:
-                sv = await agents.get_version_by_hash(session, agent_id, req.content_hash)
-            elif req.version:
-                sv = await agents.get_version(session, agent_id, req.version)
+            if content_hash_pin:
+                sv = await agents.get_version_by_hash(session, agent_id, content_hash_pin)
+            elif version:
+                sv = await agents.get_version(session, agent_id, version)
             else:
                 sv = await agents.latest_version(session, agent_id)
         if sv is None:
             if not agent_exists:
-                return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
-            pinned = req.content_hash or req.version
+                return None, _error(
+                    f"unknown agent {agent_id!r}", status=404, code="agent_not_found"
+                )
+            pinned = content_hash_pin or version
             detail = f"version {pinned!r}" if pinned else "any published version"
-            return _error(
-                f"agent {agent_id!r} has no {detail}",
-                status=404,
-                code="agent_version_not_found",
+            return None, _error(
+                f"agent {agent_id!r} has no {detail}", status=404, code="agent_version_not_found"
             )
         # The stored IR was validated at store time; re-parse (and validate) so the walker always
         # gets a validated IRDocument (the same precondition /graphs/runs guarantees).
@@ -870,14 +1009,213 @@ def create_app(
             ir = parse_document(sv.ir)
             validate_graph(ir)
         except (ValidationError, GraphValidationError) as exc:  # pragma: no cover - stored valid
-            return _error(str(exc), status=400, code="invalid_ir")
-        logger.info(
-            "agent.invoked",
-            extra={"agent_id": agent_id, "version": sv.version, "content_hash": sv.content_hash},
+            return None, _error(str(exc), status=400, code="invalid_ir")
+        return ir, None
+
+    async def fire(trigger: Trigger, input_value: Any) -> Any:
+        """The ONE firing seam (m12.md §1.2/§3) — the hard-to-reverse boundary M13 re-points at the
+        durable worker. All three trigger kinds (http via /invoke, schedule via the dispatcher,
+        webhook via /hooks) converge here: resolve the trigger's *pinned, saved* agent (never inline
+        IR — §1.1) and run it through the EXISTING M5 walker path (``_execute_ir_run``, non-stream),
+        stamping ``trigger_id`` for lineage (§2). No new execution code — only a new initiator. A
+        run whose bound inference plane is unreachable ends ``failed`` cleanly inside the walker
+        path (§1.4 honest failure), never a hang. Returns the non-stream run result dict, or an
+        ``_error`` JSONResponse the caller relays / the dispatcher logs."""
+        ir, err = await _resolve_agent_ir(
+            trigger.agent_id, version=trigger.version, content_hash_pin=trigger.content_hash
         )
+        if err is not None:
+            return err
+        assert ir is not None
+        logger.info(
+            "trigger.fire",
+            extra={"trigger_id": trigger.id, "agent_id": trigger.agent_id, "kind": trigger.kind},
+        )
+        return await _execute_ir_run(
+            ir, input_value=input_value, thread_id=None, stream=False, trigger_id=trigger.id
+        )
+
+    @app.post("/agents/{agent_id}/runs", dependencies=[Depends(require_auth)])
+    async def run_agent(agent_id: str, req: AgentRunRequest) -> Any:
+        # Invoke-by-reference (m11.md §3/§5): resolve the agent's IR (pinned contentHash > pinned
+        # version > latest), then run it through the EXISTING walker path (_execute_ir_run) — same
+        # SSE relay, same Run row (recording the agent's graph_id/graph_version/contentHash), same
+        # thread memory. The only new thing is *where the IR came from*: the registry, not the body.
+        ir, err = await _resolve_agent_ir(
+            agent_id, version=req.version, content_hash_pin=req.content_hash
+        )
+        if err is not None:
+            return err
+        assert ir is not None
+        logger.info("agent.invoked", extra={"agent_id": agent_id})
         return await _execute_ir_run(
             ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
         )
+
+    # ── theygent-native API: /triggers + invoke + hooks (M12 — the deploy primitive) ──
+    # The gap between "an agent exists" (M11) and "an agent runs without a human in the cockpit"
+    # (m12.md §0). Triggers fire SAVED, PINNED agents (§1.1) through the one ``fire`` seam over the
+    # EXISTING run path (§3) — M12 builds new *initiators*, NOT the durable runtime (a mid-run crash
+    # is still reconciled to ``failed``, M9 §2.1). All additive; /runs, /graphs/runs,
+    # /agents/{id}/runs untouched (§6).
+
+    def _validate_trigger(
+        kind: TriggerKind, version: str | None, content_hash_pin: str | None, config: dict[str, Any]
+    ) -> JSONResponse | None:
+        # §1.1: a trigger pins EXACTLY ONE of version / content_hash — an unattended deploy runs an
+        # immutable artifact, never "latest" (which could silently change under it).
+        if bool(version) == bool(content_hash_pin):
+            return _error(
+                "a trigger must pin exactly one of `version` or `content_hash` (§1.1: an "
+                "unattended deploy runs an immutable artifact)",
+                status=400,
+                code="invalid_trigger",
+            )
+        if kind == "schedule":
+            cron = config.get("cron")
+            if not isinstance(cron, str) or not cron_is_valid(cron):
+                return _error(
+                    "a `schedule` trigger requires config.cron (a valid cron expression)",
+                    status=400,
+                    code="invalid_trigger",
+                )
+        elif kind == "webhook":
+            secret = config.get("secret")
+            if not isinstance(secret, str) or not secret:
+                return _error(
+                    "a `webhook` trigger requires config.secret (the inbound signing secret)",
+                    status=400,
+                    code="invalid_trigger",
+                )
+        return None
+
+    @app.post("/triggers", dependencies=[Depends(require_auth)])
+    async def create_trigger(req: CreateTriggerRequest) -> Any:
+        invalid = _validate_trigger(req.kind, req.version, req.content_hash, req.config)
+        if invalid is not None:
+            return invalid
+        # The pinned agent must resolve NOW — registering a deploy of a nonexistent/dangling pin is
+        # a 404 here, not a surprise at fire time (§1.1; the same honest-pin discipline as invoke).
+        _ir, err = await _resolve_agent_ir(
+            req.agent_id, version=req.version, content_hash_pin=req.content_hash
+        )
+        if err is not None:
+            return err
+        async with tx() as session:
+            trigger = await triggers.create(
+                session,
+                agent_id=req.agent_id,
+                kind=req.kind,
+                version=req.version,
+                content_hash=req.content_hash,
+                config=req.config,
+                enabled=req.enabled,
+            )
+        logger.info(
+            "trigger.created",
+            extra={"trigger_id": trigger.id, "agent_id": req.agent_id, "kind": req.kind},
+        )
+        return JSONResponse(trigger.public_dump(), status_code=201)
+
+    @app.get("/triggers", dependencies=[Depends(require_auth)])
+    async def list_triggers(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await triggers.list_triggers(session, limit=limit, before=before)
+        return {"triggers": [t.public_dump() for t in rows]}
+
+    @app.get("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    async def get_trigger(trigger_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        trigger = await triggers.get(session, trigger_id)
+        if trigger is None:
+            return _error(f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found")
+        return trigger.public_dump()
+
+    @app.patch("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    async def patch_trigger(trigger_id: str, req: UpdateTriggerRequest) -> Any:
+        async with tx() as session:
+            existing = await triggers.get(session, trigger_id)
+            if existing is None:
+                return _error(
+                    f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found"
+                )
+            # A config edit is re-validated against the (immutable) kind + pin — a webhook can't
+            # lose its secret, a schedule can't get a bad cron (§3: enable/disable + edit config).
+            if req.config is not None:
+                invalid = _validate_trigger(
+                    existing.kind, existing.version, existing.content_hash, req.config
+                )
+                if invalid is not None:
+                    return invalid
+            updated = await triggers.update(
+                session, trigger_id, enabled=req.enabled, config=req.config
+            )
+        assert updated is not None
+        logger.info("trigger.updated", extra={"trigger_id": trigger_id, "enabled": updated.enabled})
+        return updated.public_dump()
+
+    @app.delete("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    async def delete_trigger(trigger_id: str) -> Response:
+        async with tx() as session:
+            deleted = await triggers.delete(session, trigger_id)
+        if not deleted:
+            return _error(f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found")
+        return Response(status_code=204)
+
+    @app.post("/agents/{agent_id}/invoke", dependencies=[Depends(require_token)])
+    async def invoke_agent(agent_id: str, req: InvokeRequest) -> Any:
+        # The HTTP trigger (§3.1): the token-authed, cockpit-free sibling of /agents/{id}/runs. Same
+        # resolution + same shared run path; the ONLY differences are the auth gate (require_token —
+        # §1.3) and the non-stream default. Returns the awaited result (stream:false) or an SSE
+        # stream (stream:true), either correlatable via GET /runs/{id}. Missing/bad token → 401
+        # (handled by the dependency before we get here).
+        ir, err = await _resolve_agent_ir(
+            agent_id, version=req.version, content_hash_pin=req.content_hash
+        )
+        if err is not None:
+            return err
+        assert ir is not None
+        logger.info("agent.invoked_unattended", extra={"agent_id": agent_id})
+        return await _execute_ir_run(
+            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+        )
+
+    @app.post("/hooks/{trigger_id}")
+    async def fire_hook(trigger_id: str, request: Request) -> Any:
+        # The webhook trigger (§3.3): an inbound URL a THIRD-PARTY system POSTs to. Authed by the
+        # per-webhook signature (HMAC-SHA256 of the raw body with config.secret), NOT the bearer
+        # token — the caller is an external system, not a credentialed user (§1.3). The raw payload
+        # maps mechanically to the agent's input (§3.3: payload → input). Bad signature → 401.
+        raw = await request.body()
+        async with tx() as session:
+            trigger = await triggers.get(session, trigger_id)
+        if trigger is None or trigger.kind != "webhook":
+            return _error(f"unknown webhook {trigger_id!r}", status=404, code="trigger_not_found")
+        if not trigger.enabled:
+            return _error(
+                f"webhook {trigger_id!r} is disabled", status=409, code="trigger_disabled"
+            )
+        secret = (trigger.config or {}).get("secret")
+        signature = request.headers.get("x-theygent-signature")
+        if not isinstance(secret, str) or not _verify_signature(secret, raw, signature):
+            return _error(
+                "invalid or missing webhook signature (X-Theygent-Signature)",
+                status=401,
+                code="invalid_signature",
+            )
+        # Mechanical payload → input: the parsed JSON body is the run input (the agent drills it
+        # with $in.in.<field> like any object input). A malformed body is a 400, never a 500.
+        try:
+            input_value = json.loads(raw) if raw else None
+        except json.JSONDecodeError:
+            return _error("webhook body is not valid JSON", status=400, code="invalid_payload")
+        result = await fire(trigger, input_value)
+        if isinstance(result, JSONResponse):  # a resolution/inference failure — relay it honestly.
+            return result
+        # Run completed in-process; return the result + run handle as 202 (an accepted, fired run).
+        return JSONResponse(result, status_code=202)
 
     # ── management plane: /admin/mcp/* (M7 — MCP server registry) ─────────
     # theygent-native management surface (like the inference plane's /admin/*). Servers connect

@@ -22,6 +22,10 @@ dependencies = [
     # M7: the official MCP Python SDK, wrapped behind `McpClient` (mcp/client.py) — the rest of
     # the control-plane never imports `mcp` directly (m7.md §3.1/§11).
     "mcp>=1.2",
+    # M12: cron parsing for the in-process schedule dispatcher (m12.md §8). Deliberately kept
+    # BEHIND the `fire()` seam / the dispatcher (dispatcher.py) so M13's durable worker can replace
+    # the tick mechanism without an API or schema change — a light, swappable dep, not a commitment.
+    "croniter>=2",
 ]
 
 [project.scripts]
