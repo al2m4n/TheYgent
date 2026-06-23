@@ -41,6 +41,42 @@ jobs:
       - name: pytest control-plane (fast suite — real HTTP seam, fake model)
         run: uv run --package theygent-control-plane pytest apps/control-plane/tests -m "not integration"
 
+  # Gates PRs touching the TS workspace (M15): the IR type-drift guard + the interface SPA
+  # (Biome · tsc · Vitest · build). The drift guard regenerates @theygent/ir-types from the
+  # Pydantic IR and fails if the checked-in generated types moved — FE/BE IR stay in lockstep
+  # (M15 §1.3 / §4). `apps/web` (the cockpit) is unchanged by M15 and keeps its own local checks.
+  frontend:
+    name: frontend (ir-types drift + interface)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: regenerate ir-types from packages/ir (the source of truth)
+        run: pnpm --filter @theygent/ir-types generate
+      - name: type-drift guard — generated IR types must match the committed ones
+        run: |
+          git diff --exit-code -- packages/ir-types/src \
+            || (echo "::error::packages/ir changed but ir-types was not regenerated — run 'pnpm --filter @theygent/ir-types generate' and commit." && exit 1)
+      - name: ir-types type-check
+        run: pnpm --filter @theygent/ir-types typecheck
+      - name: interface — biome check
+        run: pnpm --filter @theygent/interface check
+      - name: interface — type-check + build
+        run: pnpm --filter @theygent/interface build
+      - name: interface — vitest
+        run: pnpm --filter @theygent/interface test
+
   # Non-blocking (mirrors the ty hedge): runs the real llama-server loop against a
   # tiny GGUF. Job-level continue-on-error so a slow/flaky model fetch never blocks
   # a merge. Cache the GGUF so we don't re-download 101MB every run; the test skips

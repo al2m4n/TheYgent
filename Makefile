@@ -1,12 +1,12 @@
-# theygent dev Makefile — one-command bring-up / tear-down of the three local processes.
+# theygent dev Makefile — one-command bring-up / tear-down of the local processes.
 #
-#   make up     install deps, run migrations, then spin up inference + control-plane + web
+#   make up     install deps, run migrations, then spin up inference + control-plane + web + interface
 #   make down   stop everything started by `make up`
 #
-# The three processes mirror the planned topology (CLAUDE.md): inference plane (8081),
-# control-plane API (8080), cockpit SPA (5173). They run as detached background processes;
-# PIDs and logs land under .run/ (gitignored). Config is read from .env (see .env.example);
-# this Makefile sources it for the recipes that need DATABASE_URL / host+port.
+# Mirrors the planned topology (CLAUDE.md): inference plane (8081), control-plane API (8080),
+# cockpit SPA (5173), and the M15 visual interface SPA (5174). They run as detached background
+# processes; PIDs and logs land under .run/ (gitignored). Config is read from .env (see
+# .env.example); this Makefile sources it for the recipes that need DATABASE_URL / host+port.
 #
 # Prereqs not managed here: a running Postgres reachable at DATABASE_URL (migrations + the
 # control-plane need it), plus `uv` and `pnpm` on PATH.
@@ -31,7 +31,7 @@ endif
 # root pytest collides on import. Each entry is run with its own dir as rootdir.
 PY_TEST_DIRS := packages/ir apps/inference apps/control-plane
 
-.PHONY: help install migrate up start down status logs test test-py test-web
+.PHONY: help install migrate up start down status logs test test-py test-web gen-ir-types
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -50,9 +50,9 @@ migrate: ## Apply control-plane Alembic migrations (alembic upgrade head)
 	fi
 	cd apps/control-plane && uv run alembic upgrade head
 
-up: install migrate start ## Full bring-up: install, migrate, then start all three services
+up: install migrate start ## Full bring-up: install, migrate, then start all services
 
-start: ## Start inference + control-plane + web as background processes
+start: ## Start inference + control-plane + web + interface as background processes
 	@mkdir -p $(RUN_DIR)
 	echo "==> starting inference plane (:$${THEYGENT_INFERENCE_PORT:-8081})"
 	nohup uv run --package theygent-inference theygent-inference \
@@ -63,11 +63,15 @@ start: ## Start inference + control-plane + web as background processes
 	echo "==> starting cockpit (web, :5173)"
 	nohup pnpm --filter @theygent/web dev \
 		> $(RUN_DIR)/web.log 2>&1 & echo $$! > $(RUN_DIR)/web.pid
+	echo "==> starting interface (visual canvas, :5174)"
+	nohup pnpm --filter @theygent/interface dev \
+		> $(RUN_DIR)/interface.log 2>&1 & echo $$! > $(RUN_DIR)/interface.pid
 	echo ""
-	echo "All three started. Logs: make logs  |  Status: make status  |  Stop: make down"
+	echo "All started (inference :8081 · control-plane :8080 · web :5173 · interface :5174)."
+	echo "Logs: make logs  |  Status: make status  |  Stop: make down"
 
 down: ## Stop all services started by `make up`/`make start`
-	@for svc in inference control-plane web; do \
+	@for svc in inference control-plane web interface; do \
 		pidfile=$(RUN_DIR)/$$svc.pid; \
 		if [ -f $$pidfile ]; then \
 			pid=$$(cat $$pidfile); \
@@ -85,7 +89,7 @@ down: ## Stop all services started by `make up`/`make start`
 	done
 
 status: ## Show whether each service is running
-	@for svc in inference control-plane web; do \
+	@for svc in inference control-plane web interface; do \
 		pidfile=$(RUN_DIR)/$$svc.pid; \
 		if [ -f $$pidfile ] && kill -0 $$(cat $$pidfile) 2>/dev/null; then \
 			echo "  $$svc: running (pid $$(cat $$pidfile))"; \
@@ -103,9 +107,15 @@ test-py: ## Run Python tests for every package (excludes integration; pass ARGS=
 		( cd $$d && uv run pytest $(ARGS) ); \
 	done
 
-test-web: ## Run web unit tests (vitest)
+test-web: ## Run web + interface unit tests (vitest)
 	@echo "==> vitest (apps/web)"
 	pnpm --filter @theygent/web test
+	@echo "==> vitest (apps/interface — M15)"
+	pnpm --filter @theygent/interface test
 
-logs: ## Tail the logs of all three services
-	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/web.log
+gen-ir-types: ## Regenerate @theygent/ir-types from packages/ir (schema + TS + node registry)
+	@echo "==> generating ir-types from packages/ir"
+	pnpm --filter @theygent/ir-types generate
+
+logs: ## Tail the logs of all four services
+	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/web.log $(RUN_DIR)/interface.log

@@ -1,0 +1,24 @@
+{
+  "name": "@theygent/ir-types",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated TypeScript IR types + node-type registry — the FE/BE IR lockstep seam (M15 §1.3).",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node-types": "./src/node-types.json",
+    "./schema": "./src/ir.schema.json"
+  },
+  "scripts": {
+    "generate:schema": "uv run --package theygent-ir python scripts/generate.py",
+    "generate:ts": "json2ts --input src/ir.schema.json --output src/ir.d.ts --no-additionalProperties --bannerComment \"/* AUTO-GENERATED from packages/ir via pnpm --filter @theygent/ir-types generate. DO NOT EDIT. */\"",
+    "generate": "pnpm generate:schema && pnpm generate:ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.7.2"
+  }
+}

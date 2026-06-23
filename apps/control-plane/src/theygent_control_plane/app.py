@@ -243,15 +243,18 @@ def _verify_signature(secret: str, raw: bytes, provided: str | None) -> bool:
 
 
 def _default_cors_origins() -> list[str]:
-    # M8 §3.3 / §6: the cockpit SPA is served by Vite on its own port (never bundled into
-    # this app), so the browser needs CORS for the dev origin. Single-user localhost only —
-    # not a public CORS posture. Override via THEYGENT_CORS_ORIGINS (comma-separated).
+    # M8 §3.3 / §6: the dev SPAs are served by Vite on their own ports (never bundled into this
+    # app), so the browser needs CORS for each dev origin. Single-user localhost only — not a
+    # public CORS posture. Override via THEYGENT_CORS_ORIGINS (comma-separated). Two SPAs talk to
+    # the control-plane: the cockpit (:5173, M8) and the M15 visual interface (:5174).
     raw = os.environ.get("THEYGENT_CORS_ORIGINS")
     if raw:
         return [o.strip() for o in raw.split(",") if o.strip()]
     return [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
     ]
 
 
