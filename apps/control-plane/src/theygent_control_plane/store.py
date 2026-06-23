@@ -61,6 +61,7 @@ def _to_run(row: RunRow) -> Run:
         content_hash=row.content_hash,
         trigger_id=row.trigger_id,
         output=row.output,
+        awaiting_node=row.awaiting_node,
         created_at=row.created_at,
         updated_at=row.updated_at,
         completed_at=row.completed_at,
@@ -291,6 +292,10 @@ class RunStore:
             raise KeyError(run_id)
         row.status = status
         row.error = error
+        # M14 §1.1: any non-waiting transition clears the waiting-node breadcrumb — a run is only
+        # paused at a human node WHILE waiting; leaving the wait (resuming or terminalizing) clears
+        # it so a completed/failed run never carries a stale awaiting_node.
+        row.awaiting_node = None
         # M9 §2.2: persist the final output on completion. Only written when provided (an empty
         # string IS a real terminal output and is stored; None means "don't touch", so a `streaming`
         # or `failed` transition leaves it NULL).
@@ -304,6 +309,21 @@ class RunStore:
         # bulk path and never reaches here, so a swept zombie stays NULL (honest unknown end time).
         if status in _TERMINAL_STATUSES:
             row.completed_at = ts
+        await session.flush()
+        return _to_run(row)
+
+    async def mark_waiting(self, session: AsyncSession, run_id: str, node_id: str) -> Run:
+        """Pause a run at a ``human`` node (M14 §1.1): set status ``waiting`` and record which node
+        it is paused at, so ``POST /runs/{id}/resume`` can find the node (its schema + the delivery
+        target). Idempotent (a recovered durable step re-marking the same wait is a no-op write). A
+        ``waiting`` run is excluded from M9's reconcile sweep, so it survives a restart while
+        paused — the whole point of the durable wait. Does NOT stamp ``completed_at`` (not done)."""
+        row = await session.get(RunRow, run_id)
+        if row is None:  # pragma: no cover - the run is always created first
+            raise KeyError(run_id)
+        row.status = "waiting"
+        row.awaiting_node = node_id
+        row.updated_at = now()
         await session.flush()
         return _to_run(row)
 
@@ -339,6 +359,10 @@ class RunStore:
         (it died with the prior process), so ``now()`` here would be reconcile-time garbage that
         skews the duration/cost evidence. A ``failed`` run with NULL ``completed_at`` reads honestly
         as "crashed, end time unknown", distinct from a run that failed in real time."""
+        # The sweep is a WHITELIST of in-flight statuses, so M14's ``waiting`` is excluded for free
+        # AND explicitly (m14.md §1.1 / §4 the Do-NOT): a run paused at a ``human`` node is durably
+        # checkpointed on DBOS.recv and may wait for days across restarts — reconciling it to
+        # ``failed`` would defeat the durable wait. ``waiting`` is intentionally NOT in this set.
         result = await session.execute(
             update(RunRow)
             .where(RunRow.status.in_(("created", "streaming")))

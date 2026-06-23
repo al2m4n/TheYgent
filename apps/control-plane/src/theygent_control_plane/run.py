@@ -18,7 +18,11 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from ulid import ULID
 
-RunStatus = Literal["created", "streaming", "completed", "failed"]
+# M14 §1.1: ``waiting`` is the additive durable-wait status — a run paused at a ``human`` node,
+# checkpointed on ``DBOS.recv``. It is NOT ``failed`` and is deliberately EXCLUDED from M9's
+# reconciliation sweep (which touches only ``created``/``streaming``), so a run can wait
+# indefinitely across a worker restart without being reconciled to ``failed`` (m14.md §1.1 / §4).
+RunStatus = Literal["created", "streaming", "waiting", "completed", "failed"]
 
 
 def now() -> datetime:
@@ -57,6 +61,10 @@ class Run(BaseModel):
     # M9 §2.2: the run's final output, persisted on success so GET /runs/{id} can return it for an
     # un-threaded run too (not only the live SSE stream). None until a terminal output is reached.
     output: str | None = None
+    # M14 §1.1: when a run is ``waiting`` at a ``human`` node, the id of that node — the "run
+    # bookkeeping" the waiting status needs. ``POST /runs/{id}/resume`` reads it to validate the
+    # awaited input against the node's declared schema and to deliver it. NULL when not waiting.
+    awaiting_node: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
     # M12 §9 evidence gate: the real terminal-completion instant (None until a real-time terminal

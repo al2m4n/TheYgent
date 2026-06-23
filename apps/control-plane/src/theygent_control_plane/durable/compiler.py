@@ -22,19 +22,25 @@ import lives only in this package — never in ``walker.py``, a node handler, or
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from dbos import DBOS
+from dbos import DBOS, Queue, SetWorkflowID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from theygent_ir import (
+    HumanConfig,
     IRDocument,
     LlmConfig,
+    LoopConfig,
+    MapConfig,
     McpToolConfig,
+    Node,
     RouterConfig,
+    SubgraphConfig,
     ToolConfig,
     content_hash,
     parse_document,
@@ -52,6 +58,8 @@ from theygent_control_plane.walker import (
     _bind_outcome,
     _collect_in_ports,
     _is_skipped,
+    _parse_if_json,
+    _PortInputs,
     _RefError,
     _render_messages,
     _resolve_ref,
@@ -68,6 +76,47 @@ from theygent_control_plane.walker import (
 from theygent_control_plane.durable.bus import DeltaBus  # isort: skip
 
 logger = logging.getLogger("theygent.control_plane.durable")
+
+# M14 §1.4: the durable queue map fan-out enqueues per-element child workflows on. Separate from the
+# top-level RUN_QUEUE so a wide fan-out never starves top-level fires. Created at import so it is
+# registered before ``DBOS.launch()`` (same discipline as RUN_QUEUE). Concurrency is bounded per-map
+# at the application layer (a semaphore around enqueue+await in ``_map_fanout``) rather than at the
+# queue, because a DBOS queue's concurrency is fixed at construction while ``map.concurrency`` is
+# per-node config; the thin-M14 bound is "how many branches in flight at once".
+MAP_QUEUE = Queue("theygent_map")
+
+# M14 §1.1: the topic the ``human`` node recvs on and ``POST /runs/{id}/resume`` sends to. A
+# constant is sufficient — human nodes execute one-at-a-time in topological order, and DBOS buffers
+# sends per topic FIFO, so a resume arriving before (or after) the node reaches recv is delivered.
+HUMAN_TOPIC = "human"
+
+# A pragmatic "wait forever" for an un-timed human wait (DBOS.recv has no None=infinite; it takes a
+# float seconds). 100 years — the run survives restarts while paused, the whole point of the durable
+# wait; a real ``timeout`` in config bounds it precisely.
+_FOREVER_SECONDS = 100 * 365 * 24 * 3600
+
+
+class SubgraphDepthError(RuntimeError):
+    """A ``subgraph``/``loop``/``map`` body would expand past its ``maxDepth`` (m14.md §1.2). The
+    depth bound prevents unbounded / mutually-recursive composition; exceeding it fails the run
+    honestly rather than recursing forever."""
+
+
+class LoopError(RuntimeError):
+    """A ``loop`` could not complete (m14.md §1.3): a body iteration failed, or its ``condition``
+    referenced a field absent from the iteration output. Fails the run honestly, with a clear
+    reason."""
+
+
+class MapError(RuntimeError):
+    """A ``map`` could not complete (m14.md §1.4): its input is not a list, or — under the
+    ``fail_fast`` policy — an element failed. Fails the run honestly with a clear reason."""
+
+
+class HumanTimeout(RuntimeError):
+    """A ``human`` wait exceeded its ``timeout`` and the node's ``on_timeout`` policy is ``fail``
+    (m14.md §1.1). Fails the run honestly (M9) rather than hanging or fabricating an input."""
+
 
 # Gateway client is imported lazily for typing only via the resources holder below.
 
@@ -241,18 +290,128 @@ async def _complete_run_step(
         await res.store.set_status(session, run_id, status, output=output, error=error)  # type: ignore[arg-type]
 
 
+@DBOS.step(**_RETRY)
+async def _mark_waiting_step(run_id: str, node_id: str) -> None:
+    """Pause the Run at a ``human`` node (M14 §1.1): status → ``waiting`` + record the node, so the
+    run is excluded from M9's sweep while paused and ``POST /runs/{id}/resume`` can find the node.
+    Idempotent (the recovered workflow re-marks the same wait — a no-op write before the recv
+    replays its buffered value)."""
+    res = _res()
+    async with res.sessionmaker() as session, session.begin():
+        await res.store.mark_waiting(session, run_id, node_id)
+
+
+@DBOS.step(**_RETRY)
+async def _set_running_step(run_id: str) -> None:
+    """Flip a resumed ``human`` run back to a running status (``streaming``) once its input
+    arrives — so the run no longer reads as ``waiting`` after recv returns (and ``awaiting_node``
+    clears)."""
+    res = _res()
+    async with res.sessionmaker() as session, session.begin():
+        await res.store.set_status(session, run_id, "streaming")
+
+
 # ── the deterministic durable walk (orchestration is inline; activities are steps) ──
 
 
+def _node_input(ports: _PortInputs, node: Node) -> Any:
+    """The value to feed a ``subgraph``/``loop``/``map`` body run (M14 §1.2 data mapping via M10
+    named ports). One in-port → that port's value verbatim (a single-input child gets the raw
+    value); several in-ports → the ``{port: value}`` object (the child's input boundary receives it
+    and drills with ``$in.in.<port>``); no in-port → ``None``. The M10 mapping at the composition
+    seam."""
+    declared = node.ports.in_
+    if not declared:
+        return None
+    if len(declared) == 1:
+        return ports.values.get(declared[0].id)
+    return {p.id: ports.values.get(p.id) for p in declared}
+
+
+def _child_ref(config: Any, depth: int) -> dict[str, Any]:
+    """Build the pinned child ``agent_ref`` for a composed body, carrying the nesting ``depth`` (M14
+    §1.2). Depth rides INSIDE the opaque ``agent_ref`` dict so the frozen ``theygent_run`` signature
+    is untouched (m14.md §0 / §4 the Do-NOT) — ``_resolve_ir_step`` ignores it, the depth guard
+    reads it. ``config`` is a Subgraph/Loop/MapConfig — all share ``agent``/``version``/
+    ``content_hash``."""
+    return {
+        "agent_id": config.agent,
+        "version": config.version,
+        "content_hash": config.content_hash,
+        "depth": depth,
+    }
+
+
+def _eval_loop_condition(condition: str, value: Any, node_id: str) -> bool:
+    """Evaluate a ``loop`` stop-condition over the iteration output (M14 §1.3). Reuses the router's
+    ``$in`` resolver (m14.md §1.3 "reuse the router expression evaluator") against a one-port map
+    binding the output to ``in`` — so ``$in.in.<field>`` drills into it exactly as everywhere else.
+    Truthy → stop the loop. A field absent from a present output is a loud :class:`LoopError` (the
+    M9/M10 no-silent-nonsense rule), never a silent ``False``."""
+    ports = _PortInputs(values={"in": value}, declared=frozenset({"in"}))
+    try:
+        resolved = _resolve_ref(condition, ports, node_id)
+    except _RefError as exc:
+        raise LoopError(
+            f"loop {node_id!r}: condition {condition!r} could not resolve over the iteration "
+            f"output: {exc}"
+        ) from exc
+    return bool(resolved)
+
+
+async def _map_fanout(
+    run_id: str,
+    node_id: str,
+    child_ref: dict[str, Any],
+    elements: list[Any],
+    concurrency: int | None,
+) -> list[dict[str, Any]]:
+    """Fan out one ``theygent_run`` child per element on the durable queue and await all, preserving
+    element order (M14 §1.4). Each element's child has a DETERMINISTIC workflow id
+    (``<run>-map-<node>-<i>``), so on resume a completed branch dedups (replays from the journal)
+    and
+    only the incomplete branches re-run — the headline durable-fan-out property. ``concurrency`` (if
+    set) bounds how many branches the parent has in flight at once via a semaphore around
+    enqueue+await; ``None`` enqueues all at once. Child failures come back as ``status='failed'``
+    result dicts (``theygent_run`` never raises), so the join is total and the policy is decided by
+    the caller."""
+    sem = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
+
+    async def _one(index: int, element: Any) -> dict[str, Any]:
+        cwid = f"{run_id}-map-{node_id}-{index}"
+        _log_branch(run_id, node_id, "map", index)  # M14 §2: one span per fan-out branch
+
+        async def _go() -> dict[str, Any]:
+            with SetWorkflowID(cwid):
+                handle = await MAP_QUEUE.enqueue_async(
+                    theygent_run, dict(child_ref), element, None, None
+                )
+            return await handle.get_result()
+
+        if sem is None:
+            return await _go()
+        async with sem:
+            return await _go()
+
+    return list(await asyncio.gather(*[_one(i, e) for i, e in enumerate(elements)]))
+
+
 async def _durable_walk(
-    ir: IRDocument, input_value: Any, run_id: str
+    ir: IRDocument, input_value: Any, run_id: str, depth: int = 0
 ) -> tuple[Any, bool, str | None]:
     """Walk a validated IR deterministically, awaiting an activity step per ``activity`` node and
     running ``orchestration``/``boundary`` inline (M13 §2). This mirrors ``walker.walk`` exactly —
     same traversal order, same edge-liveness/skip logic, same value threading — but the I/O lives in
     journaled steps so the run resumes from the last completed activity. Returns
     ``(output, output_produced, empty_reason)``. The thread-memory replay is empty on the durable
-    ``fire()`` path (un-threaded); prior messages are threaded in by the caller if ever needed."""
+    ``fire()`` path (un-threaded); prior messages are threaded in by the caller if ever needed.
+
+    M14 adds the four additive-lowering types (m14.md §1), each a new branch here, classified by its
+    existing ``kind`` — NOT a new subsystem: ``human`` (boundary) → ``DBOS.recv`` durable wait;
+    ``subgraph`` (boundary) → a ``theygent_run`` child workflow; ``loop`` (orchestration) → bounded
+    inline repetition over child workflows, deterministic control; ``map`` (orchestration) → durable
+    fan-out/join over the queue. ``depth`` is the composition nesting level (0 at the top), guarded
+    against ``maxDepth`` before any child is spawned."""
 
     values: dict[tuple[str, str], Any] = {}
     skipped: set[str] = set()
@@ -278,7 +437,56 @@ async def _durable_walk(
                 ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
                 output = _single_in_value(ports, node)
                 output_produced = True
-            else:  # human / subgraph — deferred (§7); the durable boundary mechanism lands later.
+            elif node.type == "human":
+                # M14 §1.1: a durable wait. Persist `waiting`, then `DBOS.recv` — the workflow is
+                # checkpointed here and survives a worker crash. `POST /runs/{id}/resume` → send
+                # delivers the input and the workflow resumes from the checkpoint. The awaited input
+                # binds the node's success handle(s) (the human's response flows downstream).
+                config = HumanConfig.model_validate(node.config)
+                await _mark_waiting_step(run_id, node.id)
+                timeout = config.timeout if config.timeout is not None else _FOREVER_SECONDS
+                message = await DBOS.recv_async(HUMAN_TOPIC, timeout_seconds=timeout)
+                await _set_running_step(run_id)
+                if message is None:  # timed out (recv → None) — honest fail or declared default
+                    if config.on_timeout == "fail":
+                        raise HumanTimeout(
+                            f"human node {node.id!r}: no input within {config.timeout}s "
+                            "(on_timeout=fail)"
+                        )
+                    received = config.default
+                else:
+                    # The resume payload is {"input": …}; tolerate a bare payload too (be liberal).
+                    received = message.get("input") if isinstance(message, dict) else message
+                live_handles[node.id] = _success_handles(node)
+                for handle in live_handles[node.id]:
+                    values[(node.id, handle)] = received
+            elif node.type == "subgraph":
+                # M14 §1.2: an agent calls a SAVED, PINNED agent as an independently durable child
+                # workflow. The pin is frozen into the parent IR; the depth guard prevents unbounded
+                # recursion. The parent's in-port value (M10 mapping) is the child's run input; the
+                # child's output binds the node's ok handle (a failed child binds err).
+                config = SubgraphConfig.model_validate(node.config)
+                if depth + 1 > config.max_depth:
+                    raise SubgraphDepthError(
+                        f"subgraph {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                        f"{depth + 1} (unbounded/recursive composition)"
+                    )
+                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                child_input = _node_input(ports, node)
+                child_wid = f"{run_id}-sg-{node.id}"
+                with SetWorkflowID(child_wid):
+                    handle = await DBOS.start_workflow_async(
+                        theygent_run, _child_ref(config, depth + 1), child_input, None, None
+                    )
+                child = await handle.get_result()
+                if child.get("status") == "failed":
+                    outcome = ActivityOutcome(
+                        ok=False, value=f"subgraph {config.agent!r} failed: {child.get('error')}"
+                    )
+                else:
+                    outcome = ActivityOutcome(ok=True, value=child.get("output"))
+                _bind_outcome(node, outcome, values, live_handles)
+            else:  # no other boundary types exist (NODE_TYPE_KIND pins them) — guard anyway.
                 raise NotImplementedError(
                     f"boundary node {node.id!r} (type {node.type!r}) is not implemented yet"
                 )
@@ -340,7 +548,82 @@ async def _durable_walk(
                     )
                 live_handles[node.id] = {selected}
                 values[(node.id, selected)] = _single_in_value(ports, node)
-            else:  # loop / map — deferred (§7)
+            elif node.type == "loop":
+                # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned body
+                # agent as a child workflow (deterministic id → a completed iteration replays from
+                # the journal on resume, never re-runs); the previous output feeds the next input.
+                # The control (counter, condition over journaled output) does NO I/O — the §8.1
+                # determinism guard. maxIterations caps it; an optional condition stops early.
+                config = LoopConfig.model_validate(node.config)
+                if depth + 1 > config.max_depth:
+                    raise SubgraphDepthError(
+                        f"loop {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                        f"{depth + 1}"
+                    )
+                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                current = _node_input(ports, node)
+                for i in range(config.max_iterations):
+                    child_wid = f"{run_id}-loop-{node.id}-{i}"
+                    _log_branch(run_id, node.id, "loop", i)  # M14 §2: one span per iteration
+                    with SetWorkflowID(child_wid):
+                        handle = await DBOS.start_workflow_async(
+                            theygent_run, _child_ref(config, depth + 1), current, None, None
+                        )
+                    child = await handle.get_result()
+                    if child.get("status") == "failed":
+                        raise LoopError(
+                            f"loop {node.id!r}: iteration {i} failed: {child.get('error')}"
+                        )
+                    current = child.get("output")
+                    if config.condition and _eval_loop_condition(
+                        config.condition, current, node.id
+                    ):
+                        break
+                live_handles[node.id] = _success_handles(node)
+                for handle_id in live_handles[node.id]:
+                    values[(node.id, handle_id)] = current
+            elif node.type == "map":
+                # M14 §1.4: durable fan-out/join. One child workflow per element on the durable
+                # queue; a crash mid-fan-out resumes only the incomplete branches (deterministic
+                # per-element ids). Partial-failure policy is config: fail_fast vs collect.
+                config = MapConfig.model_validate(node.config)
+                if depth + 1 > config.max_depth:
+                    raise SubgraphDepthError(
+                        f"map {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                        f"{depth + 1}"
+                    )
+                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                collection = _node_input(ports, node)
+                if not isinstance(collection, list):
+                    parsed = _parse_if_json(collection)
+                    if not isinstance(parsed, list):
+                        raise MapError(
+                            f"map {node.id!r}: input is not a list (got "
+                            f"{type(collection).__name__}); map fans out over a collection"
+                        )
+                    collection = parsed
+                results = await _map_fanout(
+                    run_id, node.id, _child_ref(config, depth + 1), collection, config.concurrency
+                )
+                failures = [(i, r) for i, r in enumerate(results) if r.get("status") == "failed"]
+                if config.on_error == "fail_fast" and failures:
+                    i, r = failures[0]
+                    raise MapError(
+                        f"map {node.id!r}: element {i} failed (fail_fast): {r.get('error')}"
+                    )
+                if config.on_error == "collect":
+                    value: Any = [
+                        {"index": i, "status": r.get("status"), "output": r.get("output")}
+                        if r.get("status") != "failed"
+                        else {"index": i, "status": "failed", "error": r.get("error")}
+                        for i, r in enumerate(results)
+                    ]
+                else:  # fail_fast and all succeeded → the ordered list of element outputs
+                    value = [r.get("output") for r in results]
+                live_handles[node.id] = _success_handles(node)
+                for handle_id in live_handles[node.id]:
+                    values[(node.id, handle_id)] = value
+            else:  # no other orchestration types exist (NODE_TYPE_KIND pins them) — guard anyway.
                 raise NotImplementedError(
                     f"orchestration node {node.id!r} (type {node.type!r}) is not implemented yet"
                 )
@@ -371,6 +654,25 @@ def _log_node(run_id: str, node: Any, *, skipped: bool) -> None:
     )
 
 
+def _log_branch(run_id: str, node_id: str, kind: str, index: int) -> None:
+    # M14 §2: loop/map emit a span PER iteration/branch so a trace reads against the drawn graph.
+    # Same attach-point fidelity as `_log_node` (the seam M5/M13 established) — a structured record
+    # keyed by run_id + node_id + index, with the per-branch span NAME stamped as `<node_id>#<i>`.
+    # Each iteration/branch is ALSO a DBOS child workflow, so DBOS's own tracer emits a workflow
+    # span per branch natively; wiring an OTLP exporter onto both remains the deferred milestone
+    # (M13 deferred it). The `#<i>` suffix is what makes the trace legible against the graph node.
+    logger.info(
+        "durable.branch",
+        extra={
+            "run_id": run_id,
+            "node_id": node_id,
+            "span_name": f"{node_id}#{index}",
+            "branch_kind": kind,  # "loop" | "map"
+            "index": index,
+        },
+    )
+
+
 # ── the one registered durable workflow (D3) ────────────────────────────────────────
 
 
@@ -391,6 +693,9 @@ async def theygent_run(
     threaded entry threads prior messages in through a step without reshaping this signature."""
 
     run_id = DBOS.workflow_id  # stable across resume — the run row is keyed by it
+    # M14 §1.2: the composition nesting depth rides inside the opaque agent_ref dict (the frozen
+    # signature is untouched). 0 at the top; a subgraph/loop/map child is spawned with depth+1.
+    depth = int(agent_ref.get("depth", 0)) if isinstance(agent_ref, dict) else 0
     ir_dict = await _resolve_ir_step(agent_ref)
     if ir_dict is None:
         # A dangling pin should be caught at trigger-create time (M12 §1.1); if it somehow reaches
@@ -414,8 +719,13 @@ async def theygent_run(
     await _create_run_step(run_id, model, ir.id, ir.version, chash, trigger_id)
 
     try:
-        output, _produced, empty_reason = await _durable_walk(ir, input_value, run_id)
+        output, _produced, empty_reason = await _durable_walk(ir, input_value, run_id, depth)
     except (RouterError, TemplateError, EngineNameNotAllowed) as exc:
+        await _complete_run_step(run_id, "failed", None, str(exc))
+        return {"runId": run_id, "status": "failed", "error": str(exc)}
+    # M14: a bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
+    # failure, exactly like the M5 router/template errors above (m14.md §1: "fails honestly").
+    except (SubgraphDepthError, LoopError, MapError, HumanTimeout) as exc:
         await _complete_run_step(run_id, "failed", None, str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
     except NotImplementedError as exc:

@@ -142,6 +142,17 @@ class DurableRuntime:
             theygent_run, agent_ref, input_value, thread_id, trigger_id
         )
 
+    async def resume(self, run_id: str, input_value: Any) -> None:
+        """Deliver the awaited input to a ``waiting`` ``human`` run (M14 §1.1) — the durable side of
+        ``POST /runs/{id}/resume``. Maps to ``DBOS.send`` to the workflow whose id IS the run id, on
+        the ``human`` topic the node recvs on; the checkpointed workflow resumes from the recv,
+        even across a worker restart. DBOS buffers the send per topic, so delivering before the node
+        reaches recv (a race) is fine. Wrapped in ``{"input": …}`` so the node can tell a delivered
+        value from a timeout (``recv`` → ``None``)."""
+        from theygent_control_plane.durable.compiler import HUMAN_TOPIC
+
+        await DBOS.send_async(run_id, {"input": input_value}, HUMAN_TOPIC)
+
     async def fire(self, trigger: Trigger, input_value: Any) -> dict[str, Any]:
         """The durable replacement for M12's ``fire`` closure (m13-dbos.md §4): enqueue the pinned
         agent's ``theygent_run`` and await its terminal result. A run whose bound inference plane is
