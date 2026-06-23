@@ -9,6 +9,8 @@ export const keys = {
   run: (id: string) => ["run", id] as const,
   threads: () => ["threads"] as const,
   thread: (id: string) => ["thread", id] as const,
+  agents: () => ["agents"] as const,
+  agent: (id: string) => ["agent", id] as const,
   models: () => ["models"] as const,
   engines: () => ["engines"] as const,
   mcpServers: () => ["mcp-servers"] as const,
@@ -51,6 +53,14 @@ export function useThread(id: string) {
   return useQuery({ queryKey: keys.thread(id), queryFn: () => api.getThread(id), enabled: !!id });
 }
 
+export function useAgents() {
+  return useQuery({ queryKey: keys.agents(), queryFn: () => api.listAgents({ limit: 50 }) });
+}
+
+export function useAgent(id: string) {
+  return useQuery({ queryKey: keys.agent(id), queryFn: () => api.getAgent(id), enabled: !!id });
+}
+
 export function useModels() {
   return useQuery({ queryKey: keys.models(), queryFn: () => api.listModels() });
 }
@@ -73,6 +83,26 @@ export function useMcpTools(name: string, enabled: boolean) {
 }
 
 // ── mutations: each invalidates the registry list it changed ─────────────────
+
+export function useAgentMutations() {
+  const qc = useQueryClient();
+  return {
+    create: useMutation({
+      mutationFn: (body: { ir: unknown; name?: string }) => api.createAgent(body),
+      onSuccess: (detail) => {
+        qc.invalidateQueries({ queryKey: keys.agents() });
+        qc.invalidateQueries({ queryKey: keys.agent(detail.id) });
+      },
+    }),
+    addVersion: useMutation({
+      mutationFn: ({ id, ir }: { id: string; ir: unknown }) => api.addAgentVersion(id, { ir }),
+      onSuccess: (detail) => {
+        qc.invalidateQueries({ queryKey: keys.agents() });
+        qc.invalidateQueries({ queryKey: keys.agent(detail.id) });
+      },
+    }),
+  };
+}
 
 export function useModelMutations() {
   const qc = useQueryClient();

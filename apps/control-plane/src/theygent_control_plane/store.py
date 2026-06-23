@@ -16,15 +16,27 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, func, insert, select, tuple_, update
+from sqlalchemy import CursorResult, and_, delete, func, insert, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from theygent_control_plane.mcp import McpServerConfig
-from theygent_control_plane.models import McpServerRow, MessageRow, RunRow, ThreadRow
+from theygent_control_plane.models import (
+    AgentRow,
+    AgentVersionRow,
+    McpServerRow,
+    MessageRow,
+    RunRow,
+    ThreadRow,
+)
 from theygent_control_plane.run import (
+    AgentDetail,
+    AgentSummary,
+    AgentVersion,
     Run,
     RunStatus,
+    StoredVersion,
     ThreadDetail,
     ThreadMessage,
     ThreadSummary,
@@ -402,3 +414,259 @@ class McpStore:
         lazy; this restores the *registry*, not the live connections)."""
         rows = (await session.execute(select(McpServerRow))).scalars().all()
         return [(row.name, _to_mcp_config(row)) for row in rows]
+
+
+class VersionConflict(Exception):
+    """Publishing *different* content under an existing ``(agent_id,version)`` (M11 §1.2).
+    Versions are immutable: a deployed/triggered (M12) version must never silently drift, so a
+    re-publish under the same coordinate with a different ``content_hash`` is rejected — bump the
+    version (§8.2). Re-publishing *identical* content is idempotent (no conflict)."""
+
+    def __init__(self, agent_id: str, version: str, existing_hash: str, new_hash: str) -> None:
+        super().__init__(
+            f"version {version!r} of agent {agent_id!r} already exists with a different content "
+            f"hash ({existing_hash} != {new_hash}); versions are immutable — bump the version"
+        )
+        self.agent_id = agent_id
+        self.version = version
+
+
+def _stored_version(row: AgentVersionRow) -> StoredVersion:
+    return StoredVersion(
+        agent_id=row.agent_id,
+        version=row.version,
+        content_hash=row.content_hash,
+        seq=row.seq,
+        created_at=row.created_at,
+        ir=dict(row.ir),
+        view=dict(row.view) if row.view is not None else None,
+    )
+
+
+class AgentStore:
+    """Postgres persistence for the agent registry (M11) — the first big consumer of the M4
+    conventions after run/thread/message. Same discipline (M4 §1.2/§1.3): stateless ops over a
+    caller-provided session (the caller owns the transaction boundary), domain entities out
+    (``AgentDetail``/``AgentSummary``/``AgentVersion``/``StoredVersion``), ORM rows never leak.
+
+    The registry stores the canonical, view-stripped §8.2 IR document — it invents no "agent format"
+    (M11 §0/§7). The ``content_hash`` it stores is the *walker's* hash for the same IR (computed by
+    the one ``theygent_ir.content_hash`` function — §1.1), so a graph the walker ran and an agent
+    the registry stored can never disagree. Versions are immutable (§1.2): the ``(agent,version)``
+    UNIQUE index is the guard, and ``add_version`` rejects a same-coordinate, different-content
+    publish loudly (``VersionConflict``)."""
+
+    async def get_agent(self, session: AsyncSession, agent_id: str) -> AgentRow | None:
+        return await session.get(AgentRow, agent_id)
+
+    async def create_agent(self, session: AsyncSession, *, agent_id: str, name: str) -> None:
+        """Create the stable agent identity row (§2). The agent ``id`` is the IR document's own §8.2
+        ``id`` (§1.1) — the IR carries its identity; the registry persists it under that key. Caller
+        has already checked the id is free (→ 409 in the endpoint); the PK is the safety net."""
+        ts = now()
+        session.add(AgentRow(id=agent_id, name=name, created_at=ts, updated_at=ts))
+        await session.flush()
+
+    async def add_version(
+        self,
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        version: str,
+        content_hash: str,
+        ir: dict[str, Any],
+        view: dict[str, Any] | None,
+    ) -> tuple[AgentVersion, bool]:
+        """Append an immutable version, returning ``(version_meta, created)``. ``created`` is False
+        when the identical content already exists under this ``(agent_id, version)`` — a re-publish
+        of the same bytes is idempotent (no conflict, no new row). Publishing *different* content
+        under an existing coordinate raises :class:`VersionConflict` (§1.2 immutability).
+
+        The agent row is locked FOR UPDATE first (like ``append_turn`` locks the thread row) so
+        concurrent publishes can't pick the same ``seq`` or both insert the same version — the
+        control-plane scales horizontally (§1.1). ``seq`` is ``max(seq) + 1`` per agent, the
+        monotonic ordering key (M4 §3), starting at 1."""
+        # Serialize against concurrent publishes to this agent (seq allocation + the existence
+        # check must be atomic — the UNIQUE index is the loud last-resort guard).
+        await session.execute(select(AgentRow.id).where(AgentRow.id == agent_id).with_for_update())
+
+        existing = (
+            await session.execute(
+                select(AgentVersionRow).where(
+                    AgentVersionRow.agent_id == agent_id, AgentVersionRow.version == version
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            if existing.content_hash == content_hash:
+                # Idempotent re-publish of identical content — return the existing version.
+                return (
+                    AgentVersion(
+                        version=existing.version,
+                        content_hash=existing.content_hash,
+                        seq=existing.seq,
+                        created_at=existing.created_at,
+                    ),
+                    False,
+                )
+            raise VersionConflict(agent_id, version, existing.content_hash, content_hash)
+
+        next_seq = (
+            await session.execute(
+                select(func.coalesce(func.max(AgentVersionRow.seq), 0) + 1).where(
+                    AgentVersionRow.agent_id == agent_id
+                )
+            )
+        ).scalar_one()
+        ts = now()
+        row = AgentVersionRow(
+            id=new_ulid(),
+            agent_id=agent_id,
+            version=version,
+            content_hash=content_hash,
+            ir=ir,
+            view=view,
+            seq=next_seq,
+            created_at=ts,
+        )
+        session.add(row)
+        # Touch the agent's updated_at so the list view's newest-activity reflects a new version.
+        agent = await session.get(AgentRow, agent_id)
+        if agent is not None:  # pragma: no branch - caller ensured it exists
+            agent.updated_at = ts
+        await session.flush()
+        return (
+            AgentVersion(version=version, content_hash=content_hash, seq=next_seq, created_at=ts),
+            True,
+        )
+
+    async def list_agents(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[AgentSummary]:
+        """Saved agents, newest first (M8 §2 list shape) — the cockpit Agents page. Each row carries
+        the latest version coordinate (highest ``seq``) + a version count, composed in one query so
+        the cockpit needs no second call (no aggregating endpoint — M11 §5). Keyset pagination on
+        ``(created_at, id)`` DESC, mirroring ``list_runs``; an unknown ``before`` id is ignored."""
+        agg = (
+            select(
+                AgentVersionRow.agent_id.label("agent_id"),
+                func.count().label("version_count"),
+                func.max(AgentVersionRow.seq).label("max_seq"),
+            )
+            .group_by(AgentVersionRow.agent_id)
+            .subquery()
+        )
+        latest = aliased(AgentVersionRow)
+        stmt = (
+            select(
+                AgentRow.id,
+                AgentRow.name,
+                AgentRow.created_at,
+                AgentRow.updated_at,
+                func.coalesce(agg.c.version_count, 0).label("version_count"),
+                latest.version,
+                latest.content_hash,
+            )
+            .outerjoin(agg, agg.c.agent_id == AgentRow.id)
+            .outerjoin(latest, and_(latest.agent_id == AgentRow.id, latest.seq == agg.c.max_seq))
+            .order_by(AgentRow.created_at.desc(), AgentRow.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            anchor = await session.get(AgentRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(AgentRow.created_at, AgentRow.id) < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).all()
+        return [
+            AgentSummary(
+                id=row.id,
+                name=row.name,
+                created_at=row.created_at,
+                updated_at=row.updated_at,
+                version_count=int(row.version_count),
+                latest_version=row.version,
+                latest_content_hash=row.content_hash,
+            )
+            for row in rows
+        ]
+
+    async def get_agent_detail(self, session: AsyncSession, agent_id: str) -> AgentDetail | None:
+        """An agent and its versions, newest first by ``seq`` (M11 §3, GET /agents/{id})."""
+        agent = await session.get(AgentRow, agent_id)
+        if agent is None:
+            return None
+        rows = (
+            (
+                await session.execute(
+                    select(AgentVersionRow)
+                    .where(AgentVersionRow.agent_id == agent_id)
+                    .order_by(AgentVersionRow.seq.desc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return AgentDetail(
+            id=agent.id,
+            name=agent.name,
+            created_at=agent.created_at,
+            updated_at=agent.updated_at,
+            versions=[
+                AgentVersion(
+                    version=r.version,
+                    content_hash=r.content_hash,
+                    seq=r.seq,
+                    created_at=r.created_at,
+                )
+                for r in rows
+            ],
+        )
+
+    async def get_version(
+        self, session: AsyncSession, agent_id: str, version: str
+    ) -> StoredVersion | None:
+        """The stored IR (+ view) for one ``(agent_id, version)`` — GET /agents/{id}/versions/{v}
+        and the pinned ``version`` invoke (M11 §3)."""
+        row = (
+            await session.execute(
+                select(AgentVersionRow).where(
+                    AgentVersionRow.agent_id == agent_id, AgentVersionRow.version == version
+                )
+            )
+        ).scalar_one_or_none()
+        return _stored_version(row) if row is not None else None
+
+    async def get_version_by_hash(
+        self, session: AsyncSession, agent_id: str, content_hash: str
+    ) -> StoredVersion | None:
+        """The stored IR for a content-addressed (pinned-by-hash) invoke (M11 §3). ``content_hash``
+        is indexed but not unique — two versions can share identical content (same hash); the
+        highest-``seq`` match is returned deterministically. Scoped to ``agent_id`` so a hash only
+        resolves within its agent."""
+        row = (
+            await session.execute(
+                select(AgentVersionRow)
+                .where(
+                    AgentVersionRow.agent_id == agent_id,
+                    AgentVersionRow.content_hash == content_hash,
+                )
+                .order_by(AgentVersionRow.seq.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return _stored_version(row) if row is not None else None
+
+    async def latest_version(self, session: AsyncSession, agent_id: str) -> StoredVersion | None:
+        """The latest published version (highest ``seq`` — M4 §3 ordering), the default an
+        unpinned invoke resolves to (M11 §3). ``None`` if the agent has no versions."""
+        row = (
+            await session.execute(
+                select(AgentVersionRow)
+                .where(AgentVersionRow.agent_id == agent_id)
+                .order_by(AgentVersionRow.seq.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        return _stored_version(row) if row is not None else None

@@ -86,6 +86,58 @@ class MessageRow(Base):
     __table_args__ = (Index("ix_message_thread_position", "thread_id", "position", unique=True),)
 
 
+class AgentRow(Base):
+    """A saved agent's stable identity (M11 §2) — the §8.2 ``id`` that is constant across every
+    version. The *content* lives in ``AgentVersionRow``; this row is just the named identity so a
+    new version of an agent never mints a new ``id``. ``owner_id``/``workspace_id`` are deliberately
+    omitted now (M11 §1.3): the Team-tier shared registry slots a scoping column in later WITHOUT a
+    reshape — exactly as the Run was built Postgres-ready before threads existed. Single-user
+    localhost until then. ``id`` is the IR document's own ``id`` (§8.2: the IR carries its identity;
+    the registry persists it under that key, so a stored agent and the Run it produces agree)."""
+
+    __tablename__ = "agent"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)  # human label; NOT the key (§2)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+class AgentVersionRow(Base):
+    """One immutable, content-addressed version of an agent (M11 §2). A given ``(agent_id,version)``
+    resolves to exactly one ``content_hash`` forever — the UNIQUE index is the immutability guard
+    (§1.2): publishing different content under an existing ``(id, version)`` is rejected, the §8.2
+    promise M12's deploys lean on. ``ir`` is the canonical, **view-stripped** §8.2 document (the
+    registry stores the IR, never an invented "agent format" — §0/§7); ``view`` (React-Flow layout)
+    is stored alongside but **never hashed** (§1.2 — dragging a node must not mint a version), so
+    ``content_hash`` == the walker's ``content_hash`` for the same IR (§1.1).
+
+    ``seq`` is the monotonic-per-agent ordering key (M4 §3): order versions by it, NEVER by ULID or
+    timestamp — clock skew across horizontally-scaled instances makes those unreliable. ``id`` is a
+    fresh ULID for the version row itself (distinct from ``agent_id``)."""
+
+    __tablename__ = "agent_version"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"))
+    version: Mapped[str] = mapped_column(String)  # semver (§8.2)
+    content_hash: Mapped[str] = mapped_column(String)  # == the walker's hash (§1.1)
+    ir: Mapped[dict] = mapped_column(JSONB)  # canonical, view-stripped IR document
+    view: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # stored, never hashed (§1.2)
+    seq: Mapped[int] = mapped_column(Integer)  # monotonic per agent; the ordering key (M4 §3)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        # The immutability guard (§1.2): one content per (agent, version), forever. A colliding
+        # publish fails loudly here even if the application-level check ever regressed.
+        Index("ix_agent_version_agent_version", "agent_id", "version", unique=True),
+        # The ordering key (M4 §3) — versions newest-first by seq, never by time/ULID.
+        Index("ix_agent_version_agent_seq", "agent_id", "seq"),
+        # Content-addressed lookup: pin-by-hash deploys in M12 resolve a version by its hash.
+        Index("ix_agent_version_content_hash", "content_hash"),
+    )
+
+
 class McpServerRow(Base):
     """A persisted MCP server registration (M9 §2.3 / F6.1) — the *registration*, never the live
     process handle. The domain shape is the manager's ``McpServerConfig`` (mcp/client.py); this row

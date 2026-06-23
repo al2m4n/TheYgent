@@ -54,9 +54,9 @@ async def _tables(url: str) -> set[str]:
     """The migration's tables that currently exist (excludes alembic's own bookkeeping)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
+        names = "'thread', 'run', 'message', 'mcp_server', 'agent', 'agent_version'"
         rows = await conn.fetch(
-            "SELECT to_regclass('public.' || t) AS reg "
-            "FROM unnest(ARRAY['thread', 'run', 'message', 'mcp_server']) AS t"
+            f"SELECT to_regclass('public.' || t) AS reg FROM unnest(ARRAY[{names}]) AS t"
         )
         return {r["reg"] for r in rows if r["reg"] is not None}
     finally:
@@ -76,7 +76,14 @@ def test_migration_round_trip(pg_url: str) -> None:
         # can't pass vacuously on an empty/no-op chain (the round-trip must exercise 0001).
         assert asyncio.run(_tables(scratch)) == set()  # scratch starts bare
         command.upgrade(cfg, "head")
-        assert asyncio.run(_tables(scratch)) == {"thread", "run", "message", "mcp_server"}  # built
+        assert asyncio.run(_tables(scratch)) == {
+            "thread",
+            "run",
+            "message",
+            "mcp_server",
+            "agent",
+            "agent_version",
+        }  # built
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
         command.upgrade(cfg, "head")
@@ -85,6 +92,8 @@ def test_migration_round_trip(pg_url: str) -> None:
             "run",
             "message",
             "mcp_server",
+            "agent",
+            "agent_version",
         }  # rebuilt
     finally:
         if previous is None:

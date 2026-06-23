@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
     GraphValidationError,
+    IRDocument,
     content_hash,
     parse_document,
     validate_graph,
@@ -45,7 +46,7 @@ from theygent_ir import (
 from theygent_control_plane import db
 from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
 from theygent_control_plane.run import Run
-from theygent_control_plane.store import McpStore, RunStore
+from theygent_control_plane.store import AgentStore, McpStore, RunStore, VersionConflict
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
@@ -96,6 +97,35 @@ class GraphRunRequest(BaseModel):
     input: Any = None
     stream: bool = True
     thread_id: str | None = None
+
+
+class CreateAgentRequest(BaseModel):
+    # M11 §3: create an agent + its first version from an IR. The agent's §8.2 id and the first
+    # version's semver come FROM the IR document (§1.1: the IR carries its identity, the registry
+    # persists it under that key — so a stored agent and the Run it produces agree on graph_id /
+    # graph_version / contentHash). ``name`` is an optional human label; it falls back to the IR's
+    # own name. The IR is a raw dict so the control-plane owns the 400 on a validation failure.
+    ir: dict[str, Any]
+    name: str | None = None
+
+
+class AddVersionRequest(BaseModel):
+    # M11 §3: add a new immutable version from an IR. The IR's id must match the URL agent id
+    # (the version belongs to that agent); its ``version`` is the new coordinate.
+    ir: dict[str, Any]
+
+
+class AgentRunRequest(BaseModel):
+    # M11 §3: invoke a saved agent by reference. ``input`` binds to the agent's input boundary node
+    # (Any, like /graphs/runs — a multi-input agent's input is naturally an object). The version is
+    # resolved as: pinned ``content_hash`` (immutable, content-addressed) > pinned ``version`` >
+    # latest published (default). ``thread_id`` reuses M4 thread memory; ``stream`` mirrors the
+    # other run surfaces. M11 ships input-only invocation (§4); typed params are deferred.
+    input: Any = None
+    version: str | None = None
+    content_hash: str | None = None
+    thread_id: str | None = None
+    stream: bool = True
 
 
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
@@ -150,6 +180,7 @@ def create_app(
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
     mcp_store = McpStore()
+    agents = AgentStore()
     # The MCP server registry/connections (m7.md §3.2). App-scoped: created once, connections are
     # lazy (no I/O at construction), torn down at shutdown. `mcp_manager` lets tests inject a
     # manager with a fake client factory.
@@ -453,16 +484,33 @@ def create_app(
             validate_graph(ir)
         except (ValidationError, GraphValidationError) as exc:
             return _error(str(exc), status=400, code="invalid_ir")
+        # 2. Execute on the shared IR-run path — the SAME path M11's /agents/{id}/runs reuses; the
+        #    only difference between the two surfaces is where the IR came from (inline body here,
+        #    the registry there). Everything below — engine/tool/MCP up-front checks, the Run row,
+        #    SSE relay, thread memory — is identical (m11.md §3).
+        return await _execute_ir_run(
+            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+        )
 
-        # 2. Resolve every llm node's model up front and reject an engine-name binding before
-        #    anything is created or sent — the §8.4/§3.2 logical-id invariant on the graph path.
+    async def _execute_ir_run(
+        ir: IRDocument, *, input_value: Any, thread_id: str | None, stream: bool
+    ) -> Any:
+        """Run a *validated* IRDocument through the M5 walker — the one execution path both
+        /graphs/runs (inline IR) and /agents/{id}/runs (saved IR) use (m11.md §3/§5). Assumes the IR
+        is already shape/graph-valid; performs the up-front engine/tool/MCP membership checks (which
+        depend on live control-plane state, so they run per-invocation, not at store time), creates
+        the Run with the graph's recorded identity (§4), and streams/completes. No new execution
+        code — M11 only changes where the IR is sourced."""
+
+        # Resolve every llm node's model up front and reject an engine-name binding before anything
+        # is created or sent — the §8.4/§3.2 logical-id invariant on the graph path.
         try:
             llms = llm_models(ir)
         except EngineNameNotAllowed as exc:
             return _error(str(exc), status=400, code="engine_name_not_allowed")
 
-        # 2b. Resolve every tool node's name against the registry up front (m6.md §5): an unknown
-        #     tool is a 400 here, before a Run exists — never a runtime surprise inside the walker.
+        # Resolve every tool node's name against the registry up front (m6.md §5): an unknown tool
+        # is a 400 here, before a Run exists — never a runtime surprise inside the walker.
         for node, tool_name in tool_nodes(ir):
             if tool_name not in DEFAULT_REGISTRY:
                 return _error(
@@ -471,9 +519,9 @@ def create_app(
                     code="tool_not_found",
                 )
 
-        # 2c. mcp_tool nodes (m7.md §4): the server must be registered (400, no Run). The tool is
-        #     checked against the server's cached capability list ONLY if it's already connected;
-        #     otherwise the IR is accepted and the runtime handler binds err on a miss (lazy).
+        # mcp_tool nodes (m7.md §4): the server must be registered (400, no Run). The tool's checked
+        # against the server's cached capability list ONLY if it's already connected; otherwise the
+        # IR is accepted and the runtime handler binds err on a miss (lazy).
         for node, server_name, mcp_tool_name in mcp_tool_nodes(ir):
             if server_name not in mcp:
                 return _error(
@@ -495,26 +543,28 @@ def create_app(
         run_model = llms[0][1] if llms else ""
         chash = content_hash(ir)
 
-        # 3. Create + persist the Run (M4) with the graph's identity recorded (§4).
+        # Create + persist the Run (M4) with the graph's identity recorded (§4). For a saved-agent
+        # invoke this is the agent's coordinate (ir.id == agent id, ir.version == the resolved
+        # version, chash == the stored content hash — §1.1), so the Run row carries it (m11.md §6).
         async with tx() as session:
-            if req.thread_id:
-                await store.ensure_thread(session, req.thread_id)
+            if thread_id:
+                await store.ensure_thread(session, thread_id)
             run = await store.create_run(
                 session,
                 model=run_model,
-                thread_id=req.thread_id,
+                thread_id=thread_id,
                 params=None,
                 graph_id=ir.id,
                 graph_version=ir.version,
                 content_hash=chash,
             )
 
-        # 4. Thread memory (M4) is unchanged through the graph path: prior turns replay into the
-        #    llm node's messages (the walker prepends ctx.prior_messages).
+        # Thread memory (M4) is unchanged through the graph path: prior turns replay into the llm
+        # node's messages (the walker prepends ctx.prior_messages).
         prior: list[dict[str, Any]] = []
-        if req.thread_id:
+        if thread_id:
             async with tx() as session:
-                prior = list(await store.load_thread_messages(session, req.thread_id))
+                prior = list(await store.load_thread_messages(session, thread_id))
         logger.info(
             "graph_run.created",
             extra={
@@ -533,9 +583,9 @@ def create_app(
             extra_headers=_headers(run),
             mcp=mcp,
         )
-        if req.stream:
-            return await _stream_graph(ir, run, req.input, ctx)
-        return await _complete_graph(ir, run, req.input, ctx)
+        if stream:
+            return await _stream_graph(ir, run, input_value, ctx)
+        return await _complete_graph(ir, run, input_value, ctx)
 
     async def _stream_graph(ir: Any, run: Run, user_input: Any, ctx: WalkContext) -> Any:
         # Prime the walker before committing to a 200 SSE response: a pre-stream error (a 503/404
@@ -667,6 +717,167 @@ def create_app(
                 )
         logger.info("graph_run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
+
+    # ── theygent-native API: /agents/* (M11 — the agent registry) ────────
+    # The lifecycle fork: a saved agent has a stable §8.2 id, immutable versioned content addressed
+    # by contentHash, and is invoked BY REFERENCE — not by pasting a graph (m11.md §0). Purely
+    # additive (§3/§7): /runs and /graphs/runs are untouched; inline IR stays the authoring loop,
+    # /agents/* is the saved loop. The registry stores the canonical §8.2 IR — it invents no agent
+    # format — and the hash it stores IS the walker's hash (§1.1), so a stored agent and the Run it
+    # produces agree byte-for-byte. Single-user localhost: no auth/RBAC/sharing built (§1.3/§7).
+
+    @app.post("/agents", status_code=201, dependencies=[Depends(require_auth)])
+    async def create_agent(req: CreateAgentRequest) -> Any:
+        # Validate the IR (M5 shape + graph checks); the agent id + first version come FROM the IR
+        # (§1.1). View is stripped before hashing (§1.2). A NEW agent only — re-using an existing
+        # id is a 409 directing the caller to POST a version (identity is immutable, not content).
+        try:
+            ir = parse_document(req.ir)
+            validate_graph(ir)
+        except (ValidationError, GraphValidationError) as exc:
+            return _error(str(exc), status=400, code="invalid_ir")
+        doc, view, chash = _canonical_ir_and_view(ir)
+        async with tx() as session:
+            if await agents.get_agent(session, ir.id) is not None:
+                return _error(
+                    f"agent {ir.id!r} already exists; add a version via "
+                    f"POST /agents/{ir.id}/versions",
+                    status=409,
+                    code="agent_exists",
+                )
+            await agents.create_agent(session, agent_id=ir.id, name=req.name or ir.name)
+            await agents.add_version(
+                session,
+                agent_id=ir.id,
+                version=ir.version,
+                content_hash=chash,
+                ir=doc,
+                view=view,
+            )
+            detail = await agents.get_agent_detail(session, ir.id)
+        assert detail is not None
+        logger.info(
+            "agent.created",
+            extra={"agent_id": ir.id, "version": ir.version, "content_hash": chash},
+        )
+        return detail.model_dump(mode="json")
+
+    @app.get("/agents", dependencies=[Depends(require_auth)])
+    async def list_agents(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        # Paginated, newest-first list (M8 §2 list shape); each row carries the latest version +
+        # count, composed client-side-friendly in one query (no aggregating endpoint — M11 §5).
+        rows = await agents.list_agents(session, limit=limit, before=before)
+        return {"agents": [a.model_dump(mode="json") for a in rows]}
+
+    @app.get("/agents/{agent_id}", dependencies=[Depends(require_auth)])
+    async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        detail = await agents.get_agent_detail(session, agent_id)
+        if detail is None:
+            return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+        return detail.model_dump(mode="json")
+
+    @app.post("/agents/{agent_id}/versions", dependencies=[Depends(require_auth)])
+    async def add_agent_version(agent_id: str, req: AddVersionRequest) -> Any:
+        try:
+            ir = parse_document(req.ir)
+            validate_graph(ir)
+        except (ValidationError, GraphValidationError) as exc:
+            return _error(str(exc), status=400, code="invalid_ir")
+        if ir.id != agent_id:
+            return _error(
+                f"IR id {ir.id!r} does not match agent {agent_id!r} in the URL; a version's IR "
+                "must carry the same §8.2 id",
+                status=400,
+                code="agent_id_mismatch",
+            )
+        doc, view, chash = _canonical_ir_and_view(ir)
+        async with tx() as session:
+            if await agents.get_agent(session, agent_id) is None:
+                return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+            try:
+                _meta, created = await agents.add_version(
+                    session,
+                    agent_id=agent_id,
+                    version=ir.version,
+                    content_hash=chash,
+                    ir=doc,
+                    view=view,
+                )
+            except VersionConflict as exc:
+                # Immutability guard (§1.2): different content under an existing (id, version).
+                return _error(str(exc), status=409, code="version_conflict")
+            detail = await agents.get_agent_detail(session, agent_id)
+        assert detail is not None
+        logger.info(
+            "agent.versioned",
+            extra={
+                "agent_id": agent_id,
+                "version": ir.version,
+                "content_hash": chash,
+                "created": created,
+            },
+        )
+        # 201 for a genuinely new version; 200 for an idempotent re-publish of identical content.
+        return JSONResponse(detail.model_dump(mode="json"), status_code=201 if created else 200)
+
+    @app.get("/agents/{agent_id}/versions/{version}", dependencies=[Depends(require_auth)])
+    async def get_agent_version(
+        agent_id: str, version: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        # The stored IR (+ view) for that version — the §8.2 document, view-stripped for hashing but
+        # returned with its view alongside (§3). The IR is authored/edited as JSON (M8), so this is
+        # what the editor reloads.
+        sv = await agents.get_version(session, agent_id, version)
+        if sv is None:
+            return _error(
+                f"agent {agent_id!r} has no version {version!r}",
+                status=404,
+                code="agent_version_not_found",
+            )
+        return sv.model_dump(mode="json")
+
+    @app.post("/agents/{agent_id}/runs", dependencies=[Depends(require_auth)])
+    async def run_agent(agent_id: str, req: AgentRunRequest) -> Any:
+        # Invoke-by-reference (m11.md §3/§5): resolve the agent's IR (pinned contentHash > pinned
+        # version > latest), then run it through the EXISTING walker path (_execute_ir_run) — same
+        # SSE relay, same Run row (recording the agent's graph_id/graph_version/contentHash), same
+        # thread memory. The only new thing is *where the IR came from*: the registry, not the body.
+        async with tx() as session:
+            agent_exists = await agents.get_agent(session, agent_id) is not None
+            if req.content_hash:
+                sv = await agents.get_version_by_hash(session, agent_id, req.content_hash)
+            elif req.version:
+                sv = await agents.get_version(session, agent_id, req.version)
+            else:
+                sv = await agents.latest_version(session, agent_id)
+        if sv is None:
+            if not agent_exists:
+                return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+            pinned = req.content_hash or req.version
+            detail = f"version {pinned!r}" if pinned else "any published version"
+            return _error(
+                f"agent {agent_id!r} has no {detail}",
+                status=404,
+                code="agent_version_not_found",
+            )
+        # The stored IR was validated at store time; re-parse (and validate) so the walker always
+        # gets a validated IRDocument (the same precondition /graphs/runs guarantees).
+        try:
+            ir = parse_document(sv.ir)
+            validate_graph(ir)
+        except (ValidationError, GraphValidationError) as exc:  # pragma: no cover - stored valid
+            return _error(str(exc), status=400, code="invalid_ir")
+        logger.info(
+            "agent.invoked",
+            extra={"agent_id": agent_id, "version": sv.version, "content_hash": sv.content_hash},
+        )
+        return await _execute_ir_run(
+            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+        )
 
     # ── management plane: /admin/mcp/* (M7 — MCP server registry) ─────────
     # theygent-native management surface (like the inference plane's /admin/*). Servers connect
@@ -816,6 +1027,22 @@ def _empty_output_reason(output: str, finish_reason: str | None) -> str | None:
             "any content — raise maxTokens (a reasoning model can spend the whole budget thinking)"
         )
     return f"output empty: the model produced no content (finish_reason={finish_reason})"
+
+
+def _canonical_ir_and_view(ir: IRDocument) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
+    """Split a validated IR into (canonical view-stripped document, view block, contentHash) for the
+    registry (M11 §1.2). The hash is the walker's ``content_hash`` (§1.1 — the one function, so a
+    stored agent and a walked graph never disagree). The stored ``ir`` is the default-filled model
+    dump (decision D2) with ``view`` removed and ``contentHash`` stamped to the computed value, so
+    the stored document is self-describing and re-parses to the identical model + identical hash.
+    The ``view`` (React-Flow layout) is stored alongside but NEVER hashed — dragging a node must not
+    mint a new version (§8.0)."""
+
+    chash = content_hash(ir)
+    doc = ir.model_dump(mode="json", by_alias=True, exclude_none=False)
+    view = doc.pop("view", None)
+    doc["contentHash"] = chash
+    return doc, view, chash
 
 
 def _coerce_output(value: Any) -> str:

@@ -3,6 +3,7 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 const NAV: { to: string; label: string; exact?: boolean }[] = [
   { to: "/", label: "Runs", exact: true },
   { to: "/threads", label: "Threads" },
+  { to: "/agents", label: "Agents" },
   { to: "/compose", label: "Compose" },
   { to: "/registries", label: "Registries" },
 ];

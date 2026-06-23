@@ -18,7 +18,10 @@ def plain_dsn(url: str) -> str:
 async def truncate(url: str) -> None:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
-        await conn.execute("TRUNCATE message, run, thread, mcp_server RESTART IDENTITY CASCADE")
+        await conn.execute(
+            "TRUNCATE message, run, thread, mcp_server, agent_version, agent "
+            "RESTART IDENTITY CASCADE"
+        )
     finally:
         await conn.close()
 
