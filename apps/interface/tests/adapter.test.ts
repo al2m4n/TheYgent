@@ -13,7 +13,7 @@ import {
 } from "../src/adapter";
 import type { ViewBlock } from "../src/adapter/types";
 import { sameHashedContent, viewStrippedContent } from "../src/lib/canonical";
-import { sampleGraph, sampleGraphNoView } from "./fixtures";
+import { nastyGraph, sampleGraph, sampleGraphNoView } from "./fixtures";
 
 describe("adapter round-trip (the headline — §4)", () => {
   it("IR → React Flow → IR is identity on view-stripped content", () => {
@@ -23,6 +23,33 @@ describe("adapter round-trip (the headline — §4)", () => {
     // the frontend analogue of M13's walker/compiler parity — the seam is lossless.
     expect(viewStrippedContent(back)).toEqual(viewStrippedContent(ir));
     expect(sameHashedContent(back, ir)).toBe(true);
+  });
+
+  it("is identity on the NASTY graph — control edges, router conditions, ok/err + multi-in ports, collapsed view", () => {
+    const ir = nastyGraph();
+    const back = reactFlowToIr(irToReactFlow(ir), ir);
+
+    // The headline: identity on the content the server would hash, for the genuinely lossy graph.
+    expect(viewStrippedContent(back)).toEqual(viewStrippedContent(ir));
+    expect(sameHashedContent(back, ir)).toBe(true);
+
+    // And spell out that each lossy surface specifically survived:
+    const edge = (id: string) => back.edges?.find((e) => e.id === id);
+    expect(edge("e6")?.channel).toBe("control"); // control channel preserved
+    expect(edge("e2")?.condition).toBe("$in.in.ok"); // router-driven condition preserved
+    expect(edge("e4")?.condition).toBe("fallback");
+    const tool = back.nodes?.find((n) => n.id === "n_tool");
+    expect(tool?.ports?.out?.map((p) => [p.id, p.type])).toEqual([
+      ["out", "any"],
+      ["err", "error"], // the ok/err shape, incl. the error-typed port
+    ]);
+    const llm = back.nodes?.find((n) => n.id === "n_llm");
+    expect(llm?.ports?.in?.map((p) => p.id)).toEqual(["file", "question"]); // multi-in-port
+
+    // The collapsed/viewport view data is view-only — it must NOT have leaked into hashed content.
+    const content = viewStrippedContent(ir) as Record<string, unknown>;
+    expect(JSON.stringify(content)).not.toContain("collapsed");
+    expect(JSON.stringify(content)).not.toContain("viewport");
   });
 
   it("preserves node and edge ids, types, ports, channels through the round-trip", () => {

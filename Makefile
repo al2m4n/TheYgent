@@ -117,5 +117,9 @@ gen-ir-types: ## Regenerate @theygent/ir-types from packages/ir (schema + TS + n
 	@echo "==> generating ir-types from packages/ir"
 	pnpm --filter @theygent/ir-types generate
 
+smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plane (needs `make up`)
+	@echo "==> interface hand-drive smoke (drag-doesn't-hash · content-does · runs unchanged)"
+	uv run --package theygent-control-plane python apps/interface/tests/smoke/hand_drive.py
+
 logs: ## Tail the logs of all four services
 	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/web.log $(RUN_DIR)/interface.log

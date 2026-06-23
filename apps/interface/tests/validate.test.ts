@@ -50,6 +50,26 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     expect(issues.some((i) => /cycle/.test(i.message))).toBe(true);
   });
 
+  it("flags schema-invalid-but-parseable config (gates Save) — not just JSON parse-ability", () => {
+    const ir = sampleGraph();
+    const llm = ir.nodes?.find((n) => n.id === "n_llm");
+    // Valid JSON, but `model` should be a string and `messages` an array of objects — the per-type
+    // JSON Schema rejects this. The editor's gate = (errorCount > 0), so this blocks save.
+    if (llm) llm.config = { model: 123, messages: "not-an-array" };
+    const issues = validateGraph(ir);
+    const errors = issues.filter((i) => i.severity === "error" && i.nodeId === "n_llm");
+    expect(errors.length).toBeGreaterThan(0);
+    // it specifically caught the type mismatches, not just "required missing".
+    expect(errors.some((e) => /config\/model/.test(e.message))).toBe(true);
+    expect(errors.some((e) => /config\/messages/.test(e.message))).toBe(true);
+  });
+
+  it("a well-typed but schema-valid config passes the schema check", () => {
+    const ir = sampleGraph();
+    // sampleGraph's llm config is { model: "default", messages: [{role,content}] } — schema-valid.
+    expect(validateGraph(ir).filter((i) => i.severity === "error")).toEqual([]);
+  });
+
   it("flags a dangling edge handle", () => {
     const ir = sampleGraph();
     // point e1 at a non-existent in-port.

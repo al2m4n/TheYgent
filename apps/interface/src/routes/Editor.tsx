@@ -173,8 +173,14 @@ export function Editor() {
     setReseedKey((k) => k + 1);
   };
 
-  // Keep the keyboard-shortcut handlers pointing at the current closures.
-  actionsRef.current = { save: onSave, deselect: () => setSelection(null) };
+  // Keep the keyboard-shortcut handlers pointing at the current closures. Cmd/Ctrl+S honors the
+  // same validation gate as the Save button — no saving an invalid graph from the keyboard.
+  actionsRef.current = {
+    save: () => {
+      if (!saving && errorCount === 0) onSave();
+    },
+    deselect: () => setSelection(null),
+  };
 
   return (
     <div className="relative flex h-full flex-col">
@@ -239,7 +245,16 @@ export function Editor() {
           <Button onClick={onRevert} disabled={!dirty} title="Discard changes since the last save">
             Revert
           </Button>
-          <Button variant="primary" onClick={onSave} disabled={saving}>
+          <Button
+            variant="primary"
+            onClick={onSave}
+            disabled={saving || errorCount > 0}
+            title={
+              errorCount > 0
+                ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before saving`
+                : "Save this agent (⌘S)"
+            }
+          >
             {saving ? "Saving…" : "Save agent"}
           </Button>
         </div>
