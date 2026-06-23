@@ -1,5 +1,5 @@
 import { Link, useParams } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { Card, ErrorBanner, Spinner, StatusBadge } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useLiveRun } from "../lib/live";
@@ -17,9 +17,17 @@ function Detail({ label, value }: { label: string; value: ReactNode }) {
 export function RunDetail() {
   const { runId } = useParams({ from: "/runs/$runId" });
   const live = useLiveRun(runId);
-  const { data: run, isLoading, error } = useRun(runId, { live: !live?.done });
+  const { data: run, isLoading, error, refetch } = useRun(runId, { live: !live?.done });
   const threadId = run?.thread_id ?? null;
   const { data: thread } = useThread(threadId ?? "");
+
+  // When a streamed run finishes, the canonical output may live ONLY in the persisted run row:
+  // a graph whose terminal node isn't an `llm` (a `tool`/`router`/`mcp_tool` output, e.g. the
+  // `echo` graph) emits NO `event: delta` frames, so `live.output` is empty. Polling stops at the
+  // terminal status, so refetch once when the stream ends to pull `run.output` (M9 §2.2).
+  useEffect(() => {
+    if (live?.done) refetch();
+  }, [live?.done, refetch]);
 
   if (isLoading) return <Spinner />;
   if (error) return <ErrorBanner error={error} />;
@@ -43,9 +51,11 @@ export function RunDetail() {
       .map((m) => m.content)
       .join("\n");
 
-  // A live run's accumulated text stays visible after it completes; otherwise use the persisted
-  // output from the run row.
-  const output = live ? live.output : persistedOutput;
+  // While streaming, show the live accumulating tokens. Once terminal, the canonical answer is the
+  // persisted run output (the output node's value) — which for a tool/router/mcp_tool-terminal
+  // graph never crossed the SSE stream as deltas, so `live.output` is empty. Prefer persisted; fall
+  // back to the streamed text only for pre-M9 runs with no persisted output.
+  const output = isStreaming ? live?.output : (persistedOutput ?? live?.output);
 
   // A reasoning model streams its thinking live (event: reasoning). Show it as progress so a long
   // thinking phase doesn't look frozen; it is never the answer.

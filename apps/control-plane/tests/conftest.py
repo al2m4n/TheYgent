@@ -50,6 +50,13 @@ def pg_url() -> Iterator[str]:
     try:
         url = container.get_connection_url()
         command.upgrade(_alembic_config(url), "head")
+        # M13 §3: the DBOS system schema (`dbos`) is migrated alongside Alembic's `public`, against
+        # the SAME throwaway Postgres — proving the two schemas coexist and the durable suite gets
+        # checkpoint tables. DBOS owns `dbos`; Alembic never touches it (decisions D5). Idempotent,
+        # so a DurableRuntime.launch() re-running it in a test is a no-op.
+        from theygent_control_plane.durable import run_dbos_migrations
+
+        run_dbos_migrations(url)
         yield url
     finally:
         container.stop()

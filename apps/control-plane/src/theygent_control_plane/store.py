@@ -118,6 +118,47 @@ class RunStore:
         await session.flush()
         return run
 
+    async def ensure_run(
+        self,
+        session: AsyncSession,
+        *,
+        run_id: str,
+        model: str,
+        graph_id: str | None = None,
+        graph_version: str | None = None,
+        content_hash: str | None = None,
+        trigger_id: str | None = None,
+    ) -> Run:
+        """Idempotently create a run row with a CALLER-CHOSEN id (M13). The durable workflow uses
+        its own ``DBOS.workflow_id`` as the run id so a resumed run reuses the same row and
+        ``GET /runs/{id}`` correlates across a crash/resume. A DBOS step may re-execute if the
+        process dies after the row commits but before the step result is journaled (at-least-once),
+        so this is ON CONFLICT DO NOTHING — a re-exec is a no-op, never a duplicate-PK crash. The
+        thread-memory path is unused on the durable ``fire()`` route (thread_id is None), so this
+        creates an un-threaded run, exactly like an interactive graph run minus the new-ULID id."""
+        ts = now()
+        await session.execute(
+            pg_insert(RunRow)
+            .values(
+                id=run_id,
+                thread_id=None,
+                status="created",
+                model=model,
+                params=None,
+                graph_id=graph_id,
+                graph_version=graph_version,
+                content_hash=content_hash,
+                trigger_id=trigger_id,
+                error=None,
+                created_at=ts,
+                updated_at=ts,
+            )
+            .on_conflict_do_nothing(index_elements=[RunRow.id])
+        )
+        row = await session.get(RunRow, run_id)
+        assert row is not None
+        return _to_run(row)
+
     async def get_run(self, session: AsyncSession, run_id: str) -> Run | None:
         row = await session.get(RunRow, run_id)
         return _to_run(row) if row is not None else None

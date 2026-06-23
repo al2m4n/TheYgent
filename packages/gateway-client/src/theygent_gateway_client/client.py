@@ -53,8 +53,16 @@ class GatewayClient:
         *,
         api_key: str = "sk-noauth",
         timeout: float = 60.0,
+        max_retries: int | None = None,
     ) -> None:
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key, timeout=timeout)
+        # ``max_retries`` defaults to the OpenAI SDK's own (None → SDK default). The **durable**
+        # runtime (M13 §2) passes ``0`` so the SDK does NOT silently retry a failed inference call —
+        # DBOS owns retry on the durable path, and a provider-side retry on top of a DBOS step retry
+        # is the double-retry hazard the milestone explicitly forbids.
+        kwargs: dict[str, Any] = {"base_url": base_url, "api_key": api_key, "timeout": timeout}
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+        self._client = AsyncOpenAI(**kwargs)
 
     async def open_stream(
         self,

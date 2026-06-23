@@ -412,6 +412,146 @@ def _render_messages(node: Node, config: LlmConfig, ports: _PortInputs) -> list[
     ]
 
 
+# ── runtime-agnostic activity executors (M13 §2) ─────────────────────────────
+#
+# The §8.7 compile contract: an ``activity`` node (``llm``/``tool``/``mcp_tool``) is a single
+# **durable step** whose body is runtime-agnostic — the M5 walker handler logic, free of any
+# runtime SDK (m13-dbos.md §2 / decisions D4). These three functions ARE that body: the durable
+# compiler (``durable/compiler.py``) wraps them in ``@DBOS.step`` and the interactive M5 walker
+# below delegates to them, so the two execution targets run the *same* activity code and
+# walker/compiler parity is structural. The ``dbos`` import never reaches this module.
+#
+# Edges/ports are NOT passed in (they are walk state): the caller resolves ``$in`` args/messages
+# deterministically (the in-port map is plain data) and hands the executor the resolved, fully
+# serializable inputs + a value back. This is what lets a durable step checkpoint serializable
+# I/O (m13-dbos.md §3 payload discipline).
+
+
+def parse_chunk(chunk: Any) -> tuple[str | None, str | None, str | None]:
+    """The one streaming-chunk parser shared by the interactive ``_walk_llm`` generator and the
+    durable ``execute_llm`` body: ``(reasoning, content, finish_reason)`` for one upstream chunk
+    (any may be ``None``). A reasoning model emits ``reasoning_content`` (thinking) before
+    ``content`` (the answer); they are kept distinct everywhere (m9.md reasoning split)."""
+
+    if not chunk.choices:
+        return None, None, None
+    choice = chunk.choices[0]
+    finish_reason = choice.finish_reason
+    delta = choice.delta
+    if delta is None:
+        return None, None, finish_reason
+    return (
+        getattr(delta, "reasoning_content", None),
+        getattr(delta, "content", None),
+        finish_reason,
+    )
+
+
+@dataclass(frozen=True)
+class LlmActivityResult:
+    """The serializable result of an ``llm`` activity (m13-dbos.md §2/§6): the assembled answer
+    (the only thing journaled), the finish reason, and whether the model truncated to empty (spent
+    its whole budget thinking — the m9.md §2.4 reason). Tokens are a non-durable side-channel that
+    already streamed during execution; this return value is the durable record."""
+
+    output: str
+    finish_reason: str | None
+    truncated_empty: bool
+
+
+async def execute_llm(
+    gateway: GatewayClient,
+    *,
+    model_id: str,
+    params: dict[str, Any],
+    messages: list[dict[str, str]],
+    extra_headers: Mapping[str, str],
+    on_delta: Any | None = None,
+) -> LlmActivityResult:
+    """Run one ``llm`` activity to completion, assembling the answer (m13-dbos.md §2). ``on_delta``
+    (``(content: str, kind: str) -> None``, optional) receives each token as a **side effect** —
+    the SSE relay / durable delta bus (§6) — while only ``content`` accumulates into the returned
+    output. A pre-stream 503/404 raises from ``open_stream`` (the caller surfaces a clean status);
+    a mid-stream inference death raises (→ failed run). The body is identical to the M5 walker's
+    ``llm`` lowering; the durable step wraps THIS, so a journaled+replayed step is not re-executed
+    and tokens are not regenerated/re-streamed (§6)."""
+
+    upstream = await gateway.open_stream(
+        model=model_id, messages=messages, params=params, extra_headers=extra_headers
+    )
+    output = ""
+    finish_reason: str | None = None
+    async for chunk in upstream:
+        reasoning, content, fr = parse_chunk(chunk)
+        if fr:
+            finish_reason = fr
+        if reasoning and on_delta is not None:
+            on_delta(reasoning, "reasoning")
+        if content:
+            output += content
+            if on_delta is not None:
+                on_delta(content, "content")
+    truncated_empty = finish_reason == "length" and not output.strip()
+    return LlmActivityResult(
+        output=output, finish_reason=finish_reason, truncated_empty=truncated_empty
+    )
+
+
+@dataclass(frozen=True)
+class ActivityOutcome:
+    """The serializable result of a ``tool`` / ``mcp_tool`` activity (m13-dbos.md §2): ``ok`` →
+    the value binds to the success handle(s); ``not ok`` → ``value`` is an actionable error message
+    bound to the ``err`` handle and the run continues (the m6.md §4 / m7.md §4 ok-err contract,
+    here as a structured return rather than handle-mutation so a durable step can checkpoint it)."""
+
+    ok: bool
+    value: Any
+
+
+async def execute_tool(
+    tools: ToolRegistry, tool_name: str, args: dict[str, Any]
+) -> ActivityOutcome:
+    """Resolve ``tool_name`` against the registry and ``await`` it with the already-resolved
+    ``args`` (m6.md §4). A raised exception is a *structured error*, not a run failure: it is
+    returned as ``ActivityOutcome(ok=False, message)`` and the caller binds ``err``. (A non-200
+    HTTP status is a normal return value bound to ``ok``; only transport failures raise.)"""
+
+    try:
+        fn = tools.get(tool_name)
+        value = await fn(**args)
+    except Exception as exc:  # tool failed: structured err, run continues (§4).
+        return ActivityOutcome(ok=False, value=str(exc))
+    return ActivityOutcome(ok=True, value=value)
+
+
+async def execute_mcp_tool(
+    mcp: McpManager, server: str, tool: str, args: dict[str, Any]
+) -> ActivityOutcome:
+    """Invoke an external MCP server's tool with already-resolved ``args`` (m7.md §4). The same
+    ok/err contract as ``execute_tool``, only the transport differs. A tool-level error
+    (``McpResult.is_error``), a transport failure after one reconnect-retry, or an unknown tool all
+    return ``ok=False`` with an **actionable** message naming the *server* and the *kind* of failure
+    (connection vs the server's own tool error vs unknown tool) so the agent reading ``err`` can
+    decide its next move. Goes through the ``invoke_mcp_tool`` governance chokepoint (m7.md §3)."""
+
+    try:
+        result = await _invoke_mcp(mcp, server, tool, args)
+        if result.is_error:
+            return ActivityOutcome(
+                ok=False,
+                value=f"mcp server {server!r} tool {tool!r} error: {_stringify(result.value)}",
+            )
+        return ActivityOutcome(ok=True, value=result.value)
+    except McpConnectionError as exc:  # unreachable even after the reconnect-retry
+        return ActivityOutcome(
+            ok=False, value=f"mcp server {server!r} unavailable (connection failed): {exc}"
+        )
+    except McpToolNotFound as exc:  # the connected server doesn't expose this tool (already named)
+        return ActivityOutcome(ok=False, value=str(exc))
+    except Exception as exc:  # a bad arg or other invocation failure
+        return ActivityOutcome(ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}")
+
+
 # ── conditional dataflow: edge liveness, node skipping (m6.md §4) ─────────────
 
 
@@ -423,6 +563,23 @@ def _success_handles(node: Node) -> set[str]:
 def _error_handles(node: Node) -> set[str]:
     """The node's ``error``-typed out-handles — where a tool's structured error is bound."""
     return {p.id for p in node.ports.out if p.type == "error"}
+
+
+def _bind_outcome(
+    node: Node,
+    outcome: ActivityOutcome,
+    values: dict[tuple[str, str], Any],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Bind a ``tool``/``mcp_tool`` :class:`ActivityOutcome` to the node's handles (m6.md §4): the
+    success value to the non-error handles on ``ok``, the error message to the ``err`` handle(s)
+    otherwise — activating exactly the taken handle set so the un-taken branch's edges are dead.
+    Shared by the interactive walker and (conceptually) the durable compiler's value threading."""
+
+    handles = _success_handles(node) if outcome.ok else _error_handles(node)
+    live_handles[node.id] = handles
+    for handle in handles:
+        values[(node.id, handle)] = outcome.value
 
 
 def _edge_live(edge: Edge, skipped: set[str], live_handles: dict[str, set[str]]) -> bool:
@@ -550,30 +707,53 @@ async def walk(
                     f"orchestration node {node.id!r} (type {node.type!r}) is not implemented yet"
                 )
 
-    # m9.md §2.4: if the walk finished with NO output node having run, and some node short-circuited
-    # to its `err` handle, the run reached no output *because* of that handled-but-unconsumed error
-    # (its `ok` path to the output was skipped). Surface an honest reason so the control-plane
-    # doesn't report a green `completed` masquerading as success. This does NOT change the M6
-    # error-as-structured-output contract: wiring `err` somewhere is still how you handle an error.
     if result is not None and result.empty_reason is None:
-        if not result.output_produced:
-            errored = [
-                node.id
-                for node in ir.nodes
-                if node.id not in skipped
-                and live_handles.get(node.id)
-                and live_handles[node.id] <= _error_handles(node)
-            ]
-            if errored:
-                result.empty_reason = f"output empty: upstream error on node {errored[0]!r}"
-        elif _is_blank(result.output) and result.truncated_empty_nodes:
-            # Output ran but is blank because an llm spent its whole budget (reasoning model
-            # thinking, or maxTokens too low) and produced no content. Name it, not a green blank.
-            result.empty_reason = (
-                f"output empty: node {result.truncated_empty_nodes[0]!r} hit the token limit "
-                "(finish_reason=length) before producing content — raise maxTokens (a reasoning "
-                "model can spend the whole budget thinking)"
-            )
+        result.empty_reason = finalize_empty_reason(
+            ir,
+            output=result.output,
+            output_produced=result.output_produced,
+            truncated_empty_nodes=result.truncated_empty_nodes,
+            skipped=skipped,
+            live_handles=live_handles,
+        )
+
+
+def finalize_empty_reason(
+    ir: IRDocument,
+    *,
+    output: Any,
+    output_produced: bool,
+    truncated_empty_nodes: list[str],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> str | None:
+    """The m9.md §2.4 honest-empty-output reason, single-sourced so the interactive walk AND the
+    durable compiler (M13) compute it identically. If the walk finished with NO output node having
+    run and some node short-circuited to its ``err`` handle, the run reached no output *because* of
+    that handled-but-unconsumed error (its ``ok`` path to the output was skipped) — name it so the
+    control-plane doesn't report a green ``completed`` masquerading as success. If the output node
+    ran but is blank because an ``llm`` spent its whole budget (a reasoning model thinking, or
+    ``maxTokens`` too low), name that instead of a green blank. Returns ``None`` when the output is
+    legitimately present. Does NOT change the M6 error-as-structured-output contract."""
+
+    if not output_produced:
+        errored = [
+            node.id
+            for node in ir.nodes
+            if node.id not in skipped
+            and live_handles.get(node.id)
+            and live_handles[node.id] <= _error_handles(node)
+        ]
+        if errored:
+            return f"output empty: upstream error on node {errored[0]!r}"
+        return None
+    if _is_blank(output) and truncated_empty_nodes:
+        return (
+            f"output empty: node {truncated_empty_nodes[0]!r} hit the token limit "
+            "(finish_reason=length) before producing content — raise maxTokens (a reasoning "
+            "model can spend the whole budget thinking)"
+        )
+    return None
 
 
 def _log_node(ctx: WalkContext, node: Node, *, skipped: bool) -> None:
@@ -643,21 +823,15 @@ async def _walk_llm(
     output = ""
     finish_reason: str | None = None
     async for chunk in upstream:
-        if not chunk.choices:
-            continue
-        choice = chunk.choices[0]
-        if choice.finish_reason:
-            finish_reason = choice.finish_reason
-        delta = choice.delta
-        if delta is None:
-            continue
-        # A reasoning model emits `reasoning_content` (its thinking) before `content` (its answer).
+        # `parse_chunk` is the one chunk parser shared with the durable `execute_llm` body (M13 §2):
+        # a reasoning model emits `reasoning_content` (its thinking) before `content` (its answer).
         # Stream the thinking as visible progress so the model doesn't look frozen, but NEVER fold
         # it into the output — only `content` is the answer (the binding downstream nodes read).
-        reasoning = getattr(delta, "reasoning_content", None)
+        reasoning, content, fr = parse_chunk(chunk)
+        if fr:
+            finish_reason = fr
         if reasoning:
             yield Delta(node_id=node.id, content=reasoning, kind="reasoning")
-        content = getattr(delta, "content", None)
         if content:
             output += content
             yield Delta(node_id=node.id, content=content)
@@ -690,40 +864,47 @@ async def _walk_tool(
 
     config = ToolConfig.model_validate(node.config)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    # Resolve args deterministically, then run the shared ``execute_tool`` activity body (M13 §2 —
+    # the same body the durable step wraps). An unresolvable ``$in`` arg ref is a structured err,
+    # exactly as a raised tool error is (m6.md §4): bind ``err``, continue.
     try:
-        fn = ctx.tools.get(config.tool)
         args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-        value = await fn(**args)
-    except Exception as exc:  # tool failed: structured err output, run continues (§4).
-        live_handles[node.id] = _error_handles(node)
-        for handle in live_handles[node.id]:
-            values[(node.id, handle)] = str(exc)
+    except Exception as exc:
+        outcome = ActivityOutcome(ok=False, value=str(exc))
+    else:
+        outcome = await execute_tool(ctx.tools, config.tool, args)
+    _bind_outcome(node, outcome, values, live_handles)
+    if not outcome.ok:
         logger.info(
             "graph.tool_error",
             extra={
                 "run_id": ctx.run_id,
                 "node_id": node.id,
                 "tool": config.tool,
-                "error": str(exc),
+                "error": outcome.value,
             },
         )
-        return
 
-    live_handles[node.id] = _success_handles(node)
-    for handle in live_handles[node.id]:
-        values[(node.id, handle)] = value
+
+async def _invoke_mcp(mcp: McpManager, server: str, tool: str, args: dict[str, Any]) -> McpResult:
+    """THE single chokepoint every ``mcp_tool`` invocation passes through (m7.md §3 governance
+    note). This is the future governance attach-point — policy-as-code and audit logging hook in
+    HERE, observing the *invocation* (which server, which tool, the arg shape), never the contents
+    the server returns (the §10 redaction posture). M7 records the seam; the L2 policy layer is a
+    separate, evidence-driven milestone. For now it simply forwards to the MCP manager. Both the
+    interactive walker (via ``invoke_mcp_tool``) and the durable step (via ``execute_mcp_tool``)
+    pass through this one function, so governance lands once for both runtimes (M13 D4)."""
+
+    return await mcp.call_tool(server, tool, args)
 
 
 async def invoke_mcp_tool(
     server: str, tool: str, args: dict[str, Any], ctx: WalkContext
 ) -> McpResult:
-    """THE single chokepoint every ``mcp_tool`` invocation passes through (m7.md §3 governance
-    note). This is the future governance attach-point — policy-as-code and audit logging hook in
-    HERE, observing the *invocation* (which server, which tool, the arg shape), never the contents
-    the server returns (the §10 redaction posture). M7 records the seam; the L2 policy layer is a
-    separate, evidence-driven milestone. For now it simply forwards to the MCP manager."""
+    """The context-bound MCP chokepoint the interactive walker uses — delegates to ``_invoke_mcp``
+    (the governance attach-point), reading the manager off the ``WalkContext``."""
 
-    return await ctx.mcp.call_tool(server, tool, args)
+    return await _invoke_mcp(ctx.mcp, server, tool, args)
 
 
 async def _walk_mcp_tool(
@@ -748,25 +929,19 @@ async def _walk_mcp_tool(
     config = McpToolConfig.model_validate(node.config)
     server, tool = config.server, config.tool
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    result: McpResult | None = None
+    # Resolve args deterministically, then run the shared ``execute_mcp_tool`` activity body (M13
+    # §2 — the same body the durable step wraps; it classifies connection/tool-not-found/tool-error
+    # into actionable ``err`` messages). A bad arg ref is itself a structured err (m7.md §4).
     try:
         args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-        result = await invoke_mcp_tool(server, tool, args, ctx)
-        if result.is_error:  # the server reported a tool-level error (its own message)
-            error_message = f"mcp server {server!r} tool {tool!r} error: {_stringify(result.value)}"
-        else:
-            error_message = None
-    except McpConnectionError as exc:  # the server is unreachable, even after the reconnect-retry
-        error_message = f"mcp server {server!r} unavailable (connection failed): {exc}"
-    except McpToolNotFound as exc:  # the connected server doesn't expose this tool (already named)
-        error_message = str(exc)
-    except Exception as exc:  # a bad arg ref or other invocation failure
-        error_message = f"mcp server {server!r} tool {tool!r} failed: {exc}"
-
-    if error_message is not None:
-        live_handles[node.id] = _error_handles(node)
-        for handle in live_handles[node.id]:
-            values[(node.id, handle)] = error_message
+    except Exception as exc:
+        outcome = ActivityOutcome(
+            ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}"
+        )
+    else:
+        outcome = await execute_mcp_tool(ctx.mcp, server, tool, args)
+    _bind_outcome(node, outcome, values, live_handles)
+    if not outcome.ok:
         logger.info(
             "graph.mcp_error",
             extra={
@@ -774,15 +949,9 @@ async def _walk_mcp_tool(
                 "node_id": node.id,
                 "server": server,
                 "tool": tool,
-                "error": error_message,
+                "error": outcome.value,
             },
         )
-        return
-
-    assert result is not None
-    live_handles[node.id] = _success_handles(node)
-    for handle in live_handles[node.id]:
-        values[(node.id, handle)] = result.value
 
 
 def _stringify(value: Any) -> str:
