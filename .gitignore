@@ -193,3 +193,6 @@ pnpm-lock.yaml
 # Vite
 .env.local
 .env.*.local
+
+# Local dev process pids/logs (Makefile `make up`/`make start`)
+.run/

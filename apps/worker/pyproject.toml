@@ -1,0 +1,39 @@
+[project]
+name = "theygent-worker"
+version = "0.1.0"
+description = "theygent durable worker — runs compiled IR workflows on DBOS (M13, §8 process type 2)"
+requires-python = ">=3.12"
+dependencies = [
+    # The worker IS the durable runtime standing up: it imports the control-plane's durable package
+    # (the §8.7 in-workflow lowering + the DBOS runtime) and its stores, and the IR. It reaches
+    # inference only over the gateway HTTP seam (the plane boundary holds — it never imports an
+    # engine). DBOS comes transitively via the control-plane, but is declared here too since the
+    # worker process owns the DBOS lifecycle.
+    "theygent-control-plane",
+    "theygent-ir",
+    "theygent-gateway-client",
+    "dbos>=2",
+]
+
+[project.scripts]
+theygent-worker = "theygent_worker.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/theygent_worker"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "ty>=0.0.1a1",
+]
+
+[tool.uv.sources]
+theygent-control-plane = { workspace = true }
+theygent-ir = { workspace = true }
+theygent-gateway-client = { workspace = true }

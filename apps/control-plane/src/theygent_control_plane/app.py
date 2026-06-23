@@ -258,7 +258,15 @@ def create_app(
     invoke_token: str | None = None,
     start_dispatcher: bool = True,
     dispatcher_interval_s: float = 5.0,
+    durable: bool = False,
+    dbos_fast_polling: bool = False,
 ) -> FastAPI:
+    # M13 (D2): durable mode re-points the unattended ``fire()`` seam (schedules + webhooks) at the
+    # DBOS durable worker and replaces the in-process dispatcher with DBOS dynamic schedules.
+    # OFF by default — DBOS is a process-global singleton, so launching it unconditionally would
+    # break the many-apps-per-process fast suite; and non-DBOS deployments stay exactly M12. The
+    # interactive streaming surfaces (/runs, /graphs/runs, /agents/{id}/runs, /agents/{id}/invoke)
+    # stay on the M5 walker in both modes — only the unattended fire path becomes durable.
     gw = gateway or GatewayClient(inference_base_url)
     store = RunStore()
     mcp_store = McpStore()
@@ -296,25 +304,58 @@ def create_app(
         async with app.state.sessionmaker() as session:
             for name, cfg in await mcp_store.list_servers(session):
                 await mcp.register(name, cfg)
-        # M12 §3: the in-process schedule dispatcher over the persisted trigger registry. Schedules
-        # "rehydrate" for free — the dispatcher re-reads enabled schedules from Postgres every tick,
-        # so a fresh instance picks up every persisted definition with no in-memory restore. The
-        # background loop is gated (start_dispatcher) so the fast suite drives `tick` deterministic-
-        # ally while production runs the clock; the dispatcher object exists either way (tests reach
-        # it).
-        dispatcher = ScheduleDispatcher(
-            sessionmaker=app.state.sessionmaker,
-            store=triggers,
-            fire=fire,
-            interval_s=dispatcher_interval_s,
-        )
-        app.state.dispatcher = dispatcher
-        if start_dispatcher:
-            dispatcher.start()
+        # M13 §4 (durable mode): the durable worker launches DBOS embedded (the desktop-sidecar
+        # topology) and DBOS dynamic schedules REPLACE the in-process dispatcher — schedules dedupe
+        # across instances, lifting the M12 single-dispatcher constraint. On boot we reconcile DBOS
+        # schedules to the enabled schedule-triggers (create missing, drop orphans). The fire() seam
+        # (webhooks + schedules) enqueues theygent_run on the durable queue.
+        app.state.dispatcher = None
+        app.state.durable_runtime = None
+        if durable:
+            from theygent_control_plane.durable import DurableRuntime
+
+            # The durable path turns OFF provider-client retry (DBOS owns retry — the double-retry
+            # hazard, m13-dbos.md §2), so it uses its own gateway against the same inference base.
+            durable_gw = GatewayClient(inference_base_url, max_retries=0)
+            app.state.durable_gateway = durable_gw
+            runtime = DurableRuntime(
+                database_url=db_url,
+                gateway=durable_gw,
+                mcp=mcp,
+                store=store,
+                agents=agents,
+                triggers=triggers,
+                sessionmaker=app.state.sessionmaker,
+                fast_polling=dbos_fast_polling,
+            )
+            runtime.launch()
+            app.state.durable_runtime = runtime
+            async with app.state.sessionmaker() as session:
+                enabled = await triggers.list_enabled_schedules(session)
+            await runtime.reconcile_schedules(enabled)
+        else:
+            # M12 §3: the in-process schedule dispatcher over the persisted trigger registry.
+            # Schedules "rehydrate" for free — the dispatcher re-reads enabled schedules from
+            # Postgres every tick, so a fresh instance picks up every persisted definition with no
+            # in-memory restore. The background loop is gated (start_dispatcher) so the fast suite
+            # drives `tick` deterministically; the dispatcher object exists either way.
+            dispatcher = ScheduleDispatcher(
+                sessionmaker=app.state.sessionmaker,
+                store=triggers,
+                fire=fire,
+                interval_s=dispatcher_interval_s,
+            )
+            app.state.dispatcher = dispatcher
+            if start_dispatcher:
+                dispatcher.start()
         try:
             yield
         finally:
-            await dispatcher.stop()  # cancel the schedule loop (M12 §3); in-process, no drain
+            if app.state.dispatcher is not None:
+                await app.state.dispatcher.stop()  # cancel the M12 schedule loop; in-process
+            if app.state.durable_runtime is not None:
+                app.state.durable_runtime.shutdown()  # DBOS.destroy() — tear down the embedded RT
+                await app.state.durable_gateway.aclose()
             await mcp.close_all()  # tear down every live MCP connection (m7.md §3.2)
             await gw.aclose()
             await engine.dispose()
@@ -1021,6 +1062,21 @@ def create_app(
         run whose bound inference plane is unreachable ends ``failed`` cleanly inside the walker
         path (§1.4 honest failure), never a hang. Returns the non-stream run result dict, or an
         ``_error`` JSONResponse the caller relays / the dispatcher logs."""
+        # M13 §4: in durable mode the fire seam enqueues theygent_run on the DBOS durable queue and
+        # awaits its terminal result — the run now survives a crash and resumes (D2/D3). The trigger
+        # definition, API, and rows are untouched; only the dispatch mechanism moved. Non-durable
+        # mode keeps the M12 in-process walk (a mid-run crash is reconciled to failed, not resumed).
+        runtime = getattr(app.state, "durable_runtime", None)
+        if runtime is not None:
+            logger.info(
+                "trigger.fire_durable",
+                extra={
+                    "trigger_id": trigger.id,
+                    "agent_id": trigger.agent_id,
+                    "kind": trigger.kind,
+                },
+            )
+            return await runtime.fire(trigger, input_value)
         ir, err = await _resolve_agent_ir(
             trigger.agent_id, version=trigger.version, content_hash_pin=trigger.content_hash
         )
@@ -1089,6 +1145,24 @@ def create_app(
                 )
         return None
 
+    async def _sync_schedule(trigger: Trigger) -> None:
+        # M13 §4: mirror a schedule trigger's state into a DBOS dynamic schedule (durable mode).
+        # theygent's `trigger` row stays the source of truth; this keeps the DBOS schedule aligned
+        # on every create/patch/delete so an enabled schedule fires and a disabled one does not.
+        runtime = getattr(app.state, "durable_runtime", None)
+        if runtime is None or trigger.kind != "schedule":
+            return
+        # Delete-then-recreate applies a cron edit AND the enabled flag in one path (upsert alone
+        # wouldn't pick up a changed cron on an existing schedule).
+        await runtime.delete_schedule(trigger.id)
+        if trigger.enabled:
+            await runtime.upsert_schedule(trigger)
+
+    async def _drop_schedule(trigger_id: str) -> None:
+        runtime = getattr(app.state, "durable_runtime", None)
+        if runtime is not None:
+            await runtime.delete_schedule(trigger_id)
+
     @app.post("/triggers", dependencies=[Depends(require_auth)])
     async def create_trigger(req: CreateTriggerRequest) -> Any:
         invalid = _validate_trigger(req.kind, req.version, req.content_hash, req.config)
@@ -1111,6 +1185,7 @@ def create_app(
                 config=req.config,
                 enabled=req.enabled,
             )
+        await _sync_schedule(trigger)
         logger.info(
             "trigger.created",
             extra={"trigger_id": trigger.id, "agent_id": req.agent_id, "kind": req.kind},
@@ -1153,6 +1228,7 @@ def create_app(
                 session, trigger_id, enabled=req.enabled, config=req.config
             )
         assert updated is not None
+        await _sync_schedule(updated)  # M13: enable/disable + cron edits re-align the DBOS schedule
         logger.info("trigger.updated", extra={"trigger_id": trigger_id, "enabled": updated.enabled})
         return updated.public_dump()
 
@@ -1162,6 +1238,7 @@ def create_app(
             deleted = await triggers.delete(session, trigger_id)
         if not deleted:
             return _error(f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found")
+        await _drop_schedule(trigger_id)  # M13: drop the DBOS schedule alongside the trigger row
         return Response(status_code=204)
 
     @app.post("/agents/{agent_id}/invoke", dependencies=[Depends(require_token)])

@@ -26,6 +26,7 @@ dependencies = [
     # BEHIND the `fire()` seam / the dispatcher (dispatcher.py) so M13's durable worker can replace
     # the tick mechanism without an API or schema change — a light, swappable dep, not a commitment.
     "croniter>=2",
+    "dbos>=1",
 ]
 
 [project.scripts]
