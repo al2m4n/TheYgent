@@ -849,3 +849,83 @@ def test_save_agent_then_invoke_by_id_across_restart() -> None:
                 assert r2.json()["status"] == "completed"
                 # A different question over the SAME saved agent → the animal fact this time.
                 assert "fox" in r2.json()["output"].lower()
+
+
+@_skip
+def test_invoke_token_authed_against_real_mlx() -> None:
+    # THE M12 deploy proof, option (a) (m12.md §5 integration / §7 step 8): with NO cockpit, a
+    # token-authed POST /agents/{id}/invoke runs the saved M11 agent on real MLX and returns a real
+    # result — and an UNAUTHENTICATED invoke is refused (401). The first time the platform exposes a
+    # deployed agent a program can call.
+    db_url = _prepare_db()
+    ir = _trivial_ir("local")
+    with _real_inference_plane() as base:
+        app = create_app(
+            inference_base_url=f"{base}/v1",
+            database_url=db_url,
+            invoke_token="deploy-tok",
+            start_dispatcher=False,
+        )
+        with TestClient(app) as client:
+            created = client.post("/agents", json={"ir": ir, "name": "deployable"})
+            assert created.status_code == 201, created.text
+            agent_id = created.json()["id"]
+            body = {"input": "Say hello in one word.", "stream": False}
+
+            # Anonymous (no token) → 401: the unattended surface is gated (§1.3).
+            assert client.post(f"/agents/{agent_id}/invoke", json=body).status_code == 401
+
+            # Token-authed → a real MLX result, cockpit-free.
+            r = client.post(
+                f"/agents/{agent_id}/invoke",
+                json=body,
+                headers={"Authorization": "Bearer deploy-tok"},
+            )
+            assert r.status_code == 200, r.text
+            assert r.json()["status"] == "completed"
+            assert r.json()["output"].strip(), "expected real generated text from MLX"
+            got = client.get(f"/runs/{r.json()['runId']}").json()
+            assert got["graph_id"] == agent_id
+            assert got["trigger_id"] is None  # a direct invoke is not trigger-fired (lineage §2)
+
+
+@_skip
+def test_schedule_fires_against_real_mlx_on_its_own() -> None:
+    # THE M12 deploy proof, option (b) (m12.md §5 integration / §7 step 8): register a near-future
+    # cron schedule pinned to the saved agent, then WATCH a Run appear and complete on its own — the
+    # real in-process dispatcher loop firing real MLX, no human in the cockpit. "It ran without me",
+    # the thing no prior milestone could show. Drives the actual background loop (start_dispatcher
+    # default on), so this genuinely demonstrates unattended firing — and polls up to ~90s because a
+    # one-minute cron resolves at the next minute boundary.
+    db_url = _prepare_db()
+    ir = _trivial_ir("local")
+    with _real_inference_plane() as base:
+        app = create_app(
+            inference_base_url=f"{base}/v1", database_url=db_url, dispatcher_interval_s=2.0
+        )
+        with TestClient(app) as client:
+            agent_id = client.post("/agents", json={"ir": ir}).json()["id"]
+            trig = client.post(
+                "/triggers",
+                json={
+                    "agent_id": agent_id,
+                    "kind": "schedule",
+                    "version": "0.1.0",
+                    "config": {"cron": "* * * * *", "input": "Say hello in one word."},
+                },
+            )
+            assert trig.status_code == 201, trig.text
+            tid = trig.json()["id"]
+
+            deadline = time.monotonic() + 90.0
+            fired = None
+            while time.monotonic() < deadline:
+                runs = client.get("/runs").json()["runs"]
+                mine = [r for r in runs if r.get("trigger_id") == tid]
+                if mine and mine[0]["status"] in ("completed", "failed"):
+                    fired = mine[0]
+                    break
+                time.sleep(2.0)
+            assert fired is not None, "the schedule never fired on its own within the deadline"
+            assert fired["status"] == "completed"
+            assert fired["graph_version"] == "0.1.0"  # the pinned version ran (§3.2)

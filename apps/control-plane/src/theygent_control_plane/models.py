@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -56,6 +56,13 @@ class RunRow(Base):
     graph_id: Mapped[str | None] = mapped_column(String, nullable=True)
     graph_version: Mapped[str | None] = mapped_column(String, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # M12 §2 (deliberate contract extension, like M5 added graph_id): which trigger fired this run.
+    # NULL = an interactive run (POST /runs, /graphs/runs, /agents/{id}/runs, /agents/{id}/invoke);
+    # populated for a schedule-/webhook-fired run, giving an unattended run lineage for the run list
+    # and debugging. A plain breadcrumb, NOT an enforced FK: a trigger can be DELETEd (§3) while its
+    # historical runs stay intact and keep recording the id of what fired them — the lineage of what
+    # *did* run must outlive the trigger definition, so a referential constraint is the wrong tool.
+    trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     # M9 §2.2 (F5.3): the run's final accumulated output, durable regardless of threading. NULL
     # for a run that never reached a terminal output (e.g. a failed run). TEXT — outputs can be
@@ -63,6 +70,12 @@ class RunRow(Base):
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
+    # M12 §9 evidence gate (m13.md §1.2): a real terminal-completion instant, so duration is
+    # exact (completed_at - created_at) instead of the updated_at proxy, AND every run is a
+    # [created_at, completed_at] interval from which system-wide concurrency is a sweep-line query.
+    # Stamped on a real-time terminal transition (completed/failed); LEFT NULL for a reconcile-swept
+    # zombie (M9 §2.1 — its true end time is unknown; now() would be reconcile-time garbage).
+    completed_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
 
 
 class MessageRow(Base):
@@ -155,3 +168,44 @@ class McpServerRow(Base):
     cwd: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+class TriggerRow(Base):
+    """A non-interactive entry point that fires a *saved, pinned* agent unattended (M12 §1.2/§2).
+
+    This row IS the hard-to-reverse seam (§1.2): the *definition* of a trigger — what fires which
+    saved agent, with what pin, on what condition — is frozen and persisted with M4 conventions; the
+    *dispatcher* that reads it and fires runs is a reversible in-process detail that M13 swaps for
+    the durable worker without reshaping this table. So losing schedules on restart is the F6.1
+    class M9 closed for the MCP/model registries — schedules persist here and rehydrate by being
+    re-read on every dispatcher tick (§3).
+
+    A trigger always pins (§1.1): exactly one of ``version`` / ``content_hash`` is set, so an
+    unattended deploy runs an immutable artifact and can never silently change because a graph was
+    edited. ``kind``-specific knobs live in ``config`` (JSONB): a cron expression (schedule), a
+    webhook signing secret (webhook), an optional input template. ``last_fired_at`` is dispatcher
+    bookkeeping — NOT part of the frozen contract — persisted so a restart neither double-fires a
+    schedule within its window nor backfills a long downtime (the dispatcher resumes from it)."""
+
+    __tablename__ = "trigger"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"))
+    # The version pin (§1.1): exactly one of version / content_hash is set — the app enforces it.
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    kind: Mapped[str] = mapped_column(String)  # http | schedule | webhook
+    # kind-specific: {"cron": …, "input": …} | {"secret": …, "input": …} | {"input": …}
+    config: Mapped[dict] = mapped_column(JSONB)
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    # Dispatcher bookkeeping (NOT the frozen contract): the last instant a schedule fired, so the
+    # next tick computes due-ness from it and a restart resumes cleanly. NULL = never fired.
+    last_fired_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        # The dispatcher lists enabled schedules every tick; agent_id supports listing a trigger's
+        # source agent. A small registry today, but the index keeps the per-tick scan honest.
+        Index("ix_trigger_agent", "agent_id"),
+    )

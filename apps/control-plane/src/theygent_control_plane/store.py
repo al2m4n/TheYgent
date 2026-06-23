@@ -29,6 +29,7 @@ from theygent_control_plane.models import (
     MessageRow,
     RunRow,
     ThreadRow,
+    TriggerRow,
 )
 from theygent_control_plane.run import (
     AgentDetail,
@@ -40,6 +41,8 @@ from theygent_control_plane.run import (
     ThreadDetail,
     ThreadMessage,
     ThreadSummary,
+    Trigger,
+    TriggerKind,
     new_ulid,
     now,
 )
@@ -56,11 +59,18 @@ def _to_run(row: RunRow) -> Run:
         graph_id=row.graph_id,
         graph_version=row.graph_version,
         content_hash=row.content_hash,
+        trigger_id=row.trigger_id,
         output=row.output,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        completed_at=row.completed_at,
         error=row.error,
     )
+
+
+# Terminal statuses get a real-time completion timestamp stamped (M12 §9 evidence gate). The
+# startup reconcile sweep deliberately does NOT use this path — a zombie's true end time is unknown.
+_TERMINAL_STATUSES = ("completed", "failed")
 
 
 class RunStore:
@@ -76,15 +86,18 @@ class RunStore:
         graph_id: str | None = None,
         graph_version: str | None = None,
         content_hash: str | None = None,
+        trigger_id: str | None = None,
     ) -> Run:
         # Graph fields default to None so the /runs path is unchanged; /graphs/runs passes them
-        # (the IR's id/version/contentHash — M5 §4).
+        # (the IR's id/version/contentHash — M5 §4). trigger_id defaults to None so every
+        # interactive path is unchanged; a schedule-/webhook-fired run passes it (M12 §2).
         run = Run(
             model=model,
             thread_id=thread_id,
             graph_id=graph_id,
             graph_version=graph_version,
             content_hash=content_hash,
+            trigger_id=trigger_id,
         )
         session.add(
             RunRow(
@@ -96,6 +109,7 @@ class RunStore:
                 graph_id=graph_id,
                 graph_version=graph_version,
                 content_hash=content_hash,
+                trigger_id=trigger_id,
                 error=None,
                 created_at=run.created_at,
                 updated_at=run.updated_at,
@@ -241,7 +255,14 @@ class RunStore:
         # or `failed` transition leaves it NULL).
         if output is not None:
             row.output = output
-        row.updated_at = now()
+        ts = now()
+        row.updated_at = ts
+        # M12 §9 evidence gate: stamp the real completion instant on a real-time terminal transition
+        # so duration (completed_at - created_at) and run-interval concurrency are exact. A
+        # non-terminal transition (`streaming`) leaves it NULL; the reconcile sweep uses its own
+        # bulk path and never reaches here, so a swept zombie stays NULL (honest unknown end time).
+        if status in _TERMINAL_STATUSES:
+            row.completed_at = ts
         await session.flush()
         return _to_run(row)
 
@@ -252,10 +273,13 @@ class RunStore:
         it race-safe: a run that already reached ``completed``/``failed`` is left untouched, so a
         late cancellation after a successful commit can't overwrite the real outcome. Returns
         whether it changed anything."""
+        ts = now()
         result = await session.execute(
             update(RunRow)
             .where(RunRow.id == run_id, RunRow.status.in_(("created", "streaming")))
-            .values(status="failed", error=reason, updated_at=now())
+            # A client-disconnect terminalization is a real-time terminal transition, so stamp
+            # completed_at (M12 §9) — unlike the startup reconcile sweep, this IS the run's end.
+            .values(status="failed", error=reason, updated_at=ts, completed_at=ts)
         )
         return bool(cast("CursorResult[Any]", result).rowcount)
 
@@ -268,7 +292,12 @@ class RunStore:
         an interrupted run distinguishable from a real inference failure. Returns the count swept.
 
         Run once at startup, before serving requests. Bulk UPDATE (no per-row domain mapping): the
-        caller owns the transaction (§1.2), exactly like every other store method."""
+        caller owns the transaction (§1.2), exactly like every other store method.
+
+        Deliberately does NOT set ``completed_at`` (M12 §9): a zombie's real end time is unknown
+        (it died with the prior process), so ``now()`` here would be reconcile-time garbage that
+        skews the duration/cost evidence. A ``failed`` run with NULL ``completed_at`` reads honestly
+        as "crashed, end time unknown", distinct from a run that failed in real time."""
         result = await session.execute(
             update(RunRow)
             .where(RunRow.status.in_(("created", "streaming")))
@@ -670,3 +699,140 @@ class AgentStore:
             )
         ).scalar_one_or_none()
         return _stored_version(row) if row is not None else None
+
+
+def _to_trigger(row: TriggerRow) -> Trigger:
+    return Trigger(
+        id=row.id,
+        agent_id=row.agent_id,
+        version=row.version,
+        content_hash=row.content_hash,
+        kind=cast(TriggerKind, row.kind),
+        config=dict(row.config or {}),
+        enabled=row.enabled,
+        last_fired_at=row.last_fired_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+class TriggerStore:
+    """Postgres persistence for the trigger registry (M12 §2) — the deploy primitive's durable seam.
+
+    Same M4 discipline (§1.2/§1.3): stateless ops over a caller-provided session, domain ``Trigger``
+    out, ``TriggerRow`` never leaks. Persisting the *definition* (not just the dispatcher state) is
+    the exact F6.1 lesson M9 taught for the MCP/model registries — a schedule lost on restart is
+    unacceptable. The dispatcher rehydrates by simply re-reading these rows each tick (M12 §3), so a
+    fresh control-plane instance picks up every persisted schedule with no in-memory restore."""
+
+    async def create(
+        self,
+        session: AsyncSession,
+        *,
+        agent_id: str,
+        kind: TriggerKind,
+        version: str | None,
+        content_hash: str | None,
+        config: dict[str, Any],
+        enabled: bool,
+    ) -> Trigger:
+        trigger = Trigger(
+            agent_id=agent_id,
+            kind=kind,
+            version=version,
+            content_hash=content_hash,
+            config=config,
+            enabled=enabled,
+        )
+        session.add(
+            TriggerRow(
+                id=trigger.id,
+                agent_id=agent_id,
+                version=version,
+                content_hash=content_hash,
+                kind=kind,
+                config=config,
+                enabled=enabled,
+                last_fired_at=None,
+                created_at=trigger.created_at,
+                updated_at=trigger.updated_at,
+            )
+        )
+        await session.flush()
+        return trigger
+
+    async def get(self, session: AsyncSession, trigger_id: str) -> Trigger | None:
+        row = await session.get(TriggerRow, trigger_id)
+        return _to_trigger(row) if row is not None else None
+
+    async def list_triggers(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[Trigger]:
+        """Triggers, newest first (M8 §2 list shape). Keyset pagination on ``(created_at, id)``
+        DESC, mirroring ``list_runs``/``list_agents``; an unknown ``before`` id is ignored."""
+        stmt = (
+            select(TriggerRow)
+            .order_by(TriggerRow.created_at.desc(), TriggerRow.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            anchor = await session.get(TriggerRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(TriggerRow.created_at, TriggerRow.id) < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_trigger(row) for row in rows]
+
+    async def update(
+        self,
+        session: AsyncSession,
+        trigger_id: str,
+        *,
+        enabled: bool | None = None,
+        config: dict[str, Any] | None = None,
+    ) -> Trigger | None:
+        """Enable/disable and/or edit config (PATCH — M12 §3). The pin and kind are immutable here:
+        editing them would change *which immutable artifact* an unattended deploy runs, so a re-pin
+        is a new trigger, not a mutation (the §1.1 immutability discipline, applied to triggers)."""
+        row = await session.get(TriggerRow, trigger_id)
+        if row is None:
+            return None
+        if enabled is not None:
+            row.enabled = enabled
+        if config is not None:
+            row.config = config
+        row.updated_at = now()
+        await session.flush()
+        return _to_trigger(row)
+
+    async def delete(self, session: AsyncSession, trigger_id: str) -> bool:
+        result = await session.execute(delete(TriggerRow).where(TriggerRow.id == trigger_id))
+        return bool(cast("CursorResult[Any]", result).rowcount)
+
+    async def list_enabled_schedules(self, session: AsyncSession) -> list[Trigger]:
+        """Every enabled ``schedule`` trigger — what the dispatcher scans each tick (M12 §3). Read
+        fresh per tick (no in-memory cache), so a new instance after a restart sees them all and a
+        disabled trigger drops out immediately."""
+        rows = (
+            (
+                await session.execute(
+                    select(TriggerRow).where(
+                        TriggerRow.kind == "schedule", TriggerRow.enabled.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [_to_trigger(row) for row in rows]
+
+    async def mark_fired(self, session: AsyncSession, trigger_id: str, fired_at: Any) -> None:
+        """Stamp ``last_fired_at`` after a schedule fires (M12 §3). The dispatcher computes the next
+        due instant from this, so persisting it makes a restart resume cleanly — neither
+        double-firing within a window nor backfilling a long downtime."""
+        await session.execute(
+            update(TriggerRow)
+            .where(TriggerRow.id == trigger_id)
+            .values(last_fired_at=fired_at, updated_at=now())
+        )

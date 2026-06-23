@@ -50,11 +50,19 @@ class Run(BaseModel):
     graph_id: str | None = None
     graph_version: str | None = None
     content_hash: str | None = None
+    # M12 §2: which trigger fired this run (None = interactive). A deliberate, additive contract
+    # extension — the third after M4's thread_id and M5's graph fields — giving an unattended run
+    # lineage back to the schedule/webhook that fired it.
+    trigger_id: str | None = None
     # M9 §2.2: the run's final output, persisted on success so GET /runs/{id} can return it for an
     # un-threaded run too (not only the live SSE stream). None until a terminal output is reached.
     output: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
+    # M12 §9 evidence gate: the real terminal-completion instant (None until a real-time terminal
+    # transition; stays None for a reconcile-swept zombie). duration = completed_at - created_at;
+    # run intervals give system-wide concurrency (m13.md §1.2).
+    completed_at: datetime | None = None
     error: str | None = None
 
 
@@ -150,3 +158,42 @@ class StoredVersion(BaseModel):
     created_at: datetime
     ir: dict[str, Any]
     view: dict[str, Any] | None = None
+
+
+# ── Trigger domain entity (M12 §1.2/§2) — the deploy primitive ───────────────────
+# The frozen trigger *contract*: what fires which saved, pinned agent, on what condition. Like
+# ``Run``/``Agent*`` it is a domain shape the store maps ``TriggerRow`` onto (§1.3), never the ORM
+# row. The dispatcher that reads it and fires runs is a reversible in-process detail (M13 swaps it
+# for the durable worker) — this shape is the hard-to-reverse seam it must not reshape.
+
+TriggerKind = Literal["http", "schedule", "webhook"]
+
+
+class Trigger(BaseModel):
+    """A persisted, non-interactive entry point for a saved agent (M12 §1.2). A trigger always pins
+    (§1.1): exactly one of ``version`` / ``content_hash`` — an unattended deploy runs an immutable
+    artifact. ``kind`` is the firing mechanism; ``config`` carries the kind-specific knobs (a cron
+    expression, a webhook signing secret, an optional input template). ``last_fired_at`` is
+    dispatcher bookkeeping, not part of the frozen contract."""
+
+    id: str = Field(default_factory=new_ulid)
+    agent_id: str
+    version: str | None = None
+    content_hash: str | None = None
+    kind: TriggerKind
+    config: dict[str, Any] = Field(default_factory=dict)
+    enabled: bool = True
+    last_fired_at: datetime | None = None
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
+
+    def public_dump(self) -> dict[str, Any]:
+        """The wire shape, with the webhook ``secret`` redacted (§1.3 / §10 sovereignty: a signing
+        secret is the user's credential — list its presence, never echo its value, mirroring how
+        ``_mcp_view`` lists ``env`` keys without values)."""
+        data = self.model_dump(mode="json")
+        config = dict(data.get("config") or {})
+        if "secret" in config:
+            config["secret"] = "***"
+        data["config"] = config
+        return data
