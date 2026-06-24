@@ -1,11 +1,18 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
+import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
 
 const rootRoute = createRootRoute({ component: Root });
 
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Home });
+
+const registriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/registries",
+  component: Registries,
+});
 
 const editorRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -18,7 +25,7 @@ const editorRoute = createRoute({
   }),
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, editorRoute]);
+const routeTree = rootRoute.addChildren([homeRoute, editorRoute, registriesRoute]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

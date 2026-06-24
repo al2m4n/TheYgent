@@ -124,6 +124,74 @@ export interface McpServerSummary {
   connected: boolean;
 }
 
+// ── inference-plane engines + capabilities (camelCase /admin/*) ──────────────
+export interface EnginesView {
+  maxResident: number;
+  resident: unknown;
+}
+
+export interface Capabilities {
+  maxContext?: number | null;
+  toolCalling?: boolean;
+  structuredOutput?: boolean;
+  vision?: boolean;
+  reasoning?: boolean;
+  approximate?: boolean;
+}
+
+// ── M16 catalog (discovery + install) wire shapes — NOT IR, just /admin/* shapes ─
+// These mirror the inference plane's normalized CatalogProvider types. They are catalog metadata,
+// never the agent IR (the IR stays a typed @theygent/ir-types IRDocument), so M15's "no hand-written
+// IR types" rule is untouched.
+export type Fit = "fits" | "tight" | "too-large" | "unknown";
+
+export interface CatalogVariant {
+  id: string;
+  label: string;
+  engine: string;
+  filename?: string | null;
+  sizeBytes?: number | null;
+  fit: Fit;
+  recommended: boolean;
+  quality?: string | null; // "balanced", "high quality", "full precision", …
+  fitReason?: string | null; // "~5 GB needed · 16 GB RAM" (tooltip)
+}
+
+export interface CatalogEntry {
+  provider: string;
+  ref: string;
+  title: string;
+  description: string;
+  category: string;
+  kind: string;
+  sovereignty: "in-domain" | "cloud-egress";
+  engines: string[];
+  badges: { downloads?: number; likes?: number; pipelineTag?: string; [k: string]: unknown };
+  params?: string | null; // "7B" / "0.5B"
+  license?: string | null; // "apache-2.0"
+  gated?: boolean; // needs an HF token
+  updatedAt?: string | null; // ISO timestamp
+  installed?: boolean; // already in the local registry
+  installedAs?: string | null; // the logical id it's installed under
+  variants: CatalogVariant[];
+}
+
+export interface CatalogList {
+  entries: CatalogEntry[];
+  engines: string[]; // the engines the inference plane has ready (the filter that was applied)
+}
+
+export interface DownloadJob {
+  id: string;
+  logicalId: string;
+  repo: string;
+  engine: string;
+  status: "downloading" | "registering" | "done" | "error" | "cancelled";
+  doneBytes: number;
+  totalBytes: number | null;
+  error: string | null;
+}
+
 export const api = {
   listAgents: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
@@ -169,5 +237,90 @@ export const api = {
   listMcpServers: () =>
     request<{ servers: McpServerSummary[] }>(CONTROL_PLANE_URL, "/admin/mcp/servers").then(
       (r) => r.servers,
+    ),
+
+  // ── inference plane: model + engine registry (the "Installed" tab) ─────────
+  // Reuses the cockpit's M8 surface verbatim (no new routes for these): register / lifecycle /
+  // capabilities all on the user-controlled inference plane, called directly.
+  getEngines: () => request<EnginesView>(INFERENCE_URL, "/admin/engines"),
+
+  getModelCapabilities: (logicalId: string) =>
+    request<Capabilities>(
+      INFERENCE_URL,
+      `/admin/models/${encodeURIComponent(logicalId)}/capabilities`,
+    ),
+
+  putModel: (logicalId: string, body: unknown) =>
+    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteModel: (logicalId: string) =>
+    request<void>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {
+      method: "DELETE",
+    }),
+
+  warmModel: (logicalId: string) =>
+    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}:warm`, {
+      method: "POST",
+    }),
+
+  evictModel: (logicalId: string) =>
+    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}:evict`, {
+      method: "POST",
+    }),
+
+  // ── inference plane: M16 catalog (the "Discover" tab) ──────────────────────
+  // Discovery + install live in the inference plane (the user's trust domain). Install downloads
+  // weights HERE and registers them locally — theygent never sees the bytes (the sovereignty promise).
+  searchCatalogModels: (
+    params: {
+      search?: string;
+      sort?: string;
+      limit?: number;
+      engines?: string[]; // narrow to a subset of ready engines
+      size?: string; // "small" | "medium" | "large" — param-size filter
+    } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.search) q.set("search", params.search);
+    if (params.sort) q.set("sort", params.sort);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.engines?.length) q.set("engines", params.engines.join(","));
+    if (params.size) q.set("size", params.size);
+    const qs = q.toString();
+    return request<CatalogList>(INFERENCE_URL, `/admin/catalog/models${qs ? `?${qs}` : ""}`);
+  },
+
+  // `ref` is a provider id like "org/name"; the route is a {repo:path} converter, so the slash is
+  // part of the path — do NOT percent-encode it (that would break the match).
+  getCatalogModel: (ref: string) =>
+    request<CatalogEntry>(INFERENCE_URL, `/admin/catalog/models/${ref}`),
+
+  installCatalogModel: (body: {
+    repo: string;
+    engine: string;
+    variantId: string;
+    logicalId: string;
+  }) =>
+    request<DownloadJob>(INFERENCE_URL, "/admin/catalog/install", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  getDownload: (id: string) =>
+    request<DownloadJob>(INFERENCE_URL, `/admin/catalog/downloads/${encodeURIComponent(id)}`),
+
+  listDownloads: () =>
+    request<{ downloads: DownloadJob[] }>(INFERENCE_URL, "/admin/catalog/downloads").then(
+      (r) => r.downloads,
+    ),
+
+  cancelDownload: (id: string) =>
+    request<DownloadJob>(
+      INFERENCE_URL,
+      `/admin/catalog/downloads/${encodeURIComponent(id)}:cancel`,
+      { method: "POST" },
     ),
 };

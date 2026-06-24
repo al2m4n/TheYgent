@@ -91,6 +91,10 @@ class Capabilities(_Wire):
     tool_calling: bool = False
     structured_output: bool = False
     vision: bool = False
+    #: The model emits a hidden chain-of-thought (a "reasoning"/"thinking" model). Detected
+    #: best-effort from the chat template (a ``<think>`` section / ``enable_thinking`` switch),
+    #: so it rides the ``approximate`` flag like the other inferred fields.
+    reasoning: bool = False
     max_context: int | None = None
     #: True when some fields are conservative/inferred rather than probed from the
     #: engine (e.g. MLX exposes no capability endpoint — same posture as the M1

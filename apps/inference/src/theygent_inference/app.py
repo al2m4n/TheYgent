@@ -21,8 +21,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 from theygent_ir import Capabilities, ManagedBinding, parse_registration
 
+from theygent_inference.catalog import (
+    ENGINE_LIBRARY,
+    CatalogError,
+    CatalogProvider,
+    CatalogQuery,
+    HuggingFaceProvider,
+    Sort,
+)
 from theygent_inference.clock import Clock
 from theygent_inference.credentials import CredentialResolutionError, resolve_credential
+from theygent_inference.downloader import Downloader, _sanitize
 from theygent_inference.eviction import EvictionPolicy, ResourceProbe
 from theygent_inference.gateway import Gateway, merge_params
 from theygent_inference.launcher import (
@@ -88,6 +97,9 @@ def create_app(
     enable_reaper: bool = True,
     cors_origins: list[str] | None = None,
     state_path: Path | None = None,
+    catalog_provider: CatalogProvider | None = None,
+    downloader: Downloader | None = None,
+    model_dir: Path | None = None,
 ) -> FastAPI:
     # M9 §2.3: persist the logical-model registry LOCALLY to the inference plane (never the
     # control-plane's Postgres — the plane boundary). `state_path=None` keeps it in-memory (the
@@ -112,6 +124,14 @@ def create_app(
         max_resident=max_resident,
     )
     gateway = Gateway()
+    # M16: discovery + in-plane install. The catalog provider (HF today; the seam takes MCP/Apify
+    # adapters later) and the downloader are injectable so the fast suite runs with a fake Hub + a
+    # fake fetcher — no network, no weights on disk. Both live HERE, in the inference plane: install
+    # downloads in the user's trust domain and registers into the local registry, never the control
+    # plane (M16 §1.2). `model_dir` is where installed weights land (used by the real downloader).
+    catalog: CatalogProvider = catalog_provider or HuggingFaceProvider()
+    _model_dir = model_dir or (Path.home() / ".theygent" / "inference" / "models")
+    downloads = downloader or Downloader(registry, _model_dir)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -147,6 +167,8 @@ def create_app(
     app.state.manager = manager
     app.state.gateway = gateway
     app.state.launcher = engine_launcher
+    app.state.catalog = catalog
+    app.state.downloader = downloads
 
     # ── management plane: /admin/* ──────────────────────────────────────
 
@@ -257,6 +279,142 @@ def create_app(
             )
         await manager.evict(logical_id)
         return JSONResponse(_model_view(logical_id))
+
+    # ── management plane: /admin/catalog/* (M16 discovery + install) ─────
+    # Browse a provider, then install the chosen variant by downloading it HERE and registering it
+    # locally. Engine-compatibility (§6) is enforced server-side: the listing is filtered to the
+    # engines this host actually has ready, so an unrunnable model is never surfaced.
+
+    def _ready_engines() -> list[str]:
+        # Map the launcher's readiness onto installable engines. The real app's dispatcher reports
+        # per-engine readiness; a single test launcher that is ready serves every binding.
+        if isinstance(engine_launcher, ManagedLauncherSet):
+            return [
+                name
+                for name, r in engine_launcher.readiness().items()
+                if r.ready and name in ENGINE_LIBRARY
+            ]
+        return list(ENGINE_LIBRARY) if getattr(engine_launcher, "ready", False) else []
+
+    def _mark_installed(entries: list[Any]) -> None:
+        # Cross-reference the local registry so the UI can show "✓ Installed" instead of re-offering
+        # a download. Installed weights register as source=local-path with the sanitized repo as a
+        # path segment (see Downloader), so we match that segment against each entry's ref.
+        seg_to_lid: dict[str, str] = {}
+        for lid, binding in registry.items():
+            if getattr(binding, "source", None) == "local-path":
+                for part in Path(binding.model).parts:
+                    seg_to_lid.setdefault(part, lid)
+        for e in entries:
+            lid = seg_to_lid.get(_sanitize(e.ref))
+            if lid:
+                e.installed = True
+                e.installed_as = lid
+
+    # Param-size buckets → HF ``num_parameters`` ranges (the size filter).
+    _SIZE_NUM_PARAMS = {"small": "max:3B", "medium": "min:3B,max:15B", "large": "min:15B"}
+
+    @app.get("/admin/catalog/models")
+    async def catalog_list(
+        search: str = "",
+        sort: Sort = "trending",
+        limit: int = 30,
+        engines: str | None = None,
+        size: str | None = None,
+    ) -> Response:
+        # `sort` is validated at the edge (an unknown value → 422) since it's the Sort literal.
+        ready = _ready_engines()
+        # An optional `engines` override narrows to a subset — but only ever within what's ready, so
+        # the §6 invariant (never surface an unrunnable model) holds even if the client asks wider.
+        if engines is not None:
+            requested = {e.strip() for e in engines.split(",") if e.strip()}
+            selected = [e for e in ready if e in requested]
+        else:
+            selected = ready
+        q = CatalogQuery(
+            search=search,
+            sort=sort,
+            limit=min(max(limit, 1), 100),
+            engines=selected,
+            num_params=_SIZE_NUM_PARAMS.get(size or ""),
+        )
+        try:
+            entries = await asyncio.to_thread(catalog.list, q)
+        except CatalogError as exc:
+            return _openai_error(str(exc), status=502, type_="server_error", code="catalog_error")
+        _mark_installed(entries)
+        return JSONResponse(
+            {"entries": [e.model_dump(by_alias=True) for e in entries], "engines": ready}
+        )
+
+    @app.get("/admin/catalog/models/{repo:path}")
+    async def catalog_get(repo: str) -> Response:
+        engines = _ready_engines()
+        q = CatalogQuery(engines=engines)
+        try:
+            entry = await asyncio.to_thread(catalog.get, repo, q)
+        except CatalogError as exc:
+            return _openai_error(str(exc), status=502, type_="server_error", code="catalog_error")
+        return JSONResponse(entry.model_dump(by_alias=True))
+
+    @app.post("/admin/catalog/install", status_code=202)
+    async def catalog_install(request: Request) -> Response:
+        body = await request.json()
+        repo = body.get("repo")
+        engine = body.get("engine")
+        variant_id = body.get("variantId", "")
+        logical_id = body.get("logicalId")
+        if not repo or not logical_id or engine not in ENGINE_LIBRARY:
+            return _openai_error(
+                "install requires `repo`, `logicalId`, and an installable `engine` "
+                f"(one of {sorted(ENGINE_LIBRARY)})",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_install",
+            )
+        if registry.get(logical_id) is not None:
+            return _openai_error(
+                f"logical id {logical_id!r} is already registered",
+                status=409,
+                type_="invalid_request_error",
+                code="logical_id_exists",
+            )
+        try:
+            plan = await asyncio.to_thread(
+                catalog.install_plan, repo, engine, variant_id, logical_id
+            )
+        except CatalogError as exc:
+            return _openai_error(str(exc), status=502, type_="server_error", code="catalog_error")
+        job = downloads.start(plan)
+        return JSONResponse(job.view(), status_code=202)
+
+    @app.get("/admin/catalog/downloads")
+    async def catalog_downloads() -> dict[str, Any]:
+        return {"downloads": [j.view() for j in downloads.list()]}
+
+    @app.get("/admin/catalog/downloads/{job_id}")
+    async def catalog_download(job_id: str) -> Response:
+        job = downloads.get(job_id)
+        if job is None:
+            return _openai_error(
+                f"unknown download {job_id!r}",
+                status=404,
+                type_="invalid_request_error",
+                code="download_not_found",
+            )
+        return JSONResponse(job.view())
+
+    @app.post("/admin/catalog/downloads/{job_id}:cancel")
+    async def catalog_download_cancel(job_id: str) -> Response:
+        job = downloads.cancel(job_id)
+        if job is None:
+            return _openai_error(
+                f"unknown download {job_id!r}",
+                status=404,
+                type_="invalid_request_error",
+                code="download_not_found",
+            )
+        return JSONResponse(job.view())
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
