@@ -8,14 +8,17 @@ import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
 import { useEffect, useId, useState } from "react";
 import {
   type Selection,
+  type ViewBlock,
   deleteEdges,
   deleteNodes,
   duplicateNode,
+  setNodeIcon,
   updateEdge,
   updateNodeConfig,
   updateNodeLabel,
 } from "../adapter";
 import { api } from "../lib/api";
+import { ICON_CHOICES, defaultIconFor } from "../lib/icons";
 import { Badge, Button, Field, Input } from "./ui";
 
 // node types whose config composes a saved, pinned agent (the `agent` field is an agent-id picker).
@@ -111,6 +114,8 @@ function NodePanel({
           />
         </Field>
 
+        <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
+
         {Object.keys(properties).length === 0 ? (
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
@@ -165,6 +170,81 @@ function NodePanel({
         />
       </div>
     </div>
+  );
+}
+
+// ── icon picker (a `view`-only display change — never hashed, §1.4) ────────────
+
+/** Pick an emoji icon for a node, or reset to its type default. The override lives in the `view`
+ * block, so it round-trips through save/load but never affects logic or version identity. */
+function IconPicker({
+  ir,
+  nodeId,
+  nodeType,
+  onChange,
+}: {
+  ir: IRDocument;
+  nodeId: string;
+  nodeType: string;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const override = (ir.view as ViewBlock | undefined)?.nodes?.[nodeId]?.icon;
+  const fallback = defaultIconFor(nodeType);
+  const current = override && override.length > 0 ? override : fallback;
+  // The icon grid is collapsible and COLLAPSED by default — the header shows the current icon so the
+  // picker stays unobtrusive until you want to change it. UI-only state, not persisted.
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Field label="Icon">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={open ? "Hide icon choices" : "Change icon"}
+        className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-500"
+      >
+        <span className="text-base leading-none">{current}</span>
+        <span className="text-slate-500">Change icon</span>
+        <span
+          className={`ml-auto text-slate-600 transition-transform ${open ? "rotate-90" : ""}`}
+          aria-hidden
+        >
+          ▸
+        </span>
+      </button>
+      {open && (
+        <div className="mt-1.5">
+          <div className="flex flex-wrap gap-1">
+            {ICON_CHOICES.map((emoji) => {
+              const active = current === emoji;
+              return (
+                <button
+                  key={emoji}
+                  type="button"
+                  title={override === emoji ? "current icon" : `use ${emoji}`}
+                  onClick={() => onChange(setNodeIcon(ir, nodeId, emoji))}
+                  className={`flex h-7 w-7 items-center justify-center rounded border text-base leading-none transition-colors ${
+                    active
+                      ? "border-blue-500 bg-blue-950"
+                      : "border-slate-700 bg-[#0e131c] hover:border-slate-500"
+                  }`}
+                >
+                  {emoji}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(setNodeIcon(ir, nodeId, null))}
+            disabled={!override}
+            className="mt-1 text-[10px] text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Reset to default ({fallback})
+          </button>
+        </div>
+      )}
+    </Field>
   );
 }
 

@@ -8,8 +8,10 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 5174,
-    strictPort: true,
+    // Defaults to :5174 (alongside the cockpit on :5173). A PORT override lets a second instance
+    // run on a free port (e.g. a preview server beside an already-running `pnpm dev`).
+    port: Number(process.env.PORT) || 5174,
+    strictPort: !process.env.PORT,
   },
   test: {
     globals: true,

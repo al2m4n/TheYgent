@@ -38,3 +38,24 @@ body {
   border-radius: 9999px;
   border: 1px solid #0b0e14;
 }
+
+/* Transient highlight: pulse the node/edge an issue (or other UI affordance) points at, so hovering
+   a list item flashes "this is the part" on the canvas. Pure styling — applied via React Flow's
+   node/edge `className` in GraphCanvas, never stored on the IR. */
+@keyframes theygent-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(96, 165, 250, 0.6);
+  }
+}
+.react-flow__node.theygent-flash {
+  animation: theygent-flash 0.7s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+.react-flow__edge.theygent-flash .react-flow__edge-path {
+  stroke: #60a5fa !important;
+  stroke-width: 3 !important;
+}

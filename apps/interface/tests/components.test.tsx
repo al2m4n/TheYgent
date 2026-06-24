@@ -7,6 +7,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { NODE_TYPE_LIST } from "@theygent/ir-types";
 import type { IRDocument } from "@theygent/ir-types";
 import type { ReactNode } from "react";
+import { IRCodeEditor } from "../src/components/IRCodeEditor";
 import { Inspector } from "../src/components/Inspector";
 import { Palette } from "../src/components/Palette";
 import { sampleGraph } from "./fixtures";
@@ -24,6 +25,72 @@ describe("Palette (derived from the registry, never hardcoded)", () => {
     for (const spec of NODE_TYPE_LIST) {
       expect(screen.getByText(spec.type)).toBeInTheDocument();
     }
+  });
+
+  it("filters to a single category when its chip is clicked", () => {
+    const boundary = NODE_TYPE_LIST.find((s) => s.kind === "boundary");
+    const activity = NODE_TYPE_LIST.find((s) => s.kind === "activity");
+    if (!boundary || !activity) throw new Error("fixture needs a boundary + activity type");
+    render(<Palette />);
+    // "I/O & Human" is the boundary category chip — clicking it hides activity-kind nodes. Use an
+    // EXACT name so we hit the chip, not the same-labelled (collapsible) category group header
+    // (whose accessible name also carries its item count, e.g. "I/O & Human 4").
+    fireEvent.click(screen.getByRole("button", { name: "I/O & Human" }));
+    expect(screen.getByText(boundary.type)).toBeInTheDocument();
+    expect(screen.queryByText(activity.type)).not.toBeInTheDocument();
+  });
+
+  it("collapses a category group when its header is clicked (expanded by default)", () => {
+    const boundary = NODE_TYPE_LIST.find((s) => s.kind === "boundary");
+    if (!boundary) throw new Error("fixture needs a boundary type");
+    render(<Palette />);
+    // Expanded by default: the group's items are visible without any interaction.
+    expect(screen.getByText(boundary.type)).toBeInTheDocument();
+    // The category header is collapsible — clicking the first group's header (boundary, per the kind
+    // order) hides that group's items. (Headers expose "Collapse category" via title while open.)
+    fireEvent.click(screen.getAllByTitle("Collapse category")[0]);
+    expect(screen.queryByText(boundary.type)).not.toBeInTheDocument();
+  });
+
+  it("filters by the search box and shows an empty state when nothing matches", () => {
+    const some = NODE_TYPE_LIST[0];
+    render(<Palette />);
+    const search = screen.getByPlaceholderText("Search nodes…");
+    fireEvent.change(search, { target: { value: some.type } });
+    expect(screen.getByText(some.type)).toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "zzz-no-such-node" } });
+    expect(screen.getByText(/No nodes match/)).toBeInTheDocument();
+  });
+});
+
+describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
+  it("shows the IR as JSON and commits a valid edit straight to the IR", () => {
+    const ir = sampleGraph();
+    let next: IRDocument | null = null;
+    render(<IRCodeEditor ir={ir} onChange={(x) => (next = x)} />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    expect(textarea.value).toContain(`"id": "${ir.id}"`);
+    const edited = JSON.stringify({ ...ir, name: "Renamed via code" }, null, 2);
+    fireEvent.change(textarea, { target: { value: edited } });
+    expect(next).not.toBeNull();
+    expect((next as unknown as IRDocument).name).toBe("Renamed via code");
+  });
+
+  it("holds invalid JSON locally — never commits, reports invalid", () => {
+    let next: IRDocument | null = null;
+    let valid = true;
+    render(
+      <IRCodeEditor
+        ir={sampleGraph()}
+        onChange={(x) => (next = x)}
+        onValidityChange={(v) => (valid = v)}
+      />,
+    );
+    const textarea = screen.getByRole("textbox");
+    fireEvent.change(textarea, { target: { value: "{ not valid json" } });
+    expect(valid).toBe(false);
+    expect(next).toBeNull();
+    expect(screen.getByText(/invalid JSON/)).toBeInTheDocument();
   });
 });
 

@@ -15,6 +15,12 @@ export interface TheygentNodeData extends Record<string, unknown> {
   nodeType: string;
   /** Declared in/out ports — the canvas renders one handle per port id. */
   ports: { in: PortView[]; out: PortView[] };
+  /** Optional user-chosen icon override (an emoji). PRESENT ONLY when the user picked one — the
+   * type's default icon is derived in NodeView, not carried here. This is the single allowed
+   * display-only addition to node data: it is sourced from and round-tripped to the `view` block
+   * (never hashed, §1.4), so it never affects logic or version identity — unlike `kind`/`models`/
+   * `contentHash`, which must never appear on a node (the one rule). */
+  icon?: string;
 }
 
 export interface PortView {
@@ -40,6 +46,8 @@ export type Selection = { kind: "node" | "edge"; id: string } | null;
 
 export interface NodeView {
   position: XYPosition;
+  /** Optional user-chosen icon (emoji) for this node — layout/display only, never hashed. */
+  icon?: string;
 }
 
 export interface ViewBlock {

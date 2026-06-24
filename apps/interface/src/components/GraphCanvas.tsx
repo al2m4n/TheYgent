@@ -50,16 +50,21 @@ interface Props {
   // Bumped by the editor (e.g. the "Tidy" button) to force a re-seed + refit from the IR even when
   // only `view` positions changed — those are excluded from the structural signature on purpose.
   reseedKey?: number;
+  // A node/edge to transiently flash (e.g. the one an issue points at, on hover) — display only.
+  highlight?: Selection;
 }
 
 type Menu = { x: number; y: number; kind: "node" | "edge"; id: string } | null;
 
 // A signature of everything the canvas renders EXCEPT positions. When it changes we re-seed React
 // Flow from the IR; a position-only change (a drag we just committed) leaves it identical, so the
-// re-seed never fires mid-interaction and fights the drag.
+// re-seed never fires mid-interaction and fights the drag. The per-node icon override (a `view`
+// display field) IS included — picking an icon must re-seed so the node re-renders, the way a label
+// edit does; it's never touched mid-drag, so it can't fight an interaction.
 function structuralSignature(ir: IRDocument): string {
+  const icons = (ir.view as { nodes?: Record<string, { icon?: string }> } | undefined)?.nodes ?? {};
   return JSON.stringify({
-    n: (ir.nodes ?? []).map((n) => [n.id, n.type, n.label, n.ports]),
+    n: (ir.nodes ?? []).map((n) => [n.id, n.type, n.label, n.ports, icons[n.id]?.icon ?? null]),
     e: (ir.edges ?? []).map((e) => [
       e.id,
       e.source,
@@ -83,7 +88,7 @@ function withSelection(
   };
 }
 
-function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0 }: Props) {
+function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, highlight }: Props) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheygentRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheygentRFEdge>([]);
@@ -130,6 +135,25 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0 }: 
       es.map((e) => ({ ...e, selected: selection?.kind === "edge" && selection.id === e.id })),
     );
   }, [selection, setRfNodes, setRfEdges]);
+
+  // Flash the node/edge the editor points at (e.g. hovering an issue). Toggles a `className` only —
+  // never touches the IR or RF's selection. Cleared when `highlight` goes null.
+  useEffect(() => {
+    setRfNodes((ns) =>
+      ns.map((n) => ({
+        ...n,
+        className:
+          highlight?.kind === "node" && highlight.id === n.id ? "theygent-flash" : undefined,
+      })),
+    );
+    setRfEdges((es) =>
+      es.map((e) => ({
+        ...e,
+        className:
+          highlight?.kind === "edge" && highlight.id === e.id ? "theygent-flash" : undefined,
+      })),
+    );
+  }, [highlight, setRfNodes, setRfEdges]);
 
   // Fit the view once, after nodes are first measured (an async-loaded agent would otherwise fit
   // against unmeasured nodes and clip off-screen). Never on edits — that would yank the user's pan.
@@ -278,18 +302,29 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0 }: 
         />
       </ReactFlow>
 
-      {/* interaction legend — makes the structural operations discoverable */}
-      <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-slate-800 bg-[#0e131c]/80 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500">
-        <div>
-          <span className="text-slate-300">Drag</span> a node from the palette to add
-        </div>
-        <div>
-          <span className="text-slate-300">Drag handle → handle</span> to connect
-        </div>
-        <div>
-          <span className="text-slate-300">Click</span> to select ·{" "}
-          <span className="text-slate-300">Del</span> to remove ·{" "}
-          <span className="text-slate-300">Right-click</span> for menu
+      {/* interaction legend — collapsed behind a help icon, revealed on hover */}
+      <div className="group absolute left-3 top-3">
+        <button
+          type="button"
+          aria-label="Canvas help"
+          className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[#0e131c]/80 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+        >
+          ?
+        </button>
+        <div className="pointer-events-none invisible absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[#0e131c]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
+          <div>
+            <span className="text-slate-300">Drag</span> a node from the palette to add
+          </div>
+          <div>
+            <span className="text-slate-300">Drag handle → handle</span> to connect ports
+          </div>
+          <div>
+            <span className="text-slate-300">Click</span> a node to select &amp; edit its config
+          </div>
+          <div>
+            <span className="text-slate-300">Del</span> to remove ·{" "}
+            <span className="text-slate-300">Right-click</span> for menu
+          </div>
         </div>
       </div>
 

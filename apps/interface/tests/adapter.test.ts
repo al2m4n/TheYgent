@@ -7,6 +7,7 @@ import {
   irToReactFlow,
   reactFlowToIr,
   relayout,
+  setNodeIcon,
   setNodePositions,
   updateEdge,
   updateNodeConfig,
@@ -98,6 +99,46 @@ describe("view isolation (§4, decision §1.4)", () => {
     expect(view.nodes?.n_llm.position).toEqual({ x: 999, y: 777 });
     // the original is untouched (pure function).
     expect((ir.view as ViewBlock).nodes?.n_llm.position).toEqual({ x: 300, y: 80 });
+  });
+});
+
+describe("node icon override (a `view`-only display field, §1.4)", () => {
+  it("setNodeIcon is layout-only — would-be contentHash is unchanged", () => {
+    const ir = sampleGraph();
+    const next = setNodeIcon(ir, "n_llm", "🤖");
+    expect(sameHashedContent(next, ir)).toBe(true);
+    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    // pure function — the original is untouched.
+    expect((ir.view as ViewBlock).nodes?.n_llm.icon).toBeUndefined();
+  });
+
+  it("an override surfaces on the RF node and round-trips back into the view", () => {
+    const ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    const rf = irToReactFlow(ir);
+    expect(rf.nodes.find((n) => n.id === "n_llm")?.data.icon).toBe("🤖");
+    // nodes with NO override carry no icon key (the one rule holds for them).
+    expect(rf.nodes.find((n) => n.id === "n_in")?.data).not.toHaveProperty("icon");
+    // save → the override is back in the view, content still identical.
+    const back = reactFlowToIr(rf, ir);
+    expect((back.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect(sameHashedContent(back, ir)).toBe(true);
+  });
+
+  it("clearing reverts to the default and survives a later drag", () => {
+    let ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    ir = setNodeIcon(ir, "n_llm", null);
+    expect((ir.view as ViewBlock).nodes?.n_llm.icon).toBeUndefined();
+    // a drag must not wipe an existing override.
+    let withIcon = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    withIcon = setNodePositions(withIcon, { n_llm: { x: 1, y: 2 } });
+    expect((withIcon.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect((withIcon.view as ViewBlock).nodes?.n_llm.position).toEqual({ x: 1, y: 2 });
+  });
+
+  it("relayout keeps the override while rewriting positions", () => {
+    const ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    const next = relayout(ir);
+    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
   });
 });
 

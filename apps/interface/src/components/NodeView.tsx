@@ -8,6 +8,7 @@
 import { kindForType } from "@theygent/ir-types";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import type { TheygentRFNode } from "../adapter";
+import { resolveIcon } from "../lib/icons";
 
 const KIND_STYLE: Record<string, { ring: string; dot: string; label: string }> = {
   boundary: { ring: "border-emerald-600/70", dot: "bg-emerald-400", label: "text-emerald-300" },
@@ -24,6 +25,9 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
   const style = KIND_STYLE[kind] ?? KIND_STYLE.activity;
   const ins = data.ports.in;
   const outs = data.ports.out;
+  // The displayed icon: the user's override (a `view`-sourced display field) or the type default —
+  // derived here, never stored on the IR's hashed content.
+  const icon = resolveIcon(data.nodeType, data.icon);
 
   return (
     <div
@@ -32,7 +36,12 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
       }`}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-sm font-medium text-slate-100">{data.label}</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0 text-base leading-none" aria-hidden>
+            {icon}
+          </span>
+          <span className="truncate text-sm font-medium text-slate-100">{data.label}</span>
+        </span>
         <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
       </div>
       <div className={`mono mt-0.5 text-[10px] uppercase tracking-wide ${style.label}`}>

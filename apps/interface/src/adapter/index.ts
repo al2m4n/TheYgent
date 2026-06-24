@@ -67,11 +67,9 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
   const view = (ir.view ?? {}) as ViewBlock;
   const positions = resolvePositions(nodes, edges, view);
 
-  const rfNodes: TheygentRFNode[] = nodes.map((n) => ({
-    id: n.id,
-    type: "theygent",
-    position: positions[n.id] ?? { x: 0, y: 0 },
-    data: {
+  const vnodes = view.nodes ?? {};
+  const rfNodes: TheygentRFNode[] = nodes.map((n) => {
+    const data: TheygentNodeData = {
       label: n.label ?? n.id,
       nodeType: n.type,
       ports: {
@@ -86,8 +84,13 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
           required: p.required ?? true,
         })),
       },
-    },
-  }));
+    };
+    // The icon override (if any) is a `view`-sourced display field — added ONLY when the user set
+    // one, so a node with no override carries exactly label/nodeType/ports (the one rule holds).
+    const icon = vnodes[n.id]?.icon;
+    if (typeof icon === "string" && icon.length > 0) data.icon = icon;
+    return { id: n.id, type: "theygent", position: positions[n.id] ?? { x: 0, y: 0 }, data };
+  });
 
   const rfEdges: TheygentRFEdge[] = edges.map((e) => ({
     id: e.id,
@@ -149,9 +152,15 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
     condition: re.data?.condition ?? null,
   }));
 
-  // Split positions back into a `view` block — layout, never hashed (§8.6).
-  const viewNodes: Record<string, { position: XYPosition }> = {};
-  for (const rn of rf.nodes) viewNodes[rn.id] = { position: rn.position };
+  // Split positions back into a `view` block — layout, never hashed (§8.6). The icon override (a
+  // display-only field) round-trips here too, so it survives save/load without touching content.
+  const viewNodes: Record<string, { position: XYPosition; icon?: string }> = {};
+  for (const rn of rf.nodes) {
+    viewNodes[rn.id] = { position: rn.position };
+    if (typeof rn.data.icon === "string" && rn.data.icon.length > 0) {
+      viewNodes[rn.id].icon = rn.data.icon;
+    }
+  }
   const view: ViewBlock = { ...(base.view as ViewBlock | undefined), nodes: viewNodes };
 
   return { ...base, nodes, edges, view };
@@ -171,24 +180,42 @@ function freshId(prefix: string, taken: Set<string>): string {
   return id;
 }
 
-/** Set/replace a node's layout position (drag/pan) — touches `view` ONLY (decision §1.4). */
+/** Set/replace a node's layout position (drag/pan) — touches `view` ONLY (decision §1.4). Merges
+ * into the existing view entry so a sibling display field (e.g. an icon override) survives a drag. */
 export function setNodePositions(
   ir: IRDocument,
   positions: Record<string, XYPosition>,
 ): IRDocument {
   const prev = (ir.view as ViewBlock | undefined) ?? {};
   const nextNodes = { ...(prev.nodes ?? {}) };
-  for (const [id, position] of Object.entries(positions)) nextNodes[id] = { position };
+  for (const [id, position] of Object.entries(positions)) {
+    nextNodes[id] = { ...nextNodes[id], position };
+  }
+  return { ...ir, view: { ...prev, nodes: nextNodes } };
+}
+
+/** Set (or clear, with `null`) a node's icon override — a `view`-only display change, never hashed
+ * content (§1.4), exactly like a drag. Clearing reverts the node to its type's default icon. */
+export function setNodeIcon(ir: IRDocument, id: string, icon: string | null): IRDocument {
+  const prev = (ir.view as ViewBlock | undefined) ?? {};
+  const nextNodes = { ...(prev.nodes ?? {}) };
+  const position = nextNodes[id]?.position ?? { x: 0, y: 0 };
+  // Rebuild the entry so clearing simply omits the key (no `delete`); position is the only other
+  // per-node view field, so nothing is lost.
+  nextNodes[id] = icon && icon.length > 0 ? { position, icon } : { position };
   return { ...ir, view: { ...prev, nodes: nextNodes } };
 }
 
 /** Re-run the layered auto-layout, overwriting every node's `view` position (the "Tidy" button).
- * Touches `view` ONLY — a pure layout change, never hashed content (§1.4). */
+ * Touches `view` ONLY — a pure layout change, never hashed content (§1.4). Preserves any per-node
+ * display field (e.g. an icon override) — only positions are rewritten. */
 export function relayout(ir: IRDocument): IRDocument {
   const positions = autoLayout(ir.nodes ?? [], ir.edges ?? []);
   const prev = (ir.view as ViewBlock | undefined) ?? {};
-  const nextNodes: Record<string, { position: XYPosition }> = {};
-  for (const [id, position] of Object.entries(positions)) nextNodes[id] = { position };
+  const nextNodes = { ...(prev.nodes ?? {}) };
+  for (const [id, position] of Object.entries(positions)) {
+    nextNodes[id] = { ...nextNodes[id], position };
+  }
   return { ...ir, view: { ...prev, nodes: nextNodes } };
 }
 

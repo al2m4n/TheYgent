@@ -9,8 +9,10 @@ import type { IRDocument } from "@theygent/ir-types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Selection, relayout } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
+import { IRCodeEditor } from "../components/IRCodeEditor";
 import { Inspector } from "../components/Inspector";
 import { Palette } from "../components/Palette";
+import { ResizeHandle } from "../components/ResizeHandle";
 import { Badge, Button, Input } from "../components/ui";
 import { blankGraph, fromStoredVersion } from "../lib/agent";
 import { ApiError, api } from "../lib/api";
@@ -46,6 +48,19 @@ export function Editor() {
   // invisible to the structural re-seed).
   const [reseedKey, setReseedKey] = useState(0);
   const [showIssues, setShowIssues] = useState(false);
+  // Side-panel widths (px) — drag the splitters to resize, double-click to reset. Pure UI layout
+  // state (kept in memory, not the IR or localStorage — persistence is the registry, §Do-NOT).
+  const [paletteWidth, setPaletteWidth] = useState(200);
+  const [inspectorWidth, setInspectorWidth] = useState(320);
+  // Either side panel can be collapsed to a thin rail to give the canvas more room. UI-only state.
+  const [paletteCollapsed, setPaletteCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  // Visual canvas vs. raw-IR JSON editor — two views over the one IRDocument. `codeValid` gates Save
+  // so a half-typed (unparseable) IR in the code view can't be saved.
+  const [mode, setMode] = useState<"visual" | "code">("visual");
+  const [codeValid, setCodeValid] = useState(true);
+  // The node/edge to flash on the canvas while hovering its issue (display only — not selection).
+  const [highlight, setHighlight] = useState<Selection>(null);
   // Whether the open agent already exists in the registry (drives create vs add-version).
   const existsRef = useRef(false);
   // Which graph identity is currently seeded into `ir`, so we seed exactly ONCE per identity and
@@ -94,6 +109,12 @@ export function Editor() {
     enableBeforeUnload: () => dirty && !savingNavRef.current,
     withResolver: true,
   });
+
+  // Selecting a node or edge always reveals the inspector — that's where the selection's config is
+  // edited, so a collapsed inspector would hide the very panel the click was meant to open.
+  useEffect(() => {
+    if (selection) setInspectorCollapsed(false);
+  }, [selection]);
 
   const onRevert = () => {
     if (savedSnapshot) {
@@ -177,7 +198,7 @@ export function Editor() {
   // same validation gate as the Save button — no saving an invalid graph from the keyboard.
   actionsRef.current = {
     save: () => {
-      if (!saving && errorCount === 0) onSave();
+      if (!saving && errorCount === 0 && !(mode === "code" && !codeValid)) onSave();
     },
     deselect: () => setSelection(null),
   };
@@ -209,6 +230,22 @@ export function Editor() {
         </div>
 
         <div className="ml-auto flex items-center gap-3">
+          {/* Visual ⇄ Code: two views over the one IR */}
+          <div className="flex items-center rounded-md border border-slate-700 p-0.5">
+            {(["visual", "code"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`rounded px-2 py-0.5 text-xs font-medium capitalize transition-colors ${
+                  mode === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+                title={m === "visual" ? "Edit on the canvas" : "Edit the raw IR as JSON"}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
           {savedHash ? (
             <span
               className="mono max-w-[260px] truncate text-[11px] text-slate-500"
@@ -238,7 +275,11 @@ export function Editor() {
               <span className="text-emerald-400">✓ valid</span>
             )}
           </button>
-          <Button onClick={onTidy} title="Re-run the auto-layout to tidy positions">
+          <Button
+            onClick={onTidy}
+            disabled={mode === "code"}
+            title="Re-run the auto-layout to tidy positions"
+          >
             Tidy
           </Button>
           {dirty ? <Badge tone="amber">modified</Badge> : <Badge tone="green">saved</Badge>}
@@ -248,11 +289,13 @@ export function Editor() {
           <Button
             variant="primary"
             onClick={onSave}
-            disabled={saving || errorCount > 0}
+            disabled={saving || errorCount > 0 || (mode === "code" && !codeValid)}
             title={
-              errorCount > 0
-                ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before saving`
-                : "Save this agent (⌘S)"
+              mode === "code" && !codeValid
+                ? "Fix the invalid JSON before saving"
+                : errorCount > 0
+                  ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before saving`
+                  : "Save this agent (⌘S)"
             }
           >
             {saving ? "Saving…" : "Save agent"}
@@ -260,40 +303,68 @@ export function Editor() {
         </div>
       </div>
 
+      {/* Issues panel — FLOATS over the canvas (absolute) so toggling it never reflows the editor.
+          Hovering an item flashes the node/edge it points at; clicking selects it. */}
       {showIssues && (
-        <div className="max-h-44 overflow-y-auto border-b border-slate-800 bg-[#0e131c] px-3 py-2">
-          {issues.length === 0 ? (
-            <p className="text-xs text-emerald-400">No issues — the graph is structurally valid.</p>
-          ) : (
-            <ul className="space-y-1">
-              {issues.map((issue, i) => (
-                <li key={`${issue.nodeId ?? issue.edgeId ?? "g"}:${i}`}>
-                  <button
-                    type="button"
-                    className="flex w-full items-start gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[#1d2433]"
-                    onClick={() => {
-                      if (issue.nodeId) setSelection({ kind: "node", id: issue.nodeId });
-                      else if (issue.edgeId) setSelection({ kind: "edge", id: issue.edgeId });
-                    }}
-                  >
-                    <span
-                      className={issue.severity === "error" ? "text-red-400" : "text-amber-400"}
-                    >
-                      {issue.severity === "error" ? "✗" : "⚠"}
-                    </span>
-                    <span className="text-slate-300">
-                      {(issue.nodeId || issue.edgeId) && (
-                        <span className="mono text-slate-500">
-                          {issue.nodeId ?? issue.edgeId}:{" "}
+        <div className="absolute top-[46px] right-3 z-30 max-h-[60vh] w-[380px] overflow-hidden rounded-lg border border-slate-700 bg-[#0e131c] shadow-2xl">
+          <div className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Validation
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowIssues(false)}
+              title="Close"
+              className="text-slate-500 hover:text-slate-300"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="max-h-[calc(60vh-34px)] overflow-y-auto p-2">
+            {issues.length === 0 ? (
+              <p className="px-1 py-1 text-xs text-emerald-400">
+                No issues — the graph is structurally valid.
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {issues.map((issue, i) => {
+                  const target: Selection = issue.nodeId
+                    ? { kind: "node", id: issue.nodeId }
+                    : issue.edgeId
+                      ? { kind: "edge", id: issue.edgeId }
+                      : null;
+                  return (
+                    <li key={`${issue.nodeId ?? issue.edgeId ?? "g"}:${i}`}>
+                      <button
+                        type="button"
+                        className="flex w-full items-start gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[#1d2433]"
+                        onMouseEnter={() => setHighlight(target)}
+                        onMouseLeave={() => setHighlight(null)}
+                        onClick={() => {
+                          if (target) setSelection(target);
+                          setHighlight(null);
+                        }}
+                      >
+                        <span
+                          className={issue.severity === "error" ? "text-red-400" : "text-amber-400"}
+                        >
+                          {issue.severity === "error" ? "✗" : "⚠"}
                         </span>
-                      )}
-                      {issue.message}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                        <span className="text-slate-300">
+                          {(issue.nodeId || issue.edgeId) && (
+                            <span className="mono text-slate-500">
+                              {issue.nodeId ?? issue.edgeId}:{" "}
+                            </span>
+                          )}
+                          {issue.message}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         </div>
       )}
 
@@ -303,27 +374,82 @@ export function Editor() {
         </div>
       )}
 
-      {/* body */}
-      <div className="grid min-h-0 flex-1 grid-cols-[200px_1fr_320px]">
-        <aside className="min-h-0 border-r border-slate-800 bg-[#0b0e14]">
-          <Palette />
-        </aside>
-        <section className="min-h-0">
-          {/* key by the opened-agent identity so the canvas remounts (and re-fits) when a different
-              agent is opened, but NOT on edits within the same agent. */}
-          <GraphCanvas
-            key={agentId ? `${agentId}@${version}` : "new"}
-            ir={ir}
-            onChange={setIr}
-            selection={selection}
-            onSelect={setSelection}
-            reseedKey={reseedKey}
-          />
-        </section>
-        <aside className="min-h-0 border-l border-slate-800 bg-[#0b0e14]">
-          <Inspector ir={ir} selection={selection} onChange={setIr} onSelect={setSelection} />
-        </aside>
-      </div>
+      {/* body — Visual: three resizable columns (palette · canvas · inspector); Code: the raw IR */}
+      {mode === "code" ? (
+        <div className="min-h-0 flex-1">
+          <IRCodeEditor ir={ir} onChange={setIr} onValidityChange={setCodeValid} />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          {paletteCollapsed ? (
+            <CollapsedRail
+              side="left"
+              label="Nodes"
+              title="Show node palette"
+              onExpand={() => setPaletteCollapsed(false)}
+            />
+          ) : (
+            <>
+              <aside
+                className="relative min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#0b0e14]"
+                style={{ width: paletteWidth }}
+              >
+                <CollapseButton side="left" onClick={() => setPaletteCollapsed(true)} />
+                <Palette />
+              </aside>
+              <ResizeHandle
+                width={paletteWidth}
+                onResize={setPaletteWidth}
+                side="left"
+                min={150}
+                max={360}
+                defaultWidth={200}
+                label="node palette"
+              />
+            </>
+          )}
+          <section className="min-h-0 min-w-0 flex-1">
+            {/* key by the opened-agent identity so the canvas remounts (and re-fits) when a different
+                agent is opened, but NOT on edits within the same agent. */}
+            <GraphCanvas
+              key={agentId ? `${agentId}@${version}` : "new"}
+              ir={ir}
+              onChange={setIr}
+              selection={selection}
+              onSelect={setSelection}
+              reseedKey={reseedKey}
+              highlight={highlight}
+            />
+          </section>
+          {inspectorCollapsed ? (
+            <CollapsedRail
+              side="right"
+              label="Inspector"
+              title="Show inspector"
+              onExpand={() => setInspectorCollapsed(false)}
+            />
+          ) : (
+            <>
+              <ResizeHandle
+                width={inspectorWidth}
+                onResize={setInspectorWidth}
+                side="right"
+                min={260}
+                max={520}
+                defaultWidth={320}
+                label="inspector"
+              />
+              <aside
+                className="relative min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[#0b0e14]"
+                style={{ width: inspectorWidth }}
+              >
+                <CollapseButton side="right" onClick={() => setInspectorCollapsed(true)} />
+                <Inspector ir={ir} selection={selection} onChange={setIr} onSelect={setSelection} />
+              </aside>
+            </>
+          )}
+        </div>
+      )}
 
       {/* unsaved-changes guard: shown when an in-app navigation is blocked (the native browser
           prompt covers tab close / reload via enableBeforeUnload). */}
@@ -350,5 +476,54 @@ export function Editor() {
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full items-center justify-center text-sm text-slate-500">{children}</div>
+  );
+}
+
+// Chevron tucked into a panel's top corner that collapses it to a rail. The arrow points outward
+// (toward the edge it folds into): ‹ on the left panel, › on the right.
+function CollapseButton({ side, onClick }: { side: "left" | "right"; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={side === "left" ? "Collapse palette" : "Collapse inspector"}
+      className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[#1d2433] hover:text-slate-200"
+    >
+      {side === "left" ? "‹" : "›"}
+    </button>
+  );
+}
+
+// A collapsed side panel: a thin vertical rail with an expand chevron (pointing inward, toward the
+// canvas it would reopen over) and a rotated label so the panel stays identifiable while folded.
+function CollapsedRail({
+  side,
+  label,
+  title,
+  onExpand,
+}: {
+  side: "left" | "right";
+  label: string;
+  title: string;
+  onExpand: () => void;
+}) {
+  return (
+    <div
+      className={`flex w-8 min-h-0 shrink-0 flex-col items-center bg-[#0b0e14] ${
+        side === "left" ? "border-r" : "border-l"
+      } border-slate-800`}
+    >
+      <button
+        type="button"
+        onClick={onExpand}
+        title={title}
+        className="mt-2 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-[#1d2433] hover:text-slate-100"
+      >
+        {side === "left" ? "›" : "‹"}
+      </button>
+      <span className="mt-3 select-none text-[10px] uppercase tracking-wide text-slate-600 [writing-mode:vertical-rl]">
+        {label}
+      </span>
+    </div>
   );
 }
