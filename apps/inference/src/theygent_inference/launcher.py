@@ -141,15 +141,21 @@ class _SubprocessHandle:
 
 class LlamaCppHandle(_SubprocessHandle):
     async def capabilities(self) -> Capabilities:
-        # llama-server exposes context size via /props; tool-calling and structured
-        # output are model-dependent, advertised conservatively (real probe TBD).
+        # llama-server exposes context size + the chat template via /props; tool-calling and
+        # structured output are model-dependent, advertised conservatively (real probe TBD).
         max_context: int | None = None
+        reasoning = False
         with contextlib.suppress(httpx.HTTPError, KeyError, ValueError):
             async with httpx.AsyncClient(timeout=2.0) as client:
                 props = (await client.get(f"{self._base_url}/props")).json()
                 max_context = props.get("default_generation_settings", {}).get("n_ctx")
+                reasoning = _template_implies_reasoning(props.get("chat_template"))
         return Capabilities(
-            tool_calling=True, structured_output=True, vision=False, max_context=max_context
+            tool_calling=True,
+            structured_output=True,
+            vision=False,
+            reasoning=reasoning,
+            max_context=max_context,
         )
 
 
@@ -217,6 +223,59 @@ def _fetch_hf_config(model: str) -> str | None:
         return None
 
 
+# ── reasoning ("thinking") detection from the chat template ─────────────────
+# A reasoning model exposes its hidden chain-of-thought via a chat template that opens a
+# ``<think>`` section (Qwen3, DeepSeek-R1 distills, …) or gates it behind ``enable_thinking``.
+# That template is the honest *local* signal — no network, no model-name guessing.
+_REASONING_MARKERS = ("<think>", "enable_thinking", "reasoning_content")
+
+
+def _template_implies_reasoning(template: object) -> bool:
+    """True if a chat template (a string, or the list-of-{name,template} form some repos use)
+    contains a thinking marker. Best-effort: an unrecognised shape returns False."""
+    if isinstance(template, list):
+        text = " ".join(str(t.get("template", "")) for t in template if isinstance(t, dict))
+    elif isinstance(template, str):
+        text = template
+    else:
+        return False
+    low = text.lower()
+    return any(marker in low for marker in _REASONING_MARKERS)
+
+
+def _locate_repo_file(model: str, source: str, filename: str) -> str | None:
+    """Path to ``filename`` for a managed model, mirroring ``_read_model_max_context``'s lookup:
+    next to a local model dir/file, else the HF hub snapshot cache, else fetch just that file."""
+    if source == "local-path":
+        base = model if os.path.isdir(model) else os.path.dirname(model)
+        path = os.path.join(base, filename)
+        return path if os.path.exists(path) else None
+    repo = "models--" + model.replace("/", "--")
+    hits = glob.glob(os.path.join(_hf_hub_dir(), repo, "snapshots", "*", filename))
+    if hits:
+        return hits[0]
+    try:
+        from huggingface_hub import hf_hub_download
+
+        return hf_hub_download(repo_id=model, filename=filename)
+    except Exception:
+        return None
+
+
+def _read_mlx_reasoning(model: str, source: str) -> bool:
+    """Best-effort reasoning flag for an MLX model from its ``tokenizer_config.json`` chat template
+    (mlx_lm exposes no capability endpoint, so we read the static config — like max context)."""
+    path = _locate_repo_file(model, source, "tokenizer_config.json")
+    if not path:
+        return False
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return _template_implies_reasoning(data.get("chat_template"))
+
+
 def _read_model_max_context(model: str, source: str) -> int | None:
     """Real max context from the model's ``config.json`` (max_position_embeddings).
 
@@ -259,13 +318,15 @@ class MlxHandle(_SubprocessHandle):
         self._source = source
 
     async def capabilities(self) -> Capabilities:
-        # MLX has /health but NO /props (verified). max_context comes from the model
-        # config (real); tool/structured/vision are conservative -> approximate=True.
+        # MLX has /health but NO /props (verified). max_context + reasoning come from the model's
+        # static config (real); tool/structured/vision are conservative -> approximate=True.
         max_context = _read_model_max_context(self._model, self._source)
+        reasoning = _read_mlx_reasoning(self._model, self._source)
         return Capabilities(
             tool_calling=True,
             structured_output=False,
             vision=False,
+            reasoning=reasoning,
             max_context=max_context,
             approximate=True,
         )
