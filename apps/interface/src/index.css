@@ -1,0 +1,61 @@
+@import "tailwindcss";
+
+/* The interface baseline (M15: Tailwind, mirrors the cockpit's neutral dark surface). The canvas
+   is the product here, so chrome stays quiet and the graph carries the colour. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  background-color: #0b0e14;
+  color: #d8dee9;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+}
+
+.mono {
+  font-family: ui-monospace, "SF Mono", "Menlo", "Monaco", "Cascadia Code", monospace;
+}
+
+/* React Flow theming via its CSS variables (kept here so the renderer stays swappable — the
+   adapter is the only code that knows React Flow; this is pure styling). */
+.react-flow {
+  --xy-background-color: #0b0e14;
+  --xy-edge-stroke: #4b5563;
+  --xy-edge-stroke-selected: #60a5fa;
+  --xy-connectionline-stroke: #60a5fa;
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  border: 1px solid #0b0e14;
+}
+
+/* Transient highlight: pulse the node/edge an issue (or other UI affordance) points at, so hovering
+   a list item flashes "this is the part" on the canvas. Pure styling — applied via React Flow's
+   node/edge `className` in GraphCanvas, never stored on the IR. */
+@keyframes theygent-flash {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(96, 165, 250, 0.6);
+  }
+}
+.react-flow__node.theygent-flash {
+  animation: theygent-flash 0.7s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+.react-flow__edge.theygent-flash .react-flow__edge-path {
+  stroke: #60a5fa !important;
+  stroke-width: 3 !important;
+}

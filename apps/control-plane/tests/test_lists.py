@@ -107,3 +107,10 @@ def test_cors_dev_origin_allowed(client: TestClient) -> None:
     # The cockpit SPA (Vite dev origin) must be allowed (M8 §3.3/§6).
     resp = client.get("/runs", headers={"Origin": "http://localhost:5173"})
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+
+def test_cors_interface_dev_origin_allowed(client: TestClient) -> None:
+    # The M15 visual interface SPA runs on its own Vite dev origin (:5174) and also calls the
+    # control-plane directly (load/save agents) — its origin must be allowed too.
+    resp = client.get("/runs", headers={"Origin": "http://localhost:5174"})
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:5174"

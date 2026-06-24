@@ -27,6 +27,12 @@ share/python-wheels/
 *.egg
 MANIFEST
 
+# The `lib/` rule above is a Python build-output ignore — but our TS SPAs keep first-party source
+# under `src/lib/` (apps/web, apps/interface). Re-include those so they're tracked normally instead
+# of needing `git add -f` every time (the trap that silently dropped apps/interface/src/lib/).
+!**/src/lib/
+!**/src/lib/**
+
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.

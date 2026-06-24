@@ -155,8 +155,10 @@ async def test_durable_run_matches_the_walker(pg_url: str) -> None:
             assert row.output == interactive_row["output"] == FULL_MESSAGE
             assert row.graph_id == interactive_row["graph_id"] == aid
             assert row.graph_version == interactive_row["graph_version"] == ver
-            assert row.content_hash == interactive_row["content_hash"] == content_hash(
-                parse_document(ir)
+            assert (
+                row.content_hash
+                == interactive_row["content_hash"]
+                == content_hash(parse_document(ir))
             )
             assert row.completed_at is not None
         finally:

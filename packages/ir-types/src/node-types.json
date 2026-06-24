@@ -1,0 +1,589 @@
+{
+  "types": {
+    "human": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``human`` boundary node config (m14.md \u00a71.1) \u2014 a durable wait for external input. The node\nlowers onto ``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while\npaused; ``POST /runs/{id}/resume`` (\u2192 ``DBOS.send``) delivers the awaited input and the workflow\nresumes from the checkpoint. ``prompt`` describes what input is expected (advisory);\n``input_schema`` is the awaited input's declared shape (advisory in M14 \u2014 resume records it,\ndoesn't enforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever)\nbounds the wait; on timeout the node fails honestly (``on_timeout='fail'``, the default \u2192\n``failed`` run, M9) or binds the declared ``default`` (``on_timeout='default'``).",
+        "properties": {
+          "default": {
+            "default": null,
+            "title": "Default"
+          },
+          "inputSchema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inputschema"
+          },
+          "onTimeout": {
+            "default": "fail",
+            "enum": [
+              "fail",
+              "default"
+            ],
+            "title": "Ontimeout",
+            "type": "string"
+          },
+          "prompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Prompt"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeout"
+          }
+        },
+        "title": "HumanConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "default": null,
+        "inputSchema": null,
+        "onTimeout": "fail",
+        "prompt": null,
+        "timeout": null
+      },
+      "kind": "boundary",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "human"
+    },
+    "input": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``input`` boundary node \u2014 graph entry. No config in M5 (the run's ``input`` binds to\nits out-port); the model exists so an unexpected key fails validation, not silently.",
+        "properties": {},
+        "title": "InputConfig",
+        "type": "object"
+      },
+      "defaultConfig": {},
+      "kind": "boundary",
+      "ports": {
+        "in": [],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "input"
+    },
+    "llm": {
+      "configSchema": {
+        "$defs": {
+          "_Message": {
+            "additionalProperties": false,
+            "properties": {
+              "content": {
+                "title": "Content",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "system",
+                  "user",
+                  "assistant"
+                ],
+                "title": "Role",
+                "type": "string"
+              }
+            },
+            "required": [
+              "role",
+              "content"
+            ],
+            "title": "_Message",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "``llm`` node config: a single model call, no tool loop (\u00a78.3). ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)",
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/$defs/_Message"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "messages"
+        ],
+        "title": "LlmConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "messages": [],
+        "model": ""
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "llm"
+    },
+    "loop": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``loop`` orchestration node config (m14.md \u00a71.3) \u2014 bounded, deterministic agentic repetition\n(think\u2192act\u2192observe). Each iteration runs the pinned ``agent`` (a SAVED agent, child workflow);\nthe previous iteration's output feeds the next as input. ``max_iterations`` is **REQUIRED** (no\nunbounded loops \u2014 the termination + determinism guarantee). ``condition`` (optional) is a\n``$in``-reference over the iteration output (the same port-addressed grammar the router uses \u2014\nm14.md \u00a71.3 \"reuse the router expression evaluator\"): the loop **stops early** when it resolves\ntruthy. The loop control is deterministic orchestration with NO I/O \u2014 it reads journaled child\nresults, never calls inference, so a crash mid-loop resumes at the last completed iteration (no\ncompleted iteration re-runs). ``max_depth`` bounds nesting as in ``subgraph``.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "condition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Condition"
+          },
+          "contentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contenthash"
+          },
+          "maxDepth": {
+            "default": 8,
+            "title": "Maxdepth",
+            "type": "integer"
+          },
+          "maxIterations": {
+            "title": "Maxiterations",
+            "type": "integer"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "agent",
+          "maxIterations"
+        ],
+        "title": "LoopConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "agent": "",
+        "condition": null,
+        "contentHash": null,
+        "maxDepth": 8,
+        "maxIterations": 0,
+        "version": null
+      },
+      "kind": "orchestration",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "loop"
+    },
+    "map": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``map`` orchestration node config (m14.md \u00a71.4) \u2014 durable fan-out/join over a collection. The\nin-port value must be a list; one task (the pinned ``agent`` run as a child workflow) is\nenqueued on a DBOS durable queue per element, then all results are durably awaited \u2014 so a crash\nmid-fan-out resumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are\nin flight at once (``None`` = unbounded). ``on_error`` is the partial-failure policy:\n``fail_fast`` (default \u2014 any element error fails the map) vs ``collect`` (gather successes +\nper-element errors). ``max_depth`` bounds nesting as in ``subgraph``.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "concurrency": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Concurrency"
+          },
+          "contentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contenthash"
+          },
+          "maxDepth": {
+            "default": 8,
+            "title": "Maxdepth",
+            "type": "integer"
+          },
+          "onError": {
+            "default": "fail_fast",
+            "enum": [
+              "fail_fast",
+              "collect"
+            ],
+            "title": "Onerror",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "title": "MapConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "agent": "",
+        "concurrency": null,
+        "contentHash": null,
+        "maxDepth": 8,
+        "onError": "fail_fast",
+        "version": null
+      },
+      "kind": "orchestration",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "map"
+    },
+    "mcp_tool": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``mcp_tool`` activity node config (\u00a78.5 / m7.md \u00a72). ``server`` is the **logical name** of a\nregistered MCP server (resolved by the control-plane's MCP manager at runtime \u2014 same logical-id\ndiscipline as model bindings and the M6 tool registry); ``tool`` is a tool that server exposes;\n``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool``. The IR seam matches a\nlocal tool \u2014 only the transport (an external MCP process) differs.",
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "server": {
+            "title": "Server",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "server",
+          "tool"
+        ],
+        "title": "McpToolConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "args": {},
+        "server": "",
+        "tool": ""
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "mcp_tool"
+    },
+    "output": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``output`` boundary node \u2014 graph exit. No config in M5 (its in-port value is the run's\noutput).",
+        "properties": {},
+        "title": "OutputConfig",
+        "type": "object"
+      },
+      "defaultConfig": {},
+      "kind": "boundary",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": []
+      },
+      "type": "output"
+    },
+    "router": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``router`` orchestration node config (\u00a78.3 / m6.md \u00a73.2). ``select`` is a ``$in``-reference\nthat must resolve to the **name of one of this node's outgoing handles** \u2014 handle-name routing,\nnot an expression DSL. The walker follows only the edge(s) from the selected handle.",
+        "properties": {
+          "select": {
+            "title": "Select",
+            "type": "string"
+          }
+        },
+        "required": [
+          "select"
+        ],
+        "title": "RouterConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "select": ""
+      },
+      "kind": "orchestration",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "router"
+    },
+    "subgraph": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``subgraph`` boundary node config (m14.md \u00a71.2) \u2014 an agent calls another SAVED agent, run as\na DBOS child workflow (independently durable + resumable). ``agent`` is the child's \u00a78.2 id; the\nnode pins it with EXACTLY ONE of ``version`` / ``content_hash`` (validated in\n``validate_graph``) and the pin is frozen into the parent's contentHash, so composition is\nimmutable. ``max_depth`` bounds recursion (the ``subgraph`` analogue of ``loop``'s\n``max_iterations``): exceeding it fails honestly, preventing unbounded / mutually-recursive\nexpansion. The parent's in-port value is the child's run input (M10 named ports); the child's\noutput binds the node's success handle.",
+        "properties": {
+          "agent": {
+            "title": "Agent",
+            "type": "string"
+          },
+          "contentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contenthash"
+          },
+          "maxDepth": {
+            "default": 8,
+            "title": "Maxdepth",
+            "type": "integer"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          }
+        },
+        "required": [
+          "agent"
+        ],
+        "title": "SubgraphConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "agent": "",
+        "contentHash": null,
+        "maxDepth": 8,
+        "version": null
+      },
+      "kind": "boundary",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "subgraph"
+    },
+    "tool": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``tool`` activity node config (\u00a78.3 / m6.md \u00a72/\u00a73.1). ``tool`` is a logical name resolved\nagainst the control-plane's in-code tool registry (membership is checked there, not here \u2014\n``packages/ir`` stays pure). ``args`` is an arg template: each value is either a literal or a\n``$in``-reference (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) the walker\nresolves against upstream data before invoking the callable.",
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "title": "Args",
+            "type": "object"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool"
+        ],
+        "title": "ToolConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "args": {},
+        "tool": ""
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "tool"
+    }
+  }
+}

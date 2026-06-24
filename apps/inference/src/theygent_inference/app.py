@@ -69,7 +69,13 @@ def _cockpit_cors_origins() -> list[str]:
     raw = os.environ.get("THEYGENT_CORS_ORIGINS")
     if raw is not None:
         return [o.strip() for o in raw.split(",") if o.strip()]
-    return ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # The cockpit (:5173) and the M15 visual interface (:5174) both call /admin/models directly.
+    return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+    ]
 
 
 def create_app(

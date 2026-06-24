@@ -2,6 +2,8 @@
 # are governed by the uv workspace (pyproject.toml) and are ignored by pnpm (no package.json).
 packages:
   - "apps/web"
+  - "apps/interface"
+  - "packages/ir-types"
 
 # Native postinstall scripts we trust to run (pnpm 10 blocks these by default).
 onlyBuiltDependencies:
