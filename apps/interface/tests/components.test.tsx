@@ -67,7 +67,14 @@ describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
   it("shows the IR as JSON and commits a valid edit straight to the IR", () => {
     const ir = sampleGraph();
     let next: IRDocument | null = null;
-    render(<IRCodeEditor ir={ir} onChange={(x) => (next = x)} />);
+    render(
+      <IRCodeEditor
+        ir={ir}
+        onChange={(x) => {
+          next = x;
+        }}
+      />,
+    );
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
     expect(textarea.value).toContain(`"id": "${ir.id}"`);
     const edited = JSON.stringify({ ...ir, name: "Renamed via code" }, null, 2);
@@ -82,8 +89,12 @@ describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
     render(
       <IRCodeEditor
         ir={sampleGraph()}
-        onChange={(x) => (next = x)}
-        onValidityChange={(v) => (valid = v)}
+        onChange={(x) => {
+          next = x;
+        }}
+        onValidityChange={(v) => {
+          valid = v;
+        }}
       />,
     );
     const textarea = screen.getByRole("textbox");

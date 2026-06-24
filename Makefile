@@ -31,7 +31,7 @@ endif
 # root pytest collides on import. Each entry is run with its own dir as rootdir.
 PY_TEST_DIRS := packages/ir apps/inference apps/control-plane
 
-.PHONY: help install migrate up start down status logs test test-py test-web gen-ir-types
+.PHONY: help install migrate up start down status logs test test-py test-web gen-ir-types hooks lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -42,6 +42,14 @@ install: ## uv sync (Python workspace) + pnpm install (TS workspace)
 	uv sync
 	@echo "==> pnpm install"
 	pnpm install
+
+hooks: ## Install the git pre-commit hooks (.pre-commit-config.yaml — mirrors the CI gates)
+	@echo "==> uvx pre-commit install"
+	uvx pre-commit install
+
+lint: ## Run all pre-commit hooks against every file (ruff · ty · biome)
+	@echo "==> uvx pre-commit run --all-files"
+	uvx pre-commit run --all-files
 
 migrate: ## Apply control-plane Alembic migrations (alembic upgrade head)
 	@echo "==> alembic upgrade head"

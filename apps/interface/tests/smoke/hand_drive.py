@@ -1,10 +1,10 @@
 """Repeatable hand-drive smoke for apps/interface (M15 §4 acceptance), driven against a LIVE stack.
 
-The mocked Vitest tests prove the FE in isolation; they CANNOT prove the one thing that matters most
-across the seam: that a pure layout change ("drag a node") leaves the **server-computed contentHash**
-untouched, while a real content edit changes it — and that the edited agent still RUNS via the M5
-walker (the path M13 reuses). This script asserts exactly that against the running control-plane, so
-it keeps paying off after M15 instead of being a one-off click.
+The mocked Vitest tests prove the FE in isolation; they CANNOT prove the one thing that matters
+most across the seam: that a pure layout change ("drag a node") leaves the **server-computed
+contentHash** untouched, while a real content edit changes it — and that the edited agent still
+RUNS via the M5 walker (the path M13 reuses). This script asserts exactly that against the running
+control-plane, so it keeps paying off after M15 instead of being a one-off click.
 
 What it does (idempotent — uses a unique agent id per run):
   1. create an agent (input→output) at v0.1.0            → record contentHash h1
@@ -22,7 +22,8 @@ graph passes its input straight through, so this never depends on a model being 
 
 Run:  make smoke-interface           (or:  uv run --package theygent-control-plane \
                                             python apps/interface/tests/smoke/hand_drive.py)
-Env:  THEYGENT_CONTROL_PLANE_URL (default http://localhost:8080), THEYGENT_DEV_TOKEN (default dev-local)
+Env:  THEYGENT_CONTROL_PLANE_URL (default http://localhost:8080),
+      THEYGENT_DEV_TOKEN (default dev-local)
 Exit: 0 = all assertions held; non-zero = a regression (prints which assertion failed).
 """
 
@@ -105,12 +106,20 @@ def main() -> None:
         # readiness — fail loud if the stack isn't up.
         try:
             c.get("/agents", params={"limit": 1}).raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            print(f"\ncontrol-plane not reachable at {BASE} — run `make up` first ({exc})", file=sys.stderr)
+        except Exception as exc:
+            print(
+                f"\ncontrol-plane not reachable at {BASE} — run `make up` first ({exc})",
+                file=sys.stderr,
+            )
             sys.exit(2)
 
         # 1. create
-        view_a = {"nodes": {"n_in": {"position": {"x": 0, "y": 0}}, "n_out": {"position": {"x": 240, "y": 0}}}}
+        view_a = {
+            "nodes": {
+                "n_in": {"position": {"x": 0, "y": 0}},
+                "n_out": {"position": {"x": 240, "y": 0}},
+            }
+        }
         r = c.post("/agents", json={"ir": ir("0.1.0", view=view_a)})
         check("create v0.1.0 → 201", r.status_code == 201, f"status {r.status_code}")
         h1 = latest_hash(r.json())
@@ -121,7 +130,12 @@ def main() -> None:
         #    and the hash is unchanged. This is the server-verified §1.4 invariant the mocked FE
         #    test cannot give us. (Comparing two distinct versions can't isolate `view` — `version`
         #    is itself hashed, so a different version always yields a different hash.)
-        view_b = {"nodes": {"n_in": {"position": {"x": 99, "y": 77}}, "n_out": {"position": {"x": 500, "y": 300}}}}
+        view_b = {
+            "nodes": {
+                "n_in": {"position": {"x": 99, "y": 77}},
+                "n_out": {"position": {"x": 500, "y": 300}},
+            }
+        }
         r = c.post(f"/agents/{AGENT_ID}/versions", json={"ir": ir("0.1.0", view=view_b)})
         check(
             "re-publish v0.1.0 with a moved view → idempotent 200 (NOT 409 version_conflict)",
@@ -132,8 +146,15 @@ def main() -> None:
         check("drag leaves contentHash UNCHANGED (server-verified §1.4)", h2 == h1, f"{h2} == {h1}")
 
         # 3. a STRUCTURAL edit (relabel a node) → hash MUST change
-        r = c.post(f"/agents/{AGENT_ID}/versions", json={"ir": ir("0.2.0", view=view_a, in_label="start")})
-        check("add v0.2.0 (structural edit) → 200/201", r.status_code in (200, 201), f"status {r.status_code}")
+        r = c.post(
+            f"/agents/{AGENT_ID}/versions",
+            json={"ir": ir("0.2.0", view=view_a, in_label="start")},
+        )
+        check(
+            "add v0.2.0 (structural edit) → 200/201",
+            r.status_code in (200, 201),
+            f"status {r.status_code}",
+        )
         h3 = next(v["content_hash"] for v in r.json()["versions"] if v["version"] == "0.2.0")
         check("a content edit CHANGES contentHash", h3 != h1, f"{h3} != {h1}")
 
@@ -142,7 +163,10 @@ def main() -> None:
         check("reload v0.2.0 → 200", r.status_code == 200, f"status {r.status_code}")
         stored = r.json()
         check("reloaded IR carries the server contentHash", stored["ir"].get("contentHash") == h3)
-        check("reloaded IR is view-stripped (layout stored separately)", stored["ir"].get("view") in (None, {}))
+        check(
+            "reloaded IR is view-stripped (layout stored separately)",
+            stored["ir"].get("view") in (None, {}),
+        )
         check("reloaded node label round-tripped", stored["ir"]["nodes"][0].get("label") == "start")
 
         # 5. execute via the M11/M5 run path — the canvas changed nothing the runtime sees.
@@ -150,8 +174,16 @@ def main() -> None:
         check("run produced a run id (streamed)", bool(run_id), run_id or "")
         # poll the persisted Run for its terminal outcome (M9 §2.2: output persists).
         outcome = poll_run(c, run_id)
-        check("run completed via the walker", outcome["status"] == "completed", f"status {outcome['status']}")
-        check("output == input (input→output passthrough)", outcome["output"] == "hello-from-smoke", repr(outcome["output"]))
+        check(
+            "run completed via the walker",
+            outcome["status"] == "completed",
+            f"status {outcome['status']}",
+        )
+        check(
+            "output == input (input→output passthrough)",
+            outcome["output"] == "hello-from-smoke",
+            repr(outcome["output"]),
+        )
 
     print(f"\nALL {_passed} CHECKS PASSED — drag-doesn't-hash + content-does + runs unchanged.")
 

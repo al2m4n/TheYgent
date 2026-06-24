@@ -1,0 +1,57 @@
+# Pre-commit hooks for theygent — mirror the CI "fast" + "frontend" gates (.github/workflows/ci.yml)
+# so the same checks run locally before a commit lands.
+#
+# All hooks are LOCAL (run via uv / pnpm) on purpose: they use the exact workspace-pinned tool
+# versions (uv dependency-groups: ruff · ty   ·   pnpm: @biomejs/biome) instead of a second,
+# independently-versioned copy that pre-commit would otherwise fetch and let drift.
+#
+# Install once:        uvx pre-commit install
+# Run on all files:    uvx pre-commit run --all-files
+# (or `make hooks` — see the Makefile)
+
+repos:
+  - repo: local
+    hooks:
+      # ── Python: Ruff (lint + format) — gates, mirrors `uv run ruff check/format --check .` ──
+      - id: ruff-check
+        name: ruff check (lint, autofix)
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # ── Python: ty type-check — NON-BLOCKING, mirrors the CI §6 hedge (ty runs with
+      # continue-on-error while it's in preview). The `|| true` keeps it advisory: it prints
+      # findings but never blocks a commit. Drop the `|| true` to make it a hard gate later. ──
+      - id: ty
+        name: ty type-check (non-blocking — CI §6 hedge)
+        entry: bash -c 'uv run ty check apps/inference apps/control-plane packages/ir packages/gateway-client || true'
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true
+
+      # ── TS: Biome — gates the two SPAs, mirrors `pnpm --filter <app> check`. Scoped by
+      # `files:` so each only runs when that app's sources change. ──
+      - id: biome-interface
+        name: biome check (apps/interface)
+        entry: pnpm --filter @theygent/interface check
+        language: system
+        files: ^apps/interface/
+        pass_filenames: false
+        require_serial: true
+
+      - id: biome-web
+        name: biome check (apps/web)
+        entry: pnpm --filter @theygent/web check
+        language: system
+        files: ^apps/web/
+        pass_filenames: false
+        require_serial: true

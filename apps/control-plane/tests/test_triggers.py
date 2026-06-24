@@ -504,9 +504,7 @@ async def test_completed_at_stamped_for_evidence_gate(
         ) as ac:
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
             await app.state.dispatcher.tick(_DUE)
-            run = next(
-                r for r in (await ac.get("/runs")).json()["runs"] if r["trigger_id"] == tid
-            )
+            run = next(r for r in (await ac.get("/runs")).json()["runs"] if r["trigger_id"] == tid)
             assert run["status"] == "completed"
             assert run["completed_at"] is not None
             assert run["completed_at"] >= run["created_at"]  # a non-negative duration
