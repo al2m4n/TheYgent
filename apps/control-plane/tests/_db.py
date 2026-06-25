@@ -19,7 +19,8 @@ async def truncate(url: str) -> None:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
         await conn.execute(
-            "TRUNCATE message, run, thread, mcp_server, trigger, agent_version, agent "
+            "TRUNCATE message, run, thread, mcp_server, trigger, agent_version, agent, "
+            "span, node_io, agent_io_policy "
             "RESTART IDENTITY CASCADE"
         )
     finally:

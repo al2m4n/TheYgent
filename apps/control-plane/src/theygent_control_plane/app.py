@@ -28,6 +28,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, Query, Request
@@ -47,7 +48,16 @@ from theygent_ir import (
 
 from theygent_control_plane import db
 from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
+from theygent_control_plane.governance import LOCAL_PRINCIPAL, authorize
 from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
+from theygent_control_plane.observability import (
+    INPROC_EXECUTOR,
+    CaptureLevel,
+    SpanBus,
+    Telemetry,
+    build_otlp_sink,
+    now_ns,
+)
 from theygent_control_plane.run import Run, Trigger, TriggerKind
 from theygent_control_plane.store import (
     AgentStore,
@@ -78,6 +88,12 @@ logger = logging.getLogger("theygent.control_plane")
 _ENGINE_NAMES = frozenset({"mlx", "vllm", "llamacpp"})
 
 _RUN_ID_HEADER = "x-theygent-run-id"
+
+# M17: the synthetic single node a plain ``/runs`` prompt run is traced as. ``/runs`` has no
+# IR/walker (it is the M3 one-shot chat call straight to the gateway), but a prompt run is
+# conceptually a one-node run — so the waterfall shows a run-root span + one ``llm`` bar (the
+# generation, with ttft), the prompt as input and the answer as output. ``node_id == "llm"``.
+_PROMPT_NODE = SimpleNamespace(id="llm", type="llm", kind="activity")
 
 
 class RunRequest(BaseModel):
@@ -175,6 +191,16 @@ class UpdateTriggerRequest(BaseModel):
     # would change *which immutable artifact* runs — a re-pin is a new trigger, §1.1 discipline).
     enabled: bool | None = None
     config: dict[str, Any] | None = None
+
+
+class IoPolicyRequest(BaseModel):
+    # M17 §1.8/§5: set an agent's I/O capture policy. ``io_capture`` is the persist decision
+    # (off|metadata|full); the effective behavior is the AND with the deployment ceiling + topology
+    # default, surfaced in the response so the UI shows the real behavior, not a lie. Keyed to the
+    # STABLE agent id — editing it never changes the agent's contentHash (M11 immutability).
+    io_capture: CaptureLevel
+    io_retention_seconds: int | None = None
+    redact_rules: dict[str, Any] | None = None
 
 
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
@@ -282,6 +308,14 @@ def create_app(
     mcp_store = McpStore()
     agents = AgentStore()
     triggers = TriggerStore()
+    # M17: the observability seam. One live SpanBus for the /trace/stream side-channel (shared with
+    # the in-process durable runtime so its spans stream too), and the opt-in OTLP sink —
+    # constructed
+    # ONLY when OTEL_EXPORTER_OTLP_ENDPOINT is set (else None — the always-local default). The
+    # Telemetry object (the capture wrapper's home) needs the sessionmaker, so it is built in the
+    # lifespan once that exists; these two are its inputs.
+    span_bus = SpanBus()
+    otlp_sink = build_otlp_sink()
     # M12 §1.3: the first real auth — a single per-deploy bearer token gating the unattended invoke
     # + webhook-management surfaces. NOT RBAC/SSO/multi-user (those are far later, §4). Resolved at
     # construction so a test can inject one and the env drives production. When UNSET, the deploy
@@ -303,6 +337,15 @@ def create_app(
         engine = db.create_engine(db_url)
         app.state.engine = engine
         app.state.sessionmaker = db.create_sessionmaker(engine)
+        # M17: the capture wrapper's process resource — writes span/node_io through this
+        # sessionmaker
+        # (the normal data layer, never @DBOS.transaction — §4) and publishes live span events to
+        # the
+        # shared bus. The interactive walker reaches it via WalkContext.run_trace below.
+        telemetry = Telemetry(
+            sessionmaker=app.state.sessionmaker, span_bus=span_bus, otlp_sink=otlp_sink
+        )
+        app.state.telemetry = telemetry
         # M9 §2.1 (F5.2): sweep runs left non-terminal by a crash to `failed` before serving, so a
         # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
         async with app.state.sessionmaker() as session, session.begin():
@@ -337,6 +380,7 @@ def create_app(
                 triggers=triggers,
                 sessionmaker=app.state.sessionmaker,
                 fast_polling=dbos_fast_polling,
+                telemetry=telemetry,  # M17: durable steps capture through the SAME wrapper
             )
             runtime.launch()
             app.state.durable_runtime = runtime
@@ -439,6 +483,16 @@ def create_app(
         if changed:
             logger.warning("run.interrupted", extra={"run_id": run_id})
 
+    async def _finish_trace(ctx: WalkContext, status: str, error: str | None = None) -> None:
+        # M17: close the run-root span when a graph run terminalizes (mirrors store.set_status). The
+        # root anchors the waterfall's t0 + total duration; its status mirrors the run. Best-effort
+        # —
+        # telemetry never fails the run it observes. Idempotent (first-writer-wins on the root
+        # span).
+        if ctx.run_trace is not None:
+            with contextlib.suppress(Exception):
+                await ctx.run_trace.finish(status=status, error=error)
+
     # ── theygent-native API: /runs ───────────────────────────────────────
 
     @app.post("/runs", dependencies=[Depends(require_auth)])
@@ -474,12 +528,27 @@ def create_app(
             extra={"run_id": run.id, "model": run.model, "thread_id": run.thread_id},
         )
 
+        # M17: trace the prompt run too (a one-node run). No agent → the capture level is the
+        # topology default under the deployment ceiling (full on localhost), so the prompt + answer
+        # show in the click-through drawer like any node's I/O.
+        telemetry: Telemetry = app.state.telemetry
+        run_trace = telemetry.begin_run(
+            run.id,
+            executor_id=INPROC_EXECUTOR,
+            capture_level=telemetry.resolve_capture(None),
+            buffered=True,  # in-process walker: buffer + flush once at finish (no per-step DB I/O)
+        )
+
         if req.stream:
-            return await _stream_run(run, req.input, messages, req.params)
-        return await _complete_run(run, req.input, messages, req.params)
+            return await _stream_run(run, req.input, messages, req.params, run_trace)
+        return await _complete_run(run, req.input, messages, req.params, run_trace)
 
     async def _stream_run(
-        run: Run, user_input: str, messages: list[dict[str, Any]], params: dict[str, Any]
+        run: Run,
+        user_input: str,
+        messages: list[dict[str, Any]],
+        params: dict[str, Any],
+        run_trace: Any,
     ) -> Any:
         # Open the upstream stream BEFORE committing to a 200 SSE response, so a pre-stream
         # error (503/404) surfaces as a clean status — never a 200 followed by a broken
@@ -492,11 +561,13 @@ def create_app(
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            await run_trace.finish(status="err", error=f"{code}: {message}")
             logger.warning("run.failed", extra={"run_id": run.id, "code": code, "status": status})
             return _error(message, status=status, code=code, run_id=run.id)
         except APIConnectionError as exc:
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await run_trace.finish(status="err", error=str(exc))
             return _error(
                 "inference plane unreachable",
                 status=503,
@@ -512,25 +583,38 @@ def create_app(
                 yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
                 output = ""
                 finish_reason: str | None = None
-                async for chunk in upstream:
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-                    delta = choice.delta
-                    if delta is None:
-                        continue
-                    # A reasoning model streams `reasoning_content` (its thinking) before `content`
-                    # (its answer). Forward the thinking as visible progress so it doesn't look
-                    # frozen, but NEVER into `output` — only `content` is the answer.
-                    reasoning = getattr(delta, "reasoning_content", None)
-                    if reasoning:
-                        yield _sse("reasoning", {"runId": run.id, "reasoning": reasoning})
-                    content = getattr(delta, "content", None)
-                    if content:
-                        output += content
-                        yield _sse("delta", {"runId": run.id, "delta": content})
+                first_token_ns: int | None = None
+                # M17: the generation is the run's single ``llm`` node span (under the run-root) —
+                # the gap before it is the open_stream/engine latency; the bar is the generation.
+                async with run_trace.node_span(_PROMPT_NODE) as scope:
+                    async for chunk in upstream:
+                        if not chunk.choices:
+                            continue
+                        choice = chunk.choices[0]
+                        if choice.finish_reason:
+                            finish_reason = choice.finish_reason
+                        delta = choice.delta
+                        if delta is None:
+                            continue
+                        # A reasoning model streams `reasoning_content` (its thinking) before
+                        # `content` (its answer). Forward the thinking as visible progress so it
+                        # doesn't look frozen, but NEVER into `output` — only content is the answer.
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        if reasoning:
+                            yield _sse("reasoning", {"runId": run.id, "reasoning": reasoning})
+                        content = getattr(delta, "content", None)
+                        if content:
+                            if first_token_ns is None:
+                                first_token_ns = now_ns()
+                            output += content
+                            yield _sse("delta", {"runId": run.id, "delta": content})
+                    scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
+                    attrs: dict[str, Any] = {"gen_ai.request.model": run.model}
+                    if finish_reason:
+                        attrs["gen_ai.response.finish_reason"] = finish_reason
+                    if first_token_ns is not None:
+                        attrs["ttft_ms"] = round((first_token_ns - scope.span.start_ns) / 1e6, 1)
+                    scope.set_attributes(attrs)
                 # Success: mark completed AND append the turn pair in ONE transaction (§4). M9 §2.2
                 # persists the output; an empty answer (model hit its token cap before producing
                 # content) is surfaced honestly and contributes no thread turn (no blank assistant).
@@ -547,6 +631,7 @@ def create_app(
                             user_content=user_input,
                             assistant_content=output,
                         )
+                await run_trace.finish(status="ok", error=empty_reason)
                 terminal = True
                 logger.info("run.completed", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "completed"})
@@ -556,6 +641,7 @@ def create_app(
                 # never holds a dangling user turn with no answer. The run row records it.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
+                await run_trace.finish(status="err", error=str(exc))
                 terminal = True
                 logger.warning("run.failed_midstream", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
@@ -568,24 +654,47 @@ def create_app(
                 if not terminal:
                     with contextlib.suppress(Exception):
                         await asyncio.shield(_terminalize_interrupted(run.id))
+                        await run_trace.finish(
+                            status="err", error="interrupted: client disconnected mid-stream"
+                        )
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
     async def _complete_run(
-        run: Run, user_input: str, messages: list[dict[str, Any]], params: dict[str, Any]
+        run: Run,
+        user_input: str,
+        messages: list[dict[str, Any]],
+        params: dict[str, Any],
+        run_trace: Any,
     ) -> Any:
+        output = ""
+        finish_reason: str | None = None
         try:
-            completion = await gw.complete(
-                model=run.model, messages=messages, params=params, extra_headers=_headers(run)
-            )
+            # M17: the single LLM call is the run's ``llm`` node span (the trace's one bar).
+            async with run_trace.node_span(_PROMPT_NODE) as scope:
+                completion = await gw.complete(
+                    model=run.model, messages=messages, params=params, extra_headers=_headers(run)
+                )
+                choice = completion.choices[0] if completion.choices else None
+                output = (choice.message.content if choice else "") or ""
+                finish_reason = choice.finish_reason if choice else None
+                scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
+                scope.set_attributes(
+                    {
+                        "gen_ai.request.model": run.model,
+                        "gen_ai.response.finish_reason": finish_reason,
+                    }
+                )
         except APIStatusError as exc:
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            await run_trace.finish(status="err", error=f"{code}: {message}")
             return _error(message, status=status, code=code, run_id=run.id)
         except APIConnectionError as exc:
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await run_trace.finish(status="err", error=str(exc))
             return _error(
                 "inference plane unreachable",
                 status=503,
@@ -593,9 +702,6 @@ def create_app(
                 run_id=run.id,
             )
 
-        choice = completion.choices[0] if completion.choices else None
-        output = (choice.message.content if choice else "") or ""
-        finish_reason = choice.finish_reason if choice else None
         # An empty answer (model hit its token cap before producing content) is surfaced honestly
         # and contributes no thread turn — same posture as the streaming path (m9.md §2.4 spirit).
         empty_reason = _empty_output_reason(output, finish_reason)
@@ -609,6 +715,7 @@ def create_app(
                     user_content=user_input,
                     assistant_content=output,
                 )
+        await run_trace.finish(status="ok", error=empty_reason)
         logger.info("run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
 
@@ -692,6 +799,150 @@ def create_app(
                     code="resume_schema_mismatch",
                 )
         return None
+
+    # ── theygent-native API: the run waterfall (M17 — observability) ─────
+    # Additive READ surface over the span/node_io the capture wrapper persisted (§5). The in-UI
+    # waterfall needs only /trace (bars + gaps, no payloads); /io is the lazy click-through; both
+    # pass through the single ``authorize`` chokepoint (§1.9). /runs, /graphs/runs, /agents/* are
+    # untouched (§8 the Do-NOT). No external trace backend — the UI reads theygent's own store (§0).
+
+    @app.get("/runs/{run_id}/trace", dependencies=[Depends(require_auth)])
+    async def get_run_trace(run_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        # The waterfall payload: the run's span tree (timing + status + worker attribution + scalar
+        # attrs + edge sizes), ordered by start_ns. NO payloads — those are the lazy /io call
+        # (§1.3).
+        run = await store.get_run(session, run_id)
+        if run is None:
+            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
+        if not authorize(
+            LOCAL_PRINCIPAL, "trace:read", run
+        ):  # the §1.9 chokepoint (no-op allow now)
+            return _error("not permitted to read this run's trace", status=403, code="forbidden")
+        telemetry: Telemetry = app.state.telemetry
+        spans = await telemetry.trace_store.list_spans(session, run_id)
+        return {
+            "runId": run_id,
+            "status": run.status,
+            "spans": [s.model_dump(mode="json") for s in spans],
+        }
+
+    @app.get("/runs/{run_id}/trace/stream", dependencies=[Depends(require_auth)])
+    async def stream_run_trace(run_id: str) -> Any:
+        # The LIVE waterfall (§5/§6): subscribe to the in-process SpanBus and relay span open/close
+        # events as they happen, so the waterfall grows during a streaming run (the in-flight amber
+        # bar settles green/red on its close event). The durable record is /trace; this is the
+        # ephemeral live view (mirrors the token DeltaBus ↔ persisted-output relationship, D7).
+        async with tx() as s:
+            run = await store.get_run(s, run_id)
+        if run is None:
+            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
+        if not authorize(LOCAL_PRINCIPAL, "trace:read", run):
+            return _error("not permitted to read this run's trace", status=403, code="forbidden")
+        telemetry = app.state.telemetry
+        bus = telemetry.bus
+        queue = bus.subscribe(run_id)
+
+        async def gen() -> AsyncIterator[str]:
+            try:
+                # If the run already terminalized, there will be no future events — close at once so
+                # the client falls back to the static /trace snapshot (no hang). A small race window
+                # is harmless: late events were captured by the snapshot.
+                if run.status in ("completed", "failed"):
+                    yield _sse("done", {"runId": run_id, "status": run.status})
+                    return
+                while True:
+                    event = await queue.get()
+                    if event is None:  # the run finished (bus.close sentinel)
+                        yield _sse("done", {"runId": run_id})
+                        return
+                    yield _sse(f"span.{event.kind}", event.payload)
+            finally:
+                bus.unsubscribe(run_id, queue)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @app.get("/runs/{run_id}/nodes/{node_id}/io", dependencies=[Depends(require_auth)])
+    async def get_node_io(
+        run_id: str, node_id: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        # The click-through (§5/§6): the full per-node I/O, lazy. Gated states are NOT errors — the
+        # timeline stays legible; only payloads are gated, with a clear reason: not-permitted
+        # (authz)
+        # vs metadata (sizes only) vs off (capture disabled) vs simply not-captured. Never a 500.
+        run = await store.get_run(session, run_id)
+        if run is None:
+            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
+        telemetry: Telemetry = app.state.telemetry
+        io = await telemetry.io_store.get_io(session, run_id, node_id)
+        # Authz: io:read denial returns the timing/sizes shape with payloads omitted + a reason —
+        # "captured but not visible to you" is a DIFFERENT message from "not captured" (§6).
+        if not authorize(LOCAL_PRINCIPAL, "io:read", run):
+            level = io.capture_level if io is not None else await _effective_capture(run.graph_id)
+            return _io_response(
+                run_id,
+                node_id,
+                level,
+                inputs=None,
+                outputs=None,
+                bytes_in=io.bytes_in if io else 0,
+                bytes_out=io.bytes_out if io else 0,
+                truncated=io.truncated if io else False,
+                reason="You don't have access to this run's context",
+            )
+        if io is not None:
+            reason = (
+                None
+                if io.capture_level == "full"
+                else "Sizes only — full I/O capture is off for this agent"
+            )
+            return _io_response(
+                run_id,
+                node_id,
+                io.capture_level,
+                inputs=io.inputs,
+                outputs=io.outputs,
+                bytes_in=io.bytes_in,
+                bytes_out=io.bytes_out,
+                truncated=io.truncated,
+                reason=reason,
+            )
+        # No row: either capture is off for this agent, or the node didn't run / wasn't captured.
+        level = await _effective_capture(run.graph_id)
+        reason = (
+            "I/O capture is disabled for this agent"
+            if level == "off"
+            else "No I/O captured for this node"
+        )
+        return _io_response(run_id, node_id, level, inputs=None, outputs=None, reason=reason)
+
+    async def _effective_capture(agent_id: str | None) -> CaptureLevel:
+        telemetry: Telemetry = app.state.telemetry
+        return await telemetry.effective_capture_for(agent_id)
+
+    def _io_response(
+        run_id: str,
+        node_id: str,
+        capture_level: CaptureLevel,
+        *,
+        inputs: dict[str, Any] | None,
+        outputs: dict[str, Any] | None,
+        bytes_in: int = 0,
+        bytes_out: int = 0,
+        truncated: bool = False,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        # snake_case, matching SpanView / Run / the existing theygent API convention.
+        return {
+            "run_id": run_id,
+            "node_id": node_id,
+            "capture_level": capture_level,
+            "inputs": inputs,
+            "outputs": outputs,
+            "bytes_in": bytes_in,
+            "bytes_out": bytes_out,
+            "truncated": truncated,
+            "reason": reason,
+        }
 
     @app.get("/threads", dependencies=[Depends(require_auth)])
     async def list_threads(
@@ -825,12 +1076,25 @@ def create_app(
             },
         )
 
+        # M17: open the run's observability trace. The effective capture level is resolved ONCE per
+        # run (§4) = deployment ceiling ∧ topology default ∧ the agent's policy (ir.id == the saved
+        # agent id for a saved-agent run; None for an inline /graphs/runs → the topology default).
+        # The interactive walker is stamped with the ``inproc`` executor (worker attribution, §1).
+        telemetry: Telemetry = app.state.telemetry
+        capture: CaptureLevel = await telemetry.effective_capture_for(ir.id)
+        run_trace = telemetry.begin_run(
+            run.id,
+            executor_id=INPROC_EXECUTOR,
+            capture_level=capture,
+            buffered=True,  # in-process walker: buffer + flush once at finish (no per-step DB I/O)
+        )
         ctx = WalkContext(
             gateway=gw,
             run_id=run.id,
             prior_messages=prior,
             extra_headers=_headers(run),
             mcp=mcp,
+            run_trace=run_trace,
         )
         if stream:
             return await _stream_graph(ir, run, input_value, ctx)
@@ -850,11 +1114,13 @@ def create_app(
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            await _finish_trace(ctx, "err", f"{code}: {message}")
             logger.warning("graph_run.failed", extra={"run_id": run.id, "code": code})
             return _error(message, status=status, code=code, run_id=run.id)
         except APIConnectionError as exc:
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(
                 "inference plane unreachable",
                 status=503,
@@ -864,10 +1130,12 @@ def create_app(
         except RouterError as exc:  # router failed before any stream committed: clean status.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="router_error", run_id=run.id)
         except TemplateError as exc:  # a bad $in token in an llm node (m9.md §1.2): clean status.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="template_error", run_id=run.id)
 
         async def gen() -> AsyncIterator[str]:
@@ -899,12 +1167,14 @@ def create_app(
                             assistant_content=output,
                         )
                 terminal = True
+                await _finish_trace(ctx, "ok", result.empty_reason)
                 logger.info("graph_run.completed", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "completed"})
                 yield "data: [DONE]\n\n"
             except Exception as exc:  # inference died / router failed mid-walk: fail cleanly.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
+                await _finish_trace(ctx, "err", str(exc))
                 terminal = True
                 logger.warning("graph_run.failed_midstream", extra={"run_id": run.id})
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
@@ -916,6 +1186,9 @@ def create_app(
                 if not terminal:
                     with contextlib.suppress(Exception):
                         await asyncio.shield(_terminalize_interrupted(run.id))
+                        await _finish_trace(
+                            ctx, "err", "interrupted: client disconnected mid-stream"
+                        )
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -928,10 +1201,12 @@ def create_app(
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=f"{code}: {message}")
+            await _finish_trace(ctx, "err", f"{code}: {message}")
             return _error(message, status=status, code=code, run_id=run.id)
         except APIConnectionError as exc:
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(
                 "inference plane unreachable",
                 status=503,
@@ -941,14 +1216,17 @@ def create_app(
         except RouterError as exc:  # router named a missing handle / no handle field (§3.2).
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="router_error", run_id=run.id)
         except TemplateError as exc:  # a bad $in token in an llm node (m9.md §1.2): clean status.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="template_error", run_id=run.id)
         except Exception as exc:  # mid-walk drop on the non-stream path: fail cleanly, no turn.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=502, code="inference_error", run_id=run.id)
 
         output = _coerce_output(result.output)
@@ -964,6 +1242,7 @@ def create_app(
                     user_content=_coerce_output(user_input),
                     assistant_content=output,
                 )
+        await _finish_trace(ctx, "ok", result.empty_reason)
         logger.info("graph_run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
 
@@ -1088,6 +1367,56 @@ def create_app(
                 code="agent_version_not_found",
             )
         return sv.model_dump(mode="json")
+
+    @app.get("/agents/{agent_id}/io-policy", dependencies=[Depends(require_auth)])
+    async def get_io_policy(agent_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        # M17 §5/§6: the effective + stored capture policy. ``effective`` is what actually happens
+        # (ceiling ∧ topology ∧ stored), so the agent-settings control shows the real behavior —
+        # e.g.
+        # "Full requested; capped to Sizes only by this deployment". Through the authz chokepoint.
+        if await agents.get_agent(session, agent_id) is None:
+            return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+        if not authorize(LOCAL_PRINCIPAL, "agent:configure", agent_id):
+            return _error("not permitted to view this agent's policy", status=403, code="forbidden")
+        telemetry: Telemetry = app.state.telemetry
+        row = await telemetry.policy_store.get_policy(session, agent_id)
+        view = telemetry.policy_store.view(
+            agent_id=agent_id,
+            row=row,
+            ceiling=telemetry.ceiling,
+            topo_default=telemetry.topology_default,
+        )
+        return view.model_dump(mode="json")
+
+    @app.put("/agents/{agent_id}/io-policy", dependencies=[Depends(require_auth)])
+    async def put_io_policy(agent_id: str, req: IoPolicyRequest) -> Any:
+        # Set the capture policy (§1.8). Gated on ``agent:configure`` (the §1.9 chokepoint). Editing
+        # it does NOT mint a new agent version — the policy lives beside the agent row, not in the
+        # hashed IR (M11 immutability), so ``contentHash`` is unchanged (surfaced in the UI copy).
+        telemetry: Telemetry = app.state.telemetry
+        if not authorize(LOCAL_PRINCIPAL, "agent:configure", agent_id):
+            return _error("not permitted to configure this agent", status=403, code="forbidden")
+        async with tx() as session:
+            if await agents.get_agent(session, agent_id) is None:
+                return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+            row = await telemetry.policy_store.upsert_policy(
+                session,
+                agent_id=agent_id,
+                io_capture=req.io_capture,
+                io_retention_seconds=req.io_retention_seconds,
+                redact_rules=req.redact_rules,
+                updated_by=LOCAL_PRINCIPAL.id,  # NULL in single-user; the auth milestone fills it
+            )
+            view = telemetry.policy_store.view(
+                agent_id=agent_id,
+                row=row,
+                ceiling=telemetry.ceiling,
+                topo_default=telemetry.topology_default,
+            )
+        logger.info(
+            "agent.io_policy_set", extra={"agent_id": agent_id, "io_capture": req.io_capture}
+        )
+        return view.model_dump(mode="json")
 
     async def _resolve_agent_ir(
         agent_id: str, *, version: str | None, content_hash_pin: str | None

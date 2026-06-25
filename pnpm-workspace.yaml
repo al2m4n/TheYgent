@@ -5,7 +5,9 @@ packages:
   - "apps/interface"
   - "packages/ir-types"
 
-# Native postinstall scripts we trust to run (pnpm 10 blocks these by default).
-onlyBuiltDependencies:
-  - esbuild
-  - "@biomejs/biome"
+# Native postinstall scripts we trust to run. pnpm blocks dependency build scripts by default and,
+# with strictDepBuilds on, FAILS CI (ERR_PNPM_IGNORED_BUILDS) on a fresh install. pnpm 11 REMOVED
+# the old `onlyBuiltDependencies` list in favour of this `allowBuilds` map — https://pnpm.io/settings.
+allowBuilds:
+  esbuild: true
+  "@biomejs/biome": true

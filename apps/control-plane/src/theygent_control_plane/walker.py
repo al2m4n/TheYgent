@@ -35,6 +35,7 @@ and the determinism boundary (§8.1) is unmoved — multi-input is binding + add
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -60,6 +61,7 @@ from theygent_control_plane.mcp import (
     McpResult,
     McpToolNotFound,
 )
+from theygent_control_plane.observability import RunTrace, SpanScope, now_ns
 from theygent_control_plane.tools import DEFAULT_REGISTRY, ToolRegistry
 
 logger = logging.getLogger("theygent.control_plane.walker")
@@ -147,6 +149,14 @@ class WalkContext:
     # The MCP server registry/connections (app-scoped; the control-plane passes its instance). A
     # fresh empty manager by default — fine for graphs with no mcp_tool node.
     mcp: McpManager = field(default_factory=McpManager)
+    # M17: the observability handle for this run (the control-plane opens it via
+    # ``Telemetry.begin_run`` before walking). When set, the walker wraps each node in a span and
+    # captures per-node I/O through it (the §4 one-wrapper seam); when ``None`` (telemetry not
+    # wired)
+    # the walk is byte-for-byte its pre-M17 self — the wrapper is purely additive. The walker still
+    # does no run-state/thread DB I/O itself (the M5 seam rule); telemetry is an injected
+    # side-channel.
+    run_trace: RunTrace | None = None
 
 
 _CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
@@ -680,32 +690,49 @@ async def walk(
         if _is_skipped(node, ir.edges, skipped, live_handles):
             skipped.add(node.id)
             _log_node(ctx, node, skipped=True)
+            # M17: a skipped (dead-branch) node is a zero-width grey bar on the waterfall.
+            if ctx.run_trace is not None:
+                await ctx.run_trace.skipped(node)
             continue
         _log_node(ctx, node, skipped=False)
 
-        if node.kind == "boundary":
-            _walk_boundary(node, ir, input_value, values, skipped, live_handles, result)
-        elif node.kind == "activity":
-            if node.type == "llm":
-                async for delta in _walk_llm(node, ir, ctx, values, skipped, live_handles, result):
-                    yield delta
-            elif node.type == "tool":
-                await _walk_tool(node, ir, ctx, values, skipped, live_handles)
-            elif node.type == "mcp_tool":
-                await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
-            else:
-                # agent / rag / retriever / memory / code — deferred (§7).
-                raise NotImplementedError(
-                    f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
+        # M17: capture the resolved in-port values BEFORE running the node (upstream values are
+        # already bound — topo order) so the span's node_io shows what each node RECEIVED (§3).
+        io_inputs = _io_input_snapshot(node, ir.edges, values, skipped, live_handles)
+        # The one wrapper (§1.5/§4): each executed node runs inside a span; on close it writes the
+        # span row + node_io per the effective capture policy. A no-op CM when telemetry is unwired,
+        # so the walk is byte-for-byte its pre-M17 self without a RunTrace.
+        async with _open_node_span(ctx, node) as scope:
+            if node.kind == "boundary":
+                _walk_boundary(node, ir, input_value, values, skipped, live_handles, result)
+            elif node.kind == "activity":
+                if node.type == "llm":
+                    gen = _walk_llm(node, ir, ctx, values, skipped, live_handles, result, scope)
+                    async for delta in gen:
+                        yield delta
+                elif node.type == "tool":
+                    await _walk_tool(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "mcp_tool":
+                    await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
+                else:
+                    # agent / rag / retriever / memory / code — deferred (§7).
+                    raise NotImplementedError(
+                        f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
+                    )
+            elif node.kind == "orchestration":
+                if node.type == "router":
+                    _walk_router(node, ir, values, skipped, live_handles)
+                else:
+                    # loop / map — deferred (§7).
+                    raise NotImplementedError(
+                        f"orchestration node {node.id!r} (type {node.type!r}) "
+                        "is not implemented yet"
+                    )
+            if scope is not None:  # record what the node received + emitted, and its ok/err status
+                scope.set_io(
+                    inputs=io_inputs, outputs=_io_output_snapshot(node, values, live_handles)
                 )
-        elif node.kind == "orchestration":
-            if node.type == "router":
-                _walk_router(node, ir, values, skipped, live_handles)
-            else:
-                # loop / map — deferred (§7).
-                raise NotImplementedError(
-                    f"orchestration node {node.id!r} (type {node.type!r}) is not implemented yet"
-                )
+                scope.set_status(_node_span_status(node, live_handles))
 
     if result is not None and result.empty_reason is None:
         result.empty_reason = finalize_empty_reason(
@@ -769,6 +796,59 @@ def _log_node(ctx: WalkContext, node: Node, *, skipped: bool) -> None:
     )
 
 
+# ── M17 observability glue (the one-wrapper seam, §4) ────────────────────────
+# Thin, additive helpers so the walk wraps each node in a span and captures its I/O WITHOUT changing
+# any handler signature or the dispatch. When ``ctx.run_trace`` is unset the span CM is a no-op, so
+# a
+# walk without telemetry is byte-for-byte its pre-M17 self.
+
+
+@contextlib.asynccontextmanager
+async def _null_acm() -> AsyncIterator[None]:
+    """A no-op async CM yielding ``None`` — used when no :class:`RunTrace` is wired."""
+    yield None
+
+
+def _open_node_span(ctx: WalkContext, node: Node) -> Any:
+    """The node-span context manager (a real one when telemetry is wired, else a no-op)."""
+    if ctx.run_trace is not None:
+        return ctx.run_trace.node_span(node)
+    return _null_acm()
+
+
+def _io_input_snapshot(
+    node: Node,
+    edges: list[Edge],
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> dict[str, Any]:
+    """The node's RESOLVED per-in-port input values (post-``$in`` — they ARE the upstream outputs
+    the
+    node consumes), for ``node_io.inputs`` (§3). Multi-input (M10) → one entry per named in-port."""
+    return dict(_collect_in_ports(node, edges, values, skipped, live_handles).values)
+
+
+def _io_output_snapshot(
+    node: Node, values: dict[tuple[str, str], Any], live_handles: dict[str, set[str]]
+) -> dict[str, Any]:
+    """The node's emitted per-out-handle values, for ``node_io.outputs`` (§3). A router/tool emits
+    on
+    exactly the taken handle(s); an llm/input on its success handle(s); an output node emits nothing
+    (its input IS the run output, captured as the input snapshot)."""
+    return {handle: values.get((node.id, handle)) for handle in live_handles.get(node.id, set())}
+
+
+def _node_span_status(node: Node, live_handles: dict[str, set[str]]) -> str:
+    """``err`` if the node bound ONLY its error handle(s) (a tool/mcp_tool structured error — m6.md
+    §4; the run continues but the node itself errored, so the bar is red), else ``ok``. A node that
+    raised is marked ``err`` by the span CM's exception path instead."""
+    live = live_handles.get(node.id) or set()
+    if live and live <= _error_handles(node):
+        return "err"
+    return "ok"
+
+
 def _walk_boundary(
     node: Node,
     ir: IRDocument,
@@ -807,6 +887,7 @@ async def _walk_llm(
     skipped: set[str],
     live_handles: dict[str, set[str]],
     result: WalkResult | None = None,
+    scope: SpanScope | None = None,
 ) -> AsyncIterator[Delta]:
     config = LlmConfig.model_validate(node.config)
     model_id, params = resolve_model(ir, config)
@@ -815,26 +896,48 @@ async def _walk_llm(
     # prompt may compose several in-ports (M10) — $in.file AND $in.question — via the port map.
     messages = [*ctx.prior_messages, *_render_messages(node, config, ports)]
 
-    # open_stream sends the request and validates status, so a pre-stream 503/404 raises here —
-    # before any delta — letting the control-plane surface a clean status (mirrors /runs).
-    upstream = await ctx.gateway.open_stream(
-        model=model_id, messages=messages, params=params, extra_headers=ctx.extra_headers
-    )
+    # M17 §2: the actual generation is a `model.generate` phase span (a child of the llm node span),
+    # so the waterfall can later split it from a `model.load`/`engine.warmup` cold-start band (the
+    # §10 demo). It carries timing + the GenAI-semconv scalars (model, ttft, finish_reason) — no
+    # payloads (§1.3). A no-op CM when telemetry is unwired.
+    gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
     output = ""
     finish_reason: str | None = None
-    async for chunk in upstream:
-        # `parse_chunk` is the one chunk parser shared with the durable `execute_llm` body (M13 §2):
-        # a reasoning model emits `reasoning_content` (its thinking) before `content` (its answer).
-        # Stream the thinking as visible progress so the model doesn't look frozen, but NEVER fold
-        # it into the output — only `content` is the answer (the binding downstream nodes read).
-        reasoning, content, fr = parse_chunk(chunk)
-        if fr:
-            finish_reason = fr
-        if reasoning:
-            yield Delta(node_id=node.id, content=reasoning, kind="reasoning")
-        if content:
-            output += content
-            yield Delta(node_id=node.id, content=content)
+    first_token_ns: int | None = None
+    async with gen_cm as gen_scope:
+        # open_stream sends the request and validates status, so a pre-stream 503/404 raises here —
+        # before any delta — letting the control-plane surface a clean status (mirrors /runs).
+        upstream = await ctx.gateway.open_stream(
+            model=model_id, messages=messages, params=params, extra_headers=ctx.extra_headers
+        )
+        async for chunk in upstream:
+            # `parse_chunk` is the one chunk parser shared with the durable `execute_llm` body (M13
+            # §2): a reasoning model emits `reasoning_content` (its thinking) before `content` (its
+            # answer). Stream the thinking as visible progress so the model doesn't look frozen, but
+            # NEVER fold it into the output — only `content` is the answer (the binding downstream).
+            reasoning, content, fr = parse_chunk(chunk)
+            if fr:
+                finish_reason = fr
+            if reasoning:
+                yield Delta(node_id=node.id, content=reasoning, kind="reasoning")
+            if content:
+                if first_token_ns is None:
+                    first_token_ns = now_ns()
+                output += content
+                yield Delta(node_id=node.id, content=content)
+        # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model).
+        if gen_scope is not None:
+            attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
+            if finish_reason is not None:
+                attrs["gen_ai.response.finish_reason"] = finish_reason
+            if first_token_ns is not None:
+                attrs["ttft_ms"] = round((first_token_ns - gen_scope.span.start_ns) / 1e6, 1)
+            gen_scope.set_attributes(attrs)
+
+    # Mirror the model id onto the node span too, so the waterfall's left rail can label the llm
+    # node without opening the phase child.
+    if scope is not None:
+        scope.set_attributes({"gen_ai.request.model": model_id})
 
     # An empty answer with finish_reason=length means the budget ran out before any content (often
     # a reasoning model that spent it all thinking). Record it so the run is legible, not a blank.

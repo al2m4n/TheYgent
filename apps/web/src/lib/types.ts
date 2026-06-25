@@ -85,6 +85,66 @@ export interface StoredVersion {
   view: Record<string, unknown> | null;
 }
 
+// ── control-plane observability /runs/{id}/trace + /io + /io-policy (M17, snake_case) ──
+// The run waterfall reads theygent's OWN span store (never an external trace backend). A span is a
+// run-root, a node, or a phase (queue.wait / model.generate). node_id == the React Flow node id (so
+// the canvas overlay is a free join later). executor_id/worker_host = which worker handled the span.
+
+export interface Span {
+  id: string;
+  run_id: string;
+  trace_id: string;
+  span_id: string;
+  parent_span_id: string | null;
+  node_id: string | null;
+  node_type: string | null;
+  kind: string | null; // activity | orchestration | boundary
+  name: string; // node id for node spans; phase name otherwise (queue.wait, model.generate, …)
+  phase: string | null;
+  branch_index: number | null;
+  status: string; // ok | err | skipped | running
+  start_ns: number;
+  end_ns: number | null; // null while in-flight (live)
+  attributes: Record<string, unknown> | null; // GenAI scalars (model, ttft_ms, …) — no payloads
+  error: string | null;
+  executor_id: string | null; // the worker that handled it (inproc | local | a DBOS executor id)
+  worker_host: string | null; // host:pid
+  seq: number;
+  bytes_in: number | null; // edge-size annotations (joined from node_io) — no blob load
+  bytes_out: number | null;
+}
+
+export type CaptureLevel = "off" | "metadata" | "full";
+
+// GET /runs/{id}/nodes/{nodeId}/io — the lazy click-through. inputs/outputs are null when capture is
+// off/metadata or the viewer lacks io:read; `reason` says which (a gated state, never an error).
+export interface NodeIo {
+  run_id: string;
+  node_id: string;
+  capture_level: CaptureLevel;
+  inputs: Record<string, unknown> | null;
+  outputs: Record<string, unknown> | null;
+  bytes_in: number;
+  bytes_out: number;
+  truncated: boolean;
+  reason: string | null;
+}
+
+// GET/PUT /agents/{id}/io-policy — the per-agent capture policy. `effective` is what actually
+// happens (ceiling ∧ topology ∧ stored); `capped` flags when the deployment/topology limits it.
+export interface IoPolicy {
+  agent_id: string;
+  io_capture: CaptureLevel; // the stored request (or the topology default if none)
+  effective: CaptureLevel;
+  capped: boolean;
+  ceiling: CaptureLevel;
+  topology_default: CaptureLevel;
+  io_retention_seconds: number | null;
+  redact_rules: Record<string, unknown> | null;
+  updated_at: string | null;
+  has_explicit_policy: boolean;
+}
+
 // ── inference plane /admin/* (camelCase) ────────────────────────────────────
 
 export interface Capabilities {
