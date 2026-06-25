@@ -409,6 +409,80 @@ class BenchRunRow(Base):
     )
 
 
+# ── M19: the tool/MCP auth seam — encrypted secrets + connection bindings ─────────────────────────
+# M19 §1.1 (the milestone's #1 hard-to-reverse decision): tool/MCP auth never lives inline in the
+# IR.
+# A node references a logical tool key in ``ir.tools``; that binding references a ``connection`` by
+# id;
+# the connection carries NON-SECRET config (url/headers/transport/scopes) in JSONB and a
+# ``secret_ref`` pointing at the encrypted ``secret`` row. The handler resolves connection →
+# secret_ref → plaintext SERVER-SIDE, inside the step, at runtime — raw secrets never reach the IR,
+# the canvas, a span, or the journal. Rotating the secret keeps every agent's ``contentHash`` stable
+# (the connection id is hashed content; the secret is not). See ``secrets.py`` for at-rest
+# encryption.
+
+
+class SecretRow(Base):
+    """An encrypted-at-rest secret (M19 §1.1). ``id`` is the ``secret_ref`` a connection points at;
+    ``ciphertext`` is the Fernet token (AES-128-CBC + HMAC, base64 text) from ``SecretStore`` — the
+    plaintext is NEVER stored, logged, or returned over the wire. The raw value is decrypted only
+    server-side inside the step that calls the tool/MCP (the §10 sovereignty posture). A real
+    KMS/HSM/vault is the deferred upgrade; this table is the minimal honest indirection so the IR
+    carries no secret and rotation never bumps a hash."""
+
+    __tablename__ = "secret"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # the secret_ref
+    ciphertext: Mapped[str] = mapped_column(Text)  # Fernet token (never plaintext)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+class ConnectionRow(Base):
+    """A server-side tool/MCP auth + config binding (M19 §1.1). ``kind`` ∈ {http_auth, mcp_server}.
+    ``config`` (JSONB) holds ONLY non-secret material — an http connection's base url / static
+    headers / auth *scheme* / OAuth token endpoint, or an mcp_server's transport (stdio:
+    command/args/env-keys; http: url/headers/scopes). The secret material (api key, bearer token,
+    OAuth client secret, basic password) lives behind ``secret_ref`` in the ``secret`` table, NEVER
+    in this row's JSONB. The IR references this row by ``id`` from the ``tools`` block; the row's id
+    (a stable logical reference) is hashed content, the secret is not — so rotating a key keeps the
+    agent's ``contentHash`` stable, and prod-vs-staging connections are correctly different hashes.
+    On export/import the id is an environment binding the importer re-maps (like a model
+    binding)."""
+
+    __tablename__ = "connection"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``con_<ulid>``
+    name: Mapped[str] = mapped_column(String)  # human label
+    kind: Mapped[str] = mapped_column(String)  # http_auth | mcp_server
+    config: Mapped[dict] = mapped_column(JSONB)  # non-secret config only (never the secret)
+    secret_ref: Mapped[str | None] = mapped_column(String, nullable=True)  # → secret.id
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_connection_kind", "kind"),
+        Index("ix_connection_created", "created_at", "id"),
+    )
+
+
+class GateCounterRow(Base):
+    """The trivial per-key counter backing the ``ratelimit`` gate (M19 §2.8/§1.6 — the lean seam,
+    NOT a metering engine). ``id`` is a composite scope+key+window-id string (so different gates /
+    keys / windows are independent rows); ``count`` is the hits in the current fixed window, reset
+    window rolls (``window_start``). Atomic upsert in ``GateBackend.hit`` keeps it correct under
+    concurrency. ``quota`` does NOT use this table — it READS accumulated token usage off M17 spans
+    (§1.6 'usage read, not re-metered'), building no new metering pipeline."""
+
+    __tablename__ = "gate_counter"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # scope:key:window_id
+    count: Mapped[int] = mapped_column(Integer)
+    window_start: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
 class BenchPresetRow(Base):
     """A named, modality-scoped, LITERAL param set (M18 §1.7) — a sibling of bench results, not a
     third subsystem. ``params`` holds VALUES ONLY (no run/agent link): "apply preset" copies these

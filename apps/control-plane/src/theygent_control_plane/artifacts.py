@@ -1,0 +1,87 @@
+"""Audio/blob artifact storage — the M19 §2.1/§2.2 reference seam.
+
+Non-text payloads (audio in/out) are passed as **references**, never multi-MB blobs in step args
+(m13-dbos.md §3 / M17 §1.3). A reference is ``{"ref": <id|url|path>, "contentType":
+<mime>}``. ``transcribe`` FETCHES bytes from its input ref (a stored artifact, an http url, or a
+local path) and streams them to the inference plane; ``speak`` PUTS the produced bytes as a new
+artifact and returns the ref (the bytes are an artifact, not journaled — a resumed run replays the
+ref, not the audio).
+
+This is the **minimal honest** local-filesystem store (the user's trust domain), the same posture as
+the inference plane's local model dir. A cloud-aware blob store (signed URLs, retention, per-tenant
+buckets) is the deferred upgrade — only this module's internals change; the ref contract does not.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import tempfile
+
+import httpx
+from ulid import ULID
+
+#: Env override for the artifact directory; defaults to a per-host temp dir (dev). A real deployment
+#: points this at durable local storage in the user's domain.
+ARTIFACT_DIR_ENV = "THEYGENT_ARTIFACT_DIR"
+
+
+def default_artifact_dir() -> str:
+    return os.environ.get(ARTIFACT_DIR_ENV) or os.path.join(
+        tempfile.gettempdir(), "theygent-artifacts"
+    )
+
+
+def _write_blocking(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+def _read_local_blocking(base_dir: str, target: str) -> bytes:
+    """Read a stored artifact id (relative to ``base_dir``) or an absolute/local path. Blocking —
+    run off the event loop via ``asyncio.to_thread``."""
+    stored = os.path.join(base_dir, target)
+    path = stored if os.path.exists(stored) else target
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"audio artifact not found for ref {target!r}")
+    with open(path, "rb") as f:
+        return f.read()
+
+
+class LocalArtifactStore:
+    """Local-filesystem artifact storage (M19 §2.1). ``put`` writes bytes under a fresh
+    ``art_<ulid>`` id and returns the reference; ``fetch`` resolves a reference (stored id, url, or
+    local path) to ``(bytes, content_type)``. Injected into the walker/durable steps so handlers
+    stay runtime-agnostic — they call this, the store owns the I/O (file ops off the event loop)."""
+
+    def __init__(self, base_dir: str | None = None) -> None:
+        self._dir = base_dir or default_artifact_dir()
+        os.makedirs(self._dir, exist_ok=True)
+
+    async def put(self, data: bytes, content_type: str) -> dict[str, object]:
+        """Store ``data``, return its reference (``{ref, contentType, bytes}``). The bytes live on
+        disk (an artifact); only the reference is journaled/returned (§2.2)."""
+        ref_id = f"art_{ULID()}"
+        await asyncio.to_thread(_write_blocking, os.path.join(self._dir, ref_id), data)
+        return {"ref": ref_id, "contentType": content_type, "bytes": len(data)}
+
+    async def fetch(self, ref: object) -> tuple[bytes, str]:
+        """Resolve an audio reference to ``(bytes, content_type)``. ``ref`` is a ``{ref,
+        contentType}`` dict (or a bare string). A stored artifact id reads from the local dir; an
+        ``http(s)`` url is fetched (in the user's trust domain); a local path is read. Raises on an
+        unresolvable ref — the caller binds an honest ``err``."""
+        if isinstance(ref, dict):
+            target = ref.get("ref")
+            content_type = str(ref.get("contentType") or "application/octet-stream")
+        else:
+            target = ref
+            content_type = "application/octet-stream"
+        if not isinstance(target, str) or not target:
+            raise ValueError(f"audio reference has no resolvable 'ref': {ref!r}")
+        if target.startswith(("http://", "https://")):
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                resp = await client.get(target, timeout=30.0)
+            resp.raise_for_status()
+            return resp.content, resp.headers.get("content-type", content_type)
+        data = await asyncio.to_thread(_read_local_blocking, self._dir, target)
+        return data, content_type

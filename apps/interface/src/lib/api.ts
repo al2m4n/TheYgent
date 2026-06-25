@@ -140,6 +140,47 @@ export interface McpToolDescriptor {
   inputSchema?: Record<string, unknown> | null;
 }
 
+// ── M19 connection resource (the tool/MCP auth seam — §1.1) ──────────────────
+// A server-side auth + config binding the IR references by id from its `tools` block. The wire shape
+// is `public_dump`: NON-SECRET `config` only, plus `hasSecret` (never the secret or its ref). The
+// `secret` is WRITE-ONLY on create/patch — it is encrypted server-side and NEVER returned.
+export type ConnectionKind = "http_auth" | "mcp_server";
+
+export interface ConnectionRecord {
+  id: string;
+  name: string;
+  kind: ConnectionKind;
+  config: Record<string, unknown>;
+  hasSecret: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateConnectionBody {
+  name: string;
+  kind: ConnectionKind;
+  config?: Record<string, unknown>;
+  secret?: string; // write-only — goes to the encrypted secret store, never echoed back
+  enabled?: boolean;
+}
+
+// ── M12 trigger (the deploy primitive — surfaced on the input node, §1.5) ────
+export type TriggerKind = "http" | "schedule" | "webhook";
+
+export interface TriggerRecord {
+  id: string;
+  agent_id: string;
+  version: string | null;
+  content_hash: string | null;
+  kind: TriggerKind;
+  config: Record<string, unknown>; // secret redacted to "***" server-side
+  enabled: boolean;
+  last_fired_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── inference-plane engines + capabilities (camelCase /admin/*) ──────────────
 export interface EnginesView {
   maxResident: number;
@@ -383,6 +424,37 @@ export const api = {
   // picker. Read-only; tolerated to fail (the picker falls back to free text if unreachable).
   listModels: () =>
     request<{ models: ModelView[] }>(INFERENCE_URL, "/admin/models").then((r) => r.models),
+
+  // ── control plane: M19 connections (the tool/MCP auth seam) ────────────────
+  // The secret is write-only (create/patch); the wire never returns it (only `hasSecret`).
+  listConnections: () =>
+    request<{ connections: ConnectionRecord[] }>(CONTROL_PLANE_URL, "/connections").then(
+      (r) => r.connections,
+    ),
+
+  createConnection: (body: CreateConnectionBody) =>
+    request<ConnectionRecord>(CONTROL_PLANE_URL, "/connections", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  patchConnection: (
+    id: string,
+    body: { name?: string; config?: Record<string, unknown>; secret?: string; enabled?: boolean },
+  ) =>
+    request<ConnectionRecord>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteConnection: (id: string) =>
+    request<void>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  // ── control plane: M12 triggers (surfaced on the input node, §1.5) ─────────
+  listTriggers: () =>
+    request<{ triggers: TriggerRecord[] }>(CONTROL_PLANE_URL, "/triggers").then((r) => r.triggers),
 
   // Control-plane registered MCP servers — to populate the mcp_tool `server` picker + the MCP page.
   listMcpServers: () =>

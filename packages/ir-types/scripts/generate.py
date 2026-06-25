@@ -52,6 +52,15 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "subgraph": {"in": ["in"], "out": ["out"]},
     "loop": {"in": ["in"], "out": ["out"]},
     "map": {"in": ["in"], "out": ["out"]},
+    # M19 §2 — the node palette. transcribe/speak carry an ``err`` out-port (the tool ok/err
+    # contract — §2.2); guardrail emits ``pass``/``block`` (§2.6); the gates emit ``allow``/``deny``
+    # (§2.8); transform is a plain reshape (§2.9).
+    "transcribe": {"in": ["audio"], "out": ["text", "err"]},
+    "speak": {"in": ["text"], "out": ["audio", "err"]},
+    "guardrail": {"in": ["in"], "out": ["pass", "block"]},
+    "ratelimit": {"in": ["in"], "out": ["allow", "deny"]},
+    "quota": {"in": ["in"], "out": ["allow", "deny"]},
+    "transform": {"in": ["in"], "out": ["out"]},
 }
 _FALLBACK_PORTS: dict[str, list[str]] = {"in": ["in"], "out": ["out"]}
 
@@ -106,7 +115,12 @@ def build_node_types() -> dict[str, Any]:
             "defaultConfig": _default_config(config_schema),
             "ports": {
                 "in": [{"id": pid, "type": "any", "required": True} for pid in ports["in"]],
-                "out": [{"id": pid, "type": "any"} for pid in ports["out"]],
+                # An out-port named ``err`` is error-typed (the tool/llm/transcribe/speak ok-err
+                # contract — m6.md §4); the walker keys ``_error_handles`` off ``type == "error"``,
+                # so the palette default must match how real IRs declare it (tests/_ir.py).
+                "out": [
+                    {"id": pid, "type": "error" if pid == "err" else "any"} for pid in ports["out"]
+                ],
             },
         }
     return {"types": types}

@@ -1,5 +1,147 @@
 {
   "types": {
+    "guardrail": {
+      "configSchema": {
+        "$defs": {
+          "GuardrailCheck": {
+            "additionalProperties": false,
+            "description": "The guardrail's check (m19.md \u00a72.6). ``type`` picks the backend: ``rule`` (deterministic,\n\u21d2orchestration) or ``model`` (a classifier call, \u21d2activity). Exactly the matching sub-config is\nset; the node's ``kind`` follows the backend and is validated against it (\u00a71.2).",
+            "properties": {
+              "model": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GuardrailModel"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "rule": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/GuardrailRule"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "type": {
+                "enum": [
+                  "rule",
+                  "model"
+                ],
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "title": "GuardrailCheck",
+            "type": "object"
+          },
+          "GuardrailModel": {
+            "additionalProperties": false,
+            "description": "A model guardrail check backend (m19.md \u00a72.6, ``check.type == \"model\"``) \u2014 an LLM-judge \"is\nthis in scope?\" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model\nguardrail is ``kind: activity`` \u2014 \u00a71.2); ``prompt`` is the judge question; ``pass_on`` is the\nmodel answer that PASSES (default ``\"yes\"``) \u2014 anything else routes to ``block``.",
+            "properties": {
+              "model": {
+                "title": "Model",
+                "type": "string"
+              },
+              "passOn": {
+                "default": "yes",
+                "title": "Passon",
+                "type": "string"
+              },
+              "prompt": {
+                "title": "Prompt",
+                "type": "string"
+              }
+            },
+            "required": [
+              "model",
+              "prompt"
+            ],
+            "title": "GuardrailModel",
+            "type": "object"
+          },
+          "GuardrailRule": {
+            "additionalProperties": false,
+            "description": "A deterministic guardrail check backend (m19.md \u00a72.6, ``check.type == \"rule\"``). ``kind``\nselects the predicate; ``spec`` carries its knob (the regex, the min/max length, the json\nschema, the allow/deny list, the PII pattern set). Evaluated INLINE over journaled input \u2014 no\nI/O, no latency \u2014 so a rule guardrail is ``kind: orchestration`` (\u00a71.2).",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "regex",
+                  "length",
+                  "json_schema",
+                  "allow",
+                  "deny",
+                  "pii"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "spec": {
+                "additionalProperties": true,
+                "title": "Spec",
+                "type": "object"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "title": "GuardrailRule",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "``guardrail`` node config (m19.md \u00a72.6) \u2014 a first-class check that short-circuits before\ndownstream work. ``pass`` carries the input through; ``block`` carries the ``on_block`` payload\n(or the violation) \u2014 wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is\nper-instance (\u00a71.2): the editor stamps ``orchestration`` for a rule check, ``activity`` for a\nmodel check, and ``validate_graph`` enforces the match.",
+        "properties": {
+          "check": {
+            "$ref": "#/$defs/GuardrailCheck"
+          },
+          "onBlock": {
+            "additionalProperties": true,
+            "title": "Onblock",
+            "type": "object"
+          }
+        },
+        "required": [
+          "check"
+        ],
+        "title": "GuardrailConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "check": null,
+        "onBlock": {}
+      },
+      "kind": "orchestration",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "pass",
+            "type": "any"
+          },
+          {
+            "id": "block",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "guardrail"
+    },
     "human": {
       "configSchema": {
         "additionalProperties": false,
@@ -87,12 +229,42 @@
     "input": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``input`` boundary node \u2014 graph entry. No config in M5 (the run's ``input`` binds to\nits out-port); the model exists so an unexpected key fails validation, not silently.",
-        "properties": {},
+        "description": "``input`` boundary node \u2014 the single typed entry (M19 \u00a72.1, made real). ``modality`` declares\nthe payload shape (text by default \u2014 a pre-M19 input is unchanged); ``schema`` is the JSON\nSchema of the expected payload that M12 triggers map their source onto (\u00a71.5). Both are\ndeclarative \u2014 the walker still binds the run input to the out-port; modality/schema drive the\neditor + trigger mapping, not execution.",
+        "properties": {
+          "modality": {
+            "default": "text",
+            "enum": [
+              "text",
+              "audio",
+              "image",
+              "video",
+              "json",
+              "file"
+            ],
+            "title": "Modality",
+            "type": "string"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema"
+          }
+        },
         "title": "InputConfig",
         "type": "object"
       },
-      "defaultConfig": {},
+      "defaultConfig": {
+        "modality": "text",
+        "schema": null
+      },
       "kind": "boundary",
       "ports": {
         "in": [],
@@ -360,16 +532,36 @@
     "mcp_tool": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``mcp_tool`` activity node config (\u00a78.5 / m7.md \u00a72). ``server`` is the **logical name** of a\nregistered MCP server (resolved by the control-plane's MCP manager at runtime \u2014 same logical-id\ndiscipline as model bindings and the M6 tool registry); ``tool`` is a tool that server exposes;\n``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool``. The IR seam matches a\nlocal tool \u2014 only the transport (an external MCP process) differs.",
+        "description": "``mcp_tool`` activity node config (\u00a78.5 / m7.md \u00a72 + M19 \u00a72.4). The server is reached EITHER\nby the M7 ``server`` (the **logical name** of a registered MCP server, resolved by the manager)\nOR \u2014 M19 \u2014 by a ``connection`` id (an ``mcp_server`` connection, stdio or http, whose auth is\nresolved SERVER-SIDE at step time \u2014 the IR carries no secret, \u00a71.1). EXACTLY ONE of\n``server`` / ``connection`` is set (validated below). ``tool`` is the tool that server exposes;\n``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool`` \u2014 the IR seam matches a\nlocal tool, only the transport differs.",
         "properties": {
           "args": {
             "additionalProperties": true,
             "title": "Args",
             "type": "object"
           },
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connection"
+          },
           "server": {
-            "title": "Server",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Server"
           },
           "tool": {
             "title": "Tool",
@@ -377,7 +569,6 @@
           }
         },
         "required": [
-          "server",
           "tool"
         ],
         "title": "McpToolConfig",
@@ -385,7 +576,8 @@
       },
       "defaultConfig": {
         "args": {},
-        "server": "",
+        "connection": null,
+        "server": null,
         "tool": ""
       },
       "kind": "activity",
@@ -404,7 +596,7 @@
           },
           {
             "id": "err",
-            "type": "any"
+            "type": "error"
           }
         ]
       },
@@ -413,12 +605,40 @@
     "output": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``output`` boundary node \u2014 graph exit. No config in M5 (its in-port value is the run's\noutput).",
-        "properties": {},
+        "description": "``output`` boundary node \u2014 the run's return value (M19 \u00a72.1, made real). ``modality`` is the\nresult shape (text default); for audio/image it is a REFERENCE to the artifact a ``speak``/tool\nproduced upstream. ``output`` performs NO side effect (\u00a70) \u2014 posting/sending is a tool step.",
+        "properties": {
+          "modality": {
+            "default": "text",
+            "enum": [
+              "text",
+              "audio",
+              "image",
+              "json"
+            ],
+            "title": "Modality",
+            "type": "string"
+          },
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Schema"
+          }
+        },
         "title": "OutputConfig",
         "type": "object"
       },
-      "defaultConfig": {},
+      "defaultConfig": {
+        "modality": "text",
+        "schema": null
+      },
       "kind": "boundary",
       "ports": {
         "in": [
@@ -431,6 +651,129 @@
         "out": []
       },
       "type": "output"
+    },
+    "quota": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``quota`` activity node config (m19.md \u00a72.8/\u00a71.6) \u2014 a token-budget gate that READS\naccumulated usage, never re-meters (\u00a71.6). ``source: \"spans\"`` rolls up the per-node token\ncounts already on M17 spans; denies past ``budget_tokens`` in ``window_seconds`` per key.\nBuilds NO new metering pipeline (the \u00a78 Do-NOT).",
+        "properties": {
+          "budgetTokens": {
+            "title": "Budgettokens",
+            "type": "integer"
+          },
+          "keyExpr": {
+            "title": "Keyexpr",
+            "type": "string"
+          },
+          "source": {
+            "const": "spans",
+            "default": "spans",
+            "title": "Source",
+            "type": "string"
+          },
+          "windowSeconds": {
+            "title": "Windowseconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "keyExpr",
+          "budgetTokens",
+          "windowSeconds"
+        ],
+        "title": "QuotaConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "budgetTokens": 0,
+        "keyExpr": "",
+        "source": "spans",
+        "windowSeconds": 0
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "allow",
+            "type": "any"
+          },
+          {
+            "id": "deny",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "quota"
+    },
+    "ratelimit": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``ratelimit`` activity node config (m19.md \u00a72.8/\u00a71.6) \u2014 the lean per-key gate seam.\n``key_expr`` resolves the caller key from the M12 token / webhook signature or a ``$in`` field\n(per-USER is the deferred identity work \u2014 \u00a71.6). Denies past ``limit`` requests in\n``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: \"deny\"`` emits the\n``deny`` port (a clean 429-style result); ``policy: \"wait\"`` (a bounded suspend) is NAMED, not\nbuilt in M19 \u2014 start with deny.",
+        "properties": {
+          "keyExpr": {
+            "title": "Keyexpr",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "policy": {
+            "default": "deny",
+            "enum": [
+              "deny",
+              "wait"
+            ],
+            "title": "Policy",
+            "type": "string"
+          },
+          "windowSeconds": {
+            "title": "Windowseconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "keyExpr",
+          "limit",
+          "windowSeconds"
+        ],
+        "title": "RateLimitConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "keyExpr": "",
+        "limit": 0,
+        "policy": "deny",
+        "windowSeconds": 0
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "allow",
+            "type": "any"
+          },
+          {
+            "id": "deny",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "ratelimit"
     },
     "router": {
       "configSchema": {
@@ -468,6 +811,53 @@
         ]
       },
       "type": "router"
+    },
+    "speak": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``speak`` activity node config (m19.md \u00a72.2) \u2014 text in \u2192 audio-ref out, mapping 1:1 to\n``POST /v1/audio/speech`` (M18 \u00a71.1). ``model`` names a ``models`` key whose binding advertises\nthe ``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's\nreturn value is a REFERENCE to the produced audio (bytes are an artifact, never journaled \u2014\nm13-dbos.md \u00a76); it feeds an ``output`` (``modality:audio``) or an action ``tool``.",
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "SpeakConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "model": "",
+        "params": {}
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "text",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "audio",
+            "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "error"
+          }
+        ]
+      },
+      "type": "speak"
     },
     "subgraph": {
       "configSchema": {
@@ -541,16 +931,87 @@
     "tool": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``tool`` activity node config (\u00a78.3 / m6.md \u00a72/\u00a73.1). ``tool`` is a logical name resolved\nagainst the control-plane's in-code tool registry (membership is checked there, not here \u2014\n``packages/ir`` stays pure). ``args`` is an arg template: each value is either a literal or a\n``$in``-reference (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) the walker\nresolves against upstream data before invoking the callable.",
+        "description": "``tool`` activity node config (\u00a78.3 / m6.md \u00a72/\u00a73.1 + M19 \u00a72.3). ``tool`` is a logical name:\na key in ``ir.tools`` (an ``http`` connection-backed binding \u2014 M19 \u2014 or an M6 ``builtin``) OR a\ndirectly-registered builtin (``echo``/``http_fetch``). Membership is checked in the control\nplane, not here (``packages/ir`` stays pure).\n\nM6 path (builtin): ``args`` is the arg template \u2014 each value a literal or a ``$in``-reference\n(``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) resolved before the call.\n\nM19 http path (when ``tool`` resolves to an ``http`` binding, \u00a72.3): the request is described by\nthe additive fields below, all optional so a builtin ``tool`` node is byte-identical to M6. The\nconnection (resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE \u2014 auth\nnever appears in the IR or the rendered template. ``url_template``/``headers``/``body_template``\nuse the unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape\nthe step output; ``idempotency_key`` (set for unsafe methods \u2014 \u00a72.5) makes a partial-failure\nre-run a provider no-op.",
         "properties": {
           "args": {
             "additionalProperties": true,
             "title": "Args",
             "type": "object"
           },
+          "bodyTemplate": {
+            "default": null,
+            "title": "Bodytemplate"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Idempotencykey"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Method"
+          },
+          "responseMap": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Responsemap"
+          },
+          "timeoutSeconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Timeoutseconds"
+          },
           "tool": {
             "title": "Tool",
             "type": "string"
+          },
+          "urlTemplate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Urltemplate"
           }
         },
         "required": [
@@ -561,7 +1022,14 @@
       },
       "defaultConfig": {
         "args": {},
-        "tool": ""
+        "bodyTemplate": null,
+        "headers": {},
+        "idempotencyKey": null,
+        "method": null,
+        "responseMap": null,
+        "timeoutSeconds": null,
+        "tool": "",
+        "urlTemplate": null
       },
       "kind": "activity",
       "ports": {
@@ -579,11 +1047,95 @@
           },
           {
             "id": "err",
-            "type": "any"
+            "type": "error"
           }
         ]
       },
       "type": "tool"
+    },
+    "transcribe": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``transcribe`` activity node config (m19.md \u00a72.2) \u2014 audio-ref in \u2192 text out, mapping 1:1 to\n``POST /v1/audio/transcriptions`` (M18 \u00a71.1). ``model`` names a key in ``IRDocument.models``\nwhose binding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven \u2014\nan incompatible binding is rejected at run, not silently); ``params`` (language/prompt/\u2026) ride\nthrough to the endpoint. The audio bytes go to the inference base URL in the user's trust\ndomain, never the control plane (\u00a710 / M18 \u00a71.4).",
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "TranscribeConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "model": "",
+        "params": {}
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "audio",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "text",
+            "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "error"
+          }
+        ]
+      },
+      "type": "transcribe"
+    },
+    "transform": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``transform`` orchestration node config (m19.md \u00a72.9) \u2014 a lightweight, deterministic payload\nreshaper (a JSONata/jq-style ``expr``) so a builder maps ``A.out \u2192 B.in`` without a code node.\nNO sandbox, NO I/O \u2014 evaluated inline over journaled input (``kind: orchestration``). This is\nexplicitly NOT the ``code`` type (sandboxed user code; a subsystem; deferred \u2014 M14 \u00a74).",
+        "properties": {
+          "expr": {
+            "title": "Expr",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expr"
+        ],
+        "title": "TransformConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "expr": ""
+      },
+      "kind": "orchestration",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "transform"
     }
   }
 }

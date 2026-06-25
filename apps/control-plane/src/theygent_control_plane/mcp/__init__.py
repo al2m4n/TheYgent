@@ -7,6 +7,7 @@ registry and connections. See ``apps/control-plane/CLAUDE.md`` for the two recor
 """
 
 from theygent_control_plane.mcp.client import (
+    HttpMcpClient,
     McpClient,
     McpConnectionError,
     McpResult,
@@ -18,6 +19,7 @@ from theygent_control_plane.mcp.client import (
 from theygent_control_plane.mcp.manager import McpManager, McpServerNotFound
 
 __all__ = [
+    "HttpMcpClient",
     "McpClient",
     "McpConnectionError",
     "McpManager",

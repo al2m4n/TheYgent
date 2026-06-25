@@ -434,3 +434,228 @@ def test_content_hash_stable_across_port_required_default() -> None:
     optional = copy.deepcopy(base)
     optional["nodes"][2]["ports"]["in"][0]["required"] = False  # output's in-port made optional
     assert content_hash(parse_document(optional)) != h
+
+
+# ── M19 the node palette (m19.md §2) — new types, per-instance guardrail kind, role ──────────────
+
+
+def _graph_with(node: dict, *, src_handle: str, in_handle: str = "in") -> dict:
+    """Build ``input -> NODE -> output`` reusing ``_trivial`` wiring: replace the middle node (keeps
+    id ``n_llm`` so the edges stand), re-point the in-edge's targetHandle and the out-edge's
+    sourceHandle to the node's actual ports."""
+    doc = _trivial()
+    node = {**node, "id": "n_llm"}
+    doc["nodes"][1] = node
+    doc["edges"][0]["targetHandle"] = in_handle
+    doc["edges"][1]["sourceHandle"] = src_handle
+    return doc
+
+
+def test_m19_new_types_validate() -> None:
+    # transcribe / speak reference the declared ``default`` model; both are activities.
+    for node, src, in_h in (
+        (
+            {
+                "type": "transcribe",
+                "kind": "activity",
+                "config": {"model": "default", "params": {}},
+                "ports": {
+                    "in": [{"id": "audio", "type": "any"}],
+                    "out": [{"id": "text", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            "text",
+            "audio",
+        ),
+        (
+            {
+                "type": "speak",
+                "kind": "activity",
+                "config": {"model": "default", "params": {"voice": "alloy"}},
+                "ports": {
+                    "in": [{"id": "text", "type": "any"}],
+                    "out": [{"id": "audio", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            "audio",
+            "text",
+        ),
+        (
+            {
+                "type": "transform",
+                "kind": "orchestration",
+                "config": {"expr": "{ city: $in.in.city }"},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "out", "type": "any"}],
+                },
+            },
+            "out",
+            "in",
+        ),
+        (
+            {
+                "type": "ratelimit",
+                "kind": "activity",
+                "config": {"keyExpr": "$caller.token", "limit": 60, "windowSeconds": 3600},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "allow", "type": "any"}, {"id": "deny", "type": "any"}],
+                },
+            },
+            "allow",
+            "in",
+        ),
+        (
+            {
+                "type": "quota",
+                "kind": "activity",
+                "config": {
+                    "keyExpr": "$caller.token",
+                    "budgetTokens": 1_000_000,
+                    "windowSeconds": 2_592_000,
+                },
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "allow", "type": "any"}, {"id": "deny", "type": "any"}],
+                },
+            },
+            "allow",
+            "in",
+        ),
+    ):
+        validate_graph(parse_document(_graph_with(node, src_handle=src, in_handle=in_h)))
+
+
+def _guardrail_node(kind: str, check: dict) -> dict:
+    return {
+        "type": "guardrail",
+        "kind": kind,
+        "config": {"check": check, "onBlock": {"message": "nope"}},
+        "ports": {
+            "in": [{"id": "in", "type": "any"}],
+            "out": [{"id": "pass", "type": "any"}, {"id": "block", "type": "any"}],
+        },
+    }
+
+
+def test_guardrail_rule_is_orchestration() -> None:
+    node = _guardrail_node(
+        "orchestration", {"type": "rule", "rule": {"kind": "regex", "spec": {"pattern": "x"}}}
+    )
+    validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_guardrail_model_is_activity() -> None:
+    node = _guardrail_node(
+        "activity",
+        {"type": "model", "model": {"model": "default", "prompt": "in scope?", "passOn": "yes"}},
+    )
+    validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_guardrail_model_as_orchestration_rejected() -> None:
+    # The §1.2 determinism guard: a model check is I/O — it MUST be an activity, never lowered as
+    # deterministic orchestration. The per-instance kind derivation rejects the mislabel at compile.
+    node = _guardrail_node(
+        "orchestration",
+        {"type": "model", "model": {"model": "default", "prompt": "in scope?"}},
+    )
+    with pytest.raises(GraphValidationError, match="must have kind 'activity'"):
+        validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_guardrail_rule_as_activity_rejected() -> None:
+    node = _guardrail_node("activity", {"type": "rule", "rule": {"kind": "length", "spec": {}}})
+    with pytest.raises(GraphValidationError, match="must have kind 'orchestration'"):
+        validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_guardrail_rule_needs_rule_subconfig() -> None:
+    node = _guardrail_node("orchestration", {"type": "rule"})  # no `rule`
+    with pytest.raises(GraphValidationError, match=r"needs check\.rule"):
+        validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_guardrail_model_references_declared_model() -> None:
+    node = _guardrail_node(
+        "activity", {"type": "model", "model": {"model": "ghost", "prompt": "?"}}
+    )
+    with pytest.raises(GraphValidationError, match="undeclared model 'ghost'"):
+        validate_graph(parse_document(_graph_with(node, src_handle="pass")))
+
+
+def test_transcribe_undeclared_model_rejected() -> None:
+    node = {
+        "type": "transcribe",
+        "kind": "activity",
+        "config": {"model": "ghost", "params": {}},
+        "ports": {
+            "in": [{"id": "audio", "type": "any"}],
+            "out": [{"id": "text", "type": "any"}, {"id": "err", "type": "error"}],
+        },
+    }
+    with pytest.raises(GraphValidationError, match="undeclared model 'ghost'"):
+        validate_graph(parse_document(_graph_with(node, src_handle="text", in_handle="audio")))
+
+
+def test_http_tool_binding_and_node_validate() -> None:
+    doc = _trivial()
+    doc["tools"] = {"weather": {"kind": "http", "connection": "con_abc"}}
+    doc["nodes"][1] = {
+        "id": "n_llm",
+        "type": "tool",
+        "kind": "activity",
+        "config": {
+            "tool": "weather",
+            "method": "GET",
+            "urlTemplate": "https://api.example.com/f?city={$in.in.city}",
+            "headers": {"X-Trace": "{$in.in.runId}"},
+            "responseMap": "$.data",
+        },
+        "ports": {
+            "in": [{"id": "in", "type": "any"}],
+            "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+        },
+    }
+    doc["edges"][1]["sourceHandle"] = "ok"
+    validate_graph(parse_document(doc))
+
+
+def test_mcp_tool_binding_requires_exactly_one_target() -> None:
+    # M19 §2.4: an mcp tool binding sets EXACTLY ONE of server / connection.
+    both = {
+        "schemaVersion": "1.0",
+        "id": "a",
+        "name": "n",
+        "version": "0.1.0",
+        "models": {},
+        "tools": {"t": {"kind": "mcp", "tool": "x", "server": "s", "connection": "c"}},
+        "nodes": [],
+        "edges": [],
+    }
+    with pytest.raises(Exception, match="EXACTLY ONE"):
+        parse_document(both)
+    neither = copy.deepcopy(both)
+    neither["tools"]["t"] = {"kind": "mcp", "tool": "x"}
+    with pytest.raises(Exception, match="EXACTLY ONE"):
+        parse_document(neither)
+    # Either alone is fine.
+    ok_conn = copy.deepcopy(both)
+    ok_conn["tools"]["t"] = {"kind": "mcp", "tool": "x", "connection": "con_1"}
+    parse_document(ok_conn)
+
+
+def test_port_role_is_hashed_content() -> None:
+    # role is IR content (not view): changing a handle's role moves the contentHash (M19 §2.10),
+    # while the default ``data`` is materialized so omitting it hashes like writing it.
+    base = _trivial()
+    h = content_hash(parse_document(base))
+    explicit = copy.deepcopy(base)
+    for node in explicit["nodes"]:
+        for port in node["ports"]["in"] + node["ports"]["out"]:
+            port["role"] = "data"  # the default, written explicitly
+    assert content_hash(parse_document(explicit)) == h
+    control = copy.deepcopy(base)
+    control["nodes"][1]["ports"]["in"][0]["role"] = "control"
+    assert content_hash(parse_document(control)) != h

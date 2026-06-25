@@ -85,6 +85,9 @@ class DurableRuntime:
         bus: DeltaBus | None = None,
         fast_polling: bool = False,
         telemetry: Any = None,
+        tool_auth: Any = None,
+        gates: Any = None,
+        artifacts: Any = None,
     ) -> None:
         self._database_url = database_url
         self._fast_polling = fast_polling
@@ -109,6 +112,9 @@ class DurableRuntime:
                 sessionmaker=sessionmaker,
                 bus=self.bus,
                 telemetry=telemetry,
+                tool_auth=tool_auth,  # M19 §1.1: durable steps resolve connection auth too
+                gates=gates,  # M19 §2.8: durable gate steps use the same backend
+                artifacts=artifacts,  # M19 §2.2: durable audio steps use the same store
             )
         )
         self._launched = False

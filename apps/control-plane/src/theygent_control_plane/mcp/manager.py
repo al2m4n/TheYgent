@@ -25,6 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 from theygent_control_plane.mcp.client import (
+    HttpMcpClient,
     McpClient,
     McpConnectionError,
     McpResult,
@@ -37,12 +38,19 @@ from theygent_control_plane.mcp.client import (
 logger = logging.getLogger("theygent.control_plane.mcp")
 
 #: Builds an ``McpClient`` from a registration. Injectable so a test can substitute a fake; the
-#: default spawns a real stdio subprocess (the fast suite uses that against a real fake server).
+#: default opens a real stdio subprocess or http session by ``transport`` (the fast suite uses both
+#: against a real fake server).
 ClientFactory = Callable[[McpServerConfig], McpClient]
 
 
-def _stdio_factory(config: McpServerConfig) -> McpClient:
-    return StdioMcpClient(command=config.command, args=config.args, env=config.env, cwd=config.cwd)
+def _default_factory(config: McpServerConfig) -> McpClient:
+    """Build the transport-appropriate client (M19 §2.4): ``http`` → ``HttpMcpClient`` (url + the
+    server-side-built auth headers), else ``StdioMcpClient`` (the local subprocess)."""
+    if config.transport == "http":
+        return HttpMcpClient(url=config.url or "", headers=config.headers)
+    return StdioMcpClient(
+        command=config.command or "", args=config.args, env=config.env, cwd=config.cwd
+    )
 
 
 class McpServerNotFound(KeyError):
@@ -53,7 +61,7 @@ class McpServerNotFound(KeyError):
 class McpManager:
     """Per-control-plane-instance registry of named MCP servers + their lazy connections."""
 
-    def __init__(self, *, client_factory: ClientFactory = _stdio_factory) -> None:
+    def __init__(self, *, client_factory: ClientFactory = _default_factory) -> None:
         self._factory = client_factory
         self._configs: dict[str, McpServerConfig] = {}
         self._clients: dict[str, McpClient] = {}
@@ -160,6 +168,18 @@ class McpManager:
                 )
                 await self._drop(name)  # force a fresh connection on the retry
         raise last if last is not None else McpConnectionError("MCP call failed")
+
+    async def call_connection_tool(
+        self, name: str, config: McpServerConfig, tool: str, args: dict[str, Any]
+    ) -> McpResult:
+        """Invoke ``tool`` on a CONNECTION-BACKED MCP server (M19 §2.4), keyed by ``name`` (the
+        connection id) using the server-side-built ``config`` (transport + auth already resolved —
+        the secret never reached the IR). Registers the config only when it CHANGED, so a live
+        connection is reused across calls (a rotated secret / edited url re-registers + reconnects);
+        then the normal ``call_tool`` path (one reconnect-retry, ok/err contract)."""
+        if self._configs.get(name) != config:
+            await self.register(name, config)
+        return await self.call_tool(name, tool, args)
 
     async def close_all(self) -> None:
         """Tear down every live connection (control-plane shutdown)."""

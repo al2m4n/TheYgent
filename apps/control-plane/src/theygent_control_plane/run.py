@@ -33,6 +33,12 @@ def new_ulid() -> str:
     return str(ULID())
 
 
+def new_connection_id() -> str:
+    """A fresh connection id (``con_<ulid>``, M19 §1.1) — the stable logical reference the IR's
+    ``tools`` block points at. The ``con_`` prefix makes the id recognizable in IR/config/logs."""
+    return f"con_{ULID()}"
+
+
 class Run(BaseModel):
     """A single request, from creation to a terminal status.
 
@@ -203,6 +209,57 @@ class Trigger(BaseModel):
         config = dict(data.get("config") or {})
         if "secret" in config:
             config["secret"] = "***"
+        data["config"] = config
+        return data
+
+
+# ── Connection domain entity (M19 §1.1) — the tool/MCP auth seam ──────────────────────────────────
+# A connection is a server-side auth + config binding the IR references by id from its ``tools``
+# block.
+# Like ``Run``/``Trigger`` it is a domain shape the store maps ``ConnectionRow`` onto (§1.3), not
+# the
+# ORM row. The secret material lives behind ``secret_ref`` in the encrypted ``secret`` table
+# (``secrets.py``) — never in ``config`` and never on the wire. ``config`` is NON-SECRET only.
+
+ConnectionKind = Literal["http_auth", "mcp_server"]
+
+#: Defensive redaction: keys that must never appear on the wire even if a caller wrongly nested a
+#: secret in ``config`` (secrets belong behind ``secret_ref``). Mirrors Trigger ``secret`` →
+#: ``***``.
+_SECRETISH_CONFIG_KEYS = frozenset(
+    {"secret", "password", "token", "apiKey", "api_key", "authToken", "clientSecret"}
+)
+
+
+class Connection(BaseModel):
+    """A persisted tool/MCP auth + config binding (M19 §1.1). ``kind`` selects the shape:
+    ``http_auth`` (an http tool's base url / static headers / auth scheme) or ``mcp_server`` (an MCP
+    server by stdio or HTTP). ``config`` carries ONLY non-secret material; the secret material is
+    encrypted behind ``secret_ref`` (``secrets.py``). The IR references this by ``id``; rotating the
+    secret keeps every agent's ``contentHash`` stable (the id is hashed content, not the secret)."""
+
+    id: str = Field(default_factory=new_connection_id)
+    name: str
+    kind: ConnectionKind
+    config: dict[str, Any] = Field(default_factory=dict)
+    secret_ref: str | None = None
+    enabled: bool = True
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
+
+    def public_dump(self) -> dict[str, Any]:
+        """The wire shape (M19 §1.1 / §10 redaction): the ``secret_ref`` is internal plumbing and
+        the secret itself is never stored here, so the wire exposes only whether a secret is SET
+        (``hasSecret``), never the ref or value — mirroring how ``Trigger.public_dump`` redacts to
+        ``***`` and ``_mcp_view`` lists env keys without values. Any secret-ish key wrongly nested
+        in ``config`` is also redacted defensively (secrets belong behind ``secret_ref``)."""
+        data = self.model_dump(mode="json")
+        data["hasSecret"] = self.secret_ref is not None
+        data.pop("secret_ref", None)
+        config = dict(data.get("config") or {})
+        for key in list(config):
+            if key in _SECRETISH_CONFIG_KEYS:
+                config[key] = "***"
         data["config"] = config
         return data
 

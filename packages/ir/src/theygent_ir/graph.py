@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from pydantic.alias_generators import to_camel
 
 # ── the determinism taxonomy (§8.1) ──────────────────────────────────────────
@@ -52,13 +52,28 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     "retriever": "activity",
     "memory": "activity",
     "code": "activity",
+    # M19 §2 — audio model-call types + the gate seam (all activities)
+    "transcribe": "activity",  # §2.2 — POST /v1/audio/transcriptions
+    "speak": "activity",  # §2.2 — POST /v1/audio/speech
+    "ratelimit": "activity",  # §2.8 — per-key counter (I/O)
+    "quota": "activity",  # §2.8 — accumulated-usage read (I/O)
+    # M19 §1.2 — ``guardrail`` is the first PER-INSTANCE kind: rule⇒orchestration, model⇒activity.
+    # This is the table's DEFAULT (the rule backend, the default config); validate_graph derives the
+    # real expected kind from each instance's ``check.type`` and enforces it (``_expected_kind``).
+    "guardrail": "orchestration",
     # orchestration — deterministic control flow
     "router": "orchestration",
     "condition": "orchestration",
     "loop": "orchestration",
     "iterator": "orchestration",
     "map": "orchestration",
+    "transform": "orchestration",  # M19 §2.9 — deterministic reshape, inline, no I/O
 }
+
+#: Types whose ``kind`` is determined PER INSTANCE by their ``config``, not fixed in
+#: ``NODE_TYPE_KIND`` (m19.md §1.2). ``validate_graph`` derives the expected kind via
+#: ``_expected_kind`` and enforces it; the table value above is only the palette/default.
+_PER_INSTANCE_KIND_TYPES: frozenset[str] = frozenset({"guardrail"})
 
 #: The node ``type``s the walker actually executes. Every other known ``type`` is a valid IR
 #: shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is an
@@ -70,7 +85,25 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
 #: primitive: ``recv`` / child workflow / bounded inline repetition / durable-queue fan-out);
 #: the interactive M5 walker still raises ``NotImplementedError`` for them (m14.md §0/§1).
 EXECUTABLE_TYPES: frozenset[str] = frozenset(
-    {"input", "output", "llm", "tool", "router", "mcp_tool", "human", "subgraph", "loop", "map"}
+    {
+        "input",
+        "output",
+        "llm",
+        "tool",
+        "router",
+        "mcp_tool",
+        "human",
+        "subgraph",
+        "loop",
+        "map",
+        # M19 §2 — the node palette
+        "transcribe",
+        "speak",
+        "guardrail",
+        "ratelimit",
+        "quota",
+        "transform",
+    }
 )
 
 
@@ -123,16 +156,46 @@ class BuiltinTool(_Wire):
     ref: str
 
 
+class HttpTool(_Wire):
+    """An http/REST/GraphQL tool binding (M19 §2.3) — the workhorse + the substrate for action tools
+    (§2.5) and crawler tools (§1.4). ``connection`` is the id of an ``http_auth`` connection (M19
+    §1.1) whose secret the handler injects SERVER-SIDE at step time — never inline in the IR. The
+    optional ``template`` names a provider request shape (e.g. ``slack.chat.postMessage``) for the
+    small built-in action set; everything else is the raw http tool config on the node (§2.3)."""
+
+    kind: Literal["http"]
+    connection: str
+    template: str | None = None
+
+
 class McpTool(_Wire):
+    """An MCP tool binding (M7 + M19 §2.4). ``tool`` is the named tool the server exposes; the
+    server is reached EITHER by the M7 ``server`` name (a registered ``mcp_server``) OR — M19 — by a
+    ``connection`` id (an ``mcp_server`` connection, stdio or http, auth via its secret_ref).
+    Exactly one of ``server`` / ``connection`` is set (validated below); no secret in the IR."""
+
     kind: Literal["mcp"]
-    server: str
     tool: str
+    server: str | None = None
+    connection: str | None = None
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> McpTool:
+        if bool(self.server) == bool(self.connection):
+            raise ValueError(
+                "an mcp tool binding must set EXACTLY ONE of `server` (M7 registered name) or "
+                "`connection` (M19 mcp_server connection id)"
+            )
+        return self
 
 
-ToolBinding = Annotated[BuiltinTool | McpTool, Field(discriminator="kind")]
+ToolBinding = Annotated[BuiltinTool | HttpTool | McpTool, Field(discriminator="kind")]
 
 
 # ── nodes & edges (§8.3) ──────────────────────────────────────────────────────
+
+
+PortRole = Literal["data", "control"]
 
 
 class Port(_Wire):
@@ -144,11 +207,20 @@ class Port(_Wire):
     ``data`` edge or the graph fails validation; ``required: false`` declares an in-port that may
     be left unfed and resolves to ``null`` at runtime. The default is required, so an unfed input
     is a loud validation error rather than a silent ``None`` — the multi-input analogue of M9's
-    no-silent-pass-through rule. (Ignored on out-ports.)"""
+    no-silent-pass-through rule. (Ignored on out-ports.)
+
+    ``role`` (M19 §2.10) is the channel a handle carries: ``data`` (the default — threads a value)
+    or ``control`` (pure ordering: "run after this passes", no value). The editor renders the two
+    distinctly and only allows data→data / control→control connections; an edge's ``channel`` is
+    DERIVED from the handles it joins, not a separate toggle. The walker/compiler dispatch by edge
+    ``channel`` exactly as before — ``role`` is the per-handle declaration the channel follows, so a
+    pre-M19 IR (all ports default ``data``) is unchanged in meaning. This is the ONLY IR-shape
+    addition in M19 (§0/§5)."""
 
     id: str
     type: str = "any"
     required: bool = True
+    role: PortRole = "data"
 
 
 class Ports(_Wire):
@@ -232,25 +304,61 @@ class LlmConfig(_Wire):
     # loud error (m10.md §1.2). The token lives inside the opaque content string — no schema change.
 
 
+# M19 §2.1: the I/O modality vocabulary (DISTINCT from the model ``Modality`` in registration.py —
+# that is chat/vision/embeddings/audio.*; this is the payload SHAPE a boundary declares). Non-text
+# payloads enter/leave as REFERENCES (a stored blob handle + content type), never multi-MB blobs
+# journaled through step args (m13-dbos.md §3 / M17 §1.3).
+InputModality = Literal["text", "audio", "image", "video", "json", "file"]
+OutputModality = Literal["text", "audio", "image", "json"]
+
+
 class InputConfig(_Wire):
-    """``input`` boundary node — graph entry. No config in M5 (the run's ``input`` binds to
-    its out-port); the model exists so an unexpected key fails validation, not silently."""
+    """``input`` boundary node — the single typed entry (M19 §2.1, made real). ``modality`` declares
+    the payload shape (text by default — a pre-M19 input is unchanged); ``schema`` is the JSON
+    Schema of the expected payload that M12 triggers map their source onto (§1.5). Both are
+    declarative — the walker still binds the run input to the out-port; modality/schema drive the
+    editor + trigger mapping, not execution."""
+
+    modality: InputModality = "text"
+    payload_schema: dict[str, Any] | None = Field(default=None, alias="schema")
 
 
 class OutputConfig(_Wire):
-    """``output`` boundary node — graph exit. No config in M5 (its in-port value is the run's
-    output)."""
+    """``output`` boundary node — the run's return value (M19 §2.1, made real). ``modality`` is the
+    result shape (text default); for audio/image it is a REFERENCE to the artifact a ``speak``/tool
+    produced upstream. ``output`` performs NO side effect (§0) — posting/sending is a tool step."""
+
+    modality: OutputModality = "text"
+    payload_schema: dict[str, Any] | None = Field(default=None, alias="schema")
 
 
 class ToolConfig(_Wire):
-    """``tool`` activity node config (§8.3 / m6.md §2/§3.1). ``tool`` is a logical name resolved
-    against the control-plane's in-code tool registry (membership is checked there, not here —
-    ``packages/ir`` stays pure). ``args`` is an arg template: each value is either a literal or a
-    ``$in``-reference (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) the walker
-    resolves against upstream data before invoking the callable."""
+    """``tool`` activity node config (§8.3 / m6.md §2/§3.1 + M19 §2.3). ``tool`` is a logical name:
+    a key in ``ir.tools`` (an ``http`` connection-backed binding — M19 — or an M6 ``builtin``) OR a
+    directly-registered builtin (``echo``/``http_fetch``). Membership is checked in the control
+    plane, not here (``packages/ir`` stays pure).
+
+    M6 path (builtin): ``args`` is the arg template — each value a literal or a ``$in``-reference
+    (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) resolved before the call.
+
+    M19 http path (when ``tool`` resolves to an ``http`` binding, §2.3): the request is described by
+    the additive fields below, all optional so a builtin ``tool`` node is byte-identical to M6. The
+    connection (resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE — auth
+    never appears in the IR or the rendered template. ``url_template``/``headers``/``body_template``
+    use the unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape
+    the step output; ``idempotency_key`` (set for unsafe methods — §2.5) makes a partial-failure
+    re-run a provider no-op."""
 
     tool: str
     args: dict[str, Any] = Field(default_factory=dict)
+    # M19 §2.3 http-tool fields (all optional — present only when ``tool`` is an http binding).
+    method: str | None = None  # GET|POST|PUT|PATCH|DELETE
+    url_template: str | None = None  # supports $in.field; query string ok
+    headers: dict[str, str] = Field(default_factory=dict)  # connection adds auth headers at runtime
+    body_template: Any = None  # JSON body; for GraphQL: {"query": ..., "variables": {...}}
+    timeout_seconds: float | None = None
+    response_map: str | None = None  # optional JSONPath ($.data) to shape the step output
+    idempotency_key: str | None = None  # §2.5 — set for unsafe methods (replay-safe re-run)
 
 
 class RouterConfig(_Wire):
@@ -262,15 +370,27 @@ class RouterConfig(_Wire):
 
 
 class McpToolConfig(_Wire):
-    """``mcp_tool`` activity node config (§8.5 / m7.md §2). ``server`` is the **logical name** of a
-    registered MCP server (resolved by the control-plane's MCP manager at runtime — same logical-id
-    discipline as model bindings and the M6 tool registry); ``tool`` is a tool that server exposes;
-    ``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool``. The IR seam matches a
-    local tool — only the transport (an external MCP process) differs."""
+    """``mcp_tool`` activity node config (§8.5 / m7.md §2 + M19 §2.4). The server is reached EITHER
+    by the M7 ``server`` (the **logical name** of a registered MCP server, resolved by the manager)
+    OR — M19 — by a ``connection`` id (an ``mcp_server`` connection, stdio or http, whose auth is
+    resolved SERVER-SIDE at step time — the IR carries no secret, §1.1). EXACTLY ONE of
+    ``server`` / ``connection`` is set (validated below). ``tool`` is the tool that server exposes;
+    ``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool`` — the IR seam matches a
+    local tool, only the transport differs."""
 
-    server: str
     tool: str
+    server: str | None = None
+    connection: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self) -> McpToolConfig:
+        if bool(self.server) == bool(self.connection):
+            raise ValueError(
+                "an mcp_tool node must set EXACTLY ONE of `server` (M7 registered name) or "
+                "`connection` (M19 mcp_server connection id)"
+            )
+        return self
 
 
 # ── M14 the additive-lowering tier (m14.md §1) — config shapes only ───────────
@@ -354,6 +474,118 @@ class MapConfig(_Wire):
     max_depth: int = 8
 
 
+# ── M19 the node palette (m19.md §2) — config shapes only ─────────────────────
+#
+# Six genuinely-new node types M19 adds to the palette. Each is a runtime-agnostic handler + a
+# dispatch branch + this per-type ``config`` schema; no envelope/edge/``kind`` shape moves (m19.md
+# §0). ``transcribe``/``speak`` are the only new MODEL-call types (the two OpenAI audio endpoints,
+# §2.2); ``guardrail`` is the first type whose ``kind`` is per-instance (§1.2 — rule⇒orchestration,
+# model⇒activity); ``ratelimit``/``quota`` are the lean gate seam (§2.8/§1.6); ``transform`` is a
+# deterministic reshape, NOT a code sandbox (§2.9). The http/action/crawler tools reuse the existing
+# ``tool`` type (its M19 fields above), and ``switch`` is the existing ``router`` (§2.7) — no new
+# types for those.
+
+
+class TranscribeConfig(_Wire):
+    """``transcribe`` activity node config (m19.md §2.2) — audio-ref in → text out, mapping 1:1 to
+    ``POST /v1/audio/transcriptions`` (M18 §1.1). ``model`` names a key in ``IRDocument.models``
+    whose binding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven —
+    an incompatible binding is rejected at run, not silently); ``params`` (language/prompt/…) ride
+    through to the endpoint. The audio bytes go to the inference base URL in the user's trust
+    domain, never the control plane (§10 / M18 §1.4)."""
+
+    model: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class SpeakConfig(_Wire):
+    """``speak`` activity node config (m19.md §2.2) — text in → audio-ref out, mapping 1:1 to
+    ``POST /v1/audio/speech`` (M18 §1.1). ``model`` names a ``models`` key whose binding advertises
+    the ``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's
+    return value is a REFERENCE to the produced audio (bytes are an artifact, never journaled —
+    m13-dbos.md §6); it feeds an ``output`` (``modality:audio``) or an action ``tool``."""
+
+    model: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
+class GuardrailRule(_Wire):
+    """A deterministic guardrail check backend (m19.md §2.6, ``check.type == "rule"``). ``kind``
+    selects the predicate; ``spec`` carries its knob (the regex, the min/max length, the json
+    schema, the allow/deny list, the PII pattern set). Evaluated INLINE over journaled input — no
+    I/O, no latency — so a rule guardrail is ``kind: orchestration`` (§1.2)."""
+
+    kind: Literal["regex", "length", "json_schema", "allow", "deny", "pii"]
+    spec: dict[str, Any] = Field(default_factory=dict)
+
+
+class GuardrailModel(_Wire):
+    """A model guardrail check backend (m19.md §2.6, ``check.type == "model"``) — an LLM-judge "is
+    this in scope?" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model
+    guardrail is ``kind: activity`` — §1.2); ``prompt`` is the judge question; ``pass_on`` is the
+    model answer that PASSES (default ``"yes"``) — anything else routes to ``block``."""
+
+    model: str
+    prompt: str
+    pass_on: str = "yes"
+
+
+class GuardrailCheck(_Wire):
+    """The guardrail's check (m19.md §2.6). ``type`` picks the backend: ``rule`` (deterministic,
+    ⇒orchestration) or ``model`` (a classifier call, ⇒activity). Exactly the matching sub-config is
+    set; the node's ``kind`` follows the backend and is validated against it (§1.2)."""
+
+    type: Literal["rule", "model"]
+    rule: GuardrailRule | None = None
+    model: GuardrailModel | None = None
+
+
+class GuardrailConfig(_Wire):
+    """``guardrail`` node config (m19.md §2.6) — a first-class check that short-circuits before
+    downstream work. ``pass`` carries the input through; ``block`` carries the ``on_block`` payload
+    (or the violation) — wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is
+    per-instance (§1.2): the editor stamps ``orchestration`` for a rule check, ``activity`` for a
+    model check, and ``validate_graph`` enforces the match."""
+
+    check: GuardrailCheck
+    on_block: dict[str, Any] = Field(default_factory=dict)  # e.g. {"message": "..."}
+
+
+class RateLimitConfig(_Wire):
+    """``ratelimit`` activity node config (m19.md §2.8/§1.6) — the lean per-key gate seam.
+    ``key_expr`` resolves the caller key from the M12 token / webhook signature or a ``$in`` field
+    (per-USER is the deferred identity work — §1.6). Denies past ``limit`` requests in
+    ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: "deny"`` emits the
+    ``deny`` port (a clean 429-style result); ``policy: "wait"`` (a bounded suspend) is NAMED, not
+    built in M19 — start with deny."""
+
+    key_expr: str
+    limit: int
+    window_seconds: int
+    policy: Literal["deny", "wait"] = "deny"
+
+
+class QuotaConfig(_Wire):
+    """``quota`` activity node config (m19.md §2.8/§1.6) — a token-budget gate that READS
+    accumulated usage, never re-meters (§1.6). ``source: "spans"`` rolls up the per-node token
+    counts already on M17 spans; denies past ``budget_tokens`` in ``window_seconds`` per key.
+    Builds NO new metering pipeline (the §8 Do-NOT)."""
+
+    key_expr: str
+    budget_tokens: int
+    window_seconds: int
+    source: Literal["spans"] = "spans"
+
+
+class TransformConfig(_Wire):
+    """``transform`` orchestration node config (m19.md §2.9) — a lightweight, deterministic payload
+    reshaper (a JSONata/jq-style ``expr``) so a builder maps ``A.out → B.in`` without a code node.
+    NO sandbox, NO I/O — evaluated inline over journaled input (``kind: orchestration``). This is
+    explicitly NOT the ``code`` type (sandboxed user code; a subsystem; deferred — M14 §4)."""
+
+    expr: str
+
+
 _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "llm": LlmConfig,
     "input": InputConfig,
@@ -365,6 +597,13 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "subgraph": SubgraphConfig,
     "loop": LoopConfig,
     "map": MapConfig,
+    # M19 §2 — the node palette
+    "transcribe": TranscribeConfig,
+    "speak": SpeakConfig,
+    "guardrail": GuardrailConfig,
+    "ratelimit": RateLimitConfig,
+    "quota": QuotaConfig,
+    "transform": TransformConfig,
 }
 
 #: The M14 node types that compose a saved, pinned agent body (m14.md §1.2). Each must pin EXACTLY
@@ -387,6 +626,27 @@ def parse_document(data: Any) -> IRDocument:
     ``pydantic.ValidationError`` on a shape error — the caller maps it to 400."""
 
     return _IR_ADAPTER.validate_python(data)
+
+
+def _expected_kind(node: Node, cfg: _Wire | None) -> NodeKind | None:
+    """The ``kind`` a node MUST carry (§8.1). For most types this is the fixed ``NODE_TYPE_KIND``
+    value. For a PER-INSTANCE-kind type (m19.md §1.2 — only ``guardrail`` today) it is DERIVED from
+    the validated config: a ``rule`` check ⇒ ``orchestration`` (no I/O, inline), a ``model`` check
+    ⇒ ``activity`` (a classifier call). Returns ``None`` for an unknown type (the caller errors)."""
+    if node.type == "guardrail" and isinstance(cfg, GuardrailConfig):
+        return "activity" if cfg.check.type == "model" else "orchestration"
+    return NODE_TYPE_KIND.get(node.type)
+
+
+def _model_refs(cfg: _Wire | None) -> list[str]:
+    """Every ``models`` key a node's config references (§8.4) — so each is checked against
+    ``ir.models`` up front. ``llm``/``transcribe``/``speak`` name one model directly; a ``model``
+    guardrail names one in ``check.model.model``. Anything else references no model."""
+    if isinstance(cfg, LlmConfig | TranscribeConfig | SpeakConfig):
+        return [cfg.model]
+    if isinstance(cfg, GuardrailConfig) and cfg.check.type == "model" and cfg.check.model:
+        return [cfg.check.model.model]
+    return []
 
 
 def validate_graph(ir: IRDocument) -> None:
@@ -412,24 +672,55 @@ def validate_graph(ir: IRDocument) -> None:
 
     # 1-3: per-node validation.
     for node in ir.nodes:
-        expected = NODE_TYPE_KIND.get(node.type)
-        if expected is None:
+        if node.type not in NODE_TYPE_KIND:
             raise GraphValidationError(f"unknown node type {node.type!r}")
-        if node.kind != expected:
-            raise GraphValidationError(
-                f"node {node.id!r}: type {node.type!r} must have kind {expected!r}, "
-                f"got {node.kind!r}"
-            )
+        per_instance = node.type in _PER_INSTANCE_KIND_TYPES
         config_model = _CONFIG_MODELS.get(node.type)
+        cfg: _Wire | None = None
+        # For a FIXED-kind type the type/kind mismatch is the clearest error (even when the config
+        # is also wrong), so check it BEFORE parsing config — the M5 message order. For a
+        # PER-INSTANCE-kind type (guardrail) the expected kind is DERIVED from the config, so parse
+        # the config first, then derive + check the kind (m19.md §1.2).
+        if not per_instance:
+            fixed = NODE_TYPE_KIND[node.type]
+            if node.kind != fixed:
+                raise GraphValidationError(
+                    f"node {node.id!r}: type {node.type!r} must have kind {fixed!r}, "
+                    f"got {node.kind!r}"
+                )
         if config_model is not None:
             try:
                 cfg = config_model.model_validate(node.config)
             except ValidationError as exc:
                 raise GraphValidationError(f"node {node.id!r}: invalid config: {exc}") from exc
-            if isinstance(cfg, LlmConfig) and cfg.model not in ir.models:
+        if per_instance:
+            expected = _expected_kind(node, cfg)
+            if node.kind != expected:
                 raise GraphValidationError(
-                    f"node {node.id!r}: references undeclared model {cfg.model!r}"
+                    f"node {node.id!r}: type {node.type!r} must have kind {expected!r}, got "
+                    f"{node.kind!r} (a guardrail's kind follows its check: rule⇒orchestration, "
+                    "model⇒activity — m19.md §1.2)"
                 )
+        if cfg is not None:
+            # Every model the node references must be a declared ``models`` key (§8.4) —
+            # llm/transcribe/speak directly, a model guardrail via check.model (m19.md §1.2/§2.2).
+            for model_key in _model_refs(cfg):
+                if model_key not in ir.models:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: references undeclared model {model_key!r}"
+                    )
+            # M19 §2.6: a guardrail's check must carry the sub-config matching its ``type`` (a rule
+            # check needs ``rule``; a model check needs ``model``) — a loud shape error, never a
+            # silently-empty check that would pass everything.
+            if isinstance(cfg, GuardrailConfig):
+                if cfg.check.type == "rule" and cfg.check.rule is None:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: a rule guardrail needs check.rule (m19.md §2.6)"
+                    )
+                if cfg.check.type == "model" and cfg.check.model is None:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: a model guardrail needs check.model (m19.md §2.6)"
+                    )
             # M14 §1.2: a subgraph/loop/map composes a SAVED, PINNED agent — exactly one of
             # version / content_hash, so composition is immutable (never silently "latest"). The
             # pin is part of config, hence frozen into the parent's contentHash.

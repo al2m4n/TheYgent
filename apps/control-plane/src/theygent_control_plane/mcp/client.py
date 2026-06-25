@@ -1,19 +1,20 @@
-"""The ``McpClient`` lifecycle seam + the stdio transport implementation (m7.md §3.1).
+"""The ``McpClient`` lifecycle seam + the stdio AND http transport implementations (m7.md §3.1 +
+M19 §2.4).
 
-``McpClient`` is the protocol the control-plane depends on; ``StdioMcpClient`` is M7's only
-transport — it wraps the official ``mcp`` Python SDK over stdio (the server is a subprocess,
-JSON-RPC over stdin/stdout). **The SDK is wrapped here and nowhere else** (same discipline as
-``gateway-client`` wrapping the OpenAI SDK): the rest of the control-plane imports only this
-module's protocol + dataclasses, never ``mcp`` directly. HTTP/SSE is a future additive
-implementation against the same protocol (m7.md §9).
+``McpClient`` is the protocol the control-plane depends on; ``StdioMcpClient`` (the server is a
+subprocess, JSON-RPC over stdin/stdout) and ``HttpMcpClient`` (streamable-HTTP / SSE to a remote
+server) are the two transports — both wrap the official ``mcp`` SDK. **The SDK is wrapped here and
+nowhere else** (same discipline as ``gateway-client`` wrapping the OpenAI SDK): the rest of the
+control-plane imports only this module's protocol + dataclasses, never ``mcp`` directly. (M7 shipped
+stdio only; M19 §2.4 adds http against the SAME protocol — the node contract is identical.)
 
-The hard part this module owns: a **persistent** connection that survives across request tasks.
-The SDK's ``stdio_client`` / ``ClientSession`` are anyio context managers whose cancel scopes
-must be entered and exited on the *same* task. So the connection is owned by a **dedicated
-background task** (``_run``) that enters the contexts once, then serves ``call_tool`` requests off
-a queue until ``close`` — the actor pattern. Callers (request tasks) never touch the contexts
-directly; they enqueue work, so no cross-task cancel-scope violation is possible.
-"""
+The hard part this module owns: a **persistent** connection that survives across request tasks. The
+SDK's transport / ``ClientSession`` are anyio context managers whose cancel scopes must be entered
+and exited on the *same* task. So the connection is owned by a **dedicated background task**
+(``_run``) that enters the contexts once, then serves ``call_tool`` off a queue until close — the
+actor pattern. Callers (request tasks) never touch the contexts directly; they enqueue work, so no
+cross-task cancel-scope violation is possible. Both transports share that machinery
+(``_ActorMcpClient``); only ``_open_transport`` differs, so stdio and http behave identically."""
 
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ from typing import Any, Literal, Protocol
 
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel, Field
 
 
@@ -60,16 +62,20 @@ class McpToolNotFound(KeyError):
 
 
 class McpServerConfig(BaseModel):
-    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload, m7.md §3.2). M7 ships
-    only ``stdio``. ``env`` carries the user's secrets/paths INTO the subprocess they spawn — it
-    stays in the user's trust domain, never logged with values, never resolved in theygent cloud
-    (the §10 sovereignty invariant)."""
+    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload, m7.md §3.2 + M19 §2.4).
+    ``transport`` is ``stdio`` (a local subprocess — ``command``/``args``/``env``/``cwd``) or
+    ``http`` (a remote streamable-HTTP/SSE server — ``url``/``headers``). For stdio, ``env`` carries
+    the user's secrets/paths INTO the subprocess; for http, an auth header is built SERVER-SIDE from
+    a connection secret (§1.1) and lands in ``headers`` — never in the IR, never logged with values,
+    never resolved in theygent cloud (the §10 sovereignty invariant)."""
 
-    transport: Literal["stdio"] = "stdio"
-    command: str
+    transport: Literal["stdio", "http"] = "stdio"
+    command: str | None = None  # stdio
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
     cwd: str | None = None
+    url: str | None = None  # http (streamable-HTTP / SSE)
+    headers: dict[str, str] | None = None  # http — incl auth, built server-side from a connection
 
 
 class McpClient(Protocol):
@@ -99,28 +105,26 @@ def _result_value(result: types.CallToolResult) -> Any:
 _Call = tuple[str, dict[str, Any], "asyncio.Future[McpResult]"]
 
 
-class StdioMcpClient:
-    """A persistent stdio MCP connection owned by a single background task (m7.md §3.1)."""
+class _ActorMcpClient:
+    """A persistent MCP connection owned by a single background task (m7.md §3.1).
+    Transport-agnostic: a subclass provides :meth:`_open_transport`; everything else (the queue /
+    serve / reconnect contract) is shared so stdio and http behave identically."""
 
-    def __init__(
-        self,
-        *,
-        command: str,
-        args: Sequence[str] = (),
-        env: Mapping[str, str] | None = None,
-        cwd: str | None = None,
-    ) -> None:
-        self._params = StdioServerParameters(
-            command=command, args=list(args), env=dict(env) if env else None, cwd=cwd
-        )
+    def __init__(self) -> None:
         self._queue: asyncio.Queue[_Call | None] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
         self._tools: list[McpToolDescriptor] = []
 
+    async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        """Open the transport on the actor task and return its ``(read, write)`` streams. Stdio
+        spawns a subprocess; http opens a streamable-HTTP session. The contexts are entered on
+        ``stack`` so they tear down on the SAME task (the anyio cancel-scope rule)."""
+        raise NotImplementedError
+
     async def connect(self) -> None:
-        """Spawn the server and initialize the session on a dedicated task. Raises
-        :class:`McpConnectionError` if the process won't start or the handshake fails."""
+        """Open the transport and initialize the session on a dedicated task. Raises
+        :class:`McpConnectionError` if the transport won't open or the handshake fails."""
 
         loop = asyncio.get_running_loop()
         self._ready = loop.create_future()
@@ -135,7 +139,7 @@ class StdioMcpClient:
         assert self._ready is not None
         try:
             async with AsyncExitStack() as stack:
-                read, write = await stack.enter_async_context(stdio_client(self._params))
+                read, write = await self._open_transport(stack)
                 session = await stack.enter_async_context(ClientSession(read, write))
                 await session.initialize()
                 listed = await session.list_tools()
@@ -208,3 +212,43 @@ class StdioMcpClient:
             with contextlib.suppress(Exception):
                 await self._task
         self._task = None
+
+
+class StdioMcpClient(_ActorMcpClient):
+    """A persistent stdio MCP connection (m7.md §3.1) — the server is a local subprocess."""
+
+    def __init__(
+        self,
+        *,
+        command: str,
+        args: Sequence[str] = (),
+        env: Mapping[str, str] | None = None,
+        cwd: str | None = None,
+    ) -> None:
+        super().__init__()
+        self._params = StdioServerParameters(
+            command=command, args=list(args), env=dict(env) if env else None, cwd=cwd
+        )
+
+    async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        read, write = await stack.enter_async_context(stdio_client(self._params))
+        return read, write
+
+
+class HttpMcpClient(_ActorMcpClient):
+    """A persistent streamable-HTTP / SSE MCP connection (M19 §2.4) — a remote server by url.
+    ``headers`` carries the auth built SERVER-SIDE from a connection secret (§1.1); the secret never
+    appears in the IR. Same actor machinery as stdio — only the transport differs."""
+
+    def __init__(self, *, url: str, headers: Mapping[str, str] | None = None) -> None:
+        super().__init__()
+        self._url = url
+        self._headers = dict(headers) if headers else None
+
+    async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        # streamablehttp_client yields (read, write, get_session_id); we don't need the session-id
+        # callback (the actor owns one persistent session for the connection lifetime).
+        read, write, _get_session_id = await stack.enter_async_context(
+            streamablehttp_client(self._url, headers=self._headers)
+        )
+        return read, write

@@ -47,7 +47,9 @@ from theygent_ir import (
 )
 
 from theygent_control_plane import db
+from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
+from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.governance import LOCAL_PRINCIPAL, authorize
 from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
 from theygent_control_plane.observability import (
@@ -58,19 +60,23 @@ from theygent_control_plane.observability import (
     build_otlp_sink,
     now_ns,
 )
+from theygent_control_plane.run import _SECRETISH_CONFIG_KEYS as _SECRETISH_CONFIG_KEYS
 from theygent_control_plane.run import (
     BenchCase,
     BenchPreset,
     BenchRun,
     BenchSuite,
     BenchTargetKind,
+    ConnectionKind,
     Run,
     Trigger,
     TriggerKind,
 )
+from theygent_control_plane.secrets import SECRET_KEY_ENV, SecretStore
 from theygent_control_plane.store import (
     AgentStore,
     BenchStore,
+    ConnectionStore,
     McpStore,
     RunStore,
     TriggerStore,
@@ -78,13 +84,16 @@ from theygent_control_plane.store import (
     output_digest,
     params_digest,
 )
+from theygent_control_plane.tool_resolve import DbConnectionResolver
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
     RouterError,
     TemplateError,
+    TransformError,
     WalkContext,
     WalkResult,
+    audio_model_nodes,
     llm_models,
     mcp_tool_nodes,
     tool_nodes,
@@ -272,6 +281,41 @@ class CreatePresetRequest(BaseModel):
     params: dict[str, Any] = {}
 
 
+# ── M19 connection request models (§1.1) ─────────────────────────────────────────────────────────
+
+
+class CreateConnectionRequest(BaseModel):
+    # M19 §1.1: create a tool/MCP auth binding. ``config`` is NON-SECRET only
+    # (url/headers/transport/
+    # scopes); ``secret`` is the credential material — encrypted into the secret store and NEVER
+    # stored in the connection row or returned over the wire. ``kind`` ∈ http_auth | mcp_server.
+    name: str
+    kind: ConnectionKind
+    config: dict[str, Any] = {}
+    secret: str | None = None  # write-only; goes to the encrypted secret store, never echoed back
+    enabled: bool = True
+
+
+class UpdateConnectionRequest(BaseModel):
+    # M19 §1.1 PATCH: edit name / non-secret config / enabled, and ROTATE the secret. A rotation
+    # keeps the SAME secret_ref (so no agent's contentHash moves — §1.1). ``secret=""``/None leaves
+    # the existing secret untouched; a non-empty ``secret`` rotates it. ``kind`` is immutable.
+    name: str | None = None
+    config: dict[str, Any] | None = None
+    secret: str | None = None  # write-only; non-empty rotates the credential in place
+    enabled: bool | None = None
+
+
+def _secret_keys_from_env() -> list[str] | None:
+    """Resolve the Fernet key(s) for the secret store from ``THEYGENT_SECRET_KEY`` (comma-separated
+    for rotation — first encrypts, all decrypt). ``None`` when unset (SecretStore then warns + uses
+    an ephemeral key — dev-only, see secrets.py)."""
+    raw = os.environ.get(SECRET_KEY_ENV)
+    if not raw:
+        return None
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "code": code}
     body: dict[str, Any] = {"error": error}
@@ -361,6 +405,7 @@ def create_app(
     mcp_manager: McpManager | None = None,
     cors_origins: list[str] | None = None,
     invoke_token: str | None = None,
+    secret_key: list[str] | None = None,
     start_dispatcher: bool = True,
     dispatcher_interval_s: float = 5.0,
     durable: bool = False,
@@ -378,6 +423,16 @@ def create_app(
     agents = AgentStore()
     triggers = TriggerStore()
     bench = BenchStore()  # M18: saved benchmark results + suites/cases + param presets
+    # M19 §1.1: the tool/MCP auth seam. ``connections`` persists the (non-secret) bindings the IR's
+    # ``tools`` block references by id; ``secrets`` encrypts the material behind each ``secret_ref``
+    # (resolved server-side, inside the step — never in the IR/span/journal). Keys come from
+    # ``secret_key`` (test injection) or ``THEYGENT_SECRET_KEY`` (comma-separated for rotation);
+    # when unset, SecretStore makes an ephemeral key with a loud warning (dev-only — see
+    # secrets.py).
+    connections = ConnectionStore()
+    secrets = SecretStore.from_keys(
+        secret_key if secret_key is not None else _secret_keys_from_env()
+    )
     # M17: the observability seam. One live SpanBus for the /trace/stream side-channel (shared with
     # the in-process durable runtime so its spans stream too), and the opt-in OTLP sink —
     # constructed
@@ -416,6 +471,20 @@ def create_app(
             sessionmaker=app.state.sessionmaker, span_bus=span_bus, otlp_sink=otlp_sink
         )
         app.state.telemetry = telemetry
+        # M19 §1.1: the DB-backed connection resolver — the server-side auth seam an http tool /
+        # connection-backed mcp_tool resolves through, at step time. Built once (needs the
+        # sessionmaker); injected into the interactive WalkContext and the durable resources so the
+        # secret resolution is identical on both runtimes (never in the IR/span/journal).
+        tool_resolver = DbConnectionResolver(app.state.sessionmaker, connections, secrets)
+        app.state.tool_resolver = tool_resolver
+        # M19 §2.8: the gate backend (ratelimit counter + quota usage-read). Built once; injected
+        # into the interactive WalkContext + durable resources so gates behave identically on both.
+        gate_backend = GateBackend(app.state.sessionmaker)
+        app.state.gates = gate_backend
+        # M19 §2.2: the artifact store transcribe/speak resolve audio references through (local FS
+        # in the user's trust domain; the bytes never journal). Injected into both runtimes.
+        artifact_store = LocalArtifactStore()
+        app.state.artifacts = artifact_store
         # M9 §2.1 (F5.2): sweep runs left non-terminal by a crash to `failed` before serving, so a
         # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
         async with app.state.sessionmaker() as session, session.begin():
@@ -451,6 +520,9 @@ def create_app(
                 sessionmaker=app.state.sessionmaker,
                 fast_polling=dbos_fast_polling,
                 telemetry=telemetry,  # M17: durable steps capture through the SAME wrapper
+                tool_auth=tool_resolver,  # M19 §1.1: durable steps resolve connection auth too
+                gates=gate_backend,  # M19 §2.8: durable gate steps use the same backend
+                artifacts=artifact_store,  # M19 §2.2: durable audio steps use the same store
             )
             runtime.launch()
             app.state.durable_runtime = runtime
@@ -495,6 +567,8 @@ def create_app(
     app.state.store = store
     app.state.mcp = mcp
     app.state.triggers = triggers
+    app.state.connections = connections  # M19 §1.1
+    app.state.secrets = secrets  # M19 §1.1
     app.state.invoke_token = token
 
     # Auth placeholder so RBAC slots in later without reshaping handlers (§7) — a no-op
@@ -1075,13 +1149,20 @@ def create_app(
         # is created or sent — the §8.4/§3.2 logical-id invariant on the graph path.
         try:
             llms = llm_models(ir)
+            # M19 §1.3: transcribe/speak are logical-id-only too — reject an engine-name binding
+            # up front, exactly like an llm (the audio negative test the §4 contract extends).
+            audio_model_nodes(ir)
         except EngineNameNotAllowed as exc:
             return _error(str(exc), status=400, code="engine_name_not_allowed")
 
-        # Resolve every tool node's name against the registry up front (m6.md §5): an unknown tool
-        # is a 400 here, before a Run exists — never a runtime surprise inside the walker.
+        # Resolve every tool node's name up front (m6.md §5 + M19 §2.3): valid if it is a key in the
+        # IR's ``tools`` block (an M19 http/builtin binding) OR a directly-registered builtin —
+        # otherwise a 400 here, before a Run exists. The connection a binding references is resolved
+        # at STEP TIME (a dangling connection binds ``err`` honestly, never a create-time block —
+        # its
+        # id is an environment binding the importer re-maps, §1.1), so it is NOT checked here.
         for node, tool_name in tool_nodes(ir):
-            if tool_name not in DEFAULT_REGISTRY:
+            if tool_name not in ir.tools and tool_name not in DEFAULT_REGISTRY:
                 return _error(
                     f"node {node.id!r}: unknown tool {tool_name!r}",
                     status=400,
@@ -1165,6 +1246,9 @@ def create_app(
             extra_headers=_headers(run),
             mcp=mcp,
             run_trace=run_trace,
+            tool_auth=app.state.tool_resolver,  # M19 §1.1: server-side connection auth resolution
+            gates=app.state.gates,  # M19 §2.8: ratelimit/quota backend
+            artifacts=app.state.artifacts,  # M19 §2.2: transcribe/speak audio reference store
         )
         if stream:
             return await _stream_graph(ir, run, input_value, ctx)
@@ -1207,6 +1291,11 @@ def create_app(
                 await store.set_status(s, run.id, "failed", error=str(exc))
             await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="template_error", run_id=run.id)
+        except TransformError as exc:  # a bad transform expr/ref (m19.md §2.9): clean status.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
+            return _error(str(exc), status=422, code="transform_error", run_id=run.id)
 
         async def gen() -> AsyncIterator[str]:
             terminal = False
@@ -1293,6 +1382,11 @@ def create_app(
                 await store.set_status(s, run.id, "failed", error=str(exc))
             await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="template_error", run_id=run.id)
+        except TransformError as exc:  # a bad transform expr/ref (m19.md §2.9): clean status.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
+            return _error(str(exc), status=422, code="transform_error", run_id=run.id)
         except Exception as exc:  # mid-walk drop on the non-stream path: fail cleanly, no turn.
             async with tx() as s:
                 await store.set_status(s, run.id, "failed", error=str(exc))
@@ -1710,6 +1804,142 @@ def create_app(
         if not deleted:
             return _error(f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found")
         await _drop_schedule(trigger_id)  # M13: drop the DBOS schedule alongside the trigger row
+        return Response(status_code=204)
+
+    # ── M19 §1.1: the connection resource (tool/MCP auth seam) ────────────────────────────────────
+    # The ONLY new control-plane routes M19 adds (§3). A connection holds NON-SECRET config + a
+    # secret_ref; the secret material is written to the encrypted secret store in the SAME
+    # transaction and NEVER returned over the wire (public_dump redacts to hasSecret). Auth
+    # resolution is server-side at step time (no per-node apply endpoint — §1.1 / §3).
+
+    def _validate_connection(kind: ConnectionKind, config: dict[str, Any]) -> JSONResponse | None:
+        """Reject a connection whose config is malformed or smuggles a secret (§1.1: secrets go in
+        the write-only ``secret`` field, never ``config``). Returns an error response or None."""
+        for key in _SECRETISH_CONFIG_KEYS:
+            if key in config:
+                return _error(
+                    f"connection config must not contain the secret key {key!r}; pass the "
+                    "credential as the write-only `secret` field (it is encrypted server-side, "
+                    "never stored in the IR or the connection row)",
+                    status=400,
+                    code="invalid_connection",
+                )
+        if kind == "mcp_server":
+            transport = config.get("transport", "stdio")
+            if transport not in ("stdio", "http"):
+                return _error(
+                    f"mcp_server connection transport must be 'stdio' or 'http', got {transport!r}",
+                    status=400,
+                    code="invalid_connection",
+                )
+            if transport == "stdio" and not config.get("command"):
+                return _error(
+                    "mcp_server stdio connection requires a 'command' in config",
+                    status=400,
+                    code="invalid_connection",
+                )
+            if transport == "http" and not config.get("url"):
+                return _error(
+                    "mcp_server http connection requires a 'url' in config",
+                    status=400,
+                    code="invalid_connection",
+                )
+        return None
+
+    @app.post("/connections", status_code=201, dependencies=[Depends(require_auth)])
+    async def create_connection(req: CreateConnectionRequest) -> Any:
+        invalid = _validate_connection(req.kind, req.config)
+        if invalid is not None:
+            return invalid
+        # Secret + connection in ONE transaction: the secret is encrypted into the secret store and
+        # the connection row stores only the resulting secret_ref (never the plaintext — §1.1).
+        async with tx() as session:
+            secret_ref = await secrets.create(session, req.secret) if req.secret else None
+            conn = await connections.create(
+                session,
+                name=req.name,
+                kind=req.kind,
+                config=req.config,
+                secret_ref=secret_ref,
+                enabled=req.enabled,
+            )
+        logger.info("connection.created", extra={"connection_id": conn.id, "kind": conn.kind})
+        return JSONResponse(conn.public_dump(), status_code=201)
+
+    @app.get("/connections", dependencies=[Depends(require_auth)])
+    async def list_connections(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await connections.list_connections(session, limit=limit, before=before)
+        return {"connections": [c.public_dump() for c in rows]}
+
+    @app.get("/connections/{connection_id}", dependencies=[Depends(require_auth)])
+    async def get_connection(
+        connection_id: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        conn = await connections.get(session, connection_id)
+        if conn is None:
+            return _error(
+                f"unknown connection {connection_id!r}",
+                status=404,
+                code="connection_not_found",
+            )
+        return conn.public_dump()
+
+    @app.patch("/connections/{connection_id}", dependencies=[Depends(require_auth)])
+    async def patch_connection(connection_id: str, req: UpdateConnectionRequest) -> Any:
+        async with tx() as session:
+            existing = await connections.get(session, connection_id)
+            if existing is None:
+                return _error(
+                    f"unknown connection {connection_id!r}",
+                    status=404,
+                    code="connection_not_found",
+                )
+            if req.config is not None:
+                invalid = _validate_connection(existing.kind, req.config)
+                if invalid is not None:
+                    return invalid
+            # Rotate the secret IN PLACE (same secret_ref) so no agent's contentHash moves (§1.1).
+            # A non-empty ``secret`` rotates/attaches; an absent/empty one leaves it untouched.
+            secret_ref = existing.secret_ref
+            set_secret_ref = False
+            if req.secret:
+                if secret_ref is None:
+                    secret_ref = await secrets.create(session, req.secret)
+                    set_secret_ref = True  # newly attached → write the ref onto the row
+                else:
+                    await secrets.set(session, secret_ref, req.secret)  # same ref, new material
+            updated = await connections.update(
+                session,
+                connection_id,
+                name=req.name,
+                config=req.config,
+                secret_ref=secret_ref,
+                set_secret_ref=set_secret_ref,
+                enabled=req.enabled,
+            )
+        assert updated is not None
+        logger.info("connection.updated", extra={"connection_id": connection_id})
+        return updated.public_dump()
+
+    @app.delete(
+        "/connections/{connection_id}", status_code=204, dependencies=[Depends(require_auth)]
+    )
+    async def delete_connection(connection_id: str) -> Response:
+        async with tx() as session:
+            deleted = await connections.delete(session, connection_id)
+            if deleted is not None:
+                # Delete the encrypted secret alongside the connection (one transaction).
+                await secrets.delete(session, deleted.secret_ref)
+        if deleted is None:
+            return _error(
+                f"unknown connection {connection_id!r}",
+                status=404,
+                code="connection_not_found",
+            )
         return Response(status_code=204)
 
     @app.post("/agents/{agent_id}/invoke", dependencies=[Depends(require_token)])
