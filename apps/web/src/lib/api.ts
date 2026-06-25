@@ -7,12 +7,16 @@ import type {
   AgentDetail,
   AgentSummary,
   Capabilities,
+  CaptureLevel,
   EnginesView,
+  IoPolicy,
   McpServerSummary,
   McpServerView,
   McpToolView,
   ModelView,
+  NodeIo,
   Run,
+  Span,
   StoredVersion,
   ThreadDetail,
   ThreadSummary,
@@ -134,6 +138,33 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // ── control-plane: observability (M17 — the run waterfall) ────────────────
+
+  // The waterfall payload: the run's span tree (timing + status + worker attribution + edge sizes).
+  // NO payloads — those are the lazy /io call below (§1.3).
+  getTrace: (runId: string) =>
+    request<{ runId: string; status: string; spans: Span[] }>(
+      CONTROL_PLANE_URL,
+      `/runs/${runId}/trace`,
+    ).then((r) => r.spans),
+
+  // The click-through: the full per-node I/O. Gated states (off/metadata/not-permitted) come back
+  // as a 200 with inputs/outputs null + a `reason` — never an error, so the timeline stays legible.
+  getNodeIo: (runId: string, nodeId: string) =>
+    request<NodeIo>(CONTROL_PLANE_URL, `/runs/${runId}/nodes/${encodeURIComponent(nodeId)}/io`),
+
+  getIoPolicy: (agentId: string) =>
+    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${agentId}/io-policy`),
+
+  putIoPolicy: (
+    agentId: string,
+    body: { io_capture: CaptureLevel; io_retention_seconds?: number | null },
+  ) =>
+    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${agentId}/io-policy`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
   // ── inference plane: model + engine registry ──────────────────────────────
 
   listModels: () =>
@@ -219,6 +250,21 @@ export async function streamRun(
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
+    signal: controller.signal,
+  });
+  if (!res.ok) throw await toError(res);
+  if (!res.body) throw new ApiError("response had no body", 502, "no_body");
+  return { events: readSSE(res.body, controller.signal), abort: () => controller.abort() };
+}
+
+/**
+ * GET an SSE stream (M17: the live trace waterfall `/runs/{id}/trace/stream`). Same frame parser as
+ * `streamRun`, but a GET — the run executes elsewhere; this only observes its span open/close events.
+ */
+export async function streamGet(path: string): Promise<StreamHandle> {
+  const controller = new AbortController();
+  const res = await fetch(`${CONTROL_PLANE_URL}${path}`, {
+    headers: { ...authHeaders() },
     signal: controller.signal,
   });
   if (!res.ok) throw await toError(res);

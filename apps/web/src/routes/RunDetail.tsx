@@ -1,5 +1,6 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { Waterfall } from "../components/Waterfall";
 import { Card, ErrorBanner, Spinner, StatusBadge } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useLiveRun } from "../lib/live";
@@ -147,30 +148,10 @@ export function RunDetail() {
         </Card>
       </section>
 
-      {live && live.timeline.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-slate-300">Event timeline</h2>
-          <Card className="divide-y divide-slate-800/60">
-            {live.timeline.map((entry, i) => (
-              <div
-                key={`${entry.ts}:${i}:${entry.event}`}
-                className="flex items-start gap-3 px-3 py-1.5 text-xs"
-              >
-                <span
-                  className={entry.event === "run" ? "mono text-indigo-400" : "mono text-slate-500"}
-                >
-                  {entry.event}
-                </span>
-                <span className="mono flex-1 break-words text-slate-300">{entry.detail}</span>
-              </div>
-            ))}
-          </Card>
-          <p className="text-xs text-slate-600">
-            Per-node logs are emitted to the control-plane process logger; no API exposes them yet
-            (recorded rough edge). This timeline reflects the SSE event stream.
-          </p>
-        </section>
-      )}
+      {/* M17: the real run waterfall — timing bars, gaps, worker attribution, click-through per-node
+          I/O — replacing the M8 per-node-log stub (it read the SSE event stream; this reads the
+          persisted span tree + the live /trace/stream overlay). */}
+      <Waterfall runId={run.id} isLive={isStreaming} />
     </div>
   );
 }

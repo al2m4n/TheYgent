@@ -54,7 +54,10 @@ async def _tables(url: str) -> set[str]:
     """The migration's tables that currently exist (excludes alembic's own bookkeeping)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
-        names = "'thread', 'run', 'message', 'mcp_server', 'agent', 'agent_version', 'trigger'"
+        names = (
+            "'thread', 'run', 'message', 'mcp_server', 'agent', 'agent_version', 'trigger', "
+            "'span', 'node_io', 'agent_io_policy'"
+        )
         rows = await conn.fetch(
             f"SELECT to_regclass('public.' || t) AS reg FROM unnest(ARRAY[{names}]) AS t"
         )
@@ -99,6 +102,9 @@ def test_migration_round_trip(pg_url: str) -> None:
             "agent",
             "agent_version",
             "trigger",
+            "span",
+            "node_io",
+            "agent_io_policy",
         }  # built
         # Column-level proof for the M12-added run columns (a column add/drop is invisible to the
         # table-set check above, so the round-trip could silently regress without this).
@@ -114,6 +120,9 @@ def test_migration_round_trip(pg_url: str) -> None:
             "agent",
             "agent_version",
             "trigger",
+            "span",
+            "node_io",
+            "agent_io_policy",
         }  # rebuilt
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))  # cols rebuilt
     finally:

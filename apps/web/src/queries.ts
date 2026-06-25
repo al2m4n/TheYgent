@@ -7,6 +7,9 @@ import { api } from "./lib/api";
 export const keys = {
   runs: (limit?: number) => ["runs", limit ?? 50] as const,
   run: (id: string) => ["run", id] as const,
+  trace: (id: string) => ["trace", id] as const,
+  nodeIo: (id: string, nodeId: string) => ["node-io", id, nodeId] as const,
+  ioPolicy: (agentId: string) => ["io-policy", agentId] as const,
   threads: () => ["threads"] as const,
   thread: (id: string) => ["thread", id] as const,
   agents: () => ["agents"] as const,
@@ -39,6 +42,44 @@ export function useRun(id: string, opts: { live?: boolean } = {}) {
       if (opts.live && (s === "created" || s === "streaming")) return 1500;
       return false;
     },
+  });
+}
+
+// M17: the run waterfall's persisted spans. Polls while the run is live so node bars appear as
+// nodes complete (each span is written on close); the live in-flight bars are overlaid from the
+// /trace/stream SSE in the Waterfall component. Stops polling when the run is terminal.
+export function useTrace(id: string, opts: { live?: boolean } = {}) {
+  return useQuery({
+    queryKey: keys.trace(id),
+    queryFn: () => api.getTrace(id),
+    refetchInterval: opts.live ? 1000 : false,
+  });
+}
+
+// The lazy click-through: only fetched when a node is selected (enabled gates it). The payload is
+// gated server-side (off/metadata/not-permitted → inputs null + a reason), never an error.
+export function useNodeIo(runId: string, nodeId: string | null) {
+  return useQuery({
+    queryKey: keys.nodeIo(runId, nodeId ?? ""),
+    queryFn: () => api.getNodeIo(runId, nodeId as string),
+    enabled: !!nodeId,
+  });
+}
+
+export function useIoPolicy(agentId: string) {
+  return useQuery({
+    queryKey: keys.ioPolicy(agentId),
+    queryFn: () => api.getIoPolicy(agentId),
+    enabled: !!agentId,
+  });
+}
+
+export function useIoPolicyMutation(agentId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { io_capture: "off" | "metadata" | "full" }) =>
+      api.putIoPolicy(agentId, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.ioPolicy(agentId) }),
   });
 }
 

@@ -6,11 +6,13 @@
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useState } from "react";
 import {
+  Badge,
   Button,
   Card,
   Empty,
   ErrorBanner,
   Field,
+  Select,
   Spinner,
   Table,
   Td,
@@ -20,7 +22,8 @@ import {
 import { ApiError } from "../lib/api";
 import { relativeTime, shortId } from "../lib/format";
 import { startLiveRun } from "../lib/live";
-import { useAgent, useAgents } from "../queries";
+import type { CaptureLevel } from "../lib/types";
+import { useAgent, useAgents, useIoPolicy, useIoPolicyMutation } from "../queries";
 
 export function AgentsList() {
   const { data: agents, isLoading, error } = useAgents();
@@ -86,6 +89,58 @@ export function AgentsList() {
         </Table>
       )}
     </div>
+  );
+}
+
+const CAPTURE_LABEL: Record<CaptureLevel, string> = {
+  off: "Off",
+  metadata: "Sizes only",
+  full: "Full",
+};
+
+// M17 §6: the per-agent "Capture I/O context" control — bound to PUT /agents/{id}/io-policy. Shows
+// the EFFECTIVE level (so a deployment/topology cap reads honestly, not as a lie) and that editing
+// it does NOT mint a new version (the policy is keyed to agent.id, not the hashed IR — §1.8).
+function CaptureControl({ agentId }: { agentId: string }) {
+  const { data: policy, isLoading } = useIoPolicy(agentId);
+  const mutation = useIoPolicyMutation(agentId);
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-200">Capture I/O context</h2>
+        {policy && policy.effective !== policy.io_capture && (
+          <Badge tone="neutral">
+            {CAPTURE_LABEL[policy.io_capture]} requested · capped to{" "}
+            {CAPTURE_LABEL[policy.effective]}
+          </Badge>
+        )}
+      </div>
+      {isLoading && <Spinner label="Loading policy…" />}
+      {policy && (
+        <>
+          <Field label="What to persist per node when this agent runs">
+            <Select
+              value={policy.io_capture}
+              disabled={mutation.isPending}
+              onChange={(e) => mutation.mutate({ io_capture: e.target.value as CaptureLevel })}
+            >
+              <option value="off">Off — capture nothing (timeline still shows timing)</option>
+              <option value="metadata">Sizes only — record byte sizes, not payloads</option>
+              <option value="full">Full — record the input + output of each node</option>
+            </Select>
+          </Field>
+          <p className="text-xs text-slate-500">
+            Effective: <span className="text-slate-300">{CAPTURE_LABEL[policy.effective]}</span>
+            {policy.capped &&
+              ` (this deployment caps capture at ${CAPTURE_LABEL[policy.ceiling]} / topology default ${CAPTURE_LABEL[policy.topology_default]})`}
+            . Changing capture does not create a new version — it's not part of the agent's content
+            hash.
+          </p>
+          {mutation.isError && <ErrorBanner error={mutation.error} />}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -171,6 +226,8 @@ export function AgentDetail() {
           {submitting ? "Starting…" : "Run & stream"}
         </Button>
       </Card>
+
+      <CaptureControl agentId={agent.id} />
 
       <Card className="p-4">
         <h2 className="mb-2 text-sm font-semibold text-slate-200">Versions (newest first)</h2>

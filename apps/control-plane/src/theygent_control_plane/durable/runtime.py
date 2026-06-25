@@ -41,6 +41,7 @@ from theygent_control_plane.durable.config import (
     system_database_url,
 )
 from theygent_control_plane.mcp import McpManager
+from theygent_control_plane.observability import now_ns
 from theygent_control_plane.run import Trigger
 from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 
@@ -83,10 +84,20 @@ class DurableRuntime:
         sessionmaker: async_sessionmaker[AsyncSession],
         bus: DeltaBus | None = None,
         fast_polling: bool = False,
+        telemetry: Any = None,
     ) -> None:
         self._database_url = database_url
         self._fast_polling = fast_polling
         self.bus = bus or DeltaBus()
+        # M17: the observability wrapper. In the desktop sidecar the control-plane passes its own
+        # Telemetry (so durable + interactive spans share one live bus); the standalone worker
+        # builds
+        # one with its OWN bus. If absent, the durable walk simply emits no spans.
+        if telemetry is None:
+            from theygent_control_plane.observability import Telemetry
+
+            telemetry = Telemetry(sessionmaker=sessionmaker)
+        self.telemetry = telemetry
         # Install the process-local resources the steps read (compiler-global, D2/D6).
         compiler.set_resources(
             DurableResources(
@@ -97,6 +108,7 @@ class DurableRuntime:
                 triggers=triggers,
                 sessionmaker=sessionmaker,
                 bus=self.bus,
+                telemetry=telemetry,
             )
         )
         self._launched = False
@@ -161,6 +173,9 @@ class DurableRuntime:
             "agent_id": trigger.agent_id,
             "version": trigger.version,
             "content_hash": trigger.content_hash,
+            # M17 §2: stamp the enqueue instant so the workflow can emit the `queue.wait` phase span
+            # (enqueue → worker pickup). A workflow ARG (captured once, stable across DBOS replay).
+            "enqueued_ns": now_ns(),
         }
         handle = await self.enqueue_run(agent_ref, input_value, trigger_id=trigger.id)
         result = await handle.get_result()

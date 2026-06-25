@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, false
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -213,3 +213,93 @@ class TriggerRow(Base):
         # source agent. A small registry today, but the index keeps the per-tick scan honest.
         Index("ix_trigger_agent", "agent_id"),
     )
+
+
+class SpanRow(Base):
+    """One row of the run waterfall (M17 §3) — a run-root span, a node span, or a phase span. This
+    is what the in-UI timeline reads, NOT the DBOS journal (§1.2: spans for the timeline, the
+    journal for resume; both keyed by ``run_id`` but serving different masters). The domain shape is
+    ``run.Span``; this row is the persistence shape, mapped in ``store.py`` (M4 §1.3).
+
+    Deliberate deviations from the M4 conventions, recorded in migration 0008:
+    * ``start_ns``/``end_ns`` are epoch nanoseconds (``BigInteger``), not TIMESTAMPTZ (§1.4) — OTel
+      is ns-resolution and the waterfall needs clean integer arithmetic (``end-start`` = duration,
+      ``next.start - prev.end`` = gap). ``created_at`` stays TIMESTAMPTZ.
+    * ``id`` is a deterministic composite (``{run_id}:{node_id}[:{phase}][:#{branch}]``), not a ULID
+      — the load-bearing half of the §4 resume-idempotency rule (ON CONFLICT DO NOTHING on a replay
+      re-write, first-writer-wins so a resumed run visibly hops workers, §1 worker attribution).
+    * ``executor_id`` / ``worker_host`` — worker attribution: which durable worker handled the span
+      (``local``/distributed id for DBOS, ``inproc`` for the interactive walker; ``host:pid``)."""
+
+    __tablename__ = "span"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("run.id"))
+    trace_id: Mapped[str] = mapped_column(String)  # OTel trace id (hex)
+    otel_span_id: Mapped[str] = mapped_column(String)  # OTel span id (hex)
+    parent_span_id: Mapped[str | None] = mapped_column(String, nullable=True)  # NULL = run root
+    node_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    node_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    name: Mapped[str] = mapped_column(String)  # node id for node spans, phase name otherwise
+    phase: Mapped[str | None] = mapped_column(String, nullable=True)
+    branch_index: Mapped[int | None] = mapped_column(Integer, nullable=True)  # loop/map iteration
+    status: Mapped[str] = mapped_column(String)  # ok|err|skipped|running
+    start_ns: Mapped[int] = mapped_column(BigInteger)
+    end_ns: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # NULL while in-flight
+    # GenAI-semconv scalars only; NO payloads (those live in node_io — §1.3).
+    attributes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(String, nullable=True)
+    executor_id: Mapped[str | None] = mapped_column(String, nullable=True)  # worker attribution
+    worker_host: Mapped[str | None] = mapped_column(String, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer)  # monotonic per run; the ordering key (M4 §3)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_span_run_seq", "run_id", "seq"),
+        Index("ix_span_run_parent", "run_id", "parent_span_id"),
+        Index("ix_span_trace", "trace_id"),
+    )
+
+
+class NodeIoRow(Base):
+    """Per-node I/O context (M17 §3) — lazy-loaded on click, **never exported** over OTLP (§1.3).
+    Port-keyed ``inputs``/``outputs`` so multi-input (M10) renders edge-by-edge. ``capture_level``
+    records what was actually persisted (``full``/``metadata``/``off``) so ``/io`` reports honestly.
+    ``UNIQUE(run_id, node_id)`` is the §4 idempotency guard (a replay re-write is a no-op)."""
+
+    __tablename__ = "node_io"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("run.id"))
+    node_id: Mapped[str] = mapped_column(String)
+    span_id: Mapped[str | None] = mapped_column(String, nullable=True)  # soft join target
+    inputs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # { port: value } post-$in
+    outputs: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # { out_port: value }
+    bytes_in: Mapped[int] = mapped_column(Integer, server_default="0")
+    bytes_out: Mapped[int] = mapped_column(Integer, server_default="0")
+    truncated: Mapped[bool] = mapped_column(Boolean, server_default=false())
+    capture_level: Mapped[str] = mapped_column(String)  # off | metadata | full (as captured)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_node_io_run_node", "run_id", "node_id", unique=True),
+        Index("ix_node_io_run", "run_id"),
+    )
+
+
+class AgentIoPolicyRow(Base):
+    """Per-agent I/O capture governance (M17 §1.8) — keyed to the STABLE ``agent.id``, NOT
+    ``agent_version``, so editing capture policy never changes the agent's ``contentHash`` (M11
+    immutability). Absent row → effective policy = the topology default. ``updated_by`` is the
+    deferred principal slot (NULL in single-user; filled by the Governance/Identity milestone). This
+    is the ONLY new governance table — no identity/role/grant tables (§8 the Do-NOT)."""
+
+    __tablename__ = "agent_io_policy"
+
+    agent_id: Mapped[str] = mapped_column(ForeignKey("agent.id"), primary_key=True)
+    io_capture: Mapped[str] = mapped_column(String)  # off | metadata | full
+    io_retention_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    redact_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)

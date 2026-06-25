@@ -23,8 +23,10 @@ import lives only in this package — never in ``walker.py``, a node handler, or
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -57,7 +59,10 @@ from theygent_control_plane.walker import (
     TemplateError,
     _bind_outcome,
     _collect_in_ports,
+    _io_input_snapshot,
+    _io_output_snapshot,
     _is_skipped,
+    _node_span_status,
     _parse_if_json,
     _PortInputs,
     _RefError,
@@ -136,6 +141,10 @@ class DurableResources:
     triggers: TriggerStore
     sessionmaker: async_sessionmaker[AsyncSession]
     bus: DeltaBus
+    # M17: the capture wrapper resource (same object the interactive walker uses, so spans/node_io
+    # land identically under both runtimes — the §1.5 one-wrapper rule). May be None in a degraded
+    # setup; the durable walk guards on it (telemetry never fails the run it observes).
+    telemetry: Any = None  # observability.Telemetry
 
 
 _RES: DurableResources | None = None
@@ -161,6 +170,21 @@ def _coerce_output(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value)
+
+
+@contextlib.asynccontextmanager
+async def _null_acm() -> AsyncIterator[None]:
+    """A no-op async CM yielding ``None`` — used when no :class:`RunTrace` is wired (M17)."""
+    yield None
+
+
+def _durable_node_span(run_trace: Any, node: Node) -> Any:
+    """The node-span CM for the durable walk (M17 §4) — the SAME wrapper the interactive walker
+    uses,
+    so a durable run's waterfall is identical in shape. A no-op when telemetry is unwired."""
+    if run_trace is not None:
+        return run_trace.node_span(node)
+    return _null_acm()
 
 
 # ── activity steps (the §8.7 durable activities — runtime-agnostic bodies wrapped) ──
@@ -397,7 +421,7 @@ async def _map_fanout(
 
 
 async def _durable_walk(
-    ir: IRDocument, input_value: Any, run_id: str, depth: int = 0
+    ir: IRDocument, input_value: Any, run_id: str, depth: int = 0, run_trace: Any = None
 ) -> tuple[Any, bool, str | None]:
     """Walk a validated IR deterministically, awaiting an activity step per ``activity`` node and
     running ``orchestration``/``boundary`` inline (M13 §2). This mirrors ``walker.walk`` exactly —
@@ -411,7 +435,14 @@ async def _durable_walk(
     ``subgraph`` (boundary) → a ``theygent_run`` child workflow; ``loop`` (orchestration) → bounded
     inline repetition over child workflows, deterministic control; ``map`` (orchestration) → durable
     fan-out/join over the queue. ``depth`` is the composition nesting level (0 at the top), guarded
-    against ``maxDepth`` before any child is spawned."""
+    against ``maxDepth`` before any child is spawned.
+
+    M17: ``run_trace`` (a :class:`~observability.RunTrace`) wraps each node in the SAME span wrapper
+    the interactive walker uses (§1.5), so a durable run's waterfall is identical in shape — and
+    each
+    node span is stamped with the DBOS worker that ran it (worker attribution), so a crash-resumed
+    run visibly hops workers (first-writer-wins on the deterministic span id keeps the pre-crash
+    rows). A no-op when telemetry is unwired."""
 
     values: dict[tuple[str, str], Any] = {}
     skipped: set[str] = set()
@@ -424,209 +455,251 @@ async def _durable_walk(
         if _is_skipped(node, ir.edges, skipped, live_handles):
             skipped.add(node.id)
             _log_node(run_id, node, skipped=True)
+            if run_trace is not None:
+                await run_trace.skipped(node)
             continue
         _log_node(run_id, node, skipped=False)
 
-        if node.kind == "boundary":
-            if node.type == "input":
-                live_handles[node.id] = _success_handles(node)
-                for handle in live_handles[node.id]:
-                    values[(node.id, handle)] = input_value
-            elif node.type == "output":
-                live_handles[node.id] = set()
-                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                output = _single_in_value(ports, node)
-                output_produced = True
-            elif node.type == "human":
-                # M14 §1.1: a durable wait. Persist `waiting`, then `DBOS.recv` — the workflow is
-                # checkpointed here and survives a worker crash. `POST /runs/{id}/resume` → send
-                # delivers the input and the workflow resumes from the checkpoint. The awaited input
-                # binds the node's success handle(s) (the human's response flows downstream).
-                config = HumanConfig.model_validate(node.config)
-                await _mark_waiting_step(run_id, node.id)
-                timeout = config.timeout if config.timeout is not None else _FOREVER_SECONDS
-                message = await DBOS.recv_async(HUMAN_TOPIC, timeout_seconds=timeout)
-                await _set_running_step(run_id)
-                if message is None:  # timed out (recv → None) — honest fail or declared default
-                    if config.on_timeout == "fail":
-                        raise HumanTimeout(
-                            f"human node {node.id!r}: no input within {config.timeout}s "
-                            "(on_timeout=fail)"
+        io_inputs = _io_input_snapshot(node, ir.edges, values, skipped, live_handles)
+        async with _durable_node_span(run_trace, node) as scope:
+            if node.kind == "boundary":
+                if node.type == "input":
+                    live_handles[node.id] = _success_handles(node)
+                    for handle in live_handles[node.id]:
+                        values[(node.id, handle)] = input_value
+                elif node.type == "output":
+                    live_handles[node.id] = set()
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    output = _single_in_value(ports, node)
+                    output_produced = True
+                elif node.type == "human":
+                    # M14 §1.1: a durable wait. Persist `waiting`, then `DBOS.recv` — the workflow
+                    # is
+                    # checkpointed here and survives a worker crash. `POST /runs/{id}/resume` → send
+                    # delivers the input and the workflow resumes from the checkpoint. The awaited
+                    # input binds the node's success handle(s) (the response flows downstream).
+                    config = HumanConfig.model_validate(node.config)
+                    await _mark_waiting_step(run_id, node.id)
+                    timeout = config.timeout if config.timeout is not None else _FOREVER_SECONDS
+                    message = await DBOS.recv_async(HUMAN_TOPIC, timeout_seconds=timeout)
+                    await _set_running_step(run_id)
+                    if message is None:  # timed out (recv → None) — honest fail or declared default
+                        if config.on_timeout == "fail":
+                            raise HumanTimeout(
+                                f"human node {node.id!r}: no input within {config.timeout}s "
+                                "(on_timeout=fail)"
+                            )
+                        received = config.default
+                    else:
+                        # The resume payload is {"input": …}; tolerate a bare payload (be liberal).
+                        received = message.get("input") if isinstance(message, dict) else message
+                    live_handles[node.id] = _success_handles(node)
+                    for handle in live_handles[node.id]:
+                        values[(node.id, handle)] = received
+                elif node.type == "subgraph":
+                    # M14 §1.2: an agent calls a SAVED, PINNED agent as an independently durable
+                    # child
+                    # workflow. The pin is frozen into the parent IR; the depth guard prevents
+                    # unbounded recursion. The parent's in-port value (M10 mapping) is the child's
+                    # run
+                    # input; the child's output binds the node's ok handle (a failed child binds
+                    # err).
+                    config = SubgraphConfig.model_validate(node.config)
+                    if depth + 1 > config.max_depth:
+                        raise SubgraphDepthError(
+                            f"subgraph {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                            f"{depth + 1} (unbounded/recursive composition)"
                         )
-                    received = config.default
-                else:
-                    # The resume payload is {"input": …}; tolerate a bare payload too (be liberal).
-                    received = message.get("input") if isinstance(message, dict) else message
-                live_handles[node.id] = _success_handles(node)
-                for handle in live_handles[node.id]:
-                    values[(node.id, handle)] = received
-            elif node.type == "subgraph":
-                # M14 §1.2: an agent calls a SAVED, PINNED agent as an independently durable child
-                # workflow. The pin is frozen into the parent IR; the depth guard prevents unbounded
-                # recursion. The parent's in-port value (M10 mapping) is the child's run input; the
-                # child's output binds the node's ok handle (a failed child binds err).
-                config = SubgraphConfig.model_validate(node.config)
-                if depth + 1 > config.max_depth:
-                    raise SubgraphDepthError(
-                        f"subgraph {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
-                        f"{depth + 1} (unbounded/recursive composition)"
-                    )
-                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                child_input = _node_input(ports, node)
-                child_wid = f"{run_id}-sg-{node.id}"
-                with SetWorkflowID(child_wid):
-                    handle = await DBOS.start_workflow_async(
-                        theygent_run, _child_ref(config, depth + 1), child_input, None, None
-                    )
-                child = await handle.get_result()
-                if child.get("status") == "failed":
-                    outcome = ActivityOutcome(
-                        ok=False, value=f"subgraph {config.agent!r} failed: {child.get('error')}"
-                    )
-                else:
-                    outcome = ActivityOutcome(ok=True, value=child.get("output"))
-                _bind_outcome(node, outcome, values, live_handles)
-            else:  # no other boundary types exist (NODE_TYPE_KIND pins them) — guard anyway.
-                raise NotImplementedError(
-                    f"boundary node {node.id!r} (type {node.type!r}) is not implemented yet"
-                )
-
-        elif node.kind == "activity":
-            ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-            if node.type == "llm":
-                config = LlmConfig.model_validate(node.config)
-                model_id, params = resolve_model(ir, config)
-                messages = _render_messages(node, config, ports)
-                res = await _llm_step(run_id, node.id, model_id, params, messages)
-                if res["truncated_empty"]:
-                    truncated_empty_nodes.append(node.id)
-                live_handles[node.id] = _success_handles(node)
-                for handle in live_handles[node.id]:
-                    values[(node.id, handle)] = res["output"]
-            elif node.type == "tool":
-                config = ToolConfig.model_validate(node.config)
-                try:
-                    args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-                except Exception as exc:  # an unresolvable arg ref is a structured err (m6.md §4)
-                    outcome = ActivityOutcome(ok=False, value=str(exc))
-                else:
-                    step_out = await _tool_step(run_id, node.id, config.tool, args)
-                    outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
-                _bind_outcome(node, outcome, values, live_handles)
-            elif node.type == "mcp_tool":
-                config = McpToolConfig.model_validate(node.config)
-                server, tool = config.server, config.tool
-                try:
-                    args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-                except Exception as exc:
-                    outcome = ActivityOutcome(
-                        ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}"
-                    )
-                else:
-                    step_out = await _mcp_step(run_id, node.id, server, tool, args)
-                    outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
-                _bind_outcome(node, outcome, values, live_handles)
-            else:  # agent / rag / retriever / memory / code — deferred (§7)
-                raise NotImplementedError(
-                    f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
-                )
-
-        elif node.kind == "orchestration":
-            if node.type == "router":
-                # Inline, deterministic — NO I/O (the determinism guard §8.1). Mirrors _walk_router.
-                config = RouterConfig.model_validate(node.config)
-                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                try:
-                    selected = _resolve_ref(config.select, ports, node.id)
-                except _RefError as exc:
-                    raise RouterError(f"router {node.id!r}: {exc}") from exc
-                out_ids = {p.id for p in node.ports.out}
-                if not isinstance(selected, str) or selected not in out_ids:
-                    raise RouterError(
-                        f"router {node.id!r}: select {config.select!r} resolved to {selected!r}, "
-                        f"not one of its out-handles {sorted(out_ids)}"
-                    )
-                live_handles[node.id] = {selected}
-                values[(node.id, selected)] = _single_in_value(ports, node)
-            elif node.type == "loop":
-                # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned body
-                # agent as a child workflow (deterministic id → a completed iteration replays from
-                # the journal on resume, never re-runs); the previous output feeds the next input.
-                # The control (counter, condition over journaled output) does NO I/O — the §8.1
-                # determinism guard. maxIterations caps it; an optional condition stops early.
-                config = LoopConfig.model_validate(node.config)
-                if depth + 1 > config.max_depth:
-                    raise SubgraphDepthError(
-                        f"loop {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
-                        f"{depth + 1}"
-                    )
-                ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                current = _node_input(ports, node)
-                for i in range(config.max_iterations):
-                    child_wid = f"{run_id}-loop-{node.id}-{i}"
-                    _log_branch(run_id, node.id, "loop", i)  # M14 §2: one span per iteration
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    child_input = _node_input(ports, node)
+                    child_wid = f"{run_id}-sg-{node.id}"
                     with SetWorkflowID(child_wid):
                         handle = await DBOS.start_workflow_async(
-                            theygent_run, _child_ref(config, depth + 1), current, None, None
+                            theygent_run, _child_ref(config, depth + 1), child_input, None, None
                         )
                     child = await handle.get_result()
                     if child.get("status") == "failed":
-                        raise LoopError(
-                            f"loop {node.id!r}: iteration {i} failed: {child.get('error')}"
+                        outcome = ActivityOutcome(
+                            ok=False,
+                            value=f"subgraph {config.agent!r} failed: {child.get('error')}",
                         )
-                    current = child.get("output")
-                    if config.condition and _eval_loop_condition(
-                        config.condition, current, node.id
-                    ):
-                        break
-                live_handles[node.id] = _success_handles(node)
-                for handle_id in live_handles[node.id]:
-                    values[(node.id, handle_id)] = current
-            elif node.type == "map":
-                # M14 §1.4: durable fan-out/join. One child workflow per element on the durable
-                # queue; a crash mid-fan-out resumes only the incomplete branches (deterministic
-                # per-element ids). Partial-failure policy is config: fail_fast vs collect.
-                config = MapConfig.model_validate(node.config)
-                if depth + 1 > config.max_depth:
-                    raise SubgraphDepthError(
-                        f"map {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
-                        f"{depth + 1}"
+                    else:
+                        outcome = ActivityOutcome(ok=True, value=child.get("output"))
+                    _bind_outcome(node, outcome, values, live_handles)
+                else:  # no other boundary types exist (NODE_TYPE_KIND pins them) — guard anyway.
+                    raise NotImplementedError(
+                        f"boundary node {node.id!r} (type {node.type!r}) is not implemented yet"
                     )
+
+            elif node.kind == "activity":
                 ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                collection = _node_input(ports, node)
-                if not isinstance(collection, list):
-                    parsed = _parse_if_json(collection)
-                    if not isinstance(parsed, list):
-                        raise MapError(
-                            f"map {node.id!r}: input is not a list (got "
-                            f"{type(collection).__name__}); map fans out over a collection"
-                        )
-                    collection = parsed
-                results = await _map_fanout(
-                    run_id, node.id, _child_ref(config, depth + 1), collection, config.concurrency
-                )
-                failures = [(i, r) for i, r in enumerate(results) if r.get("status") == "failed"]
-                if config.on_error == "fail_fast" and failures:
-                    i, r = failures[0]
-                    raise MapError(
-                        f"map {node.id!r}: element {i} failed (fail_fast): {r.get('error')}"
+                if node.type == "llm":
+                    config = LlmConfig.model_validate(node.config)
+                    model_id, params = resolve_model(ir, config)
+                    messages = _render_messages(node, config, ports)
+                    # M17 §2: the journaled generation step is a `model.generate` phase span (child
+                    # of the node span), so a `model.load`/`engine.warmup` cold-start band can later
+                    # split out (the §10 demo). Carries the GenAI-semconv model/finish scalars.
+                    gen_cm = (
+                        scope.child_phase("model.generate") if scope is not None else _null_acm()
                     )
-                if config.on_error == "collect":
-                    value: Any = [
-                        {"index": i, "status": r.get("status"), "output": r.get("output")}
-                        if r.get("status") != "failed"
-                        else {"index": i, "status": "failed", "error": r.get("error")}
-                        for i, r in enumerate(results)
+                    async with gen_cm as gen_scope:
+                        res = await _llm_step(run_id, node.id, model_id, params, messages)
+                        if gen_scope is not None:
+                            attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
+                            if res.get("finish_reason"):
+                                attrs["gen_ai.response.finish_reason"] = res["finish_reason"]
+                            gen_scope.set_attributes(attrs)
+                    if res["truncated_empty"]:
+                        truncated_empty_nodes.append(node.id)
+                    if scope is not None:
+                        scope.set_attributes({"gen_ai.request.model": model_id})
+                    live_handles[node.id] = _success_handles(node)
+                    for handle in live_handles[node.id]:
+                        values[(node.id, handle)] = res["output"]
+                elif node.type == "tool":
+                    config = ToolConfig.model_validate(node.config)
+                    try:
+                        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
+                    except Exception as exc:  # an unresolvable arg ref is a structured err (m6 §4)
+                        outcome = ActivityOutcome(ok=False, value=str(exc))
+                    else:
+                        step_out = await _tool_step(run_id, node.id, config.tool, args)
+                        outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                    _bind_outcome(node, outcome, values, live_handles)
+                elif node.type == "mcp_tool":
+                    config = McpToolConfig.model_validate(node.config)
+                    server, tool = config.server, config.tool
+                    try:
+                        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
+                    except Exception as exc:
+                        outcome = ActivityOutcome(
+                            ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}"
+                        )
+                    else:
+                        step_out = await _mcp_step(run_id, node.id, server, tool, args)
+                        outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                    _bind_outcome(node, outcome, values, live_handles)
+                else:  # agent / rag / retriever / memory / code — deferred (§7)
+                    raise NotImplementedError(
+                        f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
+                    )
+
+            elif node.kind == "orchestration":
+                if node.type == "router":
+                    # Inline, deterministic — NO I/O (determinism guard §8.1). Mirrors _walk_router.
+                    config = RouterConfig.model_validate(node.config)
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    try:
+                        selected = _resolve_ref(config.select, ports, node.id)
+                    except _RefError as exc:
+                        raise RouterError(f"router {node.id!r}: {exc}") from exc
+                    out_ids = {p.id for p in node.ports.out}
+                    if not isinstance(selected, str) or selected not in out_ids:
+                        raise RouterError(
+                            f"router {node.id!r}: select {config.select!r} resolved to "
+                            f"{selected!r}, not one of its out-handles {sorted(out_ids)}"
+                        )
+                    live_handles[node.id] = {selected}
+                    values[(node.id, selected)] = _single_in_value(ports, node)
+                elif node.type == "loop":
+                    # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned
+                    # body
+                    # agent as a child workflow (deterministic id → a completed iteration replays
+                    # from
+                    # the journal on resume, never re-runs); the previous output feeds the next
+                    # input.
+                    # The control (counter, condition over journaled output) does NO I/O — the §8.1
+                    # determinism guard. maxIterations caps it; an optional condition stops early.
+                    config = LoopConfig.model_validate(node.config)
+                    if depth + 1 > config.max_depth:
+                        raise SubgraphDepthError(
+                            f"loop {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                            f"{depth + 1}"
+                        )
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    current = _node_input(ports, node)
+                    for i in range(config.max_iterations):
+                        child_wid = f"{run_id}-loop-{node.id}-{i}"
+                        _log_branch(run_id, node.id, "loop", i)  # M14 §2: one span per iteration
+                        with SetWorkflowID(child_wid):
+                            handle = await DBOS.start_workflow_async(
+                                theygent_run, _child_ref(config, depth + 1), current, None, None
+                            )
+                        child = await handle.get_result()
+                        if child.get("status") == "failed":
+                            raise LoopError(
+                                f"loop {node.id!r}: iteration {i} failed: {child.get('error')}"
+                            )
+                        current = child.get("output")
+                        if config.condition and _eval_loop_condition(
+                            config.condition, current, node.id
+                        ):
+                            break
+                    live_handles[node.id] = _success_handles(node)
+                    for handle_id in live_handles[node.id]:
+                        values[(node.id, handle_id)] = current
+                elif node.type == "map":
+                    # M14 §1.4: durable fan-out/join. One child workflow per element on the durable
+                    # queue; a crash mid-fan-out resumes only the incomplete branches (deterministic
+                    # per-element ids). Partial-failure policy is config: fail_fast vs collect.
+                    config = MapConfig.model_validate(node.config)
+                    if depth + 1 > config.max_depth:
+                        raise SubgraphDepthError(
+                            f"map {node.id!r}: maxDepth {config.max_depth} exceeded at depth "
+                            f"{depth + 1}"
+                        )
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    collection = _node_input(ports, node)
+                    if not isinstance(collection, list):
+                        parsed = _parse_if_json(collection)
+                        if not isinstance(parsed, list):
+                            raise MapError(
+                                f"map {node.id!r}: input is not a list (got "
+                                f"{type(collection).__name__}); map fans out over a collection"
+                            )
+                        collection = parsed
+                    results = await _map_fanout(
+                        run_id,
+                        node.id,
+                        _child_ref(config, depth + 1),
+                        collection,
+                        config.concurrency,
+                    )
+                    failures = [
+                        (i, r) for i, r in enumerate(results) if r.get("status") == "failed"
                     ]
-                else:  # fail_fast and all succeeded → the ordered list of element outputs
-                    value = [r.get("output") for r in results]
-                live_handles[node.id] = _success_handles(node)
-                for handle_id in live_handles[node.id]:
-                    values[(node.id, handle_id)] = value
-            else:  # no other orchestration types exist (NODE_TYPE_KIND pins them) — guard anyway.
-                raise NotImplementedError(
-                    f"orchestration node {node.id!r} (type {node.type!r}) is not implemented yet"
+                    if config.on_error == "fail_fast" and failures:
+                        i, r = failures[0]
+                        raise MapError(
+                            f"map {node.id!r}: element {i} failed (fail_fast): {r.get('error')}"
+                        )
+                    if config.on_error == "collect":
+                        value: Any = [
+                            {"index": i, "status": r.get("status"), "output": r.get("output")}
+                            if r.get("status") != "failed"
+                            else {"index": i, "status": "failed", "error": r.get("error")}
+                            for i, r in enumerate(results)
+                        ]
+                    else:  # fail_fast and all succeeded → the ordered list of element outputs
+                        value = [r.get("output") for r in results]
+                    live_handles[node.id] = _success_handles(node)
+                    for handle_id in live_handles[node.id]:
+                        values[(node.id, handle_id)] = value
+                else:  # no other orchestration types exist (NODE_TYPE_KIND pins) — guard anyway.
+                    raise NotImplementedError(
+                        f"orchestration node {node.id!r} (type {node.type!r}) "
+                        "is not implemented yet"
+                    )
+
+            # M17: record what the node received + emitted and its ok/err status (the durable
+            # node_io capture, governed by the run's effective policy — §4).
+            if scope is not None:
+                scope.set_io(
+                    inputs=io_inputs,
+                    outputs=_io_output_snapshot(node, values, live_handles),
                 )
+                scope.set_status(_node_span_status(node, live_handles))
 
     empty_reason = finalize_empty_reason(
         ir,
@@ -718,27 +791,69 @@ async def theygent_run(
 
     await _create_run_step(run_id, model, ir.id, ir.version, chash, trigger_id)
 
+    # M17: open the run's observability trace. Worker attribution = ``DBOS.executor_id`` (the worker
+    # executing this workflow — ``local`` single-worker, a distinct id per distributed worker; on a
+    # crash + resume the resuming worker's id stamps the spans IT completes, so the waterfall hops
+    # workers). The effective capture level is resolved once per run (§4). All best-effort —
+    # telemetry never fails the run it observes.
+    run_trace = await _begin_run_trace(run_id, ir, agent_ref)
+
     try:
-        output, _produced, empty_reason = await _durable_walk(ir, input_value, run_id, depth)
+        output, _produced, empty_reason = await _durable_walk(
+            ir, input_value, run_id, depth, run_trace
+        )
     except (RouterError, TemplateError, EngineNameNotAllowed) as exc:
         await _complete_run_step(run_id, "failed", None, str(exc))
+        await _finish_run_trace(run_trace, "err", str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
     # M14: a bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
     # failure, exactly like the M5 router/template errors above (m14.md §1: "fails honestly").
     except (SubgraphDepthError, LoopError, MapError, HumanTimeout) as exc:
         await _complete_run_step(run_id, "failed", None, str(exc))
+        await _finish_run_trace(run_trace, "err", str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
     except NotImplementedError as exc:
         await _complete_run_step(run_id, "failed", None, str(exc))
+        await _finish_run_trace(run_trace, "err", str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
     except Exception as exc:  # inference died mid-walk / unreachable plane: fail cleanly (§1.4)
         await _complete_run_step(run_id, "failed", None, str(exc))
+        await _finish_run_trace(run_trace, "err", str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
 
     out_str = _coerce_output(output)
     await _complete_run_step(run_id, "completed", out_str, empty_reason)
+    await _finish_run_trace(run_trace, "ok", empty_reason)
     logger.info("durable.run_completed", extra={"run_id": run_id, "trigger_id": trigger_id})
     return {"runId": run_id, "status": "completed", "output": out_str}
+
+
+async def _begin_run_trace(run_id: str, ir: IRDocument, agent_ref: dict[str, Any]) -> Any:
+    """Open the M17 run trace for a durable run (worker attribution + queue.wait). Best-effort: any
+    telemetry failure returns ``None`` and the walk proceeds untraced — observability never fails
+    the
+    run. ``agent_ref['enqueued_ns']`` (stamped at enqueue) lets us emit the ``queue.wait`` phase
+    span
+    (enqueue → this worker's pickup — often the biggest gap on the durable path, §2)."""
+    tel = _res().telemetry
+    if tel is None:
+        return None
+    try:
+        capture = await tel.effective_capture_for(ir.id)
+        run_trace = tel.begin_run(run_id, executor_id=DBOS.executor_id, capture_level=capture)
+        enqueued_ns = agent_ref.get("enqueued_ns") if isinstance(agent_ref, dict) else None
+        if enqueued_ns:
+            await run_trace.emit_queue_wait(int(enqueued_ns))
+        return run_trace
+    except Exception as exc:  # pragma: no cover - telemetry is best-effort
+        logger.warning("durable.trace_begin_failed", extra={"run_id": run_id, "error": str(exc)})
+        return None
+
+
+async def _finish_run_trace(run_trace: Any, status: str, error: str | None) -> None:
+    if run_trace is not None:
+        with contextlib.suppress(Exception):
+            await run_trace.finish(status=status, error=error)
 
 
 # ── the scheduled-fire workflow (M13 §4 — schedules → DBOS dynamic schedules) ────────
