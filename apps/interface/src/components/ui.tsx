@@ -1,11 +1,12 @@
 // A tiny set of inline primitives (M15 mirrors the cockpit: Tailwind, no component library). Five
 // small building blocks for the chrome around the canvas — buttons, inputs, badges.
 
-import type {
-  ButtonHTMLAttributes,
-  InputHTMLAttributes,
-  ReactNode,
-  SelectHTMLAttributes,
+import {
+  type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type SelectHTMLAttributes,
+  useEffect,
 } from "react";
 
 type Variant = "primary" | "default" | "ghost" | "danger";
@@ -125,6 +126,57 @@ export function Empty({ children }: { children: ReactNode }) {
 
 export function Spinner({ label = "Loading…" }: { label?: string }) {
   return <div className="px-3 py-8 text-center text-sm text-slate-500">{label}</div>;
+}
+
+// A centered modal dialog (the shared overlay the bench + browse flows open into). Backdrop click
+// and Escape both close it. `width` is a Tailwind max-w-* class so callers size to content.
+export function Modal({
+  title,
+  onClose,
+  children,
+  width = "max-w-3xl",
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  width?: string;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* The backdrop is a real button → keyboard-accessible close, no a11y lint. The panel is a
+          sibling above it (relative > absolute), so panel clicks never reach the backdrop. */}
+      <button
+        type="button"
+        aria-label="Close dialog"
+        className="absolute inset-0 h-full w-full cursor-default bg-black/60"
+        onClick={onClose}
+      />
+      {/* biome-ignore lint/a11y/useSemanticElements: an app-level modal panel, not a native <dialog> (no showModal) */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        className={`relative flex max-h-[90vh] w-full ${width} flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#0e131c] shadow-xl`}
+      >
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-800 px-4 py-3">
+          <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded px-2 text-lg leading-none text-slate-500 hover:text-slate-200"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </header>
+        <div className="min-h-0 flex-1 overflow-auto p-4">{children}</div>
+      </div>
+    </div>
+  );
 }
 
 // A thin download/progress bar. `value`/`max` in bytes; `indeterminate` animates when total unknown.

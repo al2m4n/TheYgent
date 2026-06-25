@@ -56,6 +56,37 @@ class ChatRequest(BaseModel):
     stream: bool = False
 
 
+class EmbeddingsRequest(BaseModel):
+    # M18: the embeddings data-plane shape (§9.1.1 — already in the contract, completed here for the
+    # bench's embeddings tester). `model` is a LOGICAL id; extras (dimensions / encoding_format)
+    # flow through to the upstream as generation params.
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    input: str | list[str]
+
+
+class SpeechRequest(BaseModel):
+    # M18 §1.1: the OpenAI text-to-speech shape. `model` is a LOGICAL id. `voice`/`response_format`/
+    # `speed` ride through as params; the response is audio bytes.
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    input: str
+    voice: str = "alloy"
+
+
+# Map an OpenAI `response_format` to the audio MIME type for the TTS response body.
+_AUDIO_MIME = {
+    "mp3": "audio/mpeg",
+    "opus": "audio/ogg",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+    "wav": "audio/wav",
+    "pcm": "audio/pcm",
+}
+
+
 def _openai_error(message: str, *, status: int, type_: str, code: str) -> JSONResponse:
     return JSONResponse(
         status_code=status,
@@ -519,5 +550,116 @@ def create_app(
             return StreamingResponse(gen(), media_type="text/event-stream")
         result = await gateway.complete(upstream, req.messages, params)
         return JSONResponse(result)
+
+    # ── data plane: embeddings + audio (M18) ────────────────────────────
+    # Same logical-id resolution + managed/reachable dispatch as chat, factored into one lease
+    # helper. The `model` field is a LOGICAL id on these too — an engine name is simply not a
+    # registered id (model_not_found), never rewritten onto the wire (§9.1.1, the M3 §3.2 negative
+    # test extended to audio/embeddings). These are non-streaming awaited calls, so a spawn/capacity
+    # failure surfaces as a clean error before the response is built (no pre-commit dance needed).
+
+    @contextlib.asynccontextmanager
+    async def _lease_for(model: str):
+        """Yield ``(binding, upstream)`` for a logical id — warming + leasing a managed engine, or
+        resolving the reachable upstream's credential locally (§10). Raises ``UnknownLogicalId`` /
+        ``EngineUnavailableError`` / ``NoCapacityError`` / ``CredentialResolutionError`` for the
+        caller to map, exactly like the chat path."""
+        binding = registry.require(model)
+        if isinstance(binding, ManagedBinding):
+            await manager.warm(model)
+            async with manager.lease(model) as upstream:
+                yield binding, upstream
+        else:
+            api_key = resolve_credential(binding.credential_ref) or "sk-noauth"
+            yield binding, Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
+
+    def _data_plane_error(exc: Exception, model: str) -> JSONResponse | None:
+        if isinstance(exc, UnknownLogicalId):
+            return _openai_error(
+                f"unknown logical id {model!r} (the model field is a logical id, "
+                "not an engine name)",
+                status=404,
+                type_="invalid_request_error",
+                code="model_not_found",
+            )
+        if isinstance(exc, EngineUnavailableError):
+            return _engine_unavailable(exc)
+        if isinstance(exc, NoCapacityError):
+            return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")
+        if isinstance(exc, CredentialResolutionError):
+            return _openai_error(
+                str(exc), status=502, type_="server_error", code="credential_error"
+            )
+        return None
+
+    @app.post("/v1/embeddings")
+    async def embeddings(req: EmbeddingsRequest) -> Response:
+        try:
+            async with _lease_for(req.model) as (binding, upstream):
+                params = merge_params(binding.params, req.model_dump())
+                params.pop("input", None)
+                result = await gateway.embed(upstream, req.input, params)
+            return JSONResponse(result)
+        except Exception as exc:
+            mapped = _data_plane_error(exc, req.model)
+            if mapped is None:
+                raise
+            return mapped
+
+    @app.post("/v1/audio/transcriptions")
+    async def transcriptions(request: Request) -> Response:
+        form = await request.form()
+        model = form.get("model")
+        upload = form.get("file")
+        if not isinstance(model, str):
+            return _openai_error(
+                "`model` (a logical id) is required",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_request",
+            )
+        if upload is None or isinstance(upload, str):
+            return _openai_error(
+                "`file` (multipart audio) is required",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_request",
+            )
+        data = await upload.read()
+        file_tuple = (
+            upload.filename or "audio.wav",
+            data,
+            upload.content_type or "application/octet-stream",
+        )
+        # Remaining form fields (language / prompt / temperature / response_format / …) forward as
+        # transcription params; model + file are routing/payload, not params.
+        extra = {k: v for k, v in form.items() if k not in ("model", "file")}
+        try:
+            async with _lease_for(model) as (binding, upstream):
+                params = merge_params(binding.params, extra)
+                result = await gateway.transcribe(upstream, file_tuple, params)
+            return JSONResponse(result)
+        except Exception as exc:
+            mapped = _data_plane_error(exc, model)
+            if mapped is None:
+                raise
+            return mapped
+
+    @app.post("/v1/audio/speech")
+    async def speech(req: SpeechRequest) -> Response:
+        try:
+            async with _lease_for(req.model) as (binding, upstream):
+                params = merge_params(binding.params, req.model_dump())
+                params.pop("input", None)
+                audio = await gateway.speak(upstream, req.input, params)
+            fmt = str(params.get("response_format", "mp3"))
+            return Response(
+                content=audio, media_type=_AUDIO_MIME.get(fmt, "application/octet-stream")
+            )
+        except Exception as exc:
+            mapped = _data_plane_error(exc, req.model)
+            if mapped is None:
+                raise
+            return mapped
 
     return app

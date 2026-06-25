@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
+import { Mcp } from "./routes/Mcp";
 import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
 
@@ -25,7 +26,13 @@ const editorRoute = createRoute({
   }),
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, editorRoute, registriesRoute]);
+const mcpRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/mcp",
+  component: Mcp,
+});
+
+const routeTree = rootRoute.addChildren([homeRoute, editorRoute, registriesRoute, mcpRoute]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

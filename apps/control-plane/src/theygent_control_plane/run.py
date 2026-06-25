@@ -205,3 +205,90 @@ class Trigger(BaseModel):
             config["secret"] = "***"
         data["config"] = config
         return data
+
+
+# ── Bench domain entities (M18 §1.6/§1.7) — the deferred test/benchmark layer ─────────────────────
+# Like Run/Agent*/Trigger these are domain shapes the store maps the ``bench_*`` rows onto (§1.3),
+# never the ORM rows. A benchmark is honest only if pinned to exactly what ran (§1.6); a preset is a
+# literal param snippet, never a live reference (§1.7). The bench adds NO execution path — these
+# record what the bench produced (model tests hit the inference data plane in the user's domain
+# directly; agent tests reuse M11 invoke), so nothing inference-shaped lives in these entities.
+
+BenchTargetKind = Literal["model", "agent"]
+AssertionKind = Literal["exact", "contains", "regex", "json-path-equals", "llm-judge"]
+
+
+class BenchCase(BaseModel):
+    """One golden case (M18 §2.5): an authored ``input``, an optional ``expected``, and the
+    ``assertion`` to score it by. ``assertion_config`` carries the kind-specific knob (regex / json
+    path / llm-judge rubric + model)."""
+
+    id: str = Field(default_factory=new_ulid)
+    input: Any = None
+    expected: Any = None
+    assertion: AssertionKind = "contains"
+    assertion_config: dict[str, Any] = Field(default_factory=dict)
+    seq: int = 0
+    created_at: datetime = Field(default_factory=now)
+
+
+class BenchSuite(BaseModel):
+    """A saved suite of golden cases pinned to one target (M18 §2.5). A model suite sets
+    ``logical_id``/``binding``; an agent suite sets ``agent_id`` + a version/contentHash pin."""
+
+    id: str = Field(default_factory=new_ulid)
+    name: str
+    target_kind: BenchTargetKind
+    modality: str | None = None
+    logical_id: str | None = None
+    binding: str | None = None
+    agent_id: str | None = None
+    version: str | None = None
+    content_hash: str | None = None
+    cases: list[BenchCase] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
+
+
+class BenchRun(BaseModel):
+    """One recorded benchmark result (M18 §1.6/§2.4) — metrics pinned to exactly what ran. A MODEL
+    pin sets ``logical_id`` + ``model_ref`` + ``binding`` + ``params_digest``; an AGENT pin sets
+    ``agent_id`` + ``version`` + ``content_hash``. ``metrics`` is the numbers; ``output_digest``
+    is a content identity for the compare diff WITHOUT the raw output; ``capture_ref`` is the opt-in
+    LOCAL reference to raw I/O (never a blob — §1.6 / §10)."""
+
+    id: str = Field(default_factory=new_ulid)
+    target_kind: BenchTargetKind
+    modality: str
+    logical_id: str | None = None
+    model_ref: str | None = None
+    binding: str | None = None
+    params: dict[str, Any] | None = None
+    params_digest: str | None = None
+    agent_id: str | None = None
+    version: str | None = None
+    content_hash: str | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    output_digest: str | None = None
+    capture_ref: str | None = None
+    suite_id: str | None = None
+    case_id: str | None = None
+    assertion: str | None = None
+    assertion_passed: bool | None = None
+    run_id: str | None = None
+    label: str | None = None
+    created_at: datetime = Field(default_factory=now)
+
+
+class BenchPreset(BaseModel):
+    """A named, modality-scoped, LITERAL param set (M18 §1.7) — values only, no link to a run or
+    agent. "Apply preset" copies these literals into ``models[binding].params`` client-side
+    (the IR stores the *values*, never the preset name — the contentHash-drift trap §1.7)."""
+
+    id: str = Field(default_factory=new_ulid)
+    name: str
+    modality: str
+    logical_id: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)

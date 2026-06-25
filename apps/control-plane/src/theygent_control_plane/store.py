@@ -14,6 +14,8 @@ No summarization, no token-budget truncation, no vector retrieval — full repla
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, and_, delete, func, insert, select, tuple_, update
@@ -25,6 +27,10 @@ from theygent_control_plane.mcp import McpServerConfig
 from theygent_control_plane.models import (
     AgentRow,
     AgentVersionRow,
+    BenchCaseRow,
+    BenchPresetRow,
+    BenchRunRow,
+    BenchSuiteRow,
     McpServerRow,
     MessageRow,
     RunRow,
@@ -35,6 +41,10 @@ from theygent_control_plane.run import (
     AgentDetail,
     AgentSummary,
     AgentVersion,
+    BenchCase,
+    BenchPreset,
+    BenchRun,
+    BenchSuite,
     Run,
     RunStatus,
     StoredVersion,
@@ -46,6 +56,22 @@ from theygent_control_plane.run import (
     new_ulid,
     now,
 )
+
+
+def params_digest(params: dict[str, Any] | None) -> str:
+    """A deterministic identity for a param set (M18 §1.6) — two bench runs differing only in
+    ``temperature`` get different digests, so they are distinct results. Canonical JSON (sorted
+    no whitespace), the same discipline as the IR ``content_hash`` fixpoint (M11 §1.1)."""
+    canonical = json.dumps(params or {}, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def output_digest(output: str | None) -> str | None:
+    """A cheap content identity for the compare diff WITHOUT storing the raw output (§1.6 / §10).
+    ``None`` output → ``None`` digest (an empty/absent result is not a content)."""
+    if output is None:
+        return None
+    return "sha256:" + hashlib.sha256(output.encode()).hexdigest()
 
 
 def _to_run(row: RunRow) -> Run:
@@ -901,3 +927,277 @@ class TriggerStore:
             .where(TriggerRow.id == trigger_id)
             .values(last_fired_at=fired_at, updated_at=now())
         )
+
+
+# ── Bench store (M18 §1.6/§1.7) ──────────────────────────────────────────────────────────────────
+
+
+def _to_bench_case(row: BenchCaseRow) -> BenchCase:
+    return BenchCase(
+        id=row.id,
+        input=(row.input or {}).get("value") if isinstance(row.input, dict) else row.input,
+        expected=(row.expected or {}).get("value") if isinstance(row.expected, dict) else None,
+        assertion=cast("Any", row.assertion),
+        assertion_config=row.assertion_config or {},
+        seq=row.seq,
+        created_at=row.created_at,
+    )
+
+
+def _to_bench_suite(row: BenchSuiteRow, cases: list[BenchCaseRow]) -> BenchSuite:
+    return BenchSuite(
+        id=row.id,
+        name=row.name,
+        target_kind=cast("Any", row.target_kind),
+        modality=row.modality,
+        logical_id=row.logical_id,
+        binding=row.binding,
+        agent_id=row.agent_id,
+        version=row.version,
+        content_hash=row.content_hash,
+        cases=[_to_bench_case(c) for c in cases],
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_bench_run(row: BenchRunRow) -> BenchRun:
+    return BenchRun(
+        id=row.id,
+        target_kind=cast("Any", row.target_kind),
+        modality=row.modality,
+        logical_id=row.logical_id,
+        model_ref=row.model_ref,
+        binding=row.binding,
+        params=row.params,
+        params_digest=row.params_digest,
+        agent_id=row.agent_id,
+        version=row.version,
+        content_hash=row.content_hash,
+        metrics=row.metrics or {},
+        output_digest=row.output_digest,
+        capture_ref=row.capture_ref,
+        suite_id=row.suite_id,
+        case_id=row.case_id,
+        assertion=row.assertion,
+        assertion_passed=row.assertion_passed,
+        run_id=row.run_id,
+        label=row.label,
+        created_at=row.created_at,
+    )
+
+
+def _to_bench_preset(row: BenchPresetRow) -> BenchPreset:
+    return BenchPreset(
+        id=row.id,
+        name=row.name,
+        modality=row.modality,
+        logical_id=row.logical_id,
+        params=row.params or {},
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+class BenchStore:
+    """Postgres persistence for the bench store (M18 §1.6/§1.7). Same M4 discipline as the other
+    stores: stateless ops over a caller-provided session, domain shapes out, ORM rows never leak.
+    Metrics + digests only by default; raw payloads are NEVER journaled here (§1.6 / §10) — capture
+    is opt-in and a LOCAL reference (``capture_ref``), never a blob in the hot table."""
+
+    # ── suites + cases ───────────────────────────────────────────────────
+    async def create_suite(self, session: AsyncSession, suite: BenchSuite) -> BenchSuite:
+        session.add(
+            BenchSuiteRow(
+                id=suite.id,
+                name=suite.name,
+                target_kind=suite.target_kind,
+                modality=suite.modality,
+                logical_id=suite.logical_id,
+                binding=suite.binding,
+                agent_id=suite.agent_id,
+                version=suite.version,
+                content_hash=suite.content_hash,
+                created_at=suite.created_at,
+                updated_at=suite.updated_at,
+            )
+        )
+        # Flush the parent before the cases so the bench_case FK to bench_suite is satisfied.
+        await session.flush()
+        for i, case in enumerate(suite.cases):
+            # input/expected wrapped in {value: …} so a scalar, list, or object all round-trip in a
+            # JSONB column without a separate type tag.
+            session.add(
+                BenchCaseRow(
+                    id=case.id,
+                    suite_id=suite.id,
+                    input={"value": case.input},
+                    expected=None if case.expected is None else {"value": case.expected},
+                    assertion=case.assertion,
+                    assertion_config=case.assertion_config or None,
+                    seq=i,
+                    created_at=case.created_at,
+                )
+            )
+        await session.flush()
+        return suite
+
+    async def get_suite(self, session: AsyncSession, suite_id: str) -> BenchSuite | None:
+        row = await session.get(BenchSuiteRow, suite_id)
+        if row is None:
+            return None
+        cases = (
+            (
+                await session.execute(
+                    select(BenchCaseRow)
+                    .where(BenchCaseRow.suite_id == suite_id)
+                    .order_by(BenchCaseRow.seq.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return _to_bench_suite(row, list(cases))
+
+    async def list_suites(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[BenchSuite]:
+        """Suites newest-first (M8 §2 keyset pagination), without their cases (the list view shows
+        coordinates; GET one suite to load its cases)."""
+        stmt = (
+            select(BenchSuiteRow)
+            .order_by(BenchSuiteRow.created_at.desc(), BenchSuiteRow.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            anchor = await session.get(BenchSuiteRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(BenchSuiteRow.created_at, BenchSuiteRow.id)
+                    < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_bench_suite(row, []) for row in rows]
+
+    # ── results ──────────────────────────────────────────────────────────
+    async def record_run(self, session: AsyncSession, run: BenchRun) -> BenchRun:
+        """Record one result. The caller has already set ``params_digest`` / ``output_digest`` (via
+        the module helpers) and decided whether ``capture_ref`` is set (opt-in, local — §1.6)."""
+        session.add(
+            BenchRunRow(
+                id=run.id,
+                target_kind=run.target_kind,
+                modality=run.modality,
+                logical_id=run.logical_id,
+                model_ref=run.model_ref,
+                binding=run.binding,
+                params=run.params,
+                params_digest=run.params_digest,
+                agent_id=run.agent_id,
+                version=run.version,
+                content_hash=run.content_hash,
+                metrics=run.metrics,
+                output_digest=run.output_digest,
+                capture_ref=run.capture_ref,
+                suite_id=run.suite_id,
+                case_id=run.case_id,
+                assertion=run.assertion,
+                assertion_passed=run.assertion_passed,
+                run_id=run.run_id,
+                label=run.label,
+                created_at=run.created_at,
+            )
+        )
+        await session.flush()
+        return run
+
+    async def get_run(self, session: AsyncSession, bench_run_id: str) -> BenchRun | None:
+        row = await session.get(BenchRunRow, bench_run_id)
+        return _to_bench_run(row) if row is not None else None
+
+    async def list_runs(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+        before: str | None = None,
+        logical_id: str | None = None,
+        agent_id: str | None = None,
+        suite_id: str | None = None,
+        case_id: str | None = None,
+    ) -> list[BenchRun]:
+        """Results newest-first (M8 §2), optionally filtered by target/suite/case so a regression
+        across versions or a per-case history is one query (§2.5)."""
+        stmt = (
+            select(BenchRunRow)
+            .order_by(BenchRunRow.created_at.desc(), BenchRunRow.id.desc())
+            .limit(limit)
+        )
+        if logical_id is not None:
+            stmt = stmt.where(BenchRunRow.logical_id == logical_id)
+        if agent_id is not None:
+            stmt = stmt.where(BenchRunRow.agent_id == agent_id)
+        if suite_id is not None:
+            stmt = stmt.where(BenchRunRow.suite_id == suite_id)
+        if case_id is not None:
+            stmt = stmt.where(BenchRunRow.case_id == case_id)
+        if before is not None:
+            anchor = await session.get(BenchRunRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(BenchRunRow.created_at, BenchRunRow.id) < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_bench_run(row) for row in rows]
+
+    # ── presets ──────────────────────────────────────────────────────────
+    async def create_preset(self, session: AsyncSession, preset: BenchPreset) -> BenchPreset:
+        session.add(
+            BenchPresetRow(
+                id=preset.id,
+                name=preset.name,
+                modality=preset.modality,
+                logical_id=preset.logical_id,
+                params=preset.params,
+                created_at=preset.created_at,
+                updated_at=preset.updated_at,
+            )
+        )
+        await session.flush()
+        return preset
+
+    async def list_presets(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+        before: str | None = None,
+        modality: str | None = None,
+        logical_id: str | None = None,
+    ) -> list[BenchPreset]:
+        stmt = (
+            select(BenchPresetRow)
+            .order_by(BenchPresetRow.created_at.desc(), BenchPresetRow.id.desc())
+            .limit(limit)
+        )
+        if modality is not None:
+            stmt = stmt.where(BenchPresetRow.modality == modality)
+        if logical_id is not None:
+            stmt = stmt.where(BenchPresetRow.logical_id == logical_id)
+        if before is not None:
+            anchor = await session.get(BenchPresetRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(BenchPresetRow.created_at, BenchPresetRow.id)
+                    < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_bench_preset(row) for row in rows]
+
+    async def get_preset(self, session: AsyncSession, preset_id: str) -> BenchPreset | None:
+        row = await session.get(BenchPresetRow, preset_id)
+        return _to_bench_preset(row) if row is not None else None
+
+    async def delete_preset(self, session: AsyncSession, preset_id: str) -> bool:
+        result = await session.execute(delete(BenchPresetRow).where(BenchPresetRow.id == preset_id))
+        return bool(cast("CursorResult[Any]", result).rowcount)

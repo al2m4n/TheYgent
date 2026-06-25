@@ -70,3 +70,46 @@ class Gateway:
         async for chunk in resp:
             yield f"data: {json.dumps(_to_dict(chunk))}\n\n"
         yield "data: [DONE]\n\n"
+
+    # ── M18: embeddings + audio (same engine-agnostic dispatch as chat) ──────
+    # These are OpenAI data-plane shapes the gateway forwards to the resolved upstream exactly like
+    # chat: it never sees `mlx`/`vllm`/`llamacpp`, only the upstream URL the manager produced. The
+    # `openai/` prefix makes LiteLLM append the right path (`/embeddings`, `/audio/*`) to api_base.
+
+    async def embed(
+        self, upstream: Upstream, inputs: str | list[str], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        resp = await litellm.aembedding(
+            model=f"openai/{upstream.model}",
+            api_base=upstream.api_base,
+            api_key=upstream.api_key,
+            input=inputs,
+            **params,
+        )
+        return _to_dict(resp)
+
+    async def transcribe(
+        self, upstream: Upstream, file: Any, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        # `file` is the OpenAI FileTypes tuple (filename, bytes, content_type) the endpoint builds
+        # from the multipart upload. STT is request/response (no token stream), so one awaited call.
+        resp = await litellm.atranscription(
+            model=f"openai/{upstream.model}",
+            api_base=upstream.api_base,
+            api_key=upstream.api_key,
+            file=file,
+            **params,
+        )
+        return _to_dict(resp)
+
+    async def speak(self, upstream: Upstream, text: str, params: dict[str, Any]) -> bytes:
+        # TTS returns audio bytes (the OpenAI speech shape). LiteLLM hands back an
+        # HttpxBinaryResponseContent; `.content` is the whole audio body.
+        resp = await litellm.aspeech(
+            model=f"openai/{upstream.model}",
+            api_base=upstream.api_base,
+            api_key=upstream.api_key,
+            input=text,
+            **params,
+        )
+        return resp.content
