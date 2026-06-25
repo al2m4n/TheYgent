@@ -35,23 +35,31 @@ and the determinism boundary (§8.1) is unmoved — multi-input is binding + add
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import logging
 import re
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+import httpx
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
     Edge,
+    GuardrailConfig,
+    GuardrailRule,
+    HttpTool,
     IRDocument,
     LlmConfig,
     McpToolConfig,
     Node,
     RouterConfig,
+    SpeakConfig,
     ToolConfig,
+    TranscribeConfig,
+    TransformConfig,
     topological_order,
 )
 
@@ -59,6 +67,7 @@ from theygent_control_plane.mcp import (
     McpConnectionError,
     McpManager,
     McpResult,
+    McpServerConfig,
     McpToolNotFound,
 )
 from theygent_control_plane.observability import RunTrace, SpanScope, now_ns
@@ -91,6 +100,14 @@ class TemplateError(ValueError):
     that this fails LOUDLY — naming the node, the token, and the available fields — instead of
     passing through as literal text and producing a green run with nonsense output. The
     control-plane maps it to a failed run with a clear reason, exactly like :class:`RouterError`."""
+
+
+class TransformError(ValueError):
+    """A ``transform`` node (m19.md §2.9) could not reshape its input: its ``expr`` is not valid
+    JSON, or a ``$in`` ref in the template doesn't resolve. Like :class:`RouterError` /
+    :class:`TemplateError` this is a LOUD failure (→ failed run), never a silent empty reshape — the
+    M9 no-silent-nonsense rule applied to the reshaper. (``transform`` has no ``err`` port; a bad
+    reshape fails the run, it is not a structured tool error.)"""
 
 
 @dataclass(frozen=True)
@@ -149,6 +166,17 @@ class WalkContext:
     # The MCP server registry/connections (app-scoped; the control-plane passes its instance). A
     # fresh empty manager by default — fine for graphs with no mcp_tool node.
     mcp: McpManager = field(default_factory=McpManager)
+    # M19 §1.1: the connection resolver an http tool / connection-backed mcp_tool resolves auth
+    # through, server-side at step time. ``None`` when no graph uses a connection (the control-plane
+    # injects its DB-backed resolver). The walker never opens a DB session — the resolver owns it.
+    tool_auth: ConnectionResolver | None = None
+    # M19 §2.8: the gate backend (``ratelimit`` counter + ``quota`` usage-read). Injected by the
+    # control-plane (it owns the DB); ``None`` when no graph uses a gate. Same injection discipline
+    # as ``tool_auth``/``run_trace`` — the walker calls it, the backend owns the session.
+    gates: Any = None  # gates.GateBackend
+    # M19 §2.2: the artifact store ``transcribe``/``speak`` resolve audio references through (fetch
+    # the input audio bytes / store the produced audio). Injected; ``None`` when no audio node runs.
+    artifacts: Any = None  # artifacts.LocalArtifactStore
     # M17: the observability handle for this run (the control-plane opens it via
     # ``Telemetry.begin_run`` before walking). When set, the walker wraps each node in a span and
     # captures per-node I/O through it (the §4 one-wrapper seam); when ``None`` (telemetry not
@@ -173,18 +201,24 @@ def _lower_params(params: Mapping[str, Any]) -> dict[str, Any]:
     return {_CAMEL_BOUNDARY.sub("_", k).lower(): v for k, v in params.items()}
 
 
-def resolve_model(ir: IRDocument, config: LlmConfig) -> tuple[str, dict[str, Any]]:
-    """Resolve an ``llm`` node's bound model to the (logical id, generation params) forwarded to
-    the inference seam (§8.4). Raises :class:`EngineNameNotAllowed` if the binding's ``model`` is
-    an engine name — the logical-id invariant, enforced before anything is created or sent."""
-
-    binding = ir.models[config.model]
+def resolve_model_key(ir: IRDocument, model_key: str) -> tuple[str, dict[str, Any]]:
+    """Resolve a ``models`` key to the (logical id, generation params) forwarded to the inference
+    seam (§8.4). Raises :class:`EngineNameNotAllowed` if the binding's ``model`` is an engine name —
+    the logical-id invariant, enforced before anything is sent. Shared by ``llm``
+    (``resolve_model``), ``transcribe`` / ``speak``, and the model ``guardrail`` (M19 §2.2/§2.6)."""
+    binding = ir.models[model_key]
     if binding.model in _ENGINE_NAMES:
         raise EngineNameNotAllowed(
             f"{binding.model!r} is an engine name, not a logical model id; "
             "the model binding must carry a logical id"
         )
     return binding.model, _lower_params(binding.params)
+
+
+def resolve_model(ir: IRDocument, config: LlmConfig) -> tuple[str, dict[str, Any]]:
+    """Resolve an ``llm`` node's bound model (§8.4) — a thin wrapper over
+    :func:`resolve_model_key`."""
+    return resolve_model_key(ir, config.model)
 
 
 def llm_models(ir: IRDocument) -> list[tuple[Node, str, dict[str, Any]]]:
@@ -197,6 +231,23 @@ def llm_models(ir: IRDocument) -> list[tuple[Node, str, dict[str, Any]]]:
         if node.type == "llm":
             model_id, params = resolve_model(ir, LlmConfig.model_validate(node.config))
             out.append((node, model_id, params))
+    return out
+
+
+def audio_model_nodes(ir: IRDocument) -> list[tuple[Node, str, dict[str, Any]]]:
+    """Every ``transcribe``/``speak`` node with its resolved (model id, params) — the control-plane
+    rejects an engine-name binding before the ``Run`` (the M19 §1.3 logical-id-only guard, extended
+    to audio). Resolution raises :class:`EngineNameNotAllowed`, mirroring ``llm_models``."""
+    out: list[tuple[Node, str, dict[str, Any]]] = []
+    for node in ir.nodes:
+        if node.type == "transcribe":
+            cfg: Any = TranscribeConfig.model_validate(node.config)
+        elif node.type == "speak":
+            cfg = SpeakConfig.model_validate(node.config)
+        else:
+            continue
+        model_id, params = resolve_model_key(ir, cfg.model)
+        out.append((node, model_id, params))
     return out
 
 
@@ -214,15 +265,18 @@ def tool_nodes(ir: IRDocument) -> list[tuple[Node, str]]:
 
 
 def mcp_tool_nodes(ir: IRDocument) -> list[tuple[Node, str, str]]:
-    """Every ``mcp_tool`` node with its (server name, tool name), in document order. The
-    control-plane checks server membership up front (→ 400 ``mcp_server_not_found``, no Run) and —
-    if that server is already connected — the tool against its cached capability list (m7.md §4)."""
+    """Every ``server``-based ``mcp_tool`` node with its (server name, tool name) in document order.
+    The control-plane checks server membership up front (→ 400 ``mcp_server_not_found``, no Run)
+    and — if that server is already connected — the tool against its cached capability list (§4).
+    M19 §2.4 **connection**-based mcp_tool nodes are SKIPPED here — like the http tool, the
+    connection resolves at step time (a dangling connection binds ``err``, not a 400 — §1.1)."""
 
     out: list[tuple[Node, str, str]] = []
     for node in ir.nodes:
         if node.type == "mcp_tool":
             cfg = McpToolConfig.model_validate(node.config)
-            out.append((node, cfg.server, cfg.tool))
+            if cfg.server:
+                out.append((node, cfg.server, cfg.tool))
     return out
 
 
@@ -562,6 +616,595 @@ async def execute_mcp_tool(
         return ActivityOutcome(ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}")
 
 
+def mcp_config_from_connection(conn: ResolvedConnection) -> McpServerConfig:
+    """Build the MCP server config from an ``mcp_server`` connection (M19 §2.4), server-side. For
+    ``http`` the secret becomes an auth header (bearer / api-key); for ``stdio`` it can be injected
+    into the subprocess env under a connection-named key (``secretEnv``). The secret exists only
+    here, never in the IR (§1.1)."""
+    cfg = conn.config or {}
+    transport = cfg.get("transport", "stdio")
+    if transport == "http":
+        headers: dict[str, str] = dict(cfg.get("headers") or {})
+        if conn.secret:
+            auth = cfg.get("auth") or {}
+            if auth.get("type") == "api_key":
+                headers[str(auth.get("header", "X-API-Key"))] = conn.secret
+            else:  # default: bearer
+                headers["Authorization"] = f"Bearer {conn.secret}"
+        return McpServerConfig(transport="http", url=cfg.get("url"), headers=headers or None)
+    env: dict[str, str] = dict(cfg.get("env") or {})
+    secret_env = cfg.get("secretEnv")
+    if conn.secret and isinstance(secret_env, str):
+        env[secret_env] = conn.secret
+    return McpServerConfig(
+        transport="stdio",
+        command=cfg.get("command"),
+        args=list(cfg.get("args") or []),
+        env=env or None,
+        cwd=cfg.get("cwd"),
+    )
+
+
+async def execute_mcp_connection_tool(
+    mcp: McpManager, name: str, config: McpServerConfig, tool: str, args: dict[str, Any]
+) -> ActivityOutcome:
+    """Invoke a CONNECTION-BACKED MCP tool (M19 §2.4) — same ok/err contract as ``execute_mcp_tool``
+    but the server is reached via the connection's resolved ``config`` (transport + server-side
+    auth) keyed by ``name``. The chokepoint + retry live in ``call_connection_tool``."""
+    try:
+        result = await mcp.call_connection_tool(name, config, tool, args)
+        if result.is_error:
+            return ActivityOutcome(
+                ok=False,
+                value=f"mcp connection {name!r} tool {tool!r} error: {_stringify(result.value)}",
+            )
+        return ActivityOutcome(ok=True, value=result.value)
+    except McpConnectionError as exc:
+        return ActivityOutcome(ok=False, value=f"mcp connection {name!r} unavailable: {exc}")
+    except McpToolNotFound as exc:
+        return ActivityOutcome(ok=False, value=str(exc))
+    except Exception as exc:
+        return ActivityOutcome(
+            ok=False, value=f"mcp connection {name!r} tool {tool!r} failed: {exc}"
+        )
+
+
+# ── M19 §2.2: the audio model-call activities (transcribe · speak) ───────────────────────────────
+#
+# The only NEW model-call types M19 adds (chat/vision stay on ``llm``). Both map 1:1 to an OpenAI
+# audio endpoint and route to a binding whose ``capabilities.modalities`` includes the matching key
+# (the inference plane enforces logical-id-only — an engine name is rejected at the seam). The audio
+# bytes go to the **inference base URL** (the gateway), in the user's trust domain — never a
+# control-plane route (§10 / M18 §1.4). Non-text payloads are REFERENCES (artifacts), not journaled.
+
+_AUDIO_FORMAT_MIME = {
+    "mp3": "audio/mpeg",
+    "opus": "audio/ogg",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+    "wav": "audio/wav",
+    "pcm": "audio/pcm",
+}
+
+
+async def execute_transcribe(
+    gateway: GatewayClient,
+    artifacts: Any,
+    *,
+    model_id: str,
+    params: dict[str, Any],
+    audio_ref: Any,
+    extra_headers: Mapping[str, str],
+) -> ActivityOutcome:
+    """Run a ``transcribe`` activity (m19.md §2.2) — audio-ref in → text out. Fetches the audio
+    bytes from the reference (artifact id / url / path) and streams them to
+    ``POST /v1/audio/transcriptions`` (logical-id). The runtime-agnostic body both runtimes wrap. A
+    fetch/transport failure binds an honest ``err`` (the tool ok/err contract); the bytes never
+    touch a control-plane route (§10)."""
+    if artifacts is None:
+        return ActivityOutcome(ok=False, value="transcribe: no artifact store configured")
+    try:
+        data, content_type = await artifacts.fetch(audio_ref)
+    except Exception as exc:
+        return ActivityOutcome(ok=False, value=f"transcribe: cannot read audio ref: {exc}")
+    try:
+        file_tuple = ("audio", data, content_type)
+        result = await gateway.transcribe(
+            model=model_id, file=file_tuple, params=params, extra_headers=extra_headers
+        )
+    except Exception as exc:
+        return ActivityOutcome(ok=False, value=f"transcribe failed: {exc}")
+    # The gateway returns the OpenAI transcription shape — a dict OR the SDK's ``Transcription``
+    # object (which carries ``.text``). Extract the text either way (a serializable string), never
+    # bind the raw SDK object (it isn't JSON-serializable for the run output).
+    if isinstance(result, dict):
+        text = result.get("text", "")
+    else:
+        text = getattr(result, "text", None) or str(result)
+    return ActivityOutcome(ok=True, value=text)
+
+
+async def execute_speak(
+    gateway: GatewayClient,
+    artifacts: Any,
+    *,
+    model_id: str,
+    params: dict[str, Any],
+    text: str,
+    extra_headers: Mapping[str, str],
+) -> ActivityOutcome:
+    """Run a ``speak`` activity (m19.md §2.2) — text in → audio-REFERENCE out. Calls ``POST
+    /v1/audio/speech`` (logical-id), then stores the produced bytes as an artifact and returns the
+    REFERENCE (the bytes are an artifact, not journaled — §2.2 / m13-dbos.md §6, so a resumed run
+    replays the ref, not the audio). The ``format`` param maps to the data plane's
+    ``response_format``."""
+    if artifacts is None:
+        return ActivityOutcome(ok=False, value="speak: no artifact store configured")
+    voice = str(params.get("voice", "alloy"))
+    fmt = str(params.get("format", "mp3"))
+    gw_params = {k: v for k, v in params.items() if k not in ("voice", "format")}
+    gw_params["response_format"] = fmt
+    try:
+        audio = await gateway.speak(
+            model=model_id, text=text, voice=voice, params=gw_params, extra_headers=extra_headers
+        )
+    except Exception as exc:
+        return ActivityOutcome(ok=False, value=f"speak failed: {exc}")
+    ref = await artifacts.put(audio, _AUDIO_FORMAT_MIME.get(fmt, "application/octet-stream"))
+    return ActivityOutcome(ok=True, value=ref)
+
+
+# ── M19 §2.3: the generic http tool (REST + GraphQL) with connection-injected auth ──────────────
+#
+# A ``tool`` node whose ``config.tool`` resolves to an ``http`` binding in ``ir.tools`` becomes a
+# real
+# outbound HTTP call. The auth lives in a server-side ``connection`` (§1.1): the binding names the
+# connection id, the handler resolves connection → secret_ref → secret AT STEP TIME and injects the
+# auth header — never the IR, the canvas, a span, or the journal. The same ok/err contract as M6's
+# ``tool`` (a transport failure binds ``err``; a non-2xx is a normal return value bound to ``ok``).
+# DBOS owns retry on the durable path (provider-client retry off — m13-dbos.md §2): this body does
+# NOT
+# retry. Substitution of url/headers/body uses the unified ``$in.field`` grammar, resolved by the
+# caller before the call (deterministic, journaled inputs) — only the auth is added here.
+
+
+@dataclass(frozen=True)
+class ResolvedConnection:
+    """A connection resolved to the data the http handler needs AT STEP TIME (M19 §1.1): its
+    non-secret ``config`` (auth scheme, base url, static headers) and the decrypted ``secret`` (or
+    ``None`` for an auth-less / secret-missing connection). The plaintext exists only here, inside
+    the
+    step — never journaled. ``enabled`` lets the resolver signal a disabled connection (→ honest
+    ``err``)."""
+
+    config: dict[str, Any]
+    secret: str | None
+    enabled: bool = True
+
+
+#: The seam the handler resolves a connection through (M19 §1.1) — a callable injected by the
+#: control-plane (it closes over the ConnectionStore + SecretStore + sessionmaker). The walker stays
+#: free of a DB session: it calls this, the resolver owns the DB read (the same pattern M17's
+#: telemetry side-channel uses). ``None`` result = unknown/disabled connection → the handler binds
+#: ``err``.
+ConnectionResolver = Callable[[str], Awaitable[ResolvedConnection | None]]
+
+
+async def _resolve_oauth2_token(auth: Mapping[str, Any], secret: str) -> str:
+    """Fetch an OAuth2 client-credentials access token (M19 §2.3) — POST the token endpoint with
+    ``grant_type=client_credentials`` + client id/secret, return ``access_token``. The client secret
+    is the connection's resolved secret; it never appears in the IR. This is the one auth scheme
+    that
+    needs its own I/O (a token fetch) before the main call."""
+    token_url = auth.get("tokenUrl") or auth.get("token_url")
+    if not token_url:
+        raise ValueError(
+            "oauth2_client_credentials auth requires a 'tokenUrl' in connection config"
+        )
+    data = {"grant_type": "client_credentials"}
+    client_id = auth.get("clientId") or auth.get("client_id")
+    if client_id:
+        data["client_id"] = client_id
+        data["client_secret"] = secret
+    scope = auth.get("scope")
+    if scope:
+        data["scope"] = scope
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(token_url, data=data, timeout=30.0)
+    resp.raise_for_status()
+    token = resp.json().get("access_token")
+    if not token:
+        raise ValueError("oauth2 token endpoint returned no access_token")
+    return str(token)
+
+
+async def _auth_headers(conn: ResolvedConnection) -> dict[str, str]:
+    """Build the auth header(s) for a resolved connection (M19 §2.3), server-side. Supports bearer,
+    api-key header, basic, and oauth2 client-credentials. An auth-less connection (no scheme) or a
+    missing secret adds nothing. Raw secret values never leave this function."""
+    auth = (conn.config or {}).get("auth") or {}
+    atype = auth.get("type")
+    if not atype:
+        return {}
+    if conn.secret is None and atype != "oauth2_client_credentials":
+        return {}  # the scheme needs a secret that isn't set — caller's call proceeds auth-less
+    if atype == "bearer":
+        return {"Authorization": f"Bearer {conn.secret}"}
+    if atype == "api_key":
+        return {str(auth.get("header", "X-API-Key")): str(conn.secret)}
+    if atype == "basic":
+        user = str(auth.get("username", ""))
+        token = base64.b64encode(f"{user}:{conn.secret}".encode()).decode("ascii")
+        return {"Authorization": f"Basic {token}"}
+    if atype == "oauth2_client_credentials":
+        token = await _resolve_oauth2_token(auth, conn.secret or "")
+        return {"Authorization": f"Bearer {token}"}
+    raise ValueError(f"unsupported connection auth type {atype!r}")
+
+
+def _apply_response_map(value: Any, path: str) -> Any:
+    """A minimal JSONPath shaper (M19 §2.3 ``responseMap``) — ``$.a.b`` / ``$.a[0].b`` into the
+    parsed response body. No dependency; supports dotted keys + ``[index]``. If the path can't be
+    walked (a typo / missing field), returns the value unchanged (graceful — a 2xx is not failed by
+    a
+    map miss; the data is still there to inspect)."""
+    expr = path.lstrip("$").lstrip(".")
+    if not expr:
+        return value
+    cur = value
+    for seg in expr.split("."):
+        key, _, idx = seg.partition("[")
+        if key:
+            if not isinstance(cur, dict) or key not in cur:
+                return value
+            cur = cur[key]
+        if idx:
+            try:
+                i = int(idx.rstrip("]"))
+                cur = cur[i]
+            except (ValueError, IndexError, TypeError, KeyError):
+                return value
+    return cur
+
+
+async def execute_http_tool(
+    conn: ResolvedConnection | None,
+    *,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: Any,
+    response_map: str | None,
+    idempotency_key: str | None,
+    timeout_s: float | None,
+) -> ActivityOutcome:
+    """Run one http-tool activity (M19 §2.3) — the runtime-agnostic body both the interactive walker
+    and the durable step wrap. ``conn`` is the connection resolved AT STEP TIME (auth injected here,
+    server-side); a missing/disabled connection (``conn is None``) binds an honest ``err``. The
+    non-2xx status is a normal return value (bound ``ok`` as ``{status, body, headers}``); only a
+    transport failure (timeout/DNS/refused) or an auth-setup error binds ``err``. The
+    ``idempotency_key`` (set for unsafe methods — §2.5) adds an ``Idempotency-Key`` header so a
+    partial-failure re-run is a provider no-op. Provider-client retry is OFF (DBOS owns retry). The
+    ``timeout_s`` is a leaf knob, not a caller-cancellation handle (ASYNC109)."""
+    if conn is None:
+        return ActivityOutcome(ok=False, value="http tool: connection not found or disabled")
+    final_url = url
+    base = (conn.config or {}).get("baseUrl")
+    if base and not url.lower().startswith(("http://", "https://")):
+        final_url = base.rstrip("/") + "/" + url.lstrip("/")
+    final_headers: dict[str, str] = {}
+    final_headers.update((conn.config or {}).get("headers") or {})  # connection static headers
+    final_headers.update(headers)  # node headers
+    if idempotency_key:
+        final_headers["Idempotency-Key"] = idempotency_key
+    try:
+        final_headers.update(await _auth_headers(conn))  # server-side auth injection (§1.1)
+    except Exception as exc:  # auth setup (e.g. oauth token fetch) failed — honest err, no hang
+        return ActivityOutcome(ok=False, value=f"http tool auth failed: {exc}")
+    kwargs: dict[str, Any] = {"headers": final_headers, "timeout": timeout_s or 30.0}
+    if body is not None:
+        kwargs["json"] = body  # JSON request (REST or GraphQL {query, variables})
+    try:
+        async with httpx.AsyncClient(follow_redirects=True) as client:
+            resp = await client.request(method.upper(), final_url, **kwargs)
+    except Exception as exc:  # transport failure → err (m6.md §4), never a hang
+        return ActivityOutcome(ok=False, value=f"http tool request failed: {exc}")
+    try:
+        parsed: Any = resp.json()
+    except (ValueError, TypeError):
+        parsed = resp.text
+    if response_map:
+        # responseMap shapes the STEP OUTPUT (§2.3): return just the mapped value, not the
+        # {status, body, headers} envelope — the author opted into the shaped data.
+        mapped = (
+            _apply_response_map(parsed, response_map) if isinstance(parsed, dict | list) else parsed
+        )
+        return ActivityOutcome(ok=True, value=mapped)
+    return ActivityOutcome(
+        ok=True,
+        value={"status": resp.status_code, "body": parsed, "headers": dict(resp.headers)},
+    )
+
+
+def is_http_tool(ir: IRDocument, tool_key: str) -> HttpTool | None:
+    """The ``http`` binding for ``tool_key`` in ``ir.tools``, or ``None`` if the key is a builtin /
+    absent (the M6 registry path). Lets the ``tool`` handler route http-vs-builtin (M19 §2.3)."""
+    binding = ir.tools.get(tool_key)
+    return binding if isinstance(binding, HttpTool) else None
+
+
+_PURE_REF = re.compile(r"\$in(?:\.[A-Za-z0-9_]+)*$")
+
+
+def _resolve_template_value(value: Any, ports: _PortInputs, node_id: str) -> Any:
+    """Substitute ``$in`` refs inside a body-template value (M19 §2.3). Only a string that is
+    EXACTLY a ``$in`` ref is resolved (to the typed value — so a GraphQL variable stays a
+    number/object); every OTHER string is left LITERAL, so a GraphQL query's own ``$var`` syntax is
+    never mistaken for a theygent token. dict/list leaves recurse; non-strings pass through.
+    (url/headers use embedded ``_render_template`` interpolation; bodies are ref-or-literal.)"""
+    if isinstance(value, str):
+        if _PURE_REF.fullmatch(value):
+            return _resolve_ref(value, ports, node_id)
+        return value  # literal — protects GraphQL ``$c``, ``$amount``, JSON-with-$, etc.
+    if isinstance(value, dict):
+        return {k: _resolve_template_value(v, ports, node_id) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_resolve_template_value(v, ports, node_id) for v in value]
+    return value
+
+
+@dataclass(frozen=True)
+class HttpCall:
+    """A fully-resolved http request (M19 §2.3) — the deterministic part (templates substituted from
+    journaled inputs) the caller hands to :func:`execute_http_tool`. The connection (auth) is
+    resolved
+    separately, inside the step. Shared by the interactive walker and the durable step so both build
+    the same request (parity)."""
+
+    connection_id: str
+    method: str
+    url: str
+    headers: dict[str, str]
+    body: Any
+    response_map: str | None
+    idempotency_key: str | None
+    timeout: float | None
+
+
+def build_http_call(
+    binding: HttpTool, config: ToolConfig, ports: _PortInputs, *, node_id: str, run_id: str
+) -> HttpCall:
+    """Resolve an http-tool node's config into a concrete request (M19 §2.3), substituting the
+    unified ``$in.field`` grammar in url / headers / body. ``idempotency_key`` additionally expands
+    ``{runId}`` / ``{nodeId}`` (the §2.5 'derived from runId+nodeId' convention). Auth is NOT added
+    here — it is injected server-side from the connection inside the step (§1.1)."""
+    url = _render_template(config.url_template or "", ports, node_id)
+    headers = {k: _render_template(v, ports, node_id) for k, v in (config.headers or {}).items()}
+    body = (
+        _resolve_template_value(config.body_template, ports, node_id)
+        if config.body_template is not None
+        else None
+    )
+    idem = config.idempotency_key
+    if idem:
+        idem = _render_template(
+            idem.replace("{runId}", run_id).replace("{nodeId}", node_id), ports, node_id
+        )
+    return HttpCall(
+        connection_id=binding.connection,
+        method=config.method or "GET",
+        url=url,
+        headers=headers,
+        body=body,
+        response_map=config.response_map,
+        idempotency_key=idem,
+        timeout=config.timeout_seconds,
+    )
+
+
+async def run_http_tool(
+    binding: HttpTool,
+    config: ToolConfig,
+    ports: _PortInputs,
+    *,
+    node_id: str,
+    run_id: str,
+    resolver: ConnectionResolver | None,
+) -> ActivityOutcome:
+    """Build + execute an http-tool call (M19 §2.3) — the one body both runtimes call so the http
+    path is identical interactive vs durable. Builds the request (deterministic), resolves the
+    connection through ``resolver`` (server-side auth, at step time), then runs it. A template error
+    or a missing resolver binds ``err`` honestly (never a hang)."""
+    try:
+        call = build_http_call(binding, config, ports, node_id=node_id, run_id=run_id)
+    except Exception as exc:  # unresolvable $in in url/headers/body → structured err (m6.md §4)
+        return ActivityOutcome(ok=False, value=f"http tool {config.tool!r}: {exc}")
+    conn = await resolver(call.connection_id) if resolver is not None else None
+    return await execute_http_tool(
+        conn,
+        method=call.method,
+        url=call.url,
+        headers=call.headers,
+        body=call.body,
+        response_map=call.response_map,
+        idempotency_key=call.idempotency_key,
+        timeout_s=call.timeout,
+    )
+
+
+# ── M19 §2.9: the transform node (deterministic reshape — NOT a code sandbox) ────────────────────
+
+
+def execute_transform(expr: str, ports: _PortInputs, node_id: str) -> Any:
+    """Reshape the in-port value(s) by a deterministic JSON template (m19.md §2.9). ``expr`` is a
+    JSON document whose string leaves may be ``$in`` refs (``$in.in.location.city``) — the handler
+    parses it and resolves each ref over the journaled inputs (reusing ``_resolve_template_value``).
+    No I/O, no sandbox (``kind: orchestration``), so it runs inline in both runtimes and replays
+    deterministically. A non-JSON ``expr`` or an unresolvable ref is a LOUD :class:`TransformError`
+    (no ``err`` port — a bad reshape fails the run). (A full JSONata/jq DSL is the deferred richer
+    form — §2.9 'include if cheap'; the JSON-template form is the cheap, dep-free reshape.)"""
+    try:
+        template = json.loads(expr)
+    except (ValueError, TypeError) as exc:
+        raise TransformError(
+            f"transform {node_id!r}: expr is not valid JSON (it is a JSON template whose string "
+            f"leaves may be $in refs): {exc}"
+        ) from exc
+    try:
+        return _resolve_template_value(template, ports, node_id)
+    except _RefError as exc:
+        raise TransformError(f"transform {node_id!r}: {exc}") from exc
+
+
+# ── M19 §2.6: the guardrail node (rule⇒orchestration · model⇒activity, §1.2) ─────────────────────
+#
+# A guardrail short-circuits before downstream work: ``pass`` carries the input through; ``block``
+# carries the ``on_block`` payload (or the violation) — wire it to an ``output`` to refuse BEFORE
+# the expensive node. A RULE check is deterministic + inline (no I/O → orchestration); a MODEL check
+# is a classifier call (→ activity). The ``kind`` follows the backend (validated in packages/ir).
+
+#: Default PII patterns for the ``pii`` rule (deterministic — emails, SSN-ish, card-ish digits). The
+#: author can override with ``spec.patterns``. A guardrail PASSES when NO pattern matches (it blocks
+#: input containing PII), the safe default for a "don't leak PII" gate.
+_PII_PATTERNS = [
+    r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",  # email
+    r"\b\d{3}-\d{2}-\d{4}\b",  # US SSN
+    r"\b(?:\d[ -]*?){13,16}\b",  # card-ish run of digits
+]
+
+
+def evaluate_guardrail_rule(rule: GuardrailRule, value: Any) -> bool:
+    """Evaluate a deterministic guardrail rule (m19.md §2.6) — return True = PASS. No I/O. ``value``
+    is the in-port value; string-shaped rules stringify it (``_stringify``). The predicates:
+    ``regex`` (``spec.pattern`` [+ ``mode`` allow|deny]); ``length`` (``spec.min``/``max`` over the
+    string); ``allow`` / ``deny`` (membership of the stringified value in ``spec.values``);
+    ``json_schema`` (minimal: the value is an object with all of ``spec.required`` keys); ``pii``
+    (PASS iff NO PII pattern matches — blocks leaks)."""
+    spec = rule.spec or {}
+    text = value if isinstance(value, str) else _stringify(value)
+    if rule.kind == "regex":
+        pattern = str(spec.get("pattern", ""))
+        matched = bool(re.search(pattern, text)) if pattern else False
+        return matched if spec.get("mode", "allow") == "allow" else not matched
+    if rule.kind == "length":
+        n = len(text)
+        lo = spec.get("min")
+        hi = spec.get("max")
+        if lo is not None and n < int(lo):
+            return False
+        return not (hi is not None and n > int(hi))
+    if rule.kind == "allow":
+        return text in [str(v) for v in spec.get("values", [])]
+    if rule.kind == "deny":
+        return text not in [str(v) for v in spec.get("values", [])]
+    if rule.kind == "json_schema":
+        parsed = _parse_if_json(value)
+        if not isinstance(parsed, dict):
+            return False
+        return all(k in parsed for k in spec.get("required", []))
+    if rule.kind == "pii":
+        patterns = spec.get("patterns") or _PII_PATTERNS
+        return not any(re.search(p, text) for p in patterns)
+    return False  # unknown rule kind (validated upstream) — fail closed
+
+
+def _bind_guardrail(
+    node: Node,
+    passed: bool,
+    input_value: Any,
+    on_block: Any,
+    values: dict[tuple[str, str], Any],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Activate ``pass`` (carrying the input through) or ``block`` (carrying ``on_block`` or the
+    input) — exactly one handle, so the un-taken branch's edges are dead (m6.md §4 edge-skipping).
+    The canonical ``control``/``data`` example: guardrail ``pass`` → llm; guardrail ``block`` →
+    output."""
+    handle = "pass" if passed else "block"
+    live_handles[node.id] = {handle}
+    values[(node.id, handle)] = input_value if passed else (on_block or input_value)
+
+
+async def execute_guardrail_model(
+    gateway: GatewayClient,
+    *,
+    model_id: str,
+    params: dict[str, Any],
+    prompt: str,
+    input_value: Any,
+    extra_headers: Mapping[str, str],
+) -> str:
+    """Run a model guardrail's classifier call (m19.md §2.6) — the runtime-agnostic body both
+    runtimes wrap. Builds one user message (the judge prompt + the input) and assembles the answer
+    via ``execute_llm``; the caller compares it to ``pass_on``. One cheap call before the costly."""
+    messages = [{"role": "user", "content": f"{prompt}\n\nInput:\n{_stringify(input_value)}"}]
+    result = await execute_llm(
+        gateway, model_id=model_id, params=params, messages=messages, extra_headers=extra_headers
+    )
+    return result.output
+
+
+def guardrail_model_passed(answer: str, pass_on: str) -> bool:
+    """A model guardrail passes when the classifier's answer begins with ``pass_on`` (case/space
+    insensitive) — e.g. a "yes/no, is this in scope?" judge with ``pass_on='yes'``."""
+    return answer.strip().lower().startswith(pass_on.strip().lower())
+
+
+# ── M19 §2.8: the gate nodes (ratelimit · quota — the lean per-key seam, §1.6) ───────────────────
+
+
+def resolve_gate_key(key_expr: str, ports: _PortInputs, node_id: str) -> str:
+    """Resolve a gate's ``key_expr`` to the caller key (m19.md §2.8/§1.6). A ``$in`` ref resolves
+    over the input (per-input-field key, e.g. ``$in.in.userId``); anything else (a literal, or
+    ``$caller.token``) is the key verbatim — a single per-key bucket. Per-USER attribution (refining
+    ``$caller.*`` to a real principal) is the deferred identity milestone (§1.6), not faked here."""
+    if key_expr.startswith("$in"):
+        try:
+            return _stringify(_resolve_ref(key_expr, ports, node_id))
+        except _RefError:
+            return key_expr  # unresolvable → fall back to the literal bucket (no silent crash)
+    return key_expr
+
+
+async def execute_ratelimit(gates: Any, *, scope: str, limit: int, window_seconds: int) -> bool:
+    """Count one hit and return True = ALLOW (m19.md §2.8). Denies once the current window's count
+    exceeds ``limit``. ``gates`` is the injected backend (the counter lives in Postgres). With no
+    backend wired (no gate in the graph normally), allow — the gate is inert, never a hard fail."""
+    if gates is None:
+        return True
+    count = await gates.hit(scope, window_seconds)
+    return count <= limit
+
+
+async def execute_quota(
+    gates: Any, *, agent_id: str | None, budget_tokens: int, window_seconds: int
+) -> bool:
+    """Read accumulated token usage and return True = ALLOW (m19.md §2.8/§1.6 — read, don't
+    re-meter). Denies once usage reaches ``budget_tokens`` in the window. No backend → allow."""
+    if gates is None:
+        return True
+    used = await gates.usage_tokens(agent_id, window_seconds)
+    return used < budget_tokens
+
+
+def _bind_gate(
+    node: Node,
+    allowed: bool,
+    input_value: Any,
+    reason: str,
+    values: dict[tuple[str, str], Any],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Activate ``allow`` (input through) or ``deny`` (a clean 429-style result — never a hang,
+    §2.8). Exactly one handle, so the un-taken branch is dead (m6.md §4 edge-skipping)."""
+    if allowed:
+        live_handles[node.id] = {"allow"}
+        values[(node.id, "allow")] = input_value
+    else:
+        live_handles[node.id] = {"deny"}
+        values[(node.id, "deny")] = {"denied": True, "reason": reason}
+
+
 # ── conditional dataflow: edge liveness, node skipping (m6.md §4) ─────────────
 
 
@@ -714,6 +1357,14 @@ async def walk(
                     await _walk_tool(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "mcp_tool":
                     await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "guardrail":  # model guardrail (rule⇒orchestration branch below)
+                    await _walk_guardrail_model(node, ir, ctx, values, skipped, live_handles)
+                elif node.type in ("ratelimit", "quota"):
+                    await _walk_gate(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "transcribe":
+                    await _walk_transcribe(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "speak":
+                    await _walk_speak(node, ir, ctx, values, skipped, live_handles)
                 else:
                     # agent / rag / retriever / memory / code — deferred (§7).
                     raise NotImplementedError(
@@ -722,8 +1373,12 @@ async def walk(
             elif node.kind == "orchestration":
                 if node.type == "router":
                     _walk_router(node, ir, values, skipped, live_handles)
+                elif node.type == "transform":
+                    _walk_transform(node, ir, values, skipped, live_handles)
+                elif node.type == "guardrail":  # rule guardrail (model⇒activity branch above)
+                    _walk_guardrail_rule(node, ir, values, skipped, live_handles)
                 else:
-                    # loop / map — deferred (§7).
+                    # loop / map — durable-only (M14, raise here in the interactive walker).
                     raise NotImplementedError(
                         f"orchestration node {node.id!r} (type {node.type!r}) "
                         "is not implemented yet"
@@ -967,15 +1622,21 @@ async def _walk_tool(
 
     config = ToolConfig.model_validate(node.config)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    # Resolve args deterministically, then run the shared ``execute_tool`` activity body (M13 §2 —
-    # the same body the durable step wraps). An unresolvable ``$in`` arg ref is a structured err,
-    # exactly as a raised tool error is (m6.md §4): bind ``err``, continue.
-    try:
-        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-    except Exception as exc:
-        outcome = ActivityOutcome(ok=False, value=str(exc))
+    # M19 §2.3: route http-vs-builtin. An ``http`` binding in ``ir.tools`` → a real outbound call
+    # with connection-injected auth (server-side, at step time); otherwise the M6 builtin registry
+    # path. An unresolvable ``$in`` ref is a structured err either way (m6.md §4): bind ``err``.
+    binding = is_http_tool(ir, config.tool)
+    if binding is not None:
+        outcome = await run_http_tool(
+            binding, config, ports, node_id=node.id, run_id=ctx.run_id, resolver=ctx.tool_auth
+        )
     else:
-        outcome = await execute_tool(ctx.tools, config.tool, args)
+        try:
+            args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
+        except Exception as exc:
+            outcome = ActivityOutcome(ok=False, value=str(exc))
+        else:
+            outcome = await execute_tool(ctx.tools, config.tool, args)
     _bind_outcome(node, outcome, values, live_handles)
     if not outcome.ok:
         logger.info(
@@ -1030,19 +1691,19 @@ async def _walk_mcp_tool(
     exist"). A bare OS error or stack blob would pass "err bound" but fail that bar."""
 
     config = McpToolConfig.model_validate(node.config)
-    server, tool = config.server, config.tool
+    tool = config.tool
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    # Resolve args deterministically, then run the shared ``execute_mcp_tool`` activity body (M13
-    # §2 — the same body the durable step wraps; it classifies connection/tool-not-found/tool-error
-    # into actionable ``err`` messages). A bad arg ref is itself a structured err (m7.md §4).
+    # Resolve args deterministically, then run the shared activity body (M13 §2 — the same body the
+    # durable step wraps). M19 §2.4: a ``connection``-based node resolves its connection server-side
+    # (auth never in the IR) and uses the http/stdio transport; a ``server``-based node is the M7
+    # registered-name path. A bad arg ref is itself a structured err (m7.md §4).
     try:
         args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
     except Exception as exc:
-        outcome = ActivityOutcome(
-            ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}"
-        )
+        target = config.connection or config.server
+        outcome = ActivityOutcome(ok=False, value=f"mcp {target!r} tool {tool!r} failed: {exc}")
     else:
-        outcome = await execute_mcp_tool(ctx.mcp, server, tool, args)
+        outcome = await _mcp_tool_outcome(ctx, config, tool, args)
     _bind_outcome(node, outcome, values, live_handles)
     if not outcome.ok:
         logger.info(
@@ -1050,11 +1711,81 @@ async def _walk_mcp_tool(
             extra={
                 "run_id": ctx.run_id,
                 "node_id": node.id,
-                "server": server,
+                "target": config.connection or config.server,
                 "tool": tool,
                 "error": outcome.value,
             },
         )
+
+
+async def _mcp_tool_outcome(
+    ctx: WalkContext, config: McpToolConfig, tool: str, args: dict[str, Any]
+) -> ActivityOutcome:
+    """Dispatch an mcp_tool call by binding kind (M19 §2.4): ``connection`` → resolve the connection
+    server-side + use its transport; ``server`` → the M7 registered-name path. Shared by the
+    interactive + durable mcp handlers."""
+    if config.connection:
+        if ctx.tool_auth is None:
+            return ActivityOutcome(ok=False, value="mcp_tool: no connection resolver configured")
+        conn = await ctx.tool_auth(config.connection)
+        if conn is None:
+            return ActivityOutcome(
+                ok=False, value=f"mcp connection {config.connection!r} not found or disabled"
+            )
+        mcp_config = mcp_config_from_connection(conn)
+        return await execute_mcp_connection_tool(ctx.mcp, config.connection, mcp_config, tool, args)
+    return await execute_mcp_tool(ctx.mcp, config.server or "", tool, args)
+
+
+async def _walk_transcribe(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a ``transcribe`` node (m19.md §2.2): the audio-ref in-port value → text. Binds text to
+    the success handle(s), an err message to ``err`` (the tool ok/err contract). The bytes go to the
+    inference base URL (gateway), never a control-plane route (§10)."""
+    config = TranscribeConfig.model_validate(node.config)
+    model_id, binding_params = resolve_model_key(ir, config.model)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    audio_ref = _single_in_value(ports, node)
+    outcome = await execute_transcribe(
+        ctx.gateway,
+        ctx.artifacts,
+        model_id=model_id,
+        params={**binding_params, **config.params},
+        audio_ref=audio_ref,
+        extra_headers=ctx.extra_headers,
+    )
+    _bind_outcome(node, outcome, values, live_handles)
+
+
+async def _walk_speak(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a ``speak`` node (m19.md §2.2): the text in-port value → an audio REFERENCE (the bytes
+    are a stored artifact, not journaled). Binds the ref to the success handle(s), an err to err."""
+    config = SpeakConfig.model_validate(node.config)
+    model_id, binding_params = resolve_model_key(ir, config.model)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    text = _single_in_value(ports, node)
+    outcome = await execute_speak(
+        ctx.gateway,
+        ctx.artifacts,
+        model_id=model_id,
+        params={**binding_params, **config.params},
+        text=text if isinstance(text, str) else _stringify(text),
+        extra_headers=ctx.extra_headers,
+    )
+    _bind_outcome(node, outcome, values, live_handles)
 
 
 def _stringify(value: Any) -> str:
@@ -1096,3 +1827,109 @@ def _walk_router(
         )
     live_handles[node.id] = {selected}
     values[(node.id, selected)] = _single_in_value(ports, node)
+
+
+def _walk_transform(
+    node: Node,
+    ir: IRDocument,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a ``transform`` node (m19.md §2.9): reshape the in-port value(s) by the JSON template
+    ``config.expr`` (deterministic, inline — no I/O) and bind the result to the success handle(s). A
+    a bad expr / unresolvable ref raises :class:`TransformError` (failed run), like the router."""
+    config = TransformConfig.model_validate(node.config)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    value = execute_transform(config.expr, ports, node.id)
+    live_handles[node.id] = _success_handles(node)
+    for handle in live_handles[node.id]:
+        values[(node.id, handle)] = value
+
+
+def _walk_guardrail_rule(
+    node: Node,
+    ir: IRDocument,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a RULE guardrail (m19.md §2.6, orchestration): evaluate the deterministic predicate over
+    the in-port value (no I/O) and activate ``pass`` (input through) or ``block`` (the onBlock
+    payload). The rule sub-config is guaranteed present (validated in packages/ir)."""
+    config = GuardrailConfig.model_validate(node.config)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    input_value = _single_in_value(ports, node)
+    assert config.check.rule is not None  # validate_graph guarantees this for a rule check
+    passed = evaluate_guardrail_rule(config.check.rule, input_value)
+    _bind_guardrail(node, passed, input_value, config.on_block, values, live_handles)
+
+
+async def _walk_guardrail_model(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a MODEL guardrail (m19.md §2.6, activity): a cheap classifier call decides pass/block.
+    The model sub-config is guaranteed present (validated in packages/ir); the model id resolves
+    like an ``llm`` (engine-name rejected). Then the same pass/block binding as the rule path."""
+    config = GuardrailConfig.model_validate(node.config)
+    mcfg = config.check.model
+    assert mcfg is not None  # validate_graph guarantees this for a model check
+    model_id, params = resolve_model_key(ir, mcfg.model)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    input_value = _single_in_value(ports, node)
+    answer = await execute_guardrail_model(
+        ctx.gateway,
+        model_id=model_id,
+        params=params,
+        prompt=mcfg.prompt,
+        input_value=input_value,
+        extra_headers=ctx.extra_headers,
+    )
+    _bind_guardrail(
+        node,
+        guardrail_model_passed(answer, mcfg.pass_on),
+        input_value,
+        config.on_block,
+        values,
+        live_handles,
+    )
+
+
+async def _walk_gate(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run a ``ratelimit`` or ``quota`` gate (m19.md §2.8): resolve the caller key, check the
+    backend, and activate ``allow`` (input through) or ``deny`` (a clean result). Both are
+    activities (counter / usage reads = I/O). Per-key now; per-user deferred (§1.6)."""
+    from theygent_ir import QuotaConfig, RateLimitConfig
+
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    input_value = _single_in_value(ports, node)
+    if node.type == "ratelimit":
+        cfg = RateLimitConfig.model_validate(node.config)
+        key = resolve_gate_key(cfg.key_expr, ports, node.id)
+        scope = f"{ir.id}:{node.id}:{key}"
+        allowed = await execute_ratelimit(
+            ctx.gates, scope=scope, limit=cfg.limit, window_seconds=cfg.window_seconds
+        )
+        reason = f"rate limit exceeded ({cfg.limit}/{cfg.window_seconds}s)"
+    else:  # quota
+        qcfg = QuotaConfig.model_validate(node.config)
+        allowed = await execute_quota(
+            ctx.gates,
+            agent_id=ir.id,
+            budget_tokens=qcfg.budget_tokens,
+            window_seconds=qcfg.window_seconds,
+        )
+        reason = f"token budget exceeded ({qcfg.budget_tokens}/{qcfg.window_seconds}s)"
+    _bind_gate(node, allowed, input_value, reason, values, live_handles)

@@ -27,7 +27,7 @@ import time
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
@@ -47,6 +47,23 @@ def _build_app(mode: str, captured: dict[str, object], response: str | None) -> 
             "object": "list",
             "data": [{"id": "triage-fast", "object": "model", "owned_by": "theygent"}],
         }
+
+    # M19 §2.2: the audio data-plane endpoints (the control-plane's transcribe/speak nodes call
+    # THESE — proving the bytes go to the inference base URL, never a control-plane route, §10).
+    @app.post("/v1/audio/transcriptions")
+    async def transcriptions(request: Request):
+        form = await request.form()
+        captured["audio_hit"] = True
+        captured["audio_model"] = form.get("model")
+        captured["audio_bytes_in"] = len(await form["file"].read()) if "file" in form else 0
+        return JSONResponse({"text": response if response is not None else "transcribed text"})
+
+    @app.post("/v1/audio/speech")
+    async def speech(request: Request):
+        body = await request.json()
+        captured["audio_hit"] = True
+        captured["audio_model"] = body.get("model")
+        return Response(content=b"FAKE_AUDIO_BYTES", media_type="audio/mpeg")
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
@@ -164,6 +181,9 @@ class FakeInference:
             "run_id_header": None,
             "model": None,
             "messages": None,
+            "audio_hit": False,
+            "audio_model": None,
+            "audio_bytes_in": 0,
         }
         app = _build_app(mode, self.captured, response)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

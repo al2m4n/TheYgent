@@ -31,6 +31,7 @@ from theygent_control_plane.models import (
     BenchPresetRow,
     BenchRunRow,
     BenchSuiteRow,
+    ConnectionRow,
     McpServerRow,
     MessageRow,
     RunRow,
@@ -45,6 +46,8 @@ from theygent_control_plane.run import (
     BenchPreset,
     BenchRun,
     BenchSuite,
+    Connection,
+    ConnectionKind,
     Run,
     RunStatus,
     StoredVersion,
@@ -927,6 +930,127 @@ class TriggerStore:
             .where(TriggerRow.id == trigger_id)
             .values(last_fired_at=fired_at, updated_at=now())
         )
+
+
+# ── Connection store (M19 §1.1) — the tool/MCP auth seam ─────────────────────────────────────────
+
+
+def _to_connection(row: ConnectionRow) -> Connection:
+    return Connection(
+        id=row.id,
+        name=row.name,
+        kind=cast(ConnectionKind, row.kind),
+        config=dict(row.config or {}),
+        secret_ref=row.secret_ref,
+        enabled=row.enabled,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+class ConnectionStore:
+    """Postgres persistence for the connection registry (M19 §1.1) — the tool/MCP auth seam.
+
+    Same M4 discipline (§1.2/§1.3): stateless ops over a caller-provided session, domain
+    ``Connection`` out, ``ConnectionRow`` never leaks. The row stores NON-SECRET config + a
+    ``secret_ref``; the secret material itself lives in the ``secret`` table (``SecretStore``),
+    written/rotated/deleted by the route alongside the connection in the SAME transaction. This
+    store knows nothing about encryption — it only persists the ref (the seam: connection = config
+    + a pointer, never the secret)."""
+
+    async def create(
+        self,
+        session: AsyncSession,
+        *,
+        name: str,
+        kind: ConnectionKind,
+        config: dict[str, Any],
+        secret_ref: str | None,
+        enabled: bool = True,
+    ) -> Connection:
+        conn = Connection(
+            name=name, kind=kind, config=config, secret_ref=secret_ref, enabled=enabled
+        )
+        session.add(
+            ConnectionRow(
+                id=conn.id,
+                name=name,
+                kind=kind,
+                config=config,
+                secret_ref=secret_ref,
+                enabled=enabled,
+                created_at=conn.created_at,
+                updated_at=conn.updated_at,
+            )
+        )
+        await session.flush()
+        return conn
+
+    async def get(self, session: AsyncSession, connection_id: str) -> Connection | None:
+        row = await session.get(ConnectionRow, connection_id)
+        return _to_connection(row) if row is not None else None
+
+    async def list_connections(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[Connection]:
+        """Connections, newest first (M8 §2 list shape). Keyset pagination on ``(created_at, id)``
+        DESC, mirroring ``list_triggers``/``list_agents``; an unknown ``before`` id is ignored."""
+        stmt = (
+            select(ConnectionRow)
+            .order_by(ConnectionRow.created_at.desc(), ConnectionRow.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            anchor = await session.get(ConnectionRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(ConnectionRow.created_at, ConnectionRow.id)
+                    < (anchor.created_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_connection(row) for row in rows]
+
+    async def update(
+        self,
+        session: AsyncSession,
+        connection_id: str,
+        *,
+        name: str | None = None,
+        config: dict[str, Any] | None = None,
+        secret_ref: str | None = None,
+        set_secret_ref: bool = False,
+        enabled: bool | None = None,
+    ) -> Connection | None:
+        """Edit non-secret config / name / enabled, and optionally re-point ``secret_ref`` (a secret
+        rotation keeps the SAME ref, so ``set_secret_ref`` is only used when clearing/attaching a
+        secret, not on rotation — the M19 §1.1 hash-stability guarantee). ``kind`` is immutable (a
+        different kind is a different connection)."""
+        row = await session.get(ConnectionRow, connection_id)
+        if row is None:
+            return None
+        if name is not None:
+            row.name = name
+        if config is not None:
+            row.config = config
+        if set_secret_ref:
+            row.secret_ref = secret_ref
+        if enabled is not None:
+            row.enabled = enabled
+        row.updated_at = now()
+        await session.flush()
+        return _to_connection(row)
+
+    async def delete(self, session: AsyncSession, connection_id: str) -> Connection | None:
+        """Delete the connection, returning the deleted domain object so the caller can also delete
+        its secret (the route owns the secret lifecycle — connection + secret in one transaction).
+        ``None`` if it did not exist."""
+        row = await session.get(ConnectionRow, connection_id)
+        if row is None:
+            return None
+        conn = _to_connection(row)
+        await session.delete(row)
+        await session.flush()
+        return conn
 
 
 # ── Bench store (M18 §1.6/§1.7) ──────────────────────────────────────────────────────────────────

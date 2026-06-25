@@ -22,6 +22,7 @@ export type Kind = "activity" | "orchestration" | "boundary";
 export type Label = string | null;
 export type Id3 = string;
 export type Required = boolean;
+export type Role = "data" | "control";
 export type Type = string;
 export type In = Port[];
 export type Out = Port[];
@@ -30,8 +31,12 @@ export type Nodes = Node[];
 export type Schemaversion = string;
 export type Kind1 = "builtin";
 export type Ref = string;
-export type Kind2 = "mcp";
-export type Server = string;
+export type Connection = string;
+export type Kind2 = "http";
+export type Template = string | null;
+export type Connection1 = string | null;
+export type Kind3 = "mcp";
+export type Server = string | null;
 export type Tool = string;
 export type Version = string;
 export type View = {
@@ -128,21 +133,49 @@ export interface Ports {
  * be left unfed and resolves to ``null`` at runtime. The default is required, so an unfed input
  * is a loud validation error rather than a silent ``None`` — the multi-input analogue of M9's
  * no-silent-pass-through rule. (Ignored on out-ports.)
+ *
+ * ``role`` (M19 §2.10) is the channel a handle carries: ``data`` (the default — threads a value)
+ * or ``control`` (pure ordering: "run after this passes", no value). The editor renders the two
+ * distinctly and only allows data→data / control→control connections; an edge's ``channel`` is
+ * DERIVED from the handles it joins, not a separate toggle. The walker/compiler dispatch by edge
+ * ``channel`` exactly as before — ``role`` is the per-handle declaration the channel follows, so a
+ * pre-M19 IR (all ports default ``data``) is unchanged in meaning. This is the ONLY IR-shape
+ * addition in M19 (§0/§5).
  */
 export interface Port {
   id: Id3;
   required?: Required;
+  role?: Role;
   type?: Type;
 }
 export interface Tools {
-  [k: string]: BuiltinTool | McpTool;
+  [k: string]: BuiltinTool | HttpTool | McpTool;
 }
 export interface BuiltinTool {
   kind: Kind1;
   ref: Ref;
 }
-export interface McpTool {
+/**
+ * An http/REST/GraphQL tool binding (M19 §2.3) — the workhorse + the substrate for action tools
+ * (§2.5) and crawler tools (§1.4). ``connection`` is the id of an ``http_auth`` connection (M19
+ * §1.1) whose secret the handler injects SERVER-SIDE at step time — never inline in the IR. The
+ * optional ``template`` names a provider request shape (e.g. ``slack.chat.postMessage``) for the
+ * small built-in action set; everything else is the raw http tool config on the node (§2.3).
+ */
+export interface HttpTool {
+  connection: Connection;
   kind: Kind2;
-  server: Server;
+  template?: Template;
+}
+/**
+ * An MCP tool binding (M7 + M19 §2.4). ``tool`` is the named tool the server exposes; the
+ * server is reached EITHER by the M7 ``server`` name (a registered ``mcp_server``) OR — M19 — by a
+ * ``connection`` id (an ``mcp_server`` connection, stdio or http, auth via its secret_ref).
+ * Exactly one of ``server`` / ``connection`` is set (validated below); no secret in the IR.
+ */
+export interface McpTool {
+  connection?: Connection1;
+  kind: Kind3;
+  server?: Server;
   tool: Tool;
 }

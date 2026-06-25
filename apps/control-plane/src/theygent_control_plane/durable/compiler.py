@@ -34,6 +34,8 @@ from typing import Any
 from dbos import DBOS, Queue, SetWorkflowID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from theygent_ir import (
+    GuardrailConfig,
+    HttpTool,
     HumanConfig,
     IRDocument,
     LlmConfig,
@@ -41,9 +43,14 @@ from theygent_ir import (
     MapConfig,
     McpToolConfig,
     Node,
+    QuotaConfig,
+    RateLimitConfig,
     RouterConfig,
+    SpeakConfig,
     SubgraphConfig,
     ToolConfig,
+    TranscribeConfig,
+    TransformConfig,
     content_hash,
     parse_document,
     topological_order,
@@ -57,6 +64,9 @@ from theygent_control_plane.walker import (
     EngineNameNotAllowed,
     RouterError,
     TemplateError,
+    TransformError,
+    _bind_gate,
+    _bind_guardrail,
     _bind_outcome,
     _collect_in_ports,
     _io_input_snapshot,
@@ -70,12 +80,27 @@ from theygent_control_plane.walker import (
     _resolve_ref,
     _single_in_value,
     _success_handles,
+    build_http_call,
+    evaluate_guardrail_rule,
+    execute_guardrail_model,
+    execute_http_tool,
     execute_llm,
+    execute_mcp_connection_tool,
     execute_mcp_tool,
+    execute_quota,
+    execute_ratelimit,
+    execute_speak,
     execute_tool,
+    execute_transcribe,
+    execute_transform,
     finalize_empty_reason,
+    guardrail_model_passed,
+    is_http_tool,
     llm_models,
+    mcp_config_from_connection,
+    resolve_gate_key,
     resolve_model,
+    resolve_model_key,
 )
 
 from theygent_control_plane.durable.bus import DeltaBus  # isort: skip
@@ -145,6 +170,15 @@ class DurableResources:
     # land identically under both runtimes — the §1.5 one-wrapper rule). May be None in a degraded
     # setup; the durable walk guards on it (telemetry never fails the run it observes).
     telemetry: Any = None  # observability.Telemetry
+    # M19 §1.1: the connection resolver an http tool / connection-backed mcp_tool resolves auth
+    # through, server-side INSIDE the step. The SAME resolver the interactive walker uses (secret
+    # resolution is identical on both runtimes; never in the IR/span/journal). May be None.
+    tool_auth: Any = None  # walker.ConnectionResolver
+    # M19 §2.8: the gate backend (ratelimit counter + quota usage-read) — the SAME one the
+    # interactive walker uses, so gates behave identically on both runtimes. May be None.
+    gates: Any = None  # gates.GateBackend
+    # M19 §2.2: the artifact store transcribe/speak resolve audio references through. May be None.
+    artifacts: Any = None  # artifacts.LocalArtifactStore
 
 
 _RES: DurableResources | None = None
@@ -251,6 +285,132 @@ async def _mcp_step(
     run_id: str, node_id: str, server: str, tool: str, args: dict[str, Any]
 ) -> dict[str, Any]:
     out = await execute_mcp_tool(_res().mcp, server, tool, args)
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
+async def _mcp_conn_step(
+    run_id: str, node_id: str, connection_id: str, tool: str, args: dict[str, Any]
+) -> dict[str, Any]:
+    """A CONNECTION-BACKED mcp_tool as a durable step (M19 §2.4): resolve the connection (auth)
+    HERE, inside the step (server-side — §1.1), build the transport config, then call. The secret
+    never journals; a completed step replays from the journal."""
+    res = _res()
+    conn = await res.tool_auth(connection_id) if res.tool_auth is not None else None
+    if conn is None:
+        return {"ok": False, "value": f"mcp connection {connection_id!r} not found or disabled"}
+    cfg = mcp_config_from_connection(conn)
+    out = await execute_mcp_connection_tool(res.mcp, connection_id, cfg, tool, args)
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
+async def _http_step(
+    run_id: str,
+    node_id: str,
+    connection_id: str,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: Any,
+    response_map: str | None,
+    idempotency_key: str | None,
+    timeout_s: float | None,
+) -> dict[str, Any]:
+    """The http-tool activity as a durable step (M19 §2.3). The connection is resolved + the secret
+    decrypted HERE, inside the step (server-side — §1.1), then the call runs. The request is built
+    deterministically in the workflow body and passed in, so step args stay serializable +
+    replay-stable. A completed step replays from the journal (no duplicated POST); the
+    ``idempotency_key`` covers the crash-after-send window (§2.5)."""
+    resolver = _res().tool_auth
+    conn = await resolver(connection_id) if resolver is not None else None
+    out = await execute_http_tool(
+        conn,
+        method=method,
+        url=url,
+        headers=headers,
+        body=body,
+        response_map=response_map,
+        idempotency_key=idempotency_key,
+        timeout_s=timeout_s,
+    )
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
+async def _guardrail_model_step(
+    run_id: str,
+    node_id: str,
+    model_id: str,
+    params: dict[str, Any],
+    prompt: str,
+    input_value: Any,
+) -> str:
+    """A MODEL guardrail's classifier call as a durable step (M19 §2.6) — the cheap judge call
+    before the expensive node. Returns the classifier answer (journaled); the caller decides
+    pass/block."""
+    return await execute_guardrail_model(
+        _res().gateway,
+        model_id=model_id,
+        params=params,
+        prompt=prompt,
+        input_value=input_value,
+        extra_headers={"x-theygent-run-id": run_id},
+    )
+
+
+@DBOS.step(**_RETRY)
+async def _ratelimit_step(scope: str, limit: int, window_seconds: int) -> bool:
+    """The ``ratelimit`` gate as a durable step (M19 §2.8) — the counter hit is I/O. Returns
+    True=allow. (A repeated step on resume re-counts a hit; a gate is a soft policy, not a financial
+    side effect, so at-least-once is acceptable here — the §1.6 lean-seam posture.)"""
+    return await execute_ratelimit(
+        _res().gates, scope=scope, limit=limit, window_seconds=window_seconds
+    )
+
+
+@DBOS.step(**_RETRY)
+async def _quota_step(agent_id: str | None, budget_tokens: int, window_seconds: int) -> bool:
+    """The ``quota`` gate as a durable step (M19 §2.8/§1.6) — reads accumulated span token usage.
+    Returns True=allow."""
+    return await execute_quota(
+        _res().gates, agent_id=agent_id, budget_tokens=budget_tokens, window_seconds=window_seconds
+    )
+
+
+@DBOS.step(**_RETRY)
+async def _transcribe_step(
+    run_id: str, node_id: str, model_id: str, params: dict[str, Any], audio_ref: Any
+) -> dict[str, Any]:
+    """The ``transcribe`` activity as a durable step (M19 §2.2): audio-ref → text. The audio bytes
+    go to the inference base URL, never a control-plane route (§10). Returns the ok/err outcome."""
+    res = _res()
+    out = await execute_transcribe(
+        res.gateway,
+        res.artifacts,
+        model_id=model_id,
+        params=params,
+        audio_ref=audio_ref,
+        extra_headers={"x-theygent-run-id": run_id},
+    )
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
+async def _speak_step(
+    run_id: str, node_id: str, model_id: str, params: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """The ``speak`` activity as a durable step (M19 §2.2): text → audio REFERENCE (the bytes are an
+    artifact, not journaled — so a resumed run replays the ref, not the audio)."""
+    res = _res()
+    out = await execute_speak(
+        res.gateway,
+        res.artifacts,
+        model_id=model_id,
+        params=params,
+        text=text,
+        extra_headers={"x-theygent-run-id": run_id},
+    )
     return {"ok": out.ok, "value": out.value}
 
 
@@ -559,27 +719,129 @@ async def _durable_walk(
                         values[(node.id, handle)] = res["output"]
                 elif node.type == "tool":
                     config = ToolConfig.model_validate(node.config)
-                    try:
-                        args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
-                    except Exception as exc:  # an unresolvable arg ref is a structured err (m6 §4)
-                        outcome = ActivityOutcome(ok=False, value=str(exc))
+                    # M19 §2.3: route http-vs-builtin. An ``http`` binding → a journaled http step
+                    # (connection auth resolved inside the step); else the M6 builtin step. Both go
+                    # through the ok/err contract.
+                    http_binding = is_http_tool(ir, config.tool)
+                    if isinstance(http_binding, HttpTool):
+                        try:
+                            call = build_http_call(
+                                http_binding, config, ports, node_id=node.id, run_id=run_id
+                            )
+                        except Exception as exc:  # template error → structured err (m6 §4)
+                            outcome = ActivityOutcome(
+                                ok=False, value=f"http tool {config.tool!r}: {exc}"
+                            )
+                        else:
+                            step_out = await _http_step(
+                                run_id,
+                                node.id,
+                                call.connection_id,
+                                call.method,
+                                call.url,
+                                call.headers,
+                                call.body,
+                                call.response_map,
+                                call.idempotency_key,
+                                call.timeout,
+                            )
+                            outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     else:
-                        step_out = await _tool_step(run_id, node.id, config.tool, args)
-                        outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                        try:
+                            args = {
+                                k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()
+                            }
+                        except Exception as exc:  # an unresolvable arg ref is a structured err (§4)
+                            outcome = ActivityOutcome(ok=False, value=str(exc))
+                        else:
+                            step_out = await _tool_step(run_id, node.id, config.tool, args)
+                            outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     _bind_outcome(node, outcome, values, live_handles)
                 elif node.type == "mcp_tool":
                     config = McpToolConfig.model_validate(node.config)
-                    server, tool = config.server, config.tool
+                    tool = config.tool
+                    target = config.connection or config.server
                     try:
                         args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
                     except Exception as exc:
                         outcome = ActivityOutcome(
-                            ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}"
+                            ok=False, value=f"mcp {target!r} tool {tool!r} failed: {exc}"
                         )
                     else:
-                        step_out = await _mcp_step(run_id, node.id, server, tool, args)
+                        # M19 §2.4: connection-backed → resolve auth in the step; else M7 server.
+                        if config.connection:
+                            step_out = await _mcp_conn_step(
+                                run_id, node.id, config.connection, tool, args
+                            )
+                        else:
+                            step_out = await _mcp_step(
+                                run_id, node.id, config.server or "", tool, args
+                            )
                         outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     _bind_outcome(node, outcome, values, live_handles)
+                elif node.type == "guardrail":  # MODEL guardrail (activity; rule⇒inline below)
+                    config = GuardrailConfig.model_validate(node.config)
+                    mcfg = config.check.model
+                    assert mcfg is not None  # validate_graph guarantees this for a model check
+                    model_id, params = resolve_model_key(ir, mcfg.model)
+                    input_value = _single_in_value(ports, node)
+                    answer = await _guardrail_model_step(
+                        run_id, node.id, model_id, params, mcfg.prompt, input_value
+                    )
+                    _bind_guardrail(
+                        node,
+                        guardrail_model_passed(answer, mcfg.pass_on),
+                        input_value,
+                        config.on_block,
+                        values,
+                        live_handles,
+                    )
+                elif node.type in ("ratelimit", "quota"):  # M19 §2.8: the gate seam
+                    input_value = _single_in_value(ports, node)
+                    if node.type == "ratelimit":
+                        rcfg = RateLimitConfig.model_validate(node.config)
+                        key = resolve_gate_key(rcfg.key_expr, ports, node.id)
+                        allowed = await _ratelimit_step(
+                            f"{ir.id}:{node.id}:{key}", rcfg.limit, rcfg.window_seconds
+                        )
+                        reason = f"rate limit exceeded ({rcfg.limit}/{rcfg.window_seconds}s)"
+                    else:
+                        qcfg = QuotaConfig.model_validate(node.config)
+                        allowed = await _quota_step(ir.id, qcfg.budget_tokens, qcfg.window_seconds)
+                        reason = (
+                            f"token budget exceeded ({qcfg.budget_tokens}/{qcfg.window_seconds}s)"
+                        )
+                    _bind_gate(node, allowed, input_value, reason, values, live_handles)
+                elif node.type == "transcribe":  # M19 §2.2 audio-ref → text
+                    tcfg = TranscribeConfig.model_validate(node.config)
+                    model_id, binding_params = resolve_model_key(ir, tcfg.model)
+                    audio_ref = _single_in_value(ports, node)
+                    step_out = await _transcribe_step(
+                        run_id, node.id, model_id, {**binding_params, **tcfg.params}, audio_ref
+                    )
+                    _bind_outcome(
+                        node,
+                        ActivityOutcome(ok=step_out["ok"], value=step_out["value"]),
+                        values,
+                        live_handles,
+                    )
+                elif node.type == "speak":  # M19 §2.2 text → audio reference
+                    scfg = SpeakConfig.model_validate(node.config)
+                    model_id, binding_params = resolve_model_key(ir, scfg.model)
+                    text_val = _single_in_value(ports, node)
+                    step_out = await _speak_step(
+                        run_id,
+                        node.id,
+                        model_id,
+                        {**binding_params, **scfg.params},
+                        text_val if isinstance(text_val, str) else json.dumps(text_val),
+                    )
+                    _bind_outcome(
+                        node,
+                        ActivityOutcome(ok=step_out["ok"], value=step_out["value"]),
+                        values,
+                        live_handles,
+                    )
                 else:  # agent / rag / retriever / memory / code — deferred (§7)
                     raise NotImplementedError(
                         f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
@@ -602,6 +864,27 @@ async def _durable_walk(
                         )
                     live_handles[node.id] = {selected}
                     values[(node.id, selected)] = _single_in_value(ports, node)
+                elif node.type == "transform":
+                    # M19 §2.9: deterministic JSON-template reshape, inline (no I/O). Same body as
+                    # the interactive walker (execute_transform), so durable parity holds.
+                    config = TransformConfig.model_validate(node.config)
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    value = execute_transform(config.expr, ports, node.id)
+                    live_handles[node.id] = _success_handles(node)
+                    for handle_id in live_handles[node.id]:
+                        values[(node.id, handle_id)] = value
+                elif node.type == "guardrail":  # RULE guardrail (orchestration; model⇒step above)
+                    # Deterministic predicate over journaled input — NO I/O (the §1.2 determinism
+                    # guard; a model guardrail is the activity branch above). Mirrors
+                    # _walk_guardrail_rule.
+                    config = GuardrailConfig.model_validate(node.config)
+                    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    input_value = _single_in_value(ports, node)
+                    assert config.check.rule is not None  # validate_graph guarantees this
+                    passed = evaluate_guardrail_rule(config.check.rule, input_value)
+                    _bind_guardrail(
+                        node, passed, input_value, config.on_block, values, live_handles
+                    )
                 elif node.type == "loop":
                     # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned
                     # body
@@ -802,7 +1085,7 @@ async def theygent_run(
         output, _produced, empty_reason = await _durable_walk(
             ir, input_value, run_id, depth, run_trace
         )
-    except (RouterError, TemplateError, EngineNameNotAllowed) as exc:
+    except (RouterError, TemplateError, TransformError, EngineNameNotAllowed) as exc:
         await _complete_run_step(run_id, "failed", None, str(exc))
         await _finish_run_trace(run_trace, "err", str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}

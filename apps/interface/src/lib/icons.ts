@@ -18,6 +18,13 @@ export const DEFAULT_NODE_ICONS: Record<string, string> = {
   loop: "🔁",
   map: "🗂️",
   subgraph: "📦",
+  // M19 palette
+  transcribe: "🎙️",
+  speak: "🔊",
+  guardrail: "🛡️",
+  ratelimit: "🚦",
+  quota: "📊",
+  transform: "🔄",
 };
 
 /** Shown for any node `type` without a dedicated default (e.g. a future M-something node). */

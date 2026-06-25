@@ -27,6 +27,10 @@ dependencies = [
     # the tick mechanism without an API or schema change — a light, swappable dep, not a commitment.
     "croniter>=2",
     "dbos>=1",
+    # M19 §1.1: encrypt tool/MCP secret material at rest (Fernet) behind a secret_ref, so the IR
+    # carries no secret and rotation never bumps a hash (secrets.py). Present transitively (via the
+    # MCP/DBOS stacks); declared now that we depend on it directly. A real KMS is the deferred upgrade.
+    "cryptography>=42",
 ]
 
 [project.scripts]

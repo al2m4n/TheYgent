@@ -77,11 +77,13 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
           id: p.id,
           type: p.type ?? "any",
           required: p.required ?? true,
+          role: p.role ?? "data",
         })),
         out: (n.ports?.out ?? []).map((p) => ({
           id: p.id,
           type: p.type ?? "any",
           required: p.required ?? true,
+          role: p.role ?? "data",
         })),
       },
     };
@@ -109,8 +111,17 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
 
 // ── Save: React Flow → IR (the inverse — identity on view-stripped content) ────
 
-function portFrom(view: { id: string; type: string; required: boolean }): Port {
-  return { id: view.id, type: view.type, required: view.required };
+function portFrom(view: {
+  id: string;
+  type: string;
+  required: boolean;
+  role: "data" | "control";
+}): Port {
+  const port: Port = { id: view.id, type: view.type, required: view.required };
+  // `role` defaults to `data` (the server fills it — D2), so OMIT the default and emit only an
+  // explicit `control` — a role-less (pre-M19) IR round-trips to itself, byte-for-byte (§2.10).
+  if (view.role === "control") port.role = "control";
+  return port;
 }
 
 export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
@@ -244,25 +255,42 @@ export interface ConnectResult {
   error?: string;
 }
 
-/** Create an IR edge from a canvas connection (§2.2). Rejects connections to non-existent handles
- * and a second `data` edge into one in-port (the ambiguous-multi-input rule the backend enforces,
- * mirrored here for an immediate red rather than a 400 at save). `channel` defaults to `data`. */
+/** Create an IR edge from a canvas connection (§2.2 / M19 §2.10). Rejects connections to
+ * non-existent handles, a **cross-role** connection (data→control or control→data — the role of the
+ * handles must match), and a second `data` edge into one in-port (the ambiguous-multi-input rule the
+ * backend enforces, mirrored here for an immediate red rather than a 400 at save). The edge
+ * `channel` is **derived** from the connected handles' role (data→data ⇒ `data`, control→control ⇒
+ * `control`) — not a separate toggle (M19 §2.10). */
 export function connect(ir: IRDocument, c: Connection): ConnectResult {
   const src = (ir.nodes ?? []).find((n) => n.id === c.source);
   const tgt = (ir.nodes ?? []).find((n) => n.id === c.target);
   if (!src || !tgt) return { error: "edge references a node that no longer exists" };
-  if (!c.sourceHandle || !(src.ports?.out ?? []).some((p) => p.id === c.sourceHandle)) {
+  const outPort = (src.ports?.out ?? []).find((p) => p.id === c.sourceHandle);
+  if (!c.sourceHandle || !outPort) {
     return { error: `node ${src.id} has no out-port ${c.sourceHandle ?? "(none)"}` };
   }
-  if (!c.targetHandle || !(tgt.ports?.in ?? []).some((p) => p.id === c.targetHandle)) {
+  const inPort = (tgt.ports?.in ?? []).find((p) => p.id === c.targetHandle);
+  if (!c.targetHandle || !inPort) {
     return { error: `node ${tgt.id} has no in-port ${c.targetHandle ?? "(none)"}` };
   }
-  const dup = (ir.edges ?? []).some(
-    (e) =>
-      (e.channel ?? "data") === "data" &&
-      e.target === c.target &&
-      e.targetHandle === c.targetHandle,
-  );
+  // M19 §2.10: data↔data or control↔control only — a handle's `role` is the channel it carries.
+  const srcRole = outPort.role ?? "data";
+  const tgtRole = inPort.role ?? "data";
+  if (srcRole !== tgtRole) {
+    return {
+      error: `cannot connect a ${srcRole} handle to a ${tgtRole} handle — data connects to data, control to control`,
+    };
+  }
+  const channel = srcRole; // the edge channel is DERIVED from the handles, not a toggle (§2.10)
+  // The ambiguous-multi-input rule applies to DATA edges only (a control edge imposes no value).
+  const dup =
+    channel === "data" &&
+    (ir.edges ?? []).some(
+      (e) =>
+        (e.channel ?? "data") === "data" &&
+        e.target === c.target &&
+        e.targetHandle === c.targetHandle,
+    );
   if (dup) {
     return {
       error: `in-port ${c.targetHandle} on ${tgt.id} is already fed by a data edge (ambiguous multi-input)`,
@@ -275,7 +303,7 @@ export function connect(ir: IRDocument, c: Connection): ConnectResult {
     sourceHandle: c.sourceHandle,
     target: c.target,
     targetHandle: c.targetHandle,
-    channel: "data",
+    channel,
   };
   return { ir: { ...ir, edges: [...(ir.edges ?? []), edge] } };
 }
@@ -330,6 +358,23 @@ export function updateEdge(
     ...ir,
     edges: (ir.edges ?? []).map((e) => (e.id === id ? { ...e, ...patch } : e)),
   };
+}
+
+/** Bind a `tool` (http) node to a connection (M19 §2.10 / §1.1): set the node's `config.tool` to a
+ * logical key and declare `ir.tools[key] = { kind:"http", connection }`. The IR references the
+ * connection by **id** — never the secret (which is resolved server-side at step time). */
+export function setHttpToolBinding(
+  ir: IRDocument,
+  nodeId: string,
+  toolKey: string,
+  connectionId: string,
+): IRDocument {
+  const tools = { ...(ir.tools ?? {}) };
+  tools[toolKey] = { kind: "http", connection: connectionId };
+  const nodes = (ir.nodes ?? []).map((n) =>
+    n.id === nodeId ? { ...n, config: { ...(n.config ?? {}), tool: toolKey } } : n,
+  );
+  return { ...ir, tools, nodes };
 }
 
 /** Duplicate a node: a fresh id, the same type/config/ports, label suffixed " copy", offset on the

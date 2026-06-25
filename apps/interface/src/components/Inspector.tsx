@@ -3,7 +3,7 @@
 // Duplicate controls. Graph-level `models`/`tools` are exposed READ-ONLY (full binding/tool editors
 // are out of scope, §2.3). When nothing is selected, the panel shows the graph's bindings.
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
 import { useEffect, useId, useState } from "react";
 import {
@@ -12,6 +12,7 @@ import {
   deleteEdges,
   deleteNodes,
   duplicateNode,
+  setHttpToolBinding,
   setNodeIcon,
   updateEdge,
   updateNodeConfig,
@@ -141,6 +142,18 @@ function NodePanel({
                 />
               );
             }
+            // M19 §2.10: the http tool's `tool` key + the connection that supplies its auth (resolved
+            // server-side; the IR stores only the connection id, never the secret — §1.1).
+            if (node.type === "tool" && key === "tool") {
+              return (
+                <ConnectionPicker
+                  key={`${node.id}:${key}`}
+                  ir={ir}
+                  nodeId={node.id}
+                  onChange={onChange}
+                />
+              );
+            }
             if (PINNED_BODY_TYPES.has(node.type) && key === "agent") {
               return (
                 <AgentPicker
@@ -163,6 +176,8 @@ function NodePanel({
           })
         )}
 
+        {node.type === "input" && <TriggerPanel agentId={ir.id} />}
+
         <RawConfigEditor
           key={`raw:${node.id}`}
           value={config}
@@ -170,6 +185,48 @@ function NodePanel({
         />
       </div>
     </div>
+  );
+}
+
+// ── trigger panel (M19 §1.5 — triggers are invocation bindings on the input, never nodes) ─────────
+
+/** The agent's M12 triggers, surfaced on the `input` node (§1.5). Triggers are NOT graph nodes —
+ * "run every hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here
+ * (list what fires this saved agent); creating one is the deploy step (M12 `POST /triggers`). The
+ * inert "Browse hub" (M16) affordance lives on the connections panel, not here. */
+function TriggerPanel({ agentId }: { agentId: string }) {
+  const { data: triggers, isLoading } = useQuery({
+    queryKey: ["triggers"],
+    queryFn: api.listTriggers,
+    retry: false,
+    staleTime: 15_000,
+  });
+  const mine = (triggers ?? []).filter((t) => t.agent_id === agentId);
+  return (
+    <Field label="Triggers (how this agent is invoked)">
+      {isLoading ? (
+        <p className="text-[11px] text-slate-600">loading…</p>
+      ) : mine.length === 0 ? (
+        <p className="text-[11px] text-slate-600">
+          No triggers. Save the agent, then add a schedule/webhook/http trigger (M12) to run it
+          unattended — triggers are invocation bindings, not graph nodes (§1.5).
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {mine.map((t) => (
+            <div
+              key={t.id}
+              className="mono flex items-center justify-between rounded border border-slate-800 px-2 py-1 text-[11px]"
+            >
+              <span className="text-slate-300">{t.kind}</span>
+              <span className={t.enabled ? "text-emerald-400" : "text-slate-600"}>
+                {t.enabled ? "enabled" : "disabled"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Field>
   );
 }
 
@@ -350,6 +407,29 @@ function ConfigField({
   onChange: (v: unknown) => void;
 }) {
   const label = required ? `${name} *` : name;
+
+  // A Literal field (modality, policy, source, …) is a JSON-Schema `enum` — render a dropdown so the
+  // editor offers the exact valid values (M19 §2.10 modality affordance + all enum config fields).
+  const enumValues = Array.isArray(schema?.enum) ? (schema.enum as unknown[]) : null;
+  if (enumValues) {
+    return (
+      <Field label={label}>
+        <select
+          className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+          value={value === null || value === undefined ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {value === undefined && <option value="">—</option>}
+          {enumValues.map((v) => (
+            <option key={String(v)} value={String(v)}>
+              {String(v)}
+            </option>
+          ))}
+        </select>
+      </Field>
+    );
+  }
+
   const kind = primitiveType(schema);
 
   if (kind === "string") {
@@ -585,6 +665,85 @@ function AgentPicker({
   );
 }
 
+/** The http tool's `tool` key + the connection that supplies its auth (M19 §2.10/§1.1). Picking a
+ * connection declares `ir.tools[key] = {kind:"http", connection}` — the IR stores the connection
+ * **id**, NEVER the secret (resolved server-side at step time). Leaving it as a builtin (echo/
+ * http_fetch) keeps the M6 path. */
+function ConnectionPicker({
+  ir,
+  nodeId,
+  onChange,
+}: {
+  ir: IRDocument;
+  nodeId: string;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
+  const config = (node?.config ?? {}) as Record<string, unknown>;
+  const toolKey = (config.tool as string) ?? "";
+  const listId = useId();
+  const { data: connections, isError } = useQuery({
+    queryKey: ["connections"],
+    queryFn: api.listConnections,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const httpConns = (connections ?? []).filter((c) => c.kind === "http_auth");
+  const binding = ir.tools?.[toolKey] as { kind?: string; connection?: string } | undefined;
+  const boundConn = binding?.kind === "http" ? binding.connection : undefined;
+  const builtins = ["echo", "http_fetch"];
+
+  return (
+    <>
+      <Field label="tool *">
+        <Input
+          list={listId}
+          value={toolKey}
+          placeholder="a builtin (echo/http_fetch) or a connection-backed key"
+          onChange={(e) =>
+            onChange(updateNodeConfig(ir, nodeId, { ...config, tool: e.target.value }))
+          }
+        />
+        <datalist id={listId}>
+          {[...new Set([...builtins, ...Object.keys(ir.tools ?? {})])].map((o) => (
+            <option key={o} value={o} />
+          ))}
+        </datalist>
+      </Field>
+      <Field label="Connection (http auth)">
+        <select
+          className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+          value={boundConn ?? ""}
+          onChange={(e) => {
+            const cid = e.target.value;
+            if (cid) onChange(setHttpToolBinding(ir, nodeId, toolKey || "http_tool", cid));
+          }}
+        >
+          <option value="">— none (builtin tool) —</option>
+          {httpConns.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        {boundConn ? (
+          <span className="text-[10px] text-emerald-500">
+            ✓ auth via {boundConn} — resolved server-side; no secret in the IR
+          </span>
+        ) : isError ? (
+          <span className="text-[10px] text-slate-600">
+            connections unreachable — this is a builtin tool
+          </span>
+        ) : (
+          <span className="text-[10px] text-slate-600">
+            pick a connection to make this an http tool with server-side auth
+          </span>
+        )}
+      </Field>
+    </>
+  );
+}
+
 function RawConfigEditor({
   value,
   onCommit,
@@ -655,7 +814,131 @@ function GraphPanel({ ir }: { ir: IRDocument }) {
           ))
         )}
       </Section>
+      <ConnectionsPanel />
     </div>
+  );
+}
+
+// ── connections panel (M19 §2.10 — the graph-level tool/MCP auth surface) ──────────────────────────
+
+/** List + create server-side `connection`s (the tool/MCP auth seam, §1.1). The ``secret`` is
+ * WRITE-ONLY — typed here, sent to the encrypted store, and NEVER rendered back (a record carries
+ * only ``hasSecret``). The inert "Browse hub" affordance is the M16 plug-point (registers the SAME
+ * connection later — §2.4); it does nothing until M16. */
+function ConnectionsPanel() {
+  const qc = useQueryClient();
+  const { data: connections, isError } = useQuery({
+    queryKey: ["connections"],
+    queryFn: api.listConnections,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<"http_auth" | "mcp_server">("http_auth");
+  const [secret, setSecret] = useState("");
+  const [configText, setConfigText] = useState("{}");
+  const [err, setErr] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: () => {
+      let config: Record<string, unknown> = {};
+      try {
+        config = JSON.parse(configText || "{}");
+      } catch {
+        throw new Error("config is not valid JSON");
+      }
+      return api.createConnection({ name, kind, config, secret: secret || undefined });
+    },
+    onSuccess: () => {
+      setName("");
+      setSecret(""); // the secret is write-only — clear it, never read it back
+      setConfigText("{}");
+      setErr(null);
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (e) => setErr((e as Error).message),
+  });
+
+  return (
+    <Section title="Connections (tool / MCP auth)">
+      {isError ? (
+        <Empty>Control plane unreachable.</Empty>
+      ) : (connections ?? []).length === 0 ? (
+        <Empty>No connections. Create one to give an http tool / MCP its auth.</Empty>
+      ) : (
+        (connections ?? []).map((c) => (
+          <div key={c.id} className="rounded border border-slate-800 px-2 py-1.5">
+            <div className="flex items-center justify-between">
+              <span className="mono text-xs text-slate-200">{c.name}</span>
+              <span className="mono text-[10px] text-slate-500">{c.kind}</span>
+            </div>
+            <div className="mono mt-0.5 flex items-center gap-2 text-[10px] text-slate-600">
+              <span>{c.id}</span>
+              {c.hasSecret && <span className="text-emerald-600">🔒 secret set</span>}
+            </div>
+          </div>
+        ))
+      )}
+
+      <div className="mt-1.5 flex gap-2">
+        <Button className="!py-1 text-xs" onClick={() => setOpen((o) => !o)}>
+          {open ? "Cancel" : "+ New connection"}
+        </Button>
+        <button
+          type="button"
+          disabled
+          title="Coming with M16 — browse the MCP/model hub and install with one click"
+          className="cursor-not-allowed rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-600"
+        >
+          Browse hub (M16)
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-2 space-y-2 rounded border border-slate-800 p-2">
+          <Field label="Name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Kind">
+            <select
+              className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100"
+              value={kind}
+              onChange={(e) => setKind(e.target.value as "http_auth" | "mcp_server")}
+            >
+              <option value="http_auth">http_auth</option>
+              <option value="mcp_server">mcp_server</option>
+            </select>
+          </Field>
+          <Field label="Config (non-secret JSON)">
+            <textarea
+              spellCheck={false}
+              className="mono h-20 w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100"
+              value={configText}
+              onChange={(e) => setConfigText(e.target.value)}
+            />
+          </Field>
+          <Field label="Secret (write-only — never shown again)">
+            <Input
+              type="password"
+              value={secret}
+              placeholder="api key / token (encrypted server-side)"
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          </Field>
+          {err && <p className="text-[11px] text-red-400">{err}</p>}
+          <Button
+            variant="primary"
+            className="!py-1 text-xs"
+            onClick={() => create.mutate()}
+            disabled={!name || create.isPending}
+          >
+            {create.isPending ? "Creating…" : "Create connection"}
+          </Button>
+        </div>
+      )}
+    </Section>
   );
 }
 
