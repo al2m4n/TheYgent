@@ -30,13 +30,13 @@ per-node I/O — without coupling the UI to any external trace backend (the one 
   §4 idempotency guard. ``capture_level`` records what was actually persisted so ``/io`` can report
   ``full`` / ``metadata`` (sizes only) / ``off`` honestly.
 * ``agent_io_policy`` — per-agent capture governance (§1.8), keyed to the **stable** ``agent.id``,
-  NOT ``agent_version`` — so editing capture policy never changes ``contentHash`` (M11 immutability).
-  Absent row → effective policy = the topology default. ``updated_by`` is the deferred principal
-  slot (NULL in single-user; filled by the Governance/Identity milestone, §1.9). This adds NO
-  identity/role/grant tables — only this one policy table (§8 the Do-NOT).
+  NOT ``agent_version`` — so editing capture policy never changes ``contentHash`` (M11
+  immutability). Absent row → effective policy = the topology default. ``updated_by`` is the
+  deferred principal slot (NULL in single-user; filled by the Governance/Identity milestone, §1.9).
+  This adds NO identity/role/grant tables — only this one policy table (§8 the Do-NOT).
 
 Hand-written and fully reversible (the §6 round-trip test exercises upgrade head → downgrade base,
-now including these three tables). ``dbos`` migration ordering is unchanged — Alembic owns ``public``.
+now including these three tables). ``dbos`` ordering is unchanged; Alembic owns ``public``.
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ def upgrade() -> None:
         # contentHash. Absent row → effective policy = the topology default.
         sa.Column("agent_id", sa.String(), sa.ForeignKey("agent.id"), primary_key=True),
         sa.Column("io_capture", sa.String(), nullable=False),  # off | metadata | full
-        sa.Column("io_retention_seconds", sa.Integer(), nullable=True),  # optional TTL (NULL = keep)
+        sa.Column("io_retention_seconds", sa.Integer(), nullable=True),  # optional TTL; NULL=keep
         sa.Column("redact_rules", postgresql.JSONB(), nullable=True),  # field/path patterns
         sa.Column("updated_at", _TZ, nullable=False),
         sa.Column("updated_by", sa.String(), nullable=True),  # principal slot (NULL single-user)
