@@ -2207,6 +2207,7 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "litellm" },
     { name = "psutil" },
+    { name = "python-multipart" },
     { name = "theygent-ir" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -2226,6 +2227,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.23" },
     { name = "litellm", specifier = ">=1.40" },
     { name = "psutil", specifier = ">=5.9" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "theygent-ir", editable = "packages/ir" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]

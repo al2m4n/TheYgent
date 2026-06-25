@@ -10,6 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ModelBench } from "../bench/ModelBench";
 import {
   Badge,
   Button,
@@ -18,6 +19,7 @@ import {
   ErrorBanner,
   Field,
   Input,
+  Modal,
   ProgressBar,
   Select,
   Spinner,
@@ -308,6 +310,8 @@ function InstalledPanel() {
   const warm = useMutation({ mutationFn: api.warmModel, onSuccess: invalidate });
   const evict = useMutation({ mutationFn: api.evictModel, onSuccess: invalidate });
   const remove = useMutation({ mutationFn: api.deleteModel, onSuccess: invalidate });
+  // M18: the per-model bench opens in a modal (no separate page) — test/benchmark right here.
+  const [benchModel, setBenchModel] = useState<ModelView | null>(null);
 
   const residentCount = engines
     ? Array.isArray(engines.resident)
@@ -363,6 +367,9 @@ function InstalledPanel() {
                 </Td>
                 <Td>
                   <div className="flex flex-wrap gap-1">
+                    <Button variant="primary" onClick={() => setBenchModel(m)}>
+                      bench
+                    </Button>
                     <Button onClick={() => warm.mutate(m.logicalId)}>warm</Button>
                     <Button onClick={() => evict.mutate(m.logicalId)}>evict</Button>
                     <Button variant="danger" onClick={() => remove.mutate(m.logicalId)}>
@@ -374,6 +381,15 @@ function InstalledPanel() {
             ))}
           </tbody>
         </Table>
+      )}
+      {benchModel && (
+        <Modal
+          title={`Bench · ${benchModel.logicalId}`}
+          width="max-w-3xl"
+          onClose={() => setBenchModel(null)}
+        >
+          <ModelBench model={benchModel} />
+        </Modal>
       )}
     </div>
   );

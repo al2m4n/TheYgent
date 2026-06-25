@@ -29,7 +29,7 @@ import logging
 import os
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,13 +58,25 @@ from theygent_control_plane.observability import (
     build_otlp_sink,
     now_ns,
 )
-from theygent_control_plane.run import Run, Trigger, TriggerKind
+from theygent_control_plane.run import (
+    BenchCase,
+    BenchPreset,
+    BenchRun,
+    BenchSuite,
+    BenchTargetKind,
+    Run,
+    Trigger,
+    TriggerKind,
+)
 from theygent_control_plane.store import (
     AgentStore,
+    BenchStore,
     McpStore,
     RunStore,
     TriggerStore,
     VersionConflict,
+    output_digest,
+    params_digest,
 )
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
@@ -203,6 +215,63 @@ class IoPolicyRequest(BaseModel):
     redact_rules: dict[str, Any] | None = None
 
 
+# ── M18 bench request models ─────────────────────────────────────────────────────────────────────
+
+
+class BenchCaseInput(BaseModel):
+    # One golden case in a suite (§2.5). ``input``/``expected`` are the AUTHORED test spec.
+    input: Any = None
+    expected: Any = None
+    assertion: str = "contains"  # exact|contains|regex|json-path-equals|llm-judge
+    assertion_config: dict[str, Any] = {}
+
+
+class CreateSuiteRequest(BaseModel):
+    # §2.5: save a suite of golden cases pinned to a target. A model suite sets logical_id/binding;
+    # an agent suite sets agent_id + (version|content_hash).
+    name: str
+    target_kind: BenchTargetKind
+    modality: str | None = None
+    logical_id: str | None = None
+    binding: str | None = None
+    agent_id: str | None = None
+    version: str | None = None
+    content_hash: str | None = None
+    cases: list[BenchCaseInput] = []
+
+
+class RecordBenchRunRequest(BaseModel):
+    # §1.6/§2.4: record one result captured AT THE BENCH. The server computes ``params_digest`` from
+    # ``params`` and ``output_digest`` from ``output`` — and stores the raw ``output`` ONLY when
+    # ``capture`` is true (opt-in, local — §1.6 / §10). Metrics + digests are always stored.
+    target_kind: BenchTargetKind
+    modality: str
+    logical_id: str | None = None
+    model_ref: str | None = None
+    binding: str | None = None
+    params: dict[str, Any] | None = None
+    agent_id: str | None = None
+    version: str | None = None
+    content_hash: str | None = None
+    metrics: dict[str, Any] = {}
+    output: str | None = None  # used to compute output_digest; only persisted when capture=True
+    capture: bool = False  # opt-in raw capture (stored as a LOCAL reference, never a blob)
+    suite_id: str | None = None
+    case_id: str | None = None
+    assertion: str | None = None
+    assertion_passed: bool | None = None
+    run_id: str | None = None
+    label: str | None = None
+
+
+class CreatePresetRequest(BaseModel):
+    # §1.7: save a named, modality-scoped, LITERAL param set. Values only — never a run/agent link.
+    name: str
+    modality: str
+    logical_id: str | None = None
+    params: dict[str, Any] = {}
+
+
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "code": code}
     body: dict[str, Any] = {"error": error}
@@ -308,6 +377,7 @@ def create_app(
     mcp_store = McpStore()
     agents = AgentStore()
     triggers = TriggerStore()
+    bench = BenchStore()  # M18: saved benchmark results + suites/cases + param presets
     # M17: the observability seam. One live SpanBus for the /trace/stream side-channel (shared with
     # the in-process durable runtime so its spans stream too), and the opt-in OTLP sink —
     # constructed
@@ -1727,6 +1797,172 @@ def create_app(
         async with tx() as s:
             await mcp_store.upsert_server(s, name, cfg)
         return JSONResponse(_mcp_view(name))
+
+    # ── M18 bench store: /bench/* ────────────────────────────────────────
+    # The bench adds NO execution path (§0): model tests hit the inference data plane DIRECTLY in
+    # the user's trust domain (§1.4 / §10 — never proxied here), agent tests reuse M11 invoke. These
+    # endpoints only PERSIST what the bench produced — metrics + digests by default, raw capture
+    # opt-in and local (§1.6). Listing follows the M8 §2 keyset shape; the error envelope is shared.
+
+    def _suite_dump(suite: BenchSuite) -> dict[str, Any]:
+        return suite.model_dump(mode="json")
+
+    @app.post("/bench/suites", dependencies=[Depends(require_auth)])
+    async def create_suite(req: CreateSuiteRequest) -> Any:
+        suite = BenchSuite(
+            name=req.name,
+            target_kind=req.target_kind,
+            modality=req.modality,
+            logical_id=req.logical_id,
+            binding=req.binding,
+            agent_id=req.agent_id,
+            version=req.version,
+            content_hash=req.content_hash,
+            cases=[
+                BenchCase(
+                    input=c.input,
+                    expected=c.expected,
+                    assertion=cast("Any", c.assertion),
+                    assertion_config=c.assertion_config,
+                    seq=i,
+                )
+                for i, c in enumerate(req.cases)
+            ],
+        )
+        async with tx() as session:
+            await bench.create_suite(session, suite)
+        return JSONResponse(_suite_dump(suite), status_code=201)
+
+    @app.get("/bench/suites", dependencies=[Depends(require_auth)])
+    async def list_suites(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await bench.list_suites(session, limit=limit, before=before)
+        return {"suites": [_suite_dump(s) for s in rows]}
+
+    @app.get("/bench/suites/{suite_id}", dependencies=[Depends(require_auth)])
+    async def get_suite(suite_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        suite = await bench.get_suite(session, suite_id)
+        if suite is None:
+            return _error(f"unknown suite {suite_id!r}", status=404, code="suite_not_found")
+        return _suite_dump(suite)
+
+    @app.post("/bench/runs", dependencies=[Depends(require_auth)])
+    async def record_bench_run(req: RecordBenchRunRequest) -> Any:
+        # The server owns the digests (§1.6): two runs differing only in a param get different
+        # ``params_digest`` and are distinct results. Raw ``output`` is persisted ONLY when capture
+        # is opted in (and even then as a local reference — never a blob in cloud topology, §10).
+        run = BenchRun(
+            target_kind=req.target_kind,
+            modality=req.modality,
+            logical_id=req.logical_id,
+            model_ref=req.model_ref,
+            binding=req.binding,
+            params=req.params,
+            params_digest=params_digest(req.params) if req.target_kind == "model" else None,
+            agent_id=req.agent_id,
+            version=req.version,
+            content_hash=req.content_hash,
+            metrics=req.metrics,
+            output_digest=output_digest(req.output),
+            # Capture is opt-in + local: we record a reference keyed by the result id, NEVER the raw
+            # output bytes in this hosted table (§1.6 / §10). The blob store itself is out of M18.
+            capture_ref=f"local://bench/{req.run_id or 'adhoc'}" if req.capture else None,
+            suite_id=req.suite_id,
+            case_id=req.case_id,
+            assertion=req.assertion,
+            assertion_passed=req.assertion_passed,
+            run_id=req.run_id,
+            label=req.label,
+        )
+        async with tx() as session:
+            await bench.record_run(session, run)
+        return JSONResponse(run.model_dump(mode="json"), status_code=201)
+
+    @app.get("/bench/runs", dependencies=[Depends(require_auth)])
+    async def list_bench_runs(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        logical_id: str | None = Query(default=None),
+        agent_id: str | None = Query(default=None),
+        suite_id: str | None = Query(default=None),
+        case_id: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await bench.list_runs(
+            session,
+            limit=limit,
+            before=before,
+            logical_id=logical_id,
+            agent_id=agent_id,
+            suite_id=suite_id,
+            case_id=case_id,
+        )
+        return {"runs": [r.model_dump(mode="json") for r in rows]}
+
+    @app.get("/bench/compare", dependencies=[Depends(require_auth)])
+    async def compare_bench_runs(
+        a: str = Query(...),
+        b: str = Query(...),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        # Two recorded results side by side (§2.4) — the A/B-versions + binding-swap headline. Each
+        # side is a ``bench_run`` (it pins its own target), so this aligns metrics + reports whether
+        # the outputs match (by digest, no raw payload). The deltas are computed on the metric keys
+        # both sides share.
+        run_a = await bench.get_run(session, a)
+        run_b = await bench.get_run(session, b)
+        if run_a is None or run_b is None:
+            missing = a if run_a is None else b
+            return _error(f"unknown bench run {missing!r}", status=404, code="bench_run_not_found")
+        deltas: dict[str, Any] = {}
+        for key in set(run_a.metrics) & set(run_b.metrics):
+            va, vb = run_a.metrics.get(key), run_b.metrics.get(key)
+            if isinstance(va, int | float) and isinstance(vb, int | float):
+                deltas[key] = vb - va
+        return {
+            "a": run_a.model_dump(mode="json"),
+            "b": run_b.model_dump(mode="json"),
+            "metric_deltas": deltas,
+            "outputs_match": (
+                run_a.output_digest is not None and run_a.output_digest == run_b.output_digest
+            ),
+        }
+
+    @app.post("/bench/presets", dependencies=[Depends(require_auth)])
+    async def create_preset(req: CreatePresetRequest) -> Any:
+        preset = BenchPreset(
+            name=req.name,
+            modality=req.modality,
+            logical_id=req.logical_id,
+            params=req.params,
+        )
+        async with tx() as session:
+            await bench.create_preset(session, preset)
+        return JSONResponse(preset.model_dump(mode="json"), status_code=201)
+
+    @app.get("/bench/presets", dependencies=[Depends(require_auth)])
+    async def list_presets(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        modality: str | None = Query(default=None),
+        logical_id: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await bench.list_presets(
+            session, limit=limit, before=before, modality=modality, logical_id=logical_id
+        )
+        return {"presets": [p.model_dump(mode="json") for p in rows]}
+
+    @app.delete("/bench/presets/{preset_id}", dependencies=[Depends(require_auth)])
+    async def delete_preset(preset_id: str) -> Response:
+        async with tx() as session:
+            deleted = await bench.delete_preset(session, preset_id)
+        if not deleted:
+            return _error(f"unknown preset {preset_id!r}", status=404, code="preset_not_found")
+        return Response(status_code=204)
 
     @app.get("/admin/mcp/servers", dependencies=[Depends(require_auth)])
     async def list_mcp_servers() -> Any:

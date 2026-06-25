@@ -20,7 +20,8 @@ async def truncate(url: str) -> None:
     try:
         await conn.execute(
             "TRUNCATE message, run, thread, mcp_server, trigger, agent_version, agent, "
-            "span, node_io, agent_io_policy "
+            "span, node_io, agent_io_policy, "
+            "bench_run, bench_case, bench_suite, bench_preset "
             "RESTART IDENTITY CASCADE"
         )
     finally:

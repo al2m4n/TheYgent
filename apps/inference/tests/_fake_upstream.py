@@ -15,13 +15,19 @@ import time
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from theygent_inference.launcher import EngineHandle
 from theygent_ir import Capabilities, ManagedBinding
 
 # Deterministic completion; streamed as the two chunks below.
 FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
+
+# Deterministic non-chat outputs (M18 fast suite): the embeddings vector, the STT transcript, and
+# the TTS audio body the fake upstream returns so the audio/embeddings endpoints prove end-to-end.
+FAKE_EMBEDDING = [0.1, 0.2, 0.3]
+FAKE_TRANSCRIPT = "the quick brown fox"
+FAKE_AUDIO = b"ID3fake-audio-bytes"
 
 
 def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
@@ -86,6 +92,38 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
                 "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
             }
         )
+
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request):
+        captured["authorization"] = request.headers.get("authorization")
+        body = await request.json()
+        model = body.get("model", "fake")
+        inputs = body.get("input")
+        items = inputs if isinstance(inputs, list) else [inputs]
+        return JSONResponse(
+            {
+                "object": "list",
+                "data": [
+                    {"object": "embedding", "index": i, "embedding": list(FAKE_EMBEDDING)}
+                    for i, _ in enumerate(items)
+                ],
+                "model": model,
+                "usage": {"prompt_tokens": len(items), "total_tokens": len(items)},
+            }
+        )
+
+    @app.post("/v1/audio/transcriptions")
+    async def transcriptions(request: Request):
+        captured["authorization"] = request.headers.get("authorization")
+        # Consume the multipart body so the request completes; the transcript is deterministic.
+        await request.form()
+        return JSONResponse({"text": FAKE_TRANSCRIPT})
+
+    @app.post("/v1/audio/speech")
+    async def speech(request: Request):
+        captured["authorization"] = request.headers.get("authorization")
+        await request.json()
+        return Response(content=FAKE_AUDIO, media_type="audio/mpeg")
 
     return app, captured
 

@@ -37,9 +37,11 @@ from theygent_ir.graph import (
 from theygent_ir.registration import (
     BINDING_NAMES,
     MANAGED_BINDINGS,
+    MODALITIES,
     Capabilities,
     Lifecycle,
     ManagedBinding,
+    Modality,
     ReachableBinding,
     RegistrationPayload,
     parse_registration,
@@ -51,6 +53,7 @@ __all__ = [
     # agent graph IR (M5)
     "EXECUTABLE_TYPES",
     "MANAGED_BINDINGS",
+    "MODALITIES",
     "NODE_TYPE_KIND",
     "BuiltinTool",
     "Capabilities",
@@ -65,6 +68,7 @@ __all__ = [
     "MapConfig",
     "McpTool",
     "McpToolConfig",
+    "Modality",
     "ModelBinding",
     "Node",
     "NodeKind",

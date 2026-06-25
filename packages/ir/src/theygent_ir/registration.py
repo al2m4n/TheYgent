@@ -12,12 +12,22 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from pydantic.alias_generators import to_camel
 
 ManagedBindingName = Literal["mlx", "vllm", "llamacpp"]
 ReachableBindingName = Literal["openai-compatible"]
 SourceName = Literal["hf", "local-path", "url"]
+
+#: The frozen modality vocabulary (M18 §1.2 / theygent-stack-9.1.md §9.1.2). The bench's tester
+#: panels are keyed on these — a new modality is a new key + a panel registered against it, never a
+#: hardcoded ``if vision … else if stt …`` tree. ``vision`` is a sub-capability of ``chat`` (M18
+#: §1.3): a vision model reports ``["chat", "vision"]`` and runs on ``/v1/chat/completions``.
+#: ``images.generation`` and ``rerank`` are RESERVED/DEFERRED (named, not implemented).
+Modality = Literal["chat", "vision", "embeddings", "audio.transcription", "audio.speech"]
+MODALITIES: frozenset[str] = frozenset(
+    {"chat", "vision", "embeddings", "audio.transcription", "audio.speech"}
+)
 
 #: Engines whose lifecycle the inference plane owns (spawn / warm / evict).
 MANAGED_BINDINGS: frozenset[str] = frozenset({"mlx", "vllm", "llamacpp"})
@@ -96,8 +106,28 @@ class Capabilities(_Wire):
     #: so it rides the ``approximate`` flag like the other inferred fields.
     reasoning: bool = False
     max_context: int | None = None
+    #: What the bench routes its tester panels on (M18 §1.2 / §9.1.2). DERIVED, not a new probe:
+    #: left at its default it is filled from the flags — ``["chat"]`` (+ ``"vision"`` when the
+    #: ``vision`` flag is set), the right answer for every chat/VLM engine theygent manages today.
+    #: A non-chat engine (an embeddings server, a Whisper STT, a TTS) declares its modalities
+    #: explicitly (e.g. ``modalities=["audio.transcription"]``) and the derivation leaves it alone.
+    #: So it rides the ``approximate`` flag like the other inferred fields.
+    modalities: list[Modality] = Field(default_factory=list)
     #: True when some fields are conservative/inferred rather than probed from the
     #: engine (e.g. MLX exposes no capability endpoint — same posture as the M1
     #: chat_template_caps follow-up). A consumer should treat such a report as
     #: best-effort, not authoritative.
     approximate: bool = False
+
+    @model_validator(mode="after")
+    def _derive_modalities(self) -> Capabilities:
+        # Empty (the default) → derive from the capability flags: every managed engine today is a
+        # chat engine, with ``vision`` as a sub-capability. A non-chat engine passes ``modalities``
+        # explicitly, which is preserved. ``extra="forbid"`` + the ``Modality`` Literal reject an
+        # unknown key/value loudly (the §4 "unknown modality is rejected" guard).
+        if not self.modalities:
+            mods: list[Modality] = ["chat"]
+            if self.vision:
+                mods.append("vision")
+            self.modalities = mods
+        return self

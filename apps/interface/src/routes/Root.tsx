@@ -19,6 +19,9 @@ export function Root() {
           <Link to="/registries" className={navLink}>
             Registries
           </Link>
+          <Link to="/mcp" className={navLink}>
+            MCP
+          </Link>
         </nav>
       </header>
       <main className="min-h-0 flex-1">

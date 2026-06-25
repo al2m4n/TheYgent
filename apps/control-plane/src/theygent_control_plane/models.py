@@ -303,3 +303,130 @@ class AgentIoPolicyRow(Base):
     redact_rules: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
     updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+# ── The bench store (M18 §1.6) — saved benchmark results + suites/cases + param presets ───────────
+# A benchmark is only honest if pinned to *exactly what ran* (§1.6). Two pin shapes share one
+# ``bench_run`` row: a MODEL run pins ``logical_id`` + ``model_ref`` + ``binding`` + a params digest
+# (temperature 0.2 vs 0.9 are different benchmarks, so params are part of identity); an AGENT run
+# pins ``agent_id`` + ``version`` + ``content_hash`` (the M11 content-addressing discipline — params
+# already live inside the hashed IR). **Metrics + digests by default; raw payloads are NOT journaled
+# here** (§1.6 / §10): in cloud topology this DB is hosted, so a captured prompt/output/audio would
+# breach §10. Capture is opt-in and stays local (``capture_ref`` — a reference, never a blob).
+
+
+class BenchSuiteRow(Base):
+    """A saved suite of golden cases pinned to one target (M18 §2.5). The pin shape mirrors
+    ``bench_run``: a model suite sets ``logical_id``/``binding``, an agent suite sets
+    ``agent_id`` + (``version``|``content_hash``). Cases live in ``bench_case`` (the run loops them
+    A suite definition (its golden cases) is an authored test spec — distinct from a captured run
+    payload — so it is stored in full so the suite re-runs (the M12 trigger discipline)."""
+
+    __tablename__ = "bench_suite"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    target_kind: Mapped[str] = mapped_column(String)  # model | agent
+    modality: Mapped[str | None] = mapped_column(String, nullable=True)
+    # model target pin
+    logical_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    binding: Mapped[str | None] = mapped_column(String, nullable=True)
+    # agent target pin (exactly one of version / content_hash — the app enforces)
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+class BenchCaseRow(Base):
+    """One golden case in a suite (M18 §2.5): ``(input, optional expected, assertion)``. ``input`` /
+    ``expected`` are the AUTHORED test definition (not a captured run payload — §1.6), stored so the
+    suite re-runs. ``assertion`` ∈ exact|contains|regex|json-path-equals|llm-judge; the config
+    carries the kind-specific knob (the regex, json path, llm-judge rubric + model)."""
+
+    __tablename__ = "bench_case"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    suite_id: Mapped[str] = mapped_column(ForeignKey("bench_suite.id"))
+    input: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # {value: …} authored input
+    expected: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # optional expected output
+    assertion: Mapped[str] = mapped_column(
+        String
+    )  # exact|contains|regex|json-path-equals|llm-judge
+    assertion_config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer)  # ordering within the suite (M4 §3)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("ix_bench_case_suite_seq", "suite_id", "seq"),)
+
+
+class BenchRunRow(Base):
+    """One recorded benchmark result (M18 §1.6/§2.4) — metrics pinned to exactly what ran. Either a
+    MODEL pin (``logical_id`` + ``model_ref`` + ``binding`` + ``params_digest``) or an AGENT pin
+    (``agent_id`` + ``version`` + ``content_hash``). ``metrics`` (JSONB) is the honest numbers
+    captured at the bench (ttftMs, tokensPerSec, totalMs, prompt/completion tokens, cost, plus
+    modality extras — rtf for STT, ttfbMs for TTS). ``output_digest`` is a cheap identity for
+    the compare diff WITHOUT the raw output; ``capture_ref`` is the opt-in LOCAL reference to
+    raw I/O (never a blob in this hot table — §1.6 / the M14 pass-references rule)."""
+
+    __tablename__ = "bench_run"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    target_kind: Mapped[str] = mapped_column(String)  # model | agent
+    modality: Mapped[str] = mapped_column(String)  # chat|vision|embeddings|audio.*|agent
+    # model pin
+    logical_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    model_ref: Mapped[str | None] = mapped_column(String, nullable=True)  # resolved engine model
+    binding: Mapped[str | None] = mapped_column(String, nullable=True)
+    params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # literal params (config)
+    params_digest: Mapped[str | None] = mapped_column(String, nullable=True)  # identity of params
+    # agent pin
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    version: Mapped[str | None] = mapped_column(String, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    # the numbers + content identity
+    metrics: Mapped[dict] = mapped_column(JSONB)
+    output_digest: Mapped[str | None] = mapped_column(String, nullable=True)
+    # opt-in local capture (NEVER a raw blob in cloud topology — §1.6 / §10)
+    capture_ref: Mapped[str | None] = mapped_column(String, nullable=True)
+    # suite linkage (§2.5) — a suite/case run tags its rows so a regression is one query
+    suite_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    case_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    assertion: Mapped[str | None] = mapped_column(String, nullable=True)
+    assertion_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # lineage + label
+    run_id: Mapped[str | None] = mapped_column(String, nullable=True)  # control-plane run (agents)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_bench_run_created", "created_at", "id"),
+        Index("ix_bench_run_logical", "logical_id"),
+        Index("ix_bench_run_agent", "agent_id"),
+        Index("ix_bench_run_suite", "suite_id"),
+        Index("ix_bench_run_case", "case_id"),
+    )
+
+
+class BenchPresetRow(Base):
+    """A named, modality-scoped, LITERAL param set (M18 §1.7) — a sibling of bench results, not a
+    third subsystem. ``params`` holds VALUES ONLY (no run/agent link): "apply preset" copies these
+    literals into an agent's ``models[binding].params``, so the IR never stores a preset *reference*
+    (a live reference would silently drift a deployed agent's behaviour — the contentHash-drift bug
+    §1.7). ``modality`` scopes it (a chat preset can't land on a TTS binding); ``logical_id`` is
+    an optional tag for the model it was tuned against."""
+
+    __tablename__ = "bench_preset"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    modality: Mapped[str] = mapped_column(String)  # the §1.2 vocabulary
+    logical_id: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )  # optional tuned-against tag
+    params: Mapped[dict] = mapped_column(JSONB)  # literal values only (§1.7)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("ix_bench_preset_modality", "modality"),)

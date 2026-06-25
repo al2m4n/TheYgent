@@ -105,6 +105,61 @@ class GatewayClient:
             **_clean_params(params),
         )
 
+    async def embed(
+        self,
+        *,
+        model: str,
+        inputs: str | list[str],
+        params: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> Any:
+        """Embeddings (M18) — one-or-many inputs → vectors. ``model`` is a logical id; transport
+        only (no normalization). Errors surface at this ``await``, like ``complete``."""
+        return await self._client.embeddings.create(
+            model=model,
+            input=inputs,
+            extra_headers=dict(extra_headers) if extra_headers else None,
+            **_clean_params(params),
+        )
+
+    async def transcribe(
+        self,
+        *,
+        model: str,
+        file: Any,
+        params: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> Any:
+        """Speech-to-text (M18 §1.1). ``file`` is the OpenAI ``FileTypes`` (a ``(filename, bytes,
+        content_type)`` tuple or a file-like) — the SDK owns the multipart encoding. ``model`` is a
+        logical id; transport only."""
+        return await self._client.audio.transcriptions.create(
+            model=model,
+            file=file,
+            extra_headers=dict(extra_headers) if extra_headers else None,
+            **_clean_params(params),
+        )
+
+    async def speak(
+        self,
+        *,
+        model: str,
+        text: str,
+        voice: str = "alloy",
+        params: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> bytes:
+        """Text-to-speech (M18 §1.1) → audio bytes. ``model`` is a logical id; ``response_format`` /
+        ``speed`` ride in ``params``. Returns the whole audio body (the binary response content)."""
+        response = await self._client.audio.speech.create(
+            model=model,
+            input=text,
+            voice=voice,  # type: ignore[arg-type]
+            extra_headers=dict(extra_headers) if extra_headers else None,
+            **_clean_params(params),
+        )
+        return response.content
+
     async def models(self) -> list[str]:
         """List logical model ids the inference plane exposes (GET ``/v1/models``).
 

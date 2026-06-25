@@ -124,6 +124,22 @@ export interface McpServerSummary {
   connected: boolean;
 }
 
+// The PUT /admin/mcp/servers/{name} body (M7 §3.2) — a stdio server definition. `env` carries the
+// user's secrets/paths into the spawned subprocess; it stays in the user's trust domain.
+export interface McpServerConfig {
+  transport: "stdio";
+  command: string;
+  args: string[];
+  env?: Record<string, string> | null;
+  cwd?: string | null;
+}
+
+export interface McpToolDescriptor {
+  name: string;
+  description?: string | null;
+  inputSchema?: Record<string, unknown> | null;
+}
+
 // ── inference-plane engines + capabilities (camelCase /admin/*) ──────────────
 export interface EnginesView {
   maxResident: number;
@@ -136,6 +152,9 @@ export interface Capabilities {
   structuredOutput?: boolean;
   vision?: boolean;
   reasoning?: boolean;
+  // M18 §1.2: the modality descriptor the bench routes tester panels on. Frozen vocabulary
+  // chat | vision | embeddings | audio.transcription | audio.speech.
+  modalities?: string[];
   approximate?: boolean;
 }
 
@@ -192,6 +211,105 @@ export interface DownloadJob {
   error: string | null;
 }
 
+// ── M18 observability trace span (snake_case — the run waterfall; M17 §3) ────
+// `name == node_id` for node spans is the canvas-overlay join (M17 §1.6 / M18 §2.3).
+export interface TraceSpan {
+  id: string;
+  node_id?: string | null;
+  node_type?: string | null;
+  name: string;
+  phase?: string | null;
+  status: string;
+  start_ns: number;
+  end_ns?: number | null;
+  attributes?: Record<string, unknown> | null;
+}
+
+// ── M18 bench store wire shapes (snake_case — control-plane convention) ──────
+// Metrics + digests only; raw payloads never cross into these (§1.6 / §10).
+export type BenchTargetKind = "model" | "agent";
+
+export interface BenchRunInput {
+  target_kind: BenchTargetKind;
+  modality: string;
+  logical_id?: string;
+  model_ref?: string;
+  binding?: string;
+  params?: Record<string, unknown>;
+  agent_id?: string;
+  version?: string;
+  content_hash?: string;
+  metrics: Record<string, number>;
+  output?: string; // used to compute output_digest; only persisted when capture=true
+  capture?: boolean;
+  suite_id?: string;
+  case_id?: string;
+  assertion?: string;
+  assertion_passed?: boolean;
+  run_id?: string;
+  label?: string;
+}
+
+export interface BenchRunRecord extends BenchRunInput {
+  id: string;
+  params_digest?: string | null;
+  output_digest?: string | null;
+  capture_ref?: string | null;
+  created_at: string;
+}
+
+export interface BenchCompare {
+  a: BenchRunRecord;
+  b: BenchRunRecord;
+  metric_deltas: Record<string, number>;
+  outputs_match: boolean;
+}
+
+export interface BenchCaseInput {
+  input?: unknown;
+  expected?: unknown;
+  assertion?: string;
+  assertion_config?: Record<string, unknown>;
+}
+
+export interface BenchSuiteInput {
+  name: string;
+  target_kind: BenchTargetKind;
+  modality?: string;
+  logical_id?: string;
+  binding?: string;
+  agent_id?: string;
+  version?: string;
+  content_hash?: string;
+  cases: BenchCaseInput[];
+}
+
+export interface BenchCaseRecord extends BenchCaseInput {
+  id: string;
+  seq: number;
+  created_at: string;
+}
+
+export interface BenchSuiteRecord extends Omit<BenchSuiteInput, "cases"> {
+  id: string;
+  cases: BenchCaseRecord[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BenchPresetInput {
+  name: string;
+  modality: string;
+  logical_id?: string;
+  params: Record<string, unknown>;
+}
+
+export interface BenchPresetRecord extends BenchPresetInput {
+  id: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export const api = {
   listAgents: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
@@ -228,15 +346,82 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // M18 agent bench: invoke a saved, PINNED agent via the existing M11 run path (no new run path,
+  // §1.5). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
+  runAgent: (
+    id: string,
+    body: { input?: unknown; version?: string; content_hash?: string; stream?: boolean },
+  ) =>
+    request<{ runId: string; status: string; output?: string; error?: string }>(
+      CONTROL_PLANE_URL,
+      `/agents/${encodeURIComponent(id)}/runs`,
+      { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
+    ),
+
+  // M18 §2.6 tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the
+  // EXISTING /graphs/runs path — which already accepts inline IR (M5 §1). This adds NO new backend
+  // and NO new execution path: it is the agent/run path pointed at a single tool (§2.6), NOT an
+  // /admin/mcp/.../invoke endpoint. Non-stream by default → terminal result; the tool's structured
+  // output comes back JSON-serialized in `output` (app.py `_coerce_output`). Mirrors `runAgent`.
+  runGraph: (body: { ir: IRDocument; input?: unknown; stream?: boolean }) =>
+    request<{ runId: string; status: string; output?: string; error?: string }>(
+      CONTROL_PLANE_URL,
+      "/graphs/runs",
+      { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
+    ),
+
+  // M18 agent bench trace (observability §1.5). Degrades: if observability hasn't landed this 404s
+  // and the bench falls back to persisted output. Spans are the per-node waterfall; `name == node.id`
+  // is the canvas-overlay join.
+  getRunTrace: (runId: string) =>
+    request<{ runId: string; status: string; spans: TraceSpan[] }>(
+      CONTROL_PLANE_URL,
+      `/runs/${encodeURIComponent(runId)}/trace`,
+    ),
+
   // Inference plane (separate base URL): the registered logical models, to populate the model
   // picker. Read-only; tolerated to fail (the picker falls back to free text if unreachable).
   listModels: () =>
     request<{ models: ModelView[] }>(INFERENCE_URL, "/admin/models").then((r) => r.models),
 
-  // Control-plane registered MCP servers — to populate the mcp_tool `server` picker.
+  // Control-plane registered MCP servers — to populate the mcp_tool `server` picker + the MCP page.
   listMcpServers: () =>
     request<{ servers: McpServerSummary[] }>(CONTROL_PLANE_URL, "/admin/mcp/servers").then(
       (r) => r.servers,
+    ),
+
+  // ── control plane: MCP server registry (the MCP page — define/manage servers) ─
+  // Register or update a stdio MCP server (M7 §3.2). `env` stays in the user's trust domain.
+  putMcpServer: (name: string, cfg: McpServerConfig) =>
+    request<McpServerSummary>(CONTROL_PLANE_URL, `/admin/mcp/servers/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    }),
+
+  deleteMcpServer: (name: string) =>
+    request<void>(CONTROL_PLANE_URL, `/admin/mcp/servers/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
+
+  // Capability probe — connects lazily, returns the cached tool list (a 503 if the server won't spawn).
+  getMcpTools: (name: string) =>
+    request<{ tools: McpToolDescriptor[] }>(
+      CONTROL_PLANE_URL,
+      `/admin/mcp/servers/${encodeURIComponent(name)}/tools`,
+    ).then((r) => r.tools),
+
+  warmMcpServer: (name: string) =>
+    request<McpServerSummary>(
+      CONTROL_PLANE_URL,
+      `/admin/mcp/servers/${encodeURIComponent(name)}:warm`,
+      { method: "POST" },
+    ),
+
+  closeMcpServer: (name: string) =>
+    request<McpServerSummary>(
+      CONTROL_PLANE_URL,
+      `/admin/mcp/servers/${encodeURIComponent(name)}:close`,
+      { method: "POST" },
     ),
 
   // ── inference plane: model + engine registry (the "Installed" tab) ─────────
@@ -323,4 +508,72 @@ export const api = {
       `/admin/catalog/downloads/${encodeURIComponent(id)}:cancel`,
       { method: "POST" },
     ),
+
+  // ── control plane: M18 bench store (metrics + digests; snake_case wire) ─────
+  // Persists what the bench PRODUCED — never raw data-plane payloads (those go straight to the
+  // inference plane, §10). All under the control-plane base URL.
+  recordBenchRun: (body: BenchRunInput) =>
+    request<BenchRunRecord>(CONTROL_PLANE_URL, "/bench/runs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listBenchRuns: (
+    params: {
+      limit?: number;
+      logical_id?: string;
+      agent_id?: string;
+      suite_id?: string;
+      case_id?: string;
+    } = {},
+  ) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ runs: BenchRunRecord[] }>(
+      CONTROL_PLANE_URL,
+      `/bench/runs${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.runs);
+  },
+
+  compareBenchRuns: (a: string, b: string) =>
+    request<BenchCompare>(
+      CONTROL_PLANE_URL,
+      `/bench/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+    ),
+
+  createSuite: (body: BenchSuiteInput) =>
+    request<BenchSuiteRecord>(CONTROL_PLANE_URL, "/bench/suites", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listSuites: () =>
+    request<{ suites: BenchSuiteRecord[] }>(CONTROL_PLANE_URL, "/bench/suites").then(
+      (r) => r.suites,
+    ),
+
+  getSuite: (id: string) =>
+    request<BenchSuiteRecord>(CONTROL_PLANE_URL, `/bench/suites/${encodeURIComponent(id)}`),
+
+  createPreset: (body: BenchPresetInput) =>
+    request<BenchPresetRecord>(CONTROL_PLANE_URL, "/bench/presets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listPresets: (params: { modality?: string; logical_id?: string } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ presets: BenchPresetRecord[] }>(
+      CONTROL_PLANE_URL,
+      `/bench/presets${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.presets);
+  },
+
+  deletePreset: (id: string) =>
+    request<void>(CONTROL_PLANE_URL, `/bench/presets/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
 };
