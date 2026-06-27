@@ -108,6 +108,14 @@ logger = logging.getLogger("theygent.control_plane")
 # not import `theygent_ir` (no graph execution yet, §2).
 _ENGINE_NAMES = frozenset({"mlx", "vllm", "llamacpp"})
 
+# M14 node types that lower ONLY onto the durable runtime (DBOS recv/child-workflows/queue). The
+# interactive M5 walker (the `/graphs/runs`, `/agents/{id}/runs`, `/agents/{id}/invoke`, and
+# non-durable `fire()` path) cannot run them — a `human` can't durably wait in-process, etc. Caught
+# up front with a CLEAR ``durable_required`` error (before a Run), rather than surfacing as the
+# walker's raw ``NotImplementedError`` mis-mapped to a 502 inference_error (the confusing
+# "not implemented yet" a builder hit when running a human/approval graph interactively).
+_DURABLE_ONLY_TYPES = frozenset({"human", "subgraph", "loop", "map"})
+
 _RUN_ID_HEADER = "x-theygent-run-id"
 
 # M17: the synthetic single node a plain ``/runs`` prompt run is traced as. ``/runs`` has no
@@ -1187,6 +1195,22 @@ def create_app(
                     status=400,
                     code="mcp_tool_not_found",
                 )
+
+        # Durable-only node types (human/subgraph/loop/map) cannot run on this interactive walker —
+        # reject up front with a clear, actionable error (before a Run), not the walker's raw
+        # NotImplementedError mis-mapped to a 502 "not implemented yet" (M14: these run on the
+        # durable runtime via a trigger/worker, not the interactive run path).
+        durable_only = sorted({n.id for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
+        if durable_only:
+            kinds = sorted({n.type for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
+            return _error(
+                f"node(s) {durable_only} use durable-only type(s) {kinds} "
+                "(human/subgraph/loop/map) — these run on the durable runtime, not the interactive "
+                "run path. Deploy the agent and invoke it via a durable trigger (schedule/webhook) "
+                "or a durable worker.",
+                status=400,
+                code="durable_required",
+            )
 
         # The trivial M5 graph has exactly one llm node; record its resolved logical id as the
         # Run's model so GET /runs/{id} stays meaningful (no llm node -> empty, an inert graph).

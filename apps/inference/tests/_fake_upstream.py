@@ -99,6 +99,8 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
         body = await request.json()
         model = body.get("model", "fake")
         inputs = body.get("input")
+        if inputs == "__force_upstream_404__":
+            return JSONResponse({"error": {"message": "Not Found"}}, status_code=404)
         items = inputs if isinstance(inputs, list) else [inputs]
         return JSONResponse(
             {

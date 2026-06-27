@@ -122,7 +122,9 @@ def _demo_ir(body_version: str, sum_version: str) -> dict:
 @_skip
 async def test_human_gate_and_map_fanout_resumes_on_mlx() -> None:
     assert _DATABASE_URL and _INFERENCE_BASE_URL
-    _prepare_db(_DATABASE_URL)
+    # Run the sync Alembic upgrade off this event loop — its env.py uses asyncio.run() internally,
+    # which collides with pytest-asyncio's running loop (latent: this env-gated test never ran).
+    await asyncio.to_thread(_prepare_db, _DATABASE_URL)
 
     from _durable import save_agent
     from theygent_control_plane import db

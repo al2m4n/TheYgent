@@ -496,9 +496,19 @@ def create_app(
 
         params = merge_params(binding.params, req.model_dump())
 
-        if isinstance(binding, ManagedBinding):
-            return await _serve_managed(req, params)
-        return await _serve_reachable(binding, req, params)
+        # A non-stream upstream error (litellm raising inside gateway.complete) must map to a clean
+        # OpenAI-style error, not an opaque 500. Warm/capacity failures are already handled inside
+        # the serve helpers (they RETURN responses, not raise). Streaming mid-run errors are out of
+        # scope here — the 200 SSE header has already flushed (the generator owns them).
+        try:
+            if isinstance(binding, ManagedBinding):
+                return await _serve_managed(req, params)
+            return await _serve_reachable(binding, req, params)
+        except Exception as exc:
+            mapped = _upstream_error(exc, req.model)
+            if mapped is None:
+                raise
+            return mapped
 
     async def _serve_managed(req: ChatRequest, params: dict[str, Any]) -> Response:
         # Spawn + resolve capacity BEFORE committing to a response. For a stream,
@@ -573,6 +583,33 @@ def create_app(
             api_key = resolve_credential(binding.credential_ref) or "sk-noauth"
             yield binding, Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
 
+    def _upstream_error(exc: Exception, model: str) -> JSONResponse | None:
+        """Map a provider/engine HTTP error (raised by litellm inside the gateway) to a CLEAN
+        OpenAI-style error instead of letting it bubble to an opaque 500. Duck-typed on
+        ``status_code`` so it covers litellm/openai/httpx status errors without importing their
+        class hierarchy. A 404 from the engine almost always means the engine doesn't serve THIS
+        endpoint/modality (e.g. embeddings or audio against a chat-only mlx_lm/llama.cpp text
+        engine) — surface that honestly so a builder knows the cause, not a stacktrace."""
+        status = getattr(exc, "status_code", None)
+        if not isinstance(status, int):
+            return None
+        upstream_msg = getattr(exc, "message", None) or str(exc)
+        if status == 404:
+            return _openai_error(
+                f"the engine serving {model!r} returned 404 for this endpoint — it likely does "
+                "not support this modality (managed mlx_lm / llama.cpp text engines serve chat "
+                "only; embeddings/audio need a model whose engine supports them, or a reachable "
+                f"openai-compatible binding). upstream: {upstream_msg}",
+                status=404,
+                type_="invalid_request_error",
+                code="modality_not_supported",
+            )
+        # Relay other provider errors honestly: pass client-class statuses through, fold the rest
+        # to a 502 (a bad upstream response), never a bare 500.
+        out_status = status if status in (400, 401, 403, 408, 409, 422, 429, 503) else 502
+        kind = "invalid_request_error" if out_status < 500 else "server_error"
+        return _openai_error(upstream_msg, status=out_status, type_=kind, code="upstream_error")
+
     def _data_plane_error(exc: Exception, model: str) -> JSONResponse | None:
         if isinstance(exc, UnknownLogicalId):
             return _openai_error(
@@ -590,7 +627,8 @@ def create_app(
             return _openai_error(
                 str(exc), status=502, type_="server_error", code="credential_error"
             )
-        return None
+        # Fall through to the provider/engine HTTP-error mapper (litellm) — no opaque 500.
+        return _upstream_error(exc, model)
 
     @app.post("/v1/embeddings")
     async def embeddings(req: EmbeddingsRequest) -> Response:

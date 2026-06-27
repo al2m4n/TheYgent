@@ -153,3 +153,15 @@ def test_unknown_logical_id_on_embeddings(client: TestClient) -> None:
     r = client.post("/v1/embeddings", json={"model": "nope", "input": "x"})
     assert r.status_code == 404
     assert r.json()["error"]["code"] == "model_not_found"
+
+
+def test_embeddings_upstream_404_maps_to_clean_error(client: TestClient) -> None:
+    # F6 regression: a registered model whose engine returns 404 for /v1/embeddings (a chat-only
+    # text engine) must surface a CLEAN OpenAI-style error, NOT an opaque 500 — the gateway's
+    # litellm NotFoundError is mapped, not re-raised (honest-failure invariant on the data plane).
+    client.put("/admin/models/embed-fast", json=managed_payload(binding="llamacpp"))
+    r = client.post(
+        "/v1/embeddings", json={"model": "embed-fast", "input": "__force_upstream_404__"}
+    )
+    assert r.status_code == 404
+    assert r.json()["error"]["code"] == "modality_not_supported"

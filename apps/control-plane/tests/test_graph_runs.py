@@ -43,6 +43,65 @@ def _graph_run(client: TestClient, *, stream: bool, thread_id: str | None = None
     return resp.json()
 
 
+def test_durable_only_node_rejected_on_interactive_path(client: TestClient) -> None:
+    # F8 regression: a durable-only node (human/subgraph/loop/map) run on the INTERACTIVE
+    # /graphs/runs walker must return a CLEAR ``durable_required`` 400 BEFORE a Run — not the
+    # walker's raw NotImplementedError mis-mapped to a 502 inference_error "not implemented yet"
+    # (which falsely told a builder the human node doesn't exist; it just needs durable mode).
+    ir = {
+        "schemaVersion": "1.0",
+        "id": "agt_human_interactive",
+        "name": "h",
+        "version": "0.1.0",
+        "models": {},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out"}]},
+            },
+            {
+                "id": "n_h",
+                "type": "human",
+                "kind": "boundary",
+                "config": {"prompt": "approve?"},
+                "ports": {"in": [{"id": "in"}], "out": [{"id": "out"}]},
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_h",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_h",
+                "sourceHandle": "out",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+    resp = client.post("/graphs/runs", json={"ir": ir, "input": "approve", "stream": False})
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert body["error"]["code"] == "durable_required"
+    assert "n_h" in body["error"]["message"]
+
+
 def test_graph_stream_full_loop(client: TestClient, fake_inference: FakeInference) -> None:
     # Happy path: the trivial graph executes and the SSE relay produces the SAME shape /runs
     # does today (the M5 thesis: identical behaviour, IR-driven path).
