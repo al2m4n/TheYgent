@@ -21,6 +21,7 @@ step. The deterministic version of that property is the fast suite's kill-and-re
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -98,7 +99,10 @@ def _two_step_ir() -> dict:
 @_skip
 async def test_real_multistep_agent_runs_durably_on_mlx() -> None:
     assert _DATABASE_URL and _INFERENCE_BASE_URL
-    _prepare_db(_DATABASE_URL)
+    # Alembic's async env.py calls asyncio.run() internally; run the sync upgrade OFF this running
+    # event loop (pytest-asyncio) so the two loops don't collide. (Latent bug: this env-gated test
+    # had never actually executed, so the collision was never hit.)
+    await asyncio.to_thread(_prepare_db, _DATABASE_URL)
 
     from theygent_control_plane import db
     from theygent_control_plane.durable.runtime import DurableRuntime

@@ -36,6 +36,12 @@ class ResourceBudget:
     max_resident: int
     #: secondary, off-by-default trigger fed by a ResourceProbe.
     over_watermark: bool = False
+    #: total resident engines INCLUDING non-evictable ones (in-flight / draining). The policy is
+    #: only handed the *evictable* subset (``resident``), so without this it cannot see slots held
+    #: by a busy/stuck engine and would under-evict — letting a single permanently-draining engine
+    #: wedge the whole plane (an idle evictable engine never gets freed). Defaults to 0 → the policy
+    #: falls back to ``len(resident)`` (the pre-fix behavior) when a caller does not supply it.
+    resident_total: int = 0
 
 
 class ResourceProbe(Protocol):
@@ -85,8 +91,13 @@ class CountAndPriorityPolicy:
         budget: ResourceBudget,
     ) -> list[str]:
         need = 0
-        # The incoming load takes one slot: free enough to stay within the ceiling.
-        over_count = (len(resident) + 1) - budget.max_resident
+        # The incoming load takes one slot: free enough to stay within the ceiling. Count ALL
+        # resident engines (including non-evictable in-flight/draining ones), not just the evictable
+        # subset handed to us — otherwise a stuck draining engine's slot is invisible and we
+        # under-evict, wedging the plane while an idle engine sits evictable. ``resident_total``
+        # defaults to 0 → fall back to ``len(resident)`` for callers that don't supply it.
+        total_resident = max(budget.resident_total, len(resident))
+        over_count = (total_resident + 1) - budget.max_resident
         if over_count > 0:
             need = over_count
         if budget.over_watermark:

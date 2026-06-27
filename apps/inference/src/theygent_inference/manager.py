@@ -226,7 +226,14 @@ class EngineManager:
             for e in self._resident.values()
             if not e.terminated and e.inflight == 0 and not e.draining
         ]
-        budget = ResourceBudget(self._max_resident, self._probe.over_watermark())
+        # Pass the TRUE resident count (incl. in-flight/draining engines the policy can't evict) so
+        # the policy frees enough evictable slots. Without this, one permanently-draining engine
+        # (inflight never → 0, e.g. a hung model subprocess) makes the policy under-count and refuse
+        # to evict an otherwise-idle engine, wedging the whole plane at NoCapacity.
+        live = sum(1 for e in self._resident.values() if not e.terminated)
+        budget = ResourceBudget(
+            self._max_resident, self._probe.over_watermark(), resident_total=live
+        )
         victims = self._policy.select_victims(
             evictable, PendingLoad(logical_id, binding.lifecycle.priority), budget
         )

@@ -91,6 +91,25 @@ def test_policy_no_eviction_when_room_available() -> None:
     assert policy.select_victims(resident, PendingLoad("x", 1), ResourceBudget(3)) == []
 
 
+def test_policy_counts_nonevictable_slots() -> None:
+    # Regression (live wedge): an idle evictable engine coexists with a stuck/draining engine the
+    # policy is NOT handed (only evictable engines are passed). With ``resident_total`` = the TRUE
+    # count (2) and max 2, the incoming load must evict the idle one. Pre-fix the policy saw only
+    # ``len(resident)`` = 1, computed 1+1 <= 2, evicted nothing → the manager then wedged at
+    # NoCapacity even though ``idle`` was perfectly evictable.
+    policy = CountAndPriorityPolicy()
+    resident = [ResidentView("idle", priority=1, last_used=1)]
+    budget = ResourceBudget(max_resident=2, resident_total=2)
+    assert policy.select_victims(resident, PendingLoad("new", 9), budget) == ["idle"]
+
+
+def test_policy_no_total_falls_back_to_len_resident() -> None:
+    # Backward-compat: callers that don't supply resident_total (default 0) keep the old behavior.
+    policy = CountAndPriorityPolicy()
+    resident = [ResidentView("a", priority=1, last_used=1)]
+    assert policy.select_victims(resident, PendingLoad("x", 1), ResourceBudget(3)) == []
+
+
 def test_policy_watermark_forces_one_even_with_room() -> None:
     policy = CountAndPriorityPolicy()
     resident = [
@@ -176,6 +195,27 @@ async def test_evict_drains_inflight_then_terminates() -> None:
     # lease released -> drained -> torn down
     assert mgr.state("busy")["resident"] is False
     assert launcher.handles[0].terminated is True
+
+
+async def test_stuck_draining_engine_does_not_wedge_idle_eviction() -> None:
+    # Regression for the live wedge found during the test session: a permanently-draining engine
+    # (in-flight forever — e.g. a hung model subprocess) must NOT block loading a new model when a
+    # DIFFERENT resident engine is idle/evictable. Pre-fix the policy under-counted the draining
+    # engine's slot and the manager raised NoCapacityError; now it evicts the idle engine and loads.
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
+    _register(reg, "idle")
+    _register(reg, "stuck")
+    _register(reg, "new")
+
+    await mgr.warm("idle")  # slot 1: idle, evictable
+    async with mgr.lease("stuck"):  # slot 2: stuck, in-flight (never releases)
+        await mgr.evict("stuck")  # -> draining, but still in-flight so it stays resident
+        assert mgr.state("stuck")["draining"] is True
+        await mgr.warm("new")  # must evict 'idle' and load 'new', NOT raise NoCapacity
+        assert mgr.state("new")["resident"] is True
+        assert mgr.state("idle")["resident"] is False  # the idle engine was freed
+        assert mgr.state("stuck")["resident"] is True  # the stuck engine kept its slot
 
 
 async def test_evict_is_idempotent_when_not_resident() -> None:
