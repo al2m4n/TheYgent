@@ -244,7 +244,7 @@ async def _llm_step(
     node_id: str,
     model_id: str,
     params: dict[str, Any],
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """The ``llm`` activity as a durable step. Streams tokens to the in-process delta bus as a side
     effect (§6 — non-durable), returns the assembled answer (the only journaled value). On replay

@@ -273,6 +273,41 @@ def llm_ir(content: str) -> dict[str, Any]:
     )
 
 
+_VISION_MODEL = {"vision": {"binding": "mlx", "model": "qwen2-vl-vision", "params": {}}}
+
+
+def vision_llm_ir(text: str, image_url: str, *, detail: str | None = None) -> dict[str, Any]:
+    """input → llm(MULTIMODAL content: [text, image_url]) → output — the M20 cross-plane follow-up
+    headline: a graph drives a vision model. The llm is bound to a vision logical model; ``text``
+    and ``image_url`` each exercise the unified ``$in`` template INSIDE a content part, so an image
+    enters from the run input (``image_url="$in"``) rather than being hardcoded — the thing a string
+    ``content`` could never express. The image block must survive IR serialize + the real gateway
+    hop unchanged (LiteLLM forwards ``image_url`` parts)."""
+    image: dict[str, Any] = {"url": image_url}
+    if detail is not None:
+        image["detail"] = detail
+    content = [
+        {"type": "text", "text": text},
+        {"type": "image_url", "image_url": image},
+    ]
+    return _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_llm",
+                "llm",
+                "activity",
+                config={"model": "vision", "messages": [{"role": "user", "content": content}]},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_llm"), _edge("e2", "n_llm", "ok", "n_out")],
+        models=_VISION_MODEL,
+    )
+
+
 def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
     """input → tool(echo, {value: <value>}) → llm(<content>) → output. echo emits the literal
     object ``value`` (network-free), so the llm's default in-port ``in`` is an OBJECT and

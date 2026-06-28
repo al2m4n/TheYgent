@@ -280,12 +280,83 @@
     "llm": {
       "configSchema": {
         "$defs": {
+          "_ImageContentPart": {
+            "additionalProperties": false,
+            "description": "An OpenAI ``image_url`` content part \u2014 the block that carries a vision input.",
+            "properties": {
+              "imageUrl": {
+                "$ref": "#/$defs/_ImageUrl"
+              },
+              "type": {
+                "const": "image_url",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "imageUrl"
+            ],
+            "title": "_ImageContentPart",
+            "type": "object"
+          },
+          "_ImageUrl": {
+            "additionalProperties": false,
+            "description": "The ``image_url`` payload of an image content part (OpenAI shape). ``url`` is an http(s) URL\nor a ``data:`` URI (base64-inline); it is ``$in``-templatable so the image can come from a graph\nin-port. ``detail`` is OpenAI's optional fidelity hint (``low``/``high``/``auto``).",
+            "properties": {
+              "detail": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail"
+              },
+              "url": {
+                "title": "Url",
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "title": "_ImageUrl",
+            "type": "object"
+          },
           "_Message": {
             "additionalProperties": false,
             "properties": {
               "content": {
-                "title": "Content",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "items": {
+                      "discriminator": {
+                        "mapping": {
+                          "image_url": "#/$defs/_ImageContentPart",
+                          "text": "#/$defs/_TextContentPart"
+                        },
+                        "propertyName": "type"
+                      },
+                      "oneOf": [
+                        {
+                          "$ref": "#/$defs/_TextContentPart"
+                        },
+                        {
+                          "$ref": "#/$defs/_ImageContentPart"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  }
+                ],
+                "title": "Content"
               },
               "role": {
                 "enum": [
@@ -303,10 +374,31 @@
             ],
             "title": "_Message",
             "type": "object"
+          },
+          "_TextContentPart": {
+            "additionalProperties": false,
+            "description": "An OpenAI ``text`` content part. ``text`` is rendered through the same ``$in`` template\nlanguage as a plain-string ``content`` (so a part can still compose an upstream value).",
+            "properties": {
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "type": {
+                "const": "text",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "title": "_TextContentPart",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "``llm`` node config: a single model call, no tool loop (\u00a78.3). ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)",
+        "description": "``llm`` node config: a single model call, no tool loop (\u00a78.3). ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)\n\nM20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +\nimage_url), not only a string, so a graph can drive a vision model (mlx_vlm on\n``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,\nso an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and\nhashes identically (see ``_Message``).",
         "properties": {
           "messages": {
             "items": {
