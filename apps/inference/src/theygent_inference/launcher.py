@@ -140,6 +140,12 @@ class _SubprocessHandle:
 
 
 class LlamaCppHandle(_SubprocessHandle):
+    def __init__(
+        self, proc: subprocess.Popen[bytes], base_url: str, *, modality: str = "chat"
+    ) -> None:
+        super().__init__(proc, base_url)
+        self._modality = modality
+
     async def capabilities(self) -> Capabilities:
         # llama-server exposes context size + the chat template via /props; tool-calling and
         # structured output are model-dependent, advertised conservatively (real probe TBD).
@@ -150,6 +156,13 @@ class LlamaCppHandle(_SubprocessHandle):
                 props = (await client.get(f"{self._base_url}/props")).json()
                 max_context = props.get("default_generation_settings", {}).get("n_ctx")
                 reasoning = _template_implies_reasoning(props.get("chat_template"))
+        if self._modality == "embeddings":
+            # An embeddings server (llama-server --embeddings) serves /v1/embeddings only — it
+            # declares the embeddings modality EXPLICITLY (derivation leaves an explicit list
+            # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
+            return Capabilities(
+                modalities=["embeddings"], max_context=max_context, approximate=True
+            )
         return Capabilities(
             tool_calling=True,
             structured_output=True,
@@ -186,6 +199,11 @@ class LlamaCppLauncher:
             cmd += ["-hf", binding.model]
         else:  # local-path | url
             cmd += ["-m", binding.model]
+        if binding.modality == "embeddings":
+            # llama.cpp is the "one binary, many modalities via flags" engine (M20 §1): the SAME
+            # llama-server serves /v1/embeddings once embeddings mode is on. Pooling must not be
+            # `none` for the OpenAI endpoint (it returns one vector per input) → `mean`.
+            cmd += ["--embeddings", "--pooling", "mean"]
         return cmd
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
@@ -196,7 +214,7 @@ class LlamaCppLauncher:
         proc = await _spawn_openai_server(
             self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
         )
-        return LlamaCppHandle(proc, base_url)
+        return LlamaCppHandle(proc, base_url, modality=binding.modality)
 
 
 # ── MLX (managed, the Tier-A milestone — proven on Apple Silicon) ────────
@@ -386,6 +404,94 @@ class MlxLauncher:
         return MlxHandle(proc, base_url, model=binding.model, source=binding.source)
 
 
+# ── MLX vision (managed — the `mlx` engine, `vision` modality) ───────────
+# A DIFFERENT program from mlx_lm.server: mlx-vlm ships its own OpenAI-compatible server for
+# vision-language models, served on /v1/chat/completions with image_url content parts (vision is a
+# sub-capability of chat — M18 §1.3). Same EngineLauncher protocol + spawn lifecycle as mlx_lm; the
+# manager dispatches to it purely by the (engine, modality) key and never learns there are two MLX
+# servers (M20 §1 — zero EngineManager caller changes).
+
+
+class MlxVlmHandle(_SubprocessHandle):
+    def __init__(
+        self, proc: subprocess.Popen[bytes], base_url: str, model: str, source: str
+    ) -> None:
+        super().__init__(proc, base_url)
+        self._model = model
+        self._source = source
+
+    async def capabilities(self) -> Capabilities:
+        # vision=True → _derive_modalities yields ["chat", "vision"] (vision rides chat, not its own
+        # endpoint). Like mlx_lm.server, mlx_vlm.server exposes no /props, so caps are conservative
+        # + approximate; max context comes from the model config when locatable (None otherwise).
+        max_context = _read_model_max_context(self._model, self._source)
+        return Capabilities(
+            tool_calling=False,
+            structured_output=False,
+            vision=True,
+            max_context=max_context,
+            approximate=True,
+        )
+
+
+class MlxVlmLauncher:
+    """Spawns ``mlx_vlm.server`` for an Apple-Silicon VLM — the MLX ``vision`` modality.
+
+    UNPROVEN until its env-gated integration test runs green here (mlx-vlm is not installed by
+    default); "written + type-checks" is not "works" (the M1 lesson). Same protocol/lifecycle shape
+    as ``MlxLauncher`` — the manager cannot tell them apart.
+    """
+
+    ENV_VAR = "THEYGENT_MLX_VLM_BIN"
+
+    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 180.0) -> None:
+        self._startup_timeout = startup_timeout
+        try:
+            self._command: list[str] | None = resolve_engine_command(
+                exe_name="mlx_vlm.server",
+                env_var=self.ENV_VAR,
+                module="mlx_vlm.server",
+                explicit=binary_path,
+                install_hint="install mlx-vlm (e.g. `uv tool install mlx-vlm`)",
+            )
+            self._reason: str | None = None
+        except EngineBinaryNotFound as exc:
+            self._command = None
+            self._reason = str(exc)
+
+    @property
+    def ready(self) -> bool:
+        return self._command is not None
+
+    @property
+    def not_ready_reason(self) -> str | None:
+        return self._reason
+
+    def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
+        assert self._command is not None
+        # mlx_vlm.server takes the model id/path directly, like mlx_lm.server. Unified memory => no
+        # GPU/VRAM flags (vLLM's concern). VLM weights/projector live in the one repo/dir.
+        return [
+            *self._command,
+            "--model",
+            binding.model,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ]
+
+    async def launch(self, binding: ManagedBinding) -> EngineHandle:
+        if self._command is None:
+            raise EngineBinaryNotFound(self._reason or "mlx_vlm.server unavailable")
+        port = _free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = await _spawn_openai_server(
+            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+        )
+        return MlxVlmHandle(proc, base_url, model=binding.model, source=binding.source)
+
+
 # ── engine dispatch (keeps EngineManager engine-agnostic) ───────────────
 
 
@@ -400,43 +506,75 @@ class EngineReadiness:
 
 
 class ManagedLauncherSet:
-    """Routes ``launch(binding)`` to the per-engine launcher keyed by ``binding.binding``.
+    """Routes ``launch(binding)`` to the per-``(engine, modality)`` launcher.
 
-    Implements ``EngineLauncher`` itself, so ``EngineManager`` is handed a single
-    launcher and never learns there are several engines — the whole reason engine #2
-    and #3 dropped in without touching the manager. ``ready`` is aggregate (the service
-    can serve if *any* engine is available); ``readiness()`` gives the per-engine
-    breakdown for /readyz.
+    Implements ``EngineLauncher`` itself, so ``EngineManager`` is handed a single launcher and never
+    learns there are several engines OR several modalities — the whole reason engine #2/#3 (and now
+    the non-chat modalities) dropped in without touching the manager. ``launch(binding)`` keeps its
+    exact signature; the key is private to this set.
+
+    M20: the dispatch key grew from the engine alone to ``(engine, modality)`` so one engine can
+    serve several modalities by *different programs* (``mlx``: ``mlx_lm.server`` chat vs
+    ``mlx_vlm.server`` vision) or the *same binary with different flags* (``llamacpp``:
+    ``llama-server``, ``+ --embeddings``). A bare-string key (``"llamacpp"``) is normalized to
+    ``(engine, "chat")``, so a chat-only set (and the fast-suite stubs) construct unchanged.
+
+    **Fail-closed dispatch (M19 "reject, don't serve wrong").** Lookup is on the EXACT
+    ``(engine, modality)`` key — there is NO fallback to the chat launcher. An ``(mlx, embeddings)``
+    binding when no ``(mlx, embeddings)`` launcher is registered is *rejected* (503), never silently
+    spawned on ``mlx_lm.server`` (where an embeddings request would get a wrong, chat shape with no
+    error). Chat needs no fallback: a chat binding's key is literally
+    ``(engine, "chat")`` and matches directly. (llama.cpp chat+embeddings are BOTH registered keys
+    pointing at the same launcher — explicit, not a fallback.)
+
+    ``ready`` is aggregate (the service can serve if *any* (engine, modality) is available);
+    ``readiness()`` gives the per-``(engine, modality)`` breakdown for /readyz, displaying the chat
+    default as the bare engine name (so the existing /readyz shape is unchanged) and a non-chat
+    modality as ``engine:modality`` (e.g. ``mlx:vision``).
     """
 
-    def __init__(self, by_engine: dict[str, EngineLauncher]) -> None:
-        self._by_engine = by_engine
+    def __init__(self, by_key: dict[tuple[str, str] | str, EngineLauncher]) -> None:
+        self._by_key: dict[tuple[str, str], EngineLauncher] = {
+            (k if isinstance(k, tuple) else (k, "chat")): v for k, v in by_key.items()
+        }
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
-        launcher = self._by_engine.get(binding.binding)
+        # EXACT (engine, modality) — no chat fallback (fail-closed; M19 reject-don't-serve-wrong).
+        launcher = self._by_key.get((binding.binding, binding.modality))
         if launcher is None:
-            raise EngineUnavailableError(f"no launcher registered for engine {binding.binding!r}")
+            raise EngineUnavailableError(
+                f"no launcher registered for engine {binding.binding!r} modality "
+                f"{binding.modality!r} — a non-chat modality is rejected here, never served by the "
+                f"chat engine (fail-closed)"
+            )
         if not launcher.ready:
             raise EngineUnavailableError(
-                f"engine {binding.binding!r} is not available on this host: "
+                f"engine {binding.binding!r} ({binding.modality!r}) is not available on this host: "
                 f"{launcher.not_ready_reason}"
             )
         return await launcher.launch(binding)
 
     @property
     def ready(self) -> bool:
-        return any(launcher.ready for launcher in self._by_engine.values())
+        return any(launcher.ready for launcher in self._by_key.values())
 
     @property
     def not_ready_reason(self) -> str | None:
         if self.ready:
             return None
         return "; ".join(
-            f"{name}: {launcher.not_ready_reason}" for name, launcher in self._by_engine.items()
+            f"{self._display(key)}: {launcher.not_ready_reason}"
+            for key, launcher in self._by_key.items()
         )
+
+    @staticmethod
+    def _display(key: tuple[str, str]) -> str:
+        """The /readyz key: bare engine for chat (unchanged shape), else ``engine:modality``."""
+        engine, modality = key
+        return engine if modality == "chat" else f"{engine}:{modality}"
 
     def readiness(self) -> dict[str, EngineReadiness]:
         return {
-            name: EngineReadiness(launcher.ready, launcher.not_ready_reason)
-            for name, launcher in self._by_engine.items()
+            self._display(key): EngineReadiness(launcher.ready, launcher.not_ready_reason)
+            for key, launcher in self._by_key.items()
         }

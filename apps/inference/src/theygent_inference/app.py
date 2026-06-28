@@ -40,6 +40,7 @@ from theygent_inference.launcher import (
     LlamaCppLauncher,
     ManagedLauncherSet,
     MlxLauncher,
+    MlxVlmLauncher,
 )
 from theygent_inference.manager import EngineManager, NoCapacityError, NotManagedError, Upstream
 from theygent_inference.registry import Registry, UnknownLogicalId
@@ -136,14 +137,19 @@ def create_app(
     # control-plane's Postgres — the plane boundary). `state_path=None` keeps it in-memory (the
     # fast suite never touches disk); the real entrypoint passes a path under the plane's state dir.
     registry = Registry(state_path)
-    # One launcher per managed engine, behind a single dispatcher so the manager stays
-    # engine-agnostic (MLX/vLLM added with zero EngineManager changes). Tests inject a
-    # single fake launcher that serves every binding.
+    # One launcher per (engine, modality), behind a single dispatcher so the manager stays
+    # engine-agnostic (MLX/vLLM — and now the non-chat modalities — added with zero EngineManager
+    # changes). Tests inject a single fake launcher that serves every binding. M20: llama.cpp serves
+    # chat + embeddings from the SAME llama-server (one instance, flags differ — two keys); MLX chat
+    # (mlx_lm.server) and vision (mlx_vlm.server) are distinct programs.
+    _llamacpp = LlamaCppLauncher()
     engine_launcher = launcher or ManagedLauncherSet(
         {
-            "llamacpp": LlamaCppLauncher(),
-            "mlx": MlxLauncher(),
-            "vllm": VllmLauncher(),
+            ("llamacpp", "chat"): _llamacpp,
+            ("llamacpp", "embeddings"): _llamacpp,
+            ("mlx", "chat"): MlxLauncher(),
+            ("mlx", "vision"): MlxVlmLauncher(),
+            ("vllm", "chat"): VllmLauncher(),
         }
     )
     manager = EngineManager(

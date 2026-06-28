@@ -66,6 +66,34 @@ def test_in_memory_when_no_state_path() -> None:
         assert c2.get("/admin/models").json()["models"] == []
 
 
+def test_pre_m20_registry_downgrades_to_chat(tmp_path: Path) -> None:
+    # A registry.json written BEFORE M20 has no `modality` key on its managed bindings. Loading it
+    # must default every such binding to "chat" (backward compatibility) and resolve it to the chat
+    # launcher — never crash, never skip the row. This is the M20 downgrade guarantee.
+    state = tmp_path / "registry.json"
+    state.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "legacy-chat": {
+                        "binding": "mlx",
+                        "source": "hf",
+                        "model": "mlx-community/old",
+                        "params": {"temperature": 0.2},
+                        "lifecycle": {"keepWarm": False, "idleTimeoutSec": 900, "priority": 0},
+                    }
+                }
+            }
+        )
+    )
+    with TestClient(_app(FakeUpstreamLauncher(), state)) as c:
+        view = c.get("/admin/models/legacy-chat").json()
+        assert view["binding"]["modality"] == "chat"  # defaulted on load
+        # And it resolves end-to-end on the chat path (the fake serves chat).
+        r = c.post("/v1/chat/completions", json={"model": "legacy-chat", "messages": []})
+        assert r.status_code == 200
+
+
 def test_plane_split_no_control_plane_db_dependency() -> None:
     # The plane-split guard: the inference registry must not reach for the control-plane's Postgres.
     # It IMPORTS no SQLAlchemy / asyncpg / control-plane module — persistence is local-only. Checked

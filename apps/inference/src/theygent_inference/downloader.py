@@ -187,7 +187,14 @@ class Downloader:
             job.done_bytes = job.total_bytes
         job.status = "registering"
         try:
-            binding = ManagedBinding(binding=job.plan.engine, source="local-path", model=str(path))
+            # M20: carry the plan's modality onto the binding so the manager spawns the right server
+            # (e.g. an installed VLM registers modality="vision" → mlx_vlm.server); default chat.
+            binding = ManagedBinding(
+                binding=job.plan.engine,
+                source="local-path",
+                model=str(path),
+                modality=job.plan.modality,
+            )
             self._registry.put(job.plan.logical_id, binding)
         except Exception as exc:
             job.status = "error"
