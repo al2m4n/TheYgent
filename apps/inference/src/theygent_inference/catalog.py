@@ -26,6 +26,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+from theygent_ir import Modality
 
 # The managed engines an entry can be installed for (the binding enum, §8.4). ``openai-compatible``
 # is a reachable passthrough — never installed — so it is not an install target.
@@ -38,6 +39,27 @@ Fit = Literal["fits", "tight", "too-large", "unknown"]
 #: (no single library tag) and is CUDA-only/unverified here, so it is intentionally absent — a
 #: not-ready engine never reaches the filter anyway. Adding an engine library is a one-line change.
 ENGINE_LIBRARY: dict[str, str] = {"mlx": "mlx", "llamacpp": "gguf"}
+
+#: HF ``pipeline_tag`` → the theygent ``modality`` the model serves (M20). A model's modality is a
+#: property of the *model* (its task), not of the engine — so install derives it from the repo's
+#: pipeline_tag and registers the binding with it, which is what makes the manager spawn the right
+#: server (``mlx`` vision → ``mlx_vlm.server``; ``llamacpp`` embeddings → ``llama-server
+#: --embeddings``). An unmapped/absent tag → ``chat`` (the default; a text-generation repo needs no
+#: special handling). This is why the listing fan-out need NOT be per-modality: whichever list a
+#: repo appears in, the install lands the correct ``(engine, modality)`` binding from its pipeline.
+_PIPELINE_MODALITY: dict[str, Modality] = {
+    "image-text-to-text": "vision",
+    "feature-extraction": "embeddings",
+    "sentence-similarity": "embeddings",
+    "automatic-speech-recognition": "audio.transcription",
+    "text-to-speech": "audio.speech",
+}
+
+
+def _modality_for_pipeline(pipeline_tag: str | None) -> Modality:
+    mod = _PIPELINE_MODALITY.get(pipeline_tag or "")
+    return mod if mod is not None else "chat"
+
 
 #: HF ``sort`` keys (huggingface_hub 1.x). Our enum is the stable surface; this maps it.
 _HF_SORT: dict[str, str] = {
@@ -78,6 +100,9 @@ class CatalogVariant(_Wire):
     id: str  # gguf filename for llamacpp; "" for a whole MLX repo (engine-unique within an entry)
     label: str  # "Q4_K_M", "4bit", ...
     engine: EngineName
+    #: The modality this model serves (M20), derived from the repo's HF pipeline_tag. Defaults to
+    #: ``chat`` so a text-generation repo is unchanged; install records it on the binding.
+    modality: Modality = "chat"
     filename: str | None = None  # the specific file to fetch (gguf); None ⇒ snapshot the repo
     size_bytes: int | None = None
     fit: Fit = "unknown"
@@ -116,6 +141,9 @@ class InstallPlan(_Wire):
     logical_id: str
     engine: EngineName
     repo: str
+    #: The modality the installed model serves (M20) — recorded on the registered binding so the
+    #: manager spawns the right server. Derived from the repo's pipeline_tag by ``install_plan``.
+    modality: Modality = "chat"
     filename: str | None = None  # specific gguf for llamacpp; None ⇒ whole repo (mlx)
     total_bytes: int | None = None  # for the progress denominator
 
@@ -386,6 +414,8 @@ class HuggingFaceProvider:
         siblings = list(getattr(info, "siblings", None) or [])
         ram = self._ram()
         requested = set(q.engines) if q.engines else set(ENGINE_LIBRARY)
+        # The modality is the model's, not the engine's (M20) — all variants of this repo share it.
+        modality = _modality_for_pipeline(getattr(info, "pipeline_tag", None))
         variants: list[CatalogVariant] = []
 
         # llamacpp: one variant per GGUF file (the quant), sized individually.
@@ -401,6 +431,7 @@ class HuggingFaceProvider:
                         id=name,
                         label=label,
                         engine="llamacpp",
+                        modality=modality,
                         filename=name,
                         size_bytes=size,
                         fit=fit_for(size, ram),
@@ -424,6 +455,7 @@ class HuggingFaceProvider:
                     id="",
                     label=label,
                     engine="mlx",
+                    modality=modality,
                     filename=None,
                     size_bytes=total or None,
                     fit=fit_for(total or None, ram),
@@ -448,9 +480,11 @@ class HuggingFaceProvider:
     ) -> InstallPlan:
         total_bytes: int | None = None
         filename: str | None = None
+        pipeline_tag: str | None = None
         try:
             info = self._hf().model_info(ref, files_metadata=True)
             siblings = list(getattr(info, "siblings", None) or [])
+            pipeline_tag = getattr(info, "pipeline_tag", None)
         except Exception:
             siblings = []
         if engine == "llamacpp":
@@ -472,6 +506,7 @@ class HuggingFaceProvider:
             logical_id=logical_id,
             engine=engine,
             repo=ref,
+            modality=_modality_for_pipeline(pipeline_tag),
             filename=filename,
             total_bytes=total_bytes,
         )

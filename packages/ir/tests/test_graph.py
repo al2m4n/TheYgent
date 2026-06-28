@@ -97,6 +97,27 @@ def test_source_is_optional() -> None:
     assert parse_document(doc).models["default"].source == "hf"
 
 
+def test_graph_model_binding_has_no_modality_field_m20_guard() -> None:
+    # M20 added `modality` to the INFERENCE registration binding (registration.ManagedBinding), NOT
+    # the hashed graph binding (graph.ModelBinding). A model node's modality INTENT is hashed via
+    # its node `type` (llm for chat/vision, transcribe/speak for audio), never via the binding. If a
+    # future change threads `modality` onto the graph binding, every agent's contentHash silently
+    # shifts (a §8.4-class reversal). This guards that line.
+    from theygent_ir import ModelBinding
+
+    assert "modality" not in ModelBinding.model_fields
+
+
+def test_trivial_content_hash_is_pinned_m20_guard() -> None:
+    # Pin the hash of a representative graph (with a managed ModelBinding). M20 touched ONLY the
+    # inference registration payload, so this hash is byte-identical pre/post-M20 and must stay so
+    # until a DELIBERATE graph-IR change. A drift here means the graph binding or envelope moved.
+    assert (
+        content_hash(parse_document(_trivial()))
+        == "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
+    )
+
+
 def test_content_hash_strips_view_dragging_a_node_is_not_a_new_version() -> None:
     # THE load-bearing §8.2 promise (§8.0 rule 2): editing the view — dragging a node,
     # changing zoom/collapsed state — must NEVER change the hash, or every drag would mint a

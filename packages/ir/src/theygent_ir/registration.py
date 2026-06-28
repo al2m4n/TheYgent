@@ -53,11 +53,27 @@ class Lifecycle(_Wire):
 
 
 class ManagedBinding(_Wire):
-    """A lifecycle-managed local engine (mlx / vllm / llamacpp)."""
+    """A lifecycle-managed local engine (mlx / vllm / llamacpp).
+
+    ``modality`` (M20) is the THIRD orthogonal axis, alongside ``binding`` (*which engine* owns the
+    lifecycle) and ``source`` (*where the weights* come from): it names the *task* the model serves
+    (``chat`` / ``vision`` / ``embeddings`` / ``audio.*``). The manager dispatches the **spawn** on
+    it — ``mlx`` chat spawns ``mlx_lm.server`` while ``mlx`` vision spawns ``mlx_vlm.server``;
+    ``llamacpp`` embeddings adds ``--embeddings`` to the same ``llama-server``. It is NOT a new
+    ``binding`` value (the §8.4 enum stays frozen — ``mlx-vlm`` is still the ``mlx`` engine, only
+    the task differs) and it defaults to ``"chat"`` so every pre-M20 registration is unchanged. A
+    deliberate, named additive extension (theygent-stack-9.1.md §9.1.3).
+
+    Lands ONLY here, never on ``ReachableBinding`` (a reachable upstream self-describes its own
+    modality over its URL). NOTE the distinction from the graph IR's ``graph.ModelBinding``: this is
+    the inference-plane registration payload (local ``registry.json``, never content-hashed), so the
+    field never touches a saved agent's ``contentHash``.
+    """
 
     binding: ManagedBindingName
     source: SourceName
     model: str
+    modality: Modality = "chat"
     params: dict[str, Any] = Field(default_factory=dict)
     lifecycle: Lifecycle = Field(default_factory=Lifecycle)
     fallback: str | None = None

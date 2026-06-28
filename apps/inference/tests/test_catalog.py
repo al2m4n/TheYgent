@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
 from _fake_upstream import FakeUpstreamLauncher
 from fastapi.testclient import TestClient
 from theygent_inference.app import create_app
@@ -479,6 +480,126 @@ def test_installed_cross_reference(tmp_path: Path) -> None:
         assert mlx["installedAs"] == "my-qwen"
         # a different repo is not marked installed
         assert by_ref["bartowski/Qwen2.5-7B-Instruct-GGUF"]["installed"] is False
+
+
+# ── M20: modality derived from pipeline_tag → recorded on plan / variant / binding ───
+
+
+def _qwen_vl_mlx() -> FakeModelInfo:
+    # A VLM repo: HF tags it image-text-to-text. Its modality is vision, whatever the engine.
+    return FakeModelInfo(
+        id="mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+        library_name="mlx",
+        pipeline_tag="image-text-to-text",
+        tags=["mlx"],
+        safetensors=FakeSafetensors(total=4 * GB),
+        siblings=[FakeSibling("model.safetensors", 4 * GB), FakeSibling("config.json", 1000)],
+    )
+
+
+def _nomic_embed_gguf() -> FakeModelInfo:
+    return FakeModelInfo(
+        id="nomic-ai/nomic-embed-text-v1.5-GGUF",
+        pipeline_tag="feature-extraction",
+        tags=["gguf"],
+        siblings=[FakeSibling("nomic-embed-text-v1.5.Q4_K_M.gguf", 100_000_000)],
+    )
+
+
+@pytest.mark.parametrize(
+    ("pipeline_tag", "expected"),
+    [
+        # the five frozen Modality keys, each mapped from exactly one HF pipeline_tag
+        ("image-text-to-text", "vision"),
+        ("feature-extraction", "embeddings"),
+        ("sentence-similarity", "embeddings"),
+        ("automatic-speech-recognition", "audio.transcription"),
+        ("text-to-speech", "audio.speech"),
+        # the dominant case + the catch-all: text-generation / unknown / missing → chat
+        ("text-generation", "chat"),
+        ("text-generation-inference", "chat"),
+        (None, "chat"),
+        ("", "chat"),
+        # RESERVED / non-runnable tasks must NOT be silently mis-mapped onto a non-chat key — they
+        # fall to the chat catch-all (listing-level exclusion of these is a deferred refinement).
+        ("text-to-image", "chat"),
+        ("image-classification", "chat"),
+    ],
+)
+def test_modality_for_pipeline_maps_only_the_frozen_vocab(
+    pipeline_tag: str | None, expected: str
+) -> None:
+    from theygent_inference.catalog import _modality_for_pipeline
+
+    mod = _modality_for_pipeline(pipeline_tag)
+    assert mod == expected
+    # whatever it returns is always one of the five frozen keys (never an out-of-vocab string)
+    assert mod in {"chat", "vision", "embeddings", "audio.transcription", "audio.speech"}
+
+
+def test_install_plan_derives_vision_modality_for_vlm() -> None:
+    api = FakeHfApi(by_repo={"mlx-community/Qwen2.5-VL-7B-Instruct-4bit": _qwen_vl_mlx()})
+    p = HuggingFaceProvider(hf_api=api)
+    plan = p.install_plan("mlx-community/Qwen2.5-VL-7B-Instruct-4bit", "mlx", "", "qwen-vl")
+    assert plan.modality == "vision"
+
+
+def test_install_plan_derives_embeddings_modality() -> None:
+    api = FakeHfApi(by_repo={"nomic-ai/nomic-embed-text-v1.5-GGUF": _nomic_embed_gguf()})
+    p = HuggingFaceProvider(hf_api=api)
+    plan = p.install_plan(
+        "nomic-ai/nomic-embed-text-v1.5-GGUF",
+        "llamacpp",
+        "nomic-embed-text-v1.5.Q4_K_M.gguf",
+        "embed",
+    )
+    assert plan.modality == "embeddings"
+
+
+def test_install_plan_defaults_chat_for_text_models() -> None:
+    # A plain chat repo (no special pipeline_tag) → chat, identical to pre-M20 behaviour.
+    api = FakeHfApi(by_repo={"mlx-community/Qwen2.5-0.5B-Instruct-4bit": _qwen_mlx()})
+    p = HuggingFaceProvider(hf_api=api)
+    plan = p.install_plan("mlx-community/Qwen2.5-0.5B-Instruct-4bit", "mlx", "", "qwen")
+    assert plan.modality == "chat"
+
+
+def test_get_stamps_variant_modality_from_pipeline_tag() -> None:
+    api = FakeHfApi(by_repo={"mlx-community/Qwen2.5-VL-7B-Instruct-4bit": _qwen_vl_mlx()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=32 * GB)
+    entry = p.get("mlx-community/Qwen2.5-VL-7B-Instruct-4bit", CatalogQuery(engines=["mlx"]))
+    assert entry.variants
+    assert all(v.modality == "vision" for v in entry.variants)
+
+
+def test_downloader_registers_modality(tmp_path: Path) -> None:
+    import anyio
+    from theygent_inference.registry import Registry
+
+    registry = Registry()
+
+    def fake_fetch(plan: InstallPlan, dest: Path) -> Path:
+        dest.mkdir(parents=True, exist_ok=True)
+        f = dest / "snapshot"
+        f.write_bytes(b"w")
+        return f
+
+    dl = Downloader(registry, tmp_path, fetch=fake_fetch, dir_size=lambda p: 1)
+
+    async def _drive() -> str:
+        job = dl.start(InstallPlan(logical_id="vlm", engine="mlx", repo="r", modality="vision"))
+        for _ in range(200):
+            if job.status in ("done", "error"):
+                break
+            await anyio.sleep(0.01)
+        return job.status
+
+    status = anyio.run(_drive)
+    assert status == "done"
+    # The installed VLM registers with modality=vision → the manager will spawn mlx_vlm.server.
+    binding = registry.require("vlm")
+    assert binding.binding == "mlx"
+    assert binding.modality == "vision"
 
 
 def test_cancel_download(tmp_path: Path) -> None:
