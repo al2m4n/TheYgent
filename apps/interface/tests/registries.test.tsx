@@ -16,6 +16,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/lib/api";
+import { NotificationCenter, notify } from "../src/lib/notify";
 import { BrowseModal, Registries } from "../src/routes/Registries";
 
 const GB = 1_000_000_000;
@@ -127,15 +128,18 @@ function renderWithRouter(ui: ReactNode) {
   return render(
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
+      {/* Download progress reports to the global center (as in the real app shell), so mount it
+          here too — the install tests assert on the toast it renders. */}
+      <NotificationCenter />
     </QueryClientProvider>,
   );
 }
 
 const renderRegistries = () => renderWithRouter(<Registries />);
-const renderBrowse = () =>
-  renderWithRouter(<BrowseModal onClose={() => {}} onInstalled={() => {}} />);
+const renderBrowse = () => renderWithRouter(<BrowseModal onClose={() => {}} />);
 
 afterEach(() => {
+  notify.dismiss(); // clear any progress toasts before the next test (sonner state is module-global)
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });

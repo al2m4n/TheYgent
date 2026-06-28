@@ -9,7 +9,7 @@
 // install run THERE — theygent never sees the download (the sovereignty promise, M16 §1.2).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
 import {
   Badge,
@@ -20,7 +20,6 @@ import {
   Field,
   Input,
   Modal,
-  ProgressBar,
   Select,
   Spinner,
   Table,
@@ -28,23 +27,13 @@ import {
   Th,
 } from "../components/ui";
 import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api } from "../lib/api";
+import { formatBytes } from "../lib/format";
+import { notify, trackDownload } from "../lib/notify";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const ENGINE_LABEL: Record<string, string> = { mlx: "MLX", llamacpp: "llama.cpp", vllm: "vLLM" };
 const engineLabel = (e: string) => ENGINE_LABEL[e] ?? e;
-
-function formatBytes(n: number | null | undefined): string {
-  if (!n || n <= 0) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let v = n;
-  let i = 0;
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000;
-    i++;
-  }
-  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
-}
 
 function formatRelativeTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -61,12 +50,6 @@ function compact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1000) return `${(n / 1000).toFixed(0)}k`;
   return String(n);
-}
-
-function formatDuration(sec: number): string {
-  if (sec < 60) return `${Math.round(sec)}s`;
-  const m = Math.floor(sec / 60);
-  return m < 60 ? `${m}m ${Math.round(sec % 60)}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 function slugify(s: string): string {
@@ -121,37 +104,11 @@ const SIZE_OPTIONS = [
   { value: "large", label: "Large (>15B)" },
 ];
 
-// Active install ids, shared by the Registries page and the Browse screen. Resumes in-flight
-// downloads on mount (the jobs keep running in the plane across a page reload).
-function useInstalls() {
-  const [installs, setInstalls] = useState<string[]>([]);
-  useEffect(() => {
-    let active = true;
-    api
-      .listDownloads()
-      .then((jobs) => {
-        if (!active) return;
-        const live = jobs
-          .filter((j) => j.status === "downloading" || j.status === "registering")
-          .map((j) => j.id);
-        if (live.length) setInstalls((prev) => Array.from(new Set([...live, ...prev])));
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
-  return {
-    installs,
-    add: (id: string) => setInstalls((x) => [id, ...x]),
-    dismiss: (id: string) => setInstalls((x) => x.filter((i) => i !== id)),
-  };
-}
-
 // ── the Registries page: installed models + an Add flow ──────────────────────
+// Install progress no longer lives here — it's reported to the global NotificationCenter
+// (bottom-right, persists across navigation). Starting an install just spawns a toast.
 
 export function Registries() {
-  const { installs, add, dismiss } = useInstalls();
   const [adding, setAdding] = useState(false);
   const [browsing, setBrowsing] = useState(false);
 
@@ -168,33 +125,21 @@ export function Registries() {
       </div>
 
       {adding && (
-        <AddModelPanel
-          onClose={() => setAdding(false)}
-          onInstalled={add}
-          onBrowse={() => setBrowsing(true)}
-        />
-      )}
-
-      {installs.length > 0 && (
-        <div className="mb-4">
-          <DownloadsTray ids={installs} onDismiss={dismiss} />
-        </div>
+        <AddModelPanel onClose={() => setAdding(false)} onBrowse={() => setBrowsing(true)} />
       )}
 
       <InstalledPanel />
 
-      {browsing && <BrowseModal onClose={() => setBrowsing(false)} onInstalled={add} />}
+      {browsing && <BrowseModal onClose={() => setBrowsing(false)} />}
     </div>
   );
 }
 
 function AddModelPanel({
   onClose,
-  onInstalled,
   onBrowse,
 }: {
   onClose: () => void;
-  onInstalled: (jobId: string) => void;
   onBrowse: () => void;
 }) {
   const qc = useQueryClient();
@@ -269,13 +214,7 @@ function AddModelPanel({
               <div className="border-b border-slate-800 px-4 py-2">
                 <div className="mono truncate text-[11px] text-slate-400">{resolved}</div>
               </div>
-              <ModelDetail
-                entry={minimalEntry(resolved)}
-                onInstalled={(jobId) => {
-                  onInstalled(jobId);
-                  onClose();
-                }}
-              />
+              <ModelDetail entry={minimalEntry(resolved)} onStarted={onClose} />
             </Card>
           )}
         </div>
@@ -531,16 +470,8 @@ function ManualRegisterForm({
 // A secondary, add-on surface — it overlays the Registries page (like the editor's issues panel)
 // rather than being its own route, so the user browses, installs, and closes without leaving.
 
-export function BrowseModal({
-  onClose,
-  onInstalled,
-}: {
-  onClose: () => void;
-  onInstalled: (jobId: string) => void;
-}) {
-  // Its own tray so progress shows while browsing; it also notifies the page (onInstalled) so the
-  // install stays visible in the page's tray after the modal closes.
-  const { installs, add, dismiss } = useInstalls();
+export function BrowseModal({ onClose }: { onClose: () => void }) {
+  // Progress shows in the global NotificationCenter, so the modal stays open while you install more.
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
       <Card className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden p-0">
@@ -566,20 +497,14 @@ export function BrowseModal({
           </button>
         </div>
         <div className="space-y-4 overflow-y-auto p-5">
-          {installs.length > 0 && <DownloadsTray ids={installs} onDismiss={dismiss} />}
-          <BrowsePanel
-            onInstalled={(jobId) => {
-              add(jobId);
-              onInstalled(jobId);
-            }}
-          />
+          <BrowsePanel />
         </div>
       </Card>
     </div>
   );
 }
 
-function BrowsePanel({ onInstalled }: { onInstalled: (jobId: string) => void }) {
+function BrowsePanel() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState("trending");
@@ -699,7 +624,6 @@ function BrowsePanel({ onInstalled }: { onInstalled: (jobId: string) => void }) 
               entry={entry}
               expanded={selected === entry.ref}
               onToggle={() => setSelected((s) => (s === entry.ref ? null : entry.ref))}
-              onInstalled={onInstalled}
             />
           ))}
           {data.entries.length >= limit && (
@@ -737,12 +661,10 @@ function ModelCard({
   entry,
   expanded,
   onToggle,
-  onInstalled,
 }: {
   entry: CatalogEntry;
   expanded: boolean;
   onToggle: () => void;
-  onInstalled: (jobId: string) => void;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -779,17 +701,19 @@ function ModelCard({
           <span className="text-slate-600">{expanded ? "▲" : "▼"}</span>
         </div>
       </button>
-      {expanded && <ModelDetail entry={entry} onInstalled={onInstalled} />}
+      {expanded && <ModelDetail entry={entry} />}
     </Card>
   );
 }
 
 function ModelDetail({
   entry,
-  onInstalled,
+  onStarted,
 }: {
   entry: CatalogEntry;
-  onInstalled: (jobId: string) => void;
+  // Called when an install begins (the paste flow uses it to close the Add panel). Browse omits it
+  // so the modal stays open for installing more.
+  onStarted?: () => void;
 }) {
   const ref_ = entry.ref;
   const { data, isLoading, error } = useQuery({
@@ -843,9 +767,9 @@ function ModelDetail({
           title={data?.title ?? ref_}
           variant={installing}
           onClose={() => setInstalling(null)}
-          onInstalled={(jobId) => {
+          onStarted={() => {
             setInstalling(null);
-            onInstalled(jobId);
+            onStarted?.();
           }}
         />
       )}
@@ -884,13 +808,13 @@ function InstallDialog({
   title,
   variant,
   onClose,
-  onInstalled,
+  onStarted,
 }: {
   repo: string;
   title: string;
   variant: CatalogVariant;
   onClose: () => void;
-  onInstalled: (jobId: string) => void;
+  onStarted: () => void;
 }) {
   const suggested = useMemo(() => {
     const base = slugify(title || repo.split("/").pop() || repo);
@@ -907,7 +831,15 @@ function InstallDialog({
         variantId: variant.id,
         logicalId: logicalId.trim(),
       }),
-    onSuccess: (job) => onInstalled(job.id),
+    onSuccess: (job) => {
+      // Hand the job to the global center: a live progress card appears bottom-right and follows the
+      // user across pages. The dialog/panel then closes (onStarted).
+      trackDownload(job);
+      notify.success(`Downloading ${job.logicalId}`, {
+        description: `${repo} · ${engineLabel(variant.engine)}`,
+      });
+      onStarted();
+    },
   });
 
   return (
@@ -950,113 +882,4 @@ function InstallDialog({
   );
 }
 
-// ── Downloads tray (live progress; one polled row per active install) ──────────
-
-function DownloadsTray({ ids, onDismiss }: { ids: string[]; onDismiss: (id: string) => void }) {
-  return (
-    <Card className="space-y-2 p-3">
-      <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Downloads</h2>
-      {ids.map((id) => (
-        <DownloadRow key={id} id={id} onDismiss={() => onDismiss(id)} />
-      ))}
-    </Card>
-  );
-}
-
-function DownloadRow({ id, onDismiss }: { id: string; onDismiss: () => void }) {
-  const qc = useQueryClient();
-  const { data } = useQuery({
-    queryKey: ["download", id],
-    queryFn: () => api.getDownload(id),
-    refetchInterval: (q) => {
-      const s = q.state.data?.status;
-      return s === "done" || s === "error" || s === "cancelled" ? false : 750;
-    },
-  });
-  const cancel = useMutation({
-    mutationFn: () => api.cancelDownload(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["download", id] }),
-  });
-
-  // Live download rate from successive byte samples → speed + ETA.
-  const sample = useRef<{ bytes: number; t: number } | null>(null);
-  const [rate, setRate] = useState<number | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sample only on a byte change
-  useEffect(() => {
-    if (!data) return;
-    const now = Date.now();
-    const prev = sample.current;
-    if (prev && data.doneBytes > prev.bytes && now > prev.t) {
-      setRate((data.doneBytes - prev.bytes) / ((now - prev.t) / 1000));
-    }
-    sample.current = { bytes: data.doneBytes, t: now };
-  }, [data?.doneBytes]);
-
-  // When an install completes, the new model appears under Installed → refresh those queries once.
-  useEffect(() => {
-    if (data?.status === "done") {
-      qc.invalidateQueries({ queryKey: ["models"] });
-      qc.invalidateQueries({ queryKey: ["engines"] });
-    }
-  }, [data?.status, qc]);
-
-  if (!data) return null;
-  const done = data.status === "done";
-  const errored = data.status === "error";
-  const cancelled = data.status === "cancelled";
-  const active = !done && !errored && !cancelled;
-  const eta =
-    active && rate && rate > 0 && data.totalBytes
-      ? (data.totalBytes - data.doneBytes) / rate
-      : null;
-
-  let footer = `${formatBytes(data.doneBytes)} / ${formatBytes(data.totalBytes)}`;
-  if (active && rate && rate > 0) {
-    footer += ` · ${formatBytes(rate)}/s`;
-    if (eta && eta > 0) footer += ` · ~${formatDuration(eta)} left`;
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <span className="mono truncate text-slate-200">{data.logicalId}</span>
-        <div className="flex shrink-0 items-center gap-2">
-          <Badge tone={errored || cancelled ? "red" : done ? "green" : "blue"}>{data.status}</Badge>
-          {active && (
-            <button
-              type="button"
-              onClick={() => cancel.mutate()}
-              disabled={cancel.isPending}
-              className="text-slate-500 hover:text-rose-300"
-            >
-              cancel
-            </button>
-          )}
-          {!active && (
-            <button
-              type="button"
-              onClick={onDismiss}
-              className="text-slate-500 hover:text-slate-300"
-            >
-              ✕
-            </button>
-          )}
-        </div>
-      </div>
-      {errored ? (
-        <p className="text-[11px] text-rose-400">{data.error}</p>
-      ) : cancelled ? (
-        <p className="text-[11px] text-slate-500">Cancelled.</p>
-      ) : (
-        <>
-          <ProgressBar
-            value={data.doneBytes}
-            max={data.totalBytes}
-            indeterminate={!data.totalBytes && !done}
-          />
-          <p className="text-right text-[11px] text-slate-500">{done ? "Installed ✓" : footer}</p>
-        </>
-      )}
-    </div>
-  );
-}
+// (Live download progress now renders in the global NotificationCenter — see lib/notify.tsx.)

@@ -109,12 +109,19 @@ def _edge(eid: str, source: str, sh: str, target: str, th: str = "in") -> dict:
 
 
 def _doc(nodes: list[dict], edges: list[dict], *, models: dict | None = None) -> dict[str, Any]:
+    # Deep-copy ``models``: the shared constructors below pass module-level dicts (``_DEFAULT_MODEL``
+    # / ``_VISION_MODEL``) by reference, and tests mutate the returned IR in place (e.g. setting an
+    # engine-name binding — ``doc["models"]["default"]["model"] = "mlx"``). Without the copy that
+    # mutation leaks into the module-level dict and poisons every later ``llm_ir``/``agent_ir`` call,
+    # so a structurally-valid graph is wrongly rejected with ``engine_name_not_allowed`` depending on
+    # test order. Honors this module's contract: "a fresh deep copy each call ... without disturbing
+    # another".
     return {
         "schemaVersion": "1.0",
         "id": "agt_m6_test",
         "name": "m6-test",
         "version": "0.1.0",
-        "models": models or {},
+        "models": copy.deepcopy(models) if models else {},
         "tools": {},
         "nodes": nodes,
         "edges": edges,
