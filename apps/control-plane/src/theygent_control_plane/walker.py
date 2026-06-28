@@ -465,13 +465,38 @@ def _render_template(content: str, ports: _PortInputs, node_id: str) -> str:
     return _TEMPLATE_TOKEN.sub(_sub, content)
 
 
-def _render_messages(node: Node, config: LlmConfig, ports: _PortInputs) -> list[dict[str, str]]:
+def _render_content(content: Any, ports: _PortInputs, node_id: str) -> Any:
+    """Render one ``messages`` ``content`` against the port map. A plain string is rendered inline
+    through the ``$in`` template (the pre-M20 path, unchanged). A list is the M20 multimodal form:
+    each ``text`` part's ``text`` and each ``image_url`` part's ``url`` are ``$in``-templatable, so
+    the image can come from a graph in-port (``$in.image``). The parts are emitted as plain
+    OpenAI-shaped dicts (gateway/LiteLLM forward them verbatim); ``detail`` is included only when
+    set, so a clean OpenAI ``image_url`` reaches the wire (no ``detail: null`` for a server)."""
+    if isinstance(content, str):
+        return _render_template(content, ports, node_id)
+    rendered: list[dict[str, Any]] = []
+    for part in content:
+        if part.type == "text":
+            rendered.append({"type": "text", "text": _render_template(part.text, ports, node_id)})
+        else:  # image_url part (the discriminated union has only these two members)
+            image_url: dict[str, Any] = {
+                "url": _render_template(part.image_url.url, ports, node_id)
+            }
+            if part.image_url.detail is not None:
+                image_url["detail"] = part.image_url.detail
+            rendered.append({"type": "image_url", "image_url": image_url})
+    return rendered
+
+
+def _render_messages(node: Node, config: LlmConfig, ports: _PortInputs) -> list[dict[str, Any]]:
     """Render every ``messages`` content field through the port-addressed ``$in`` template (m10.md
     §1.2). One llm node can now compose several upstreams in one prompt — ``$in.file`` AND
-    ``$in.question`` — because the token addresses the node's named in-ports, not a single value."""
+    ``$in.question`` — because the token addresses the node's named in-ports, not a single value.
+    M20: a ``content`` may also be a list of multimodal parts (text + image_url) — see
+    ``_render_content`` — so a graph drives a vision model; the template applies in each part."""
 
     return [
-        {"role": msg.role, "content": _render_template(msg.content, ports, node.id)}
+        {"role": msg.role, "content": _render_content(msg.content, ports, node.id)}
         for msg in config.messages
     ]
 
@@ -528,7 +553,7 @@ async def execute_llm(
     *,
     model_id: str,
     params: dict[str, Any],
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     extra_headers: Mapping[str, str],
     on_delta: Any | None = None,
 ) -> LlmActivityResult:

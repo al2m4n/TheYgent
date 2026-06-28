@@ -35,7 +35,7 @@ from _durable import (
     side_effect_entered,
 )
 from _fake_inference import FULL_MESSAGE, FakeInference
-from _ir import _doc, _edge, _node, trivial_ir
+from _ir import _doc, _edge, _node, trivial_ir, vision_llm_ir
 from fastapi.testclient import TestClient
 from theygent_control_plane import db
 from theygent_control_plane.app import create_app
@@ -161,6 +161,47 @@ async def test_durable_run_matches_the_walker(pg_url: str) -> None:
                 == content_hash(parse_document(ir))
             )
             assert row.completed_at is not None
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
+async def test_durable_multimodal_content_survives_the_journal(pg_url: str) -> None:
+    # M20 cross-plane follow-up on the durable path: the rendered ``messages`` are a DBOS step
+    # argument, so a multimodal content (text + image_url) is serialized into the journal and handed
+    # to the gateway from there. Prove the image block survives that round-trip unchanged AND that
+    # the image enters from the run input via ``$in`` inside the image part — a vision agent on a
+    # durable graph. (The interactive parity for the same shape lives in test_vision_content.py.)
+    await reset_dbos_schema(pg_url)
+    image = "https://example.com/cat.png"
+    ir = vision_llm_ir("Describe the image.", "$in")
+    ir["id"] = "agt_vision_durable"
+    with FakeInference() as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": aid, "version": ver, "content_hash": None}, image
+            )
+            durable = await handle.get_result()
+            assert durable["status"] == "completed"
+            # The image content block crossed the wire VERBATIM after a trip through the DBOS
+            # journal, with ``$in`` substituted to the run input — the multimodal payload survives.
+            assert fake.captured["messages"] == [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Describe the image."},
+                        {"type": "image_url", "image_url": {"url": image}},
+                    ],
+                }
+            ]
+            assert fake.captured["model"] == "qwen2-vl-vision"
         finally:
             rt.shutdown()
             await gw.aclose()

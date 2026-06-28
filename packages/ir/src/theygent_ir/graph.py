@@ -282,9 +282,58 @@ class IRDocument(_Wire):
 # ── per-type config schemas (§8.7 step 3, scoped to M5's three types) ─────────
 
 
+# ── multimodal message content (M20 cross-plane follow-up) ────────────────────
+#
+# M20 made the inference plane serve vision locally (mlx_vlm.server on /v1/chat/completions). To
+# DRIVE a vision agent from a graph, an ``llm`` node's message ``content`` must carry an image, not
+# just text. These models mirror the OpenAI chat content-part shape: a ``content`` is EITHER a plain
+# string (pre-M20 — unchanged) OR a list of parts, each a ``text`` or ``image_url`` block. A part's
+# text and an image's url are both ``$in``-templatable, so the image enters from a graph in-port
+# (``$in.image``) rather than being hardcoded — the whole point of "drive a vision agent from a
+# graph". LiteLLM already forwards ``image_url`` parts, so the control-plane threads them through
+# unchanged (m20.md follow-up).
+
+
+class _TextContentPart(_Wire):
+    """An OpenAI ``text`` content part. ``text`` is rendered through the same ``$in`` template
+    language as a plain-string ``content`` (so a part can still compose an upstream value)."""
+
+    type: Literal["text"]
+    text: str
+
+
+class _ImageUrl(_Wire):
+    """The ``image_url`` payload of an image content part (OpenAI shape). ``url`` is an http(s) URL
+    or a ``data:`` URI (base64-inline); it is ``$in``-templatable so the image can come from a graph
+    in-port. ``detail`` is OpenAI's optional fidelity hint (``low``/``high``/``auto``)."""
+
+    url: str
+    detail: str | None = None
+
+
+class _ImageContentPart(_Wire):
+    """An OpenAI ``image_url`` content part — the block that carries a vision input."""
+
+    type: Literal["image_url"]
+    image_url: _ImageUrl
+
+
+#: One block of a multimodal message ``content`` (M20). Discriminated on ``type`` so an unknown
+#: block fails loudly (``_Wire`` forbids extra keys) rather than being silently dropped.
+_ContentPart = Annotated[_TextContentPart | _ImageContentPart, Field(discriminator="type")]
+
+
 class _Message(_Wire):
+    # M20 cross-plane follow-up: ``content`` is EITHER a plain string (the pre-M20 shape, unchanged)
+    # OR a list of OpenAI content parts (text + image_url) so a vision agent can carry an image. The
+    # union is backward-compatible by construction: a string validates as ``str`` and serializes
+    # byte-for-byte as before, so a pre-M20 IR's ``contentHash`` is UNMOVED (the canonical dump is
+    # identical — contenthash.py decision D2). A list ``content`` is the new multimodal form. Only a
+    # list ``content`` changes the hash; a string does not — so ``schemaVersion`` is NOT bumped
+    # (the addition is purely additive + back-compat: name the extension, don't break the frozen
+    # surface).
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: str | list[_ContentPart]
 
 
 class LlmConfig(_Wire):
@@ -294,7 +343,13 @@ class LlmConfig(_Wire):
     (§8.5 / m10.md §1.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named
     in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown
     port or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,
-    renamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name — see m10.md.)"""
+    renamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name — see m10.md.)
+
+    M20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +
+    image_url), not only a string, so a graph can drive a vision model (mlx_vlm on
+    ``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,
+    so an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and
+    hashes identically (see ``_Message``)."""
 
     model: str
     messages: list[_Message]

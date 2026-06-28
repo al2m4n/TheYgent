@@ -680,3 +680,81 @@ def test_port_role_is_hashed_content() -> None:
     control = copy.deepcopy(base)
     control["nodes"][1]["ports"]["in"][0]["role"] = "control"
     assert content_hash(parse_document(control)) != h
+
+
+# ── M20 cross-plane follow-up: multimodal message content (text + image_url) ──────────────────────
+# An ``llm`` node's message ``content`` may now be a list of OpenAI content parts so a graph can
+# drive a vision model. The load-bearing invariant is backward compatibility: a plain-string
+# ``content`` must hash and serialize byte-for-byte as before, so a pre-M20 agent never re-versions.
+
+# The hashes a STRING-content graph produced *before* the union was added — recorded here so the
+# back-compat guarantee is pinned against a concrete value, not just self-consistency. If the union
+# ever silently re-canonicalizes a string content, these constants break.
+_PRE_M20_TRIVIAL_HASH = "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
+
+
+def _with_content(content: object) -> dict:
+    """The trivial graph with the llm node's single message ``content`` replaced."""
+    doc = _trivial()
+    doc["nodes"][1]["config"]["messages"] = [{"role": "user", "content": content}]
+    return doc
+
+
+def test_string_content_hashes_identically_to_pre_m20() -> None:
+    # The whole back-compat claim in one assert: a string content yields the EXACT hash it did
+    # before ``content`` became a union (no silent re-canonicalization → no spurious re-version).
+    assert content_hash(parse_document(_trivial())) == _PRE_M20_TRIVIAL_HASH
+
+
+def test_string_content_still_dumps_as_a_bare_string() -> None:
+    # The union must not wrap a string in a list/object — the canonical dump (what the hash runs
+    # over, and what the gateway receives) stays a plain string.
+    doc = parse_document(_trivial())
+    msg = doc.model_dump(mode="json", by_alias=True)["nodes"][1]["config"]["messages"][0]
+    assert msg["content"] == "$in"
+    assert isinstance(msg["content"], str)
+
+
+def test_list_content_validates_and_round_trips() -> None:
+    # The new multimodal form: a text part + an image_url part (with the optional ``detail`` hint).
+    content = [
+        {"type": "text", "text": "Describe: $in"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA", "detail": "low"}},
+    ]
+    doc = parse_document(_with_content(content))
+    validate_graph(doc)  # config validation lives here (node.config is opaque to parse_document)
+    dumped = doc.model_dump(mode="json", by_alias=True)["nodes"][1]["config"]["messages"][0]
+    assert dumped["content"] == content  # parts round-trip verbatim (incl. ``detail``)
+
+
+def test_list_content_omits_detail_when_unset() -> None:
+    # ``detail`` defaults to None; an image part without it round-trips without inventing the key
+    # (so the wire image_url stays a clean OpenAI shape after the walker drops the None).
+    content = [{"type": "image_url", "image_url": {"url": "https://ex.com/c.png"}}]
+    doc = parse_document(_with_content(content))
+    validate_graph(doc)
+    image = doc.nodes[1].config["messages"][0]["content"][0]["image_url"]
+    assert "detail" not in image or image.get("detail") is None
+
+
+def test_list_content_changes_the_hash() -> None:
+    # Adding an image is a real content change → a new contentHash (a vision agent is a new version
+    # of a text agent), while string content is unchanged (the back-compat seam above).
+    assert (
+        content_hash(parse_document(_with_content([{"type": "text", "text": "$in"}])))
+        != _PRE_M20_TRIVIAL_HASH
+    )
+
+
+def test_unknown_content_part_type_rejected() -> None:
+    # The discriminated union fails loudly on an unknown block type — no silently-dropped content.
+    doc = parse_document(_with_content([{"type": "video", "url": "x"}]))
+    with pytest.raises(GraphValidationError, match="invalid config"):
+        validate_graph(doc)
+
+
+def test_content_part_rejects_extra_keys() -> None:
+    # ``_Wire`` forbids extra keys, so a typo'd field on a known part is a loud error, not ignored.
+    doc = parse_document(_with_content([{"type": "text", "text": "hi", "bogus": 1}]))
+    with pytest.raises(GraphValidationError, match="invalid config"):
+        validate_graph(doc)
