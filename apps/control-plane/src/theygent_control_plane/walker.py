@@ -35,6 +35,7 @@ and the determinism boundary (§8.1) is unmoved — multi-input is binding + add
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import json
@@ -47,12 +48,14 @@ from typing import Any
 import httpx
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
+    BuiltinTool,
     Edge,
     GuardrailConfig,
     GuardrailRule,
     HttpTool,
     IRDocument,
     LlmConfig,
+    McpTool,
     McpToolConfig,
     Node,
     RouterConfig,
@@ -516,36 +519,104 @@ def _render_messages(node: Node, config: LlmConfig, ports: _PortInputs) -> list[
 # I/O (m13-dbos.md §3 payload discipline).
 
 
-def parse_chunk(chunk: Any) -> tuple[str | None, str | None, str | None]:
-    """The one streaming-chunk parser shared by the interactive ``_walk_llm`` generator and the
-    durable ``execute_llm`` body: ``(reasoning, content, finish_reason)`` for one upstream chunk
-    (any may be ``None``). A reasoning model emits ``reasoning_content`` (thinking) before
-    ``content`` (the answer); they are kept distinct everywhere (m9.md reasoning split)."""
+@dataclass(frozen=True)
+class ToolCall:
+    """One assembled tool call the model emitted (M21) — the OpenAI ``function`` shape after the
+    streamed fragments are merged. ``name`` is a key in ``ir.tools`` (or a directly-registered
+    builtin); ``arguments`` is the parsed function arguments — the ``$in`` substitution dict for an
+    http tool, the call args for a builtin/mcp tool (m21.md §6 Q3)."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ChunkDelta:
+    """One parsed streaming chunk. M21 extends the M9 reasoning/content split with ``tool_calls`` —
+    the raw per-chunk ``delta.tool_calls`` fragment list (each {index, id?, function:{name?,
+    arguments?}}). A non-tool chunk has ``tool_calls=None`` — byte-identical to pre-M21."""
+
+    reasoning: str | None
+    content: str | None
+    finish_reason: str | None
+    tool_calls: list[Any] | None = None
+
+
+def parse_chunk(chunk: Any) -> ChunkDelta:
+    """The one streaming-chunk parser the ``execute_llm`` body uses (and, via it, both runtimes): a
+    reasoning model emits ``reasoning_content`` (thinking) before ``content`` (the answer), kept
+    distinct (m9.md reasoning split); M21 also surfaces ``tool_calls`` for the loop."""
 
     if not chunk.choices:
-        return None, None, None
+        return ChunkDelta(None, None, None)
     choice = chunk.choices[0]
     finish_reason = choice.finish_reason
     delta = choice.delta
     if delta is None:
-        return None, None, finish_reason
-    return (
-        getattr(delta, "reasoning_content", None),
-        getattr(delta, "content", None),
-        finish_reason,
+        return ChunkDelta(None, None, finish_reason)
+    return ChunkDelta(
+        reasoning=getattr(delta, "reasoning_content", None),
+        content=getattr(delta, "content", None),
+        finish_reason=finish_reason,
+        tool_calls=getattr(delta, "tool_calls", None),
     )
+
+
+def _accumulate_tool_calls(acc: dict[int, dict[str, Any]], fragments: list[Any]) -> None:
+    """Merge a chunk's streamed ``tool_calls`` fragments into ``acc`` keyed by index (M21): the id +
+    function name arrive once, the JSON ``arguments`` string streams in pieces and is concatenated.
+    Tolerates BOTH the streamed-fragment shape AND a whole tool_calls list on a terminal message
+    (then each 'fragment' already carries the full call) — [[prefer-what-real-servers-return]]."""
+
+    for frag in fragments or []:
+        idx = getattr(frag, "index", None)
+        if idx is None:
+            idx = len(acc)  # a terminal whole-list shape may omit index → append in arrival order
+        slot = acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+        fid = getattr(frag, "id", None)
+        if fid:
+            slot["id"] = fid
+        fn = getattr(frag, "function", None)
+        if fn is not None:
+            name = getattr(fn, "name", None)
+            if name:
+                slot["name"] = name
+            args = getattr(fn, "arguments", None)
+            if args:
+                slot["arguments"] += args
+
+
+def _finalize_tool_calls(acc: dict[int, dict[str, Any]]) -> list[ToolCall]:
+    """Turn the merged fragment map into ``ToolCall``s, parsing each function ``arguments`` JSON
+    string into a dict (an empty/unparseable arguments → ``{}``, so a no-arg tool still calls)."""
+
+    calls: list[ToolCall] = []
+    for idx, slot in sorted(acc.items()):
+        if not slot["name"]:
+            continue  # a fragment with no resolved name is not a usable call
+        try:
+            parsed = json.loads(slot["arguments"]) if slot["arguments"].strip() else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+        calls.append(ToolCall(id=slot["id"] or f"call_{idx}", name=slot["name"], arguments=parsed))
+    return calls
 
 
 @dataclass(frozen=True)
 class LlmActivityResult:
     """The serializable result of an ``llm`` activity (m13-dbos.md §2/§6): the assembled answer
-    (the only thing journaled), the finish reason, and whether the model truncated to empty (spent
-    its whole budget thinking — the m9.md §2.4 reason). Tokens are a non-durable side-channel that
-    already streamed during execution; this return value is the durable record."""
+    (the only thing journaled), the finish reason, whether the model truncated to empty (the m9.md
+    §2.4 reason), and — M21 — any ``tool_calls`` the model emitted this turn (empty when none).
+    Tokens are a non-durable side-channel that already streamed; this return value is the durable
+    record, so a replayed step re-derives the same answer + tool calls without re-executing (§6)."""
 
     output: str
     finish_reason: str | None
     truncated_empty: bool
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 async def execute_llm(
@@ -556,33 +627,47 @@ async def execute_llm(
     messages: list[dict[str, Any]],
     extra_headers: Mapping[str, str],
     on_delta: Any | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: Any = None,
 ) -> LlmActivityResult:
-    """Run one ``llm`` activity to completion, assembling the answer (m13-dbos.md §2). ``on_delta``
-    (``(content: str, kind: str) -> None``, optional) receives each token as a **side effect** —
-    the SSE relay / durable delta bus (§6) — while only ``content`` accumulates into the returned
-    output. A pre-stream 503/404 raises from ``open_stream`` (the caller surfaces a clean status);
-    a mid-stream inference death raises (→ failed run). The body is identical to the M5 walker's
-    ``llm`` lowering; the durable step wraps THIS, so a journaled+replayed step is not re-executed
-    and tokens are not regenerated/re-streamed (§6)."""
+    """Run ONE ``llm`` model turn to completion, assembling the answer + any tool calls (m13-dbos.md
+    §2; M21). ``on_delta`` (``(piece, kind)``) streams tokens as a side effect (the SSE relay /
+    durable delta bus, §6) while only ``content`` accumulates into the output. ``tools`` /
+    ``tool_choice`` offer the model functions to call; streamed ``tool_calls`` fragments are merged
+    into the returned ``tool_calls``. This is ONE turn — it does NOT loop; the loop (execute tools →
+    feed results back → call again) lives in the caller (the walker / durable compiler) so each turn
+    stays a journalable step (m21.md §2). A pre-stream 503/404 raises from ``open_stream``; a
+    mid-stream death raises (→ failed run)."""
 
     upstream = await gateway.open_stream(
-        model=model_id, messages=messages, params=params, extra_headers=extra_headers
+        model=model_id,
+        messages=messages,
+        params=params,
+        extra_headers=extra_headers,
+        tools=tools,
+        tool_choice=tool_choice,
     )
     output = ""
     finish_reason: str | None = None
+    tool_acc: dict[int, dict[str, Any]] = {}
     async for chunk in upstream:
-        reasoning, content, fr = parse_chunk(chunk)
-        if fr:
-            finish_reason = fr
-        if reasoning and on_delta is not None:
-            on_delta(reasoning, "reasoning")
-        if content:
-            output += content
+        parsed = parse_chunk(chunk)
+        if parsed.finish_reason:
+            finish_reason = parsed.finish_reason
+        if parsed.reasoning and on_delta is not None:
+            on_delta(parsed.reasoning, "reasoning")
+        if parsed.content:
+            output += parsed.content
             if on_delta is not None:
-                on_delta(content, "content")
-    truncated_empty = finish_reason == "length" and not output.strip()
+                on_delta(parsed.content, "content")
+        if parsed.tool_calls:
+            _accumulate_tool_calls(tool_acc, parsed.tool_calls)
+    truncated_empty = finish_reason == "length" and not output.strip() and not tool_acc
     return LlmActivityResult(
-        output=output, finish_reason=finish_reason, truncated_empty=truncated_empty
+        output=output,
+        finish_reason=finish_reason,
+        truncated_empty=truncated_empty,
+        tool_calls=tuple(_finalize_tool_calls(tool_acc)),
     )
 
 
@@ -1055,6 +1140,151 @@ async def run_http_tool(
         idempotency_key=call.idempotency_key,
         timeout_s=call.timeout,
     )
+
+
+# ── M21 autonomous tool-calling: function schemas + per-call dispatch ────────────────────────────
+
+
+def _to_openai_tool_choice(tool_choice: Any) -> Any:
+    """Lower the IR ``tool_choice`` to the OpenAI wire value: ``auto``/``none``/``required`` pass
+    through; a named choice (a ``_NamedToolChoice`` model) becomes ``{type, function:{name}}``."""
+    if isinstance(tool_choice, str):
+        return tool_choice
+    if hasattr(tool_choice, "model_dump"):
+        return tool_choice.model_dump(by_alias=True)
+    return tool_choice
+
+
+def _fn_schema(
+    name: str, description: str | None, parameters: dict[str, Any] | None
+) -> dict[str, Any]:
+    """One OpenAI function-tool schema. ``name`` is the ir.tools key the model calls (so a tool_call
+    maps straight back to its binding); description + JSON-Schema ``parameters`` steer the model."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description or "",
+            "parameters": parameters or {"type": "object", "properties": {}},
+        },
+    }
+
+
+async def build_tool_schemas(
+    ir: IRDocument, tool_keys: list[str], *, registry: ToolRegistry, mcp: McpManager
+) -> list[dict[str, Any]]:
+    """Build the OpenAI ``tools`` array the model sees from an llm node's ``tools`` keys (M21). The
+    function NAME is the ir.tools key (dispatch maps a tool_call back to its binding); description +
+    parameters come from the self-describing binding — an http binding carries them directly, an mcp
+    binding from the server's cached ``list_tools`` descriptor, a builtin from the registry's
+    hand-authored schema (m21.md §6 Q2). A key with no resolvable schema is skipped."""
+
+    schemas: list[dict[str, Any]] = []
+    for key in tool_keys:
+        binding = ir.tools.get(key)
+        if isinstance(binding, HttpTool):
+            schemas.append(_fn_schema(key, binding.description, binding.parameter_schema))
+        elif isinstance(binding, BuiltinTool):
+            meta = registry.schema(binding.ref)
+            if meta is not None:
+                schemas.append(_fn_schema(key, meta[0], meta[1]))
+        elif isinstance(binding, McpTool) and binding.server:
+            with contextlib.suppress(Exception):  # server unreachable → skip (best-effort)
+                for d in await mcp.list_tools(binding.server):
+                    if d.name == binding.tool:
+                        schemas.append(_fn_schema(key, d.description, d.input_schema))
+                        break
+        elif binding is None and key in registry:  # a directly-registered builtin (echo/http_fetch)
+            meta = registry.schema(key)
+            if meta is not None:
+                schemas.append(_fn_schema(key, meta[0], meta[1]))
+    return schemas
+
+
+def tool_result_message(call: ToolCall, outcome: ActivityOutcome) -> dict[str, Any]:
+    """The ``{role: tool}`` message fed back to the model after a tool call (M21): the tool's result
+    on success, or its actionable error on failure (the M6/M7 'tool error is structured output'
+    contract — a failed tool is NOT a run failure; the model sees the error and can recover)."""
+    return {"role": "tool", "tool_call_id": call.id, "content": _stringify(outcome.value)}
+
+
+def assistant_tool_calls_message(calls: list[ToolCall]) -> dict[str, Any]:
+    """The assistant turn that requested the tool calls — appended to the transcript before the tool
+    results so the next model turn sees its own request + the answers (the OpenAI loop shape)."""
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": c.id,
+                "type": "function",
+                "function": {"name": c.name, "arguments": json.dumps(c.arguments)},
+            }
+            for c in calls
+        ],
+    }
+
+
+async def execute_tool_call(
+    ir: IRDocument,
+    call: ToolCall,
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None,
+    run_id: str,
+    node_id: str,
+    idempotency_suffix: str = "",
+) -> ActivityOutcome:
+    """Execute ONE model-emitted tool call by dispatching to the EXISTING executor for its binding
+    (M21) — no new tool machinery. ``call.name`` is an ir.tools key (or a directly-registered
+    builtin); ``call.arguments`` is the model's args. For an http tool the args ARE the ``$in``
+    source (m21.md §6 Q3): the binding's url/body slots are filled from them. ok/err is the M6/M7
+    contract — a tool error is RETURNED, not raised, so the loop feeds it back to the model. The
+    ``idempotency_suffix`` (the call id / iteration) is appended to the http idempotency key so a
+    write tool called twice in one loop under at-least-once (D9) doesn't collide."""
+
+    binding = ir.tools.get(call.name)
+    if binding is None:
+        if call.name in registry:  # a directly-registered builtin (echo / http_fetch)
+            return await execute_tool(registry, call.name, call.arguments)
+        return ActivityOutcome(ok=False, value=f"unknown tool {call.name!r}")
+    if isinstance(binding, BuiltinTool):
+        return await execute_tool(registry, binding.ref, call.arguments)
+    if isinstance(binding, McpTool):
+        if binding.server:
+            return await execute_mcp_tool(mcp, binding.server, binding.tool, call.arguments)
+        conn = await tool_auth(binding.connection or "") if tool_auth is not None else None
+        if conn is None:
+            return ActivityOutcome(
+                ok=False, value=f"mcp connection {binding.connection!r} not found or disabled"
+            )
+        cfg = mcp_config_from_connection(conn)
+        return await execute_mcp_connection_tool(
+            mcp, binding.connection or "", cfg, binding.tool, call.arguments
+        )
+    if isinstance(binding, HttpTool):
+        props = frozenset((binding.parameter_schema or {}).get("properties", {}).keys())
+        ports = _PortInputs(
+            values=call.arguments, declared=props | frozenset(call.arguments.keys())
+        )
+        idem = binding.idempotency_key
+        if idem and idempotency_suffix:
+            idem = f"{idem}-{idempotency_suffix}"
+        config = ToolConfig(
+            tool=call.name,
+            method=binding.method,
+            url_template=binding.url_template,
+            body_template=binding.body_template,
+            headers=binding.headers,
+            response_map=binding.response_map,
+            idempotency_key=idem,
+            timeout_seconds=binding.timeout_seconds,
+        )
+        return await run_http_tool(
+            binding, config, ports, node_id=node_id, run_id=run_id, resolver=tool_auth
+        )
+    return ActivityOutcome(ok=False, value=f"tool {call.name!r}: unsupported binding")
 
 
 # ── M19 §2.9: the transform node (deterministic reshape — NOT a code sandbox) ────────────────────
@@ -1576,40 +1806,125 @@ async def _walk_llm(
     # prompt may compose several in-ports (M10) — $in.file AND $in.question — via the port map.
     messages = [*ctx.prior_messages, *_render_messages(node, config, ports)]
 
-    # M17 §2: the actual generation is a `model.generate` phase span (a child of the llm node span),
-    # so the waterfall can later split it from a `model.load`/`engine.warmup` cold-start band (the
-    # §10 demo). It carries timing + the GenAI-semconv scalars (model, ttft, finish_reason) — no
-    # payloads (§1.3). A no-op CM when telemetry is unwired.
+    # M21 — autonomous tool-calling. If the node offers tools, build the OpenAI function schemas
+    # (function names == ir.tools keys, so a tool_call maps straight back to a binding) + the
+    # tool_choice ONCE, then run a BOUNDED loop: stream one model turn (the shared `execute_llm`
+    # body — M13 §2/D4 / the parity refactor m21.md §6 Q1), and if it emits tool_calls, execute each
+    # via the EXISTING executors, append the assistant request + each {role:tool} result, and call
+    # again — until the model answers or `maxToolIterations` is hit. With no tools this is exactly
+    # ONE turn, byte-identical to pre-M21 (test_m21_llm_parity is the golden gate). The
+    # streaming/parse body lives ONCE in `execute_llm`, wrapped here (interactive) and in the
+    # durable
+    # compiler (parity). M17 §2: each turn streams inside a `model.generate` phase span.
+    tool_schemas: list[dict[str, Any]] | None = None
+    tool_choice: Any = None
+    if config.tools:
+        tool_schemas = await build_tool_schemas(ir, config.tools, registry=ctx.tools, mcp=ctx.mcp)
+        tool_choice = _to_openai_tool_choice(config.tool_choice)
+
     gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
-    output = ""
-    finish_reason: str | None = None
     first_token_ns: int | None = None
+    final_output = ""
+    final_finish: str | None = None
+    truncated = False
+    capped = False
     async with gen_cm as gen_scope:
-        # open_stream sends the request and validates status, so a pre-stream 503/404 raises here —
-        # before any delta — letting the control-plane surface a clean status (mirrors /runs).
-        upstream = await ctx.gateway.open_stream(
-            model=model_id, messages=messages, params=params, extra_headers=ctx.extra_headers
-        )
-        async for chunk in upstream:
-            # `parse_chunk` is the one chunk parser shared with the durable `execute_llm` body (M13
-            # §2): a reasoning model emits `reasoning_content` (its thinking) before `content` (its
-            # answer). Stream the thinking as visible progress so the model doesn't look frozen, but
-            # NEVER fold it into the output — only `content` is the answer (the binding downstream).
-            reasoning, content, fr = parse_chunk(chunk)
-            if fr:
-                finish_reason = fr
-            if reasoning:
-                yield Delta(node_id=node.id, content=reasoning, kind="reasoning")
-            if content:
-                if first_token_ns is None:
-                    first_token_ns = now_ns()
-                output += content
-                yield Delta(node_id=node.id, content=content)
+        iteration = 0
+        while True:
+            # One streaming model turn, bridged from `execute_llm`'s on_delta into this generator's
+            # yields via a cooperative queue/task (so the streaming body is shared, not duplicated).
+            deltas: asyncio.Queue[Delta | None] = asyncio.Queue()
+
+            def _on_delta(content: str, kind: str, q: asyncio.Queue[Delta | None] = deltas) -> None:
+                q.put_nowait(
+                    Delta(
+                        node_id=node.id,
+                        content=content,
+                        kind="reasoning" if kind == "reasoning" else "content",
+                    )
+                )
+
+            async def _turn(q: asyncio.Queue[Delta | None] = deltas) -> LlmActivityResult:
+                # A pre-stream 503/404 or a mid-stream death raises here and re-raises at
+                # `await task` → failed run, as the inline loop did.
+                try:
+                    return await execute_llm(
+                        ctx.gateway,
+                        model_id=model_id,
+                        params=params,
+                        messages=messages,
+                        extra_headers=ctx.extra_headers,
+                        on_delta=_on_delta,
+                        tools=tool_schemas,
+                        tool_choice=tool_choice,
+                    )
+                finally:
+                    q.put_nowait(None)  # sentinel: producer done (success OR error)
+
+            task = asyncio.create_task(_turn())
+            try:
+                while True:
+                    d = await deltas.get()
+                    if d is None:
+                        break
+                    if d.kind != "reasoning" and first_token_ns is None:
+                        first_token_ns = now_ns()  # ttft = first ANSWER token (not thinking)
+                    yield d
+                turn = await task
+            finally:
+                # Consumer stopped early (client disconnect → GeneratorExit) or an error propagated:
+                # cancel the in-flight turn so the upstream stream isn't leaked (M9 interrupt rule).
+                if not task.done():
+                    task.cancel()
+                    with contextlib.suppress(BaseException):
+                        await task
+
+            final_finish = turn.finish_reason
+            # No tool calls (or the node has no tools) → this turn's answer is final.
+            if not (turn.tool_calls and config.tools):
+                final_output = turn.output
+                truncated = turn.truncated_empty
+                break
+            # Hit the cap with the model still wanting tools → stop honestly (m9 §2.4 discipline).
+            if iteration >= config.max_tool_iterations:
+                capped = True
+                final_output = turn.output
+                break
+            # Execute the requested tools, feeding the assistant request + each result back so the
+            # next turn sees them (the OpenAI loop shape). A tool error is fed back, not fatal
+            # (M6/M7).
+            messages.append(assistant_tool_calls_message(list(turn.tool_calls)))
+            for call in turn.tool_calls:
+                yield Delta(
+                    node_id=node.id, content=call.name, kind="tool_call"
+                )  # visible progress
+                # M17: each tool call is a child span under the llm node span, so the waterfall
+                # shows
+                # the autonomous loop's tool steps inside the model node (m21.md Phase 6 / §6).
+                tool_cm = (
+                    scope.child_phase(f"tool.{call.name}") if scope is not None else _null_acm()
+                )
+                async with tool_cm as tool_scope:
+                    outcome = await execute_tool_call(
+                        ir,
+                        call,
+                        registry=ctx.tools,
+                        mcp=ctx.mcp,
+                        tool_auth=ctx.tool_auth,
+                        run_id=ctx.run_id,
+                        node_id=node.id,
+                        idempotency_suffix=f"{node.id}-{iteration}-{call.id}",
+                    )
+                    if tool_scope is not None:
+                        tool_scope.set_attributes({"tool.name": call.name, "tool.ok": outcome.ok})
+                messages.append(tool_result_message(call, outcome))
+            iteration += 1
+
         # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model).
         if gen_scope is not None:
             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
-            if finish_reason is not None:
-                attrs["gen_ai.response.finish_reason"] = finish_reason
+            if final_finish is not None:
+                attrs["gen_ai.response.finish_reason"] = final_finish
             if first_token_ns is not None:
                 attrs["ttft_ms"] = round((first_token_ns - gen_scope.span.start_ns) / 1e6, 1)
             gen_scope.set_attributes(attrs)
@@ -1619,16 +1934,16 @@ async def _walk_llm(
     if scope is not None:
         scope.set_attributes({"gen_ai.request.model": model_id})
 
-    # An empty answer with finish_reason=length means the budget ran out before any content (often
-    # a reasoning model that spent it all thinking). Record it so the run is legible, not a blank.
-    if result is not None and finish_reason == "length" and not output.strip():
+    # Honest legibility (m9 §2.4): a truncated-empty answer, OR a tool loop that hit its cap without
+    # a final answer, must not bind a green blank.
+    if result is not None and (truncated or (capped and _is_blank(final_output))):
         result.truncated_empty_nodes.append(node.id)
 
-    # Activate the success handles and bind the full text, so downstream data edges pick it by
+    # Activate the success handles and bind the final text, so downstream data edges pick it by
     # ``sourceHandle`` (e.g. "ok"). An llm error raises mid-stream (failed run) — it never binds.
     live_handles[node.id] = _success_handles(node)
     for handle in live_handles[node.id]:
-        values[(node.id, handle)] = output
+        values[(node.id, handle)] = final_output
 
 
 async def _walk_tool(

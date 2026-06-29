@@ -38,6 +38,17 @@ def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
     return {k: v for k, v in params.items() if k not in _RESERVED}
 
 
+def _tool_kwargs(tools: list[dict[str, Any]] | None, tool_choice: Any) -> dict[str, Any]:
+    """The OpenAI function-calling kwargs, forwarded to ``create`` only when set (M21) — so a
+    tools-less call is byte-identical to pre-M21."""
+    out: dict[str, Any] = {}
+    if tools:
+        out["tools"] = tools
+        if tool_choice is not None:
+            out["tool_choice"] = tool_choice
+    return out
+
+
 class GatewayClient:
     """Stateless OpenAI-compatible client for one inference ``baseUrl``.
 
@@ -71,12 +82,20 @@ class GatewayClient:
         messages: list[dict[str, Any]],
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
     ) -> Any:
         """Open a streaming completion and return the async stream of chunks.
 
         The ``await`` here sends the request and validates the response status, so a
         non-200 raises now (before iteration). The caller iterates the returned stream;
         a mid-stream failure raises during iteration.
+
+        ``tools``/``tool_choice`` (M21) carry the OpenAI function-calling protocol verbatim —
+        a NAMED transport-seam extension (not buried in ``params``) so the function-calling
+        contract is explicit and type-checked. The inference plane forwards them to the engine
+        (no inference-side change); a model that ignores them simply streams content. Forwarded
+        only when set, so a tools-less call is byte-identical to pre-M21.
         """
         # The SDK's typed overloads can't model a dynamic **params splat alongside the
         # stream literal, so the checker can't pick an overload; the call is correct.
@@ -85,6 +104,7 @@ class GatewayClient:
             messages=messages,  # type: ignore[arg-type]
             stream=True,
             extra_headers=dict(extra_headers) if extra_headers else None,
+            **_tool_kwargs(tools, tool_choice),
             **_clean_params(params),
         )
 
@@ -95,13 +115,17 @@ class GatewayClient:
         messages: list[dict[str, Any]],
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: Any = None,
     ) -> ChatCompletion:
-        """Non-streaming completion — the whole answer in one object."""
+        """Non-streaming completion — the whole answer in one object. ``tools``/``tool_choice``
+        (M21) carry the OpenAI function-calling protocol; see :meth:`open_stream`."""
         return await self._client.chat.completions.create(  # ty: ignore[no-matching-overload]
             model=model,
             messages=messages,  # type: ignore[arg-type]
             stream=False,
             extra_headers=dict(extra_headers) if extra_headers else None,
+            **_tool_kwargs(tools, tool_choice),
             **_clean_params(params),
         )
 

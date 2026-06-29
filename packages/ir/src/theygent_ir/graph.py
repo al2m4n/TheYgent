@@ -24,6 +24,7 @@ control-plane, which owns the inference seam. The IR owns the *format*, not the 
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from typing import Annotated, Any, Literal
 
@@ -166,6 +167,26 @@ class HttpTool(_Wire):
     kind: Literal["http"]
     connection: str
     template: str | None = None
+    # M21 — a model-callable http tool is SELF-DESCRIBING: ``description`` + ``parameter_schema``
+    # (an OpenAI function ``parameters`` JSON-Schema) are what the model reads to decide the call.
+    # The request shape lives here too, so the binding is a COMPLETE, reusable tool the llm
+    # tool-loop invokes by reference (no wired node) — one HttpTool serves both invocation modes.
+    # Auth stays in ``connection`` (injected server-side), never a slot. All optional, so a pre-M21
+    # http binding (node-wired, M19) is unchanged; the contentHash shift on a graph that USES an
+    # http binding is the same additive typed-field evolution M19's ``Port.role`` made without a
+    # schemaVersion bump (m21.md §6 Q4). For an http tool used by an llm, the validator requires
+    # ``description`` + ``parameter_schema`` AND that the schema's top-level properties equal the
+    # ``$in.*`` slots referenced by ``url_template``/``body_template`` (m21.md §6 Q3 equivalence).
+    description: str | None = None
+    parameter_schema: dict[str, Any] | None = None
+    method: str | None = None  # GET|POST|PUT|PATCH|DELETE
+    url_template: str | None = (
+        None  # $in.<param> slots; the model fills them via function.arguments
+    )
+    body_template: Any = None  # JSON body; $in.<param> slots at any depth
+    headers: dict[str, str] = Field(default_factory=dict)  # connection adds auth headers at runtime
+    response_map: str | None = None  # optional JSONPath ($.data) to shape the tool result
+    idempotency_key: str | None = None  # §2.5 — replay-safe re-run for unsafe methods
 
 
 class McpTool(_Wire):
@@ -336,8 +357,27 @@ class _Message(_Wire):
     content: str | list[_ContentPart]
 
 
+# ── M21 tool-calling: tool_choice vocabulary (the OpenAI shape) ───────────────
+
+
+class _ToolFunctionName(_Wire):
+    name: str
+
+
+class _NamedToolChoice(_Wire):
+    """Force a specific tool — OpenAI's ``{"type":"function","function":{"name":...}}``."""
+
+    type: Literal["function"]
+    function: _ToolFunctionName
+
+
+#: ``tool_choice`` follows the OpenAI vocabulary: ``auto`` (model decides), ``none`` (never call a
+#: tool — equivalent to a plain completion), ``required`` (must call one), or a named function.
+ToolChoice = Literal["auto", "none", "required"] | _NamedToolChoice
+
+
 class LlmConfig(_Wire):
-    """``llm`` node config: a single model call, no tool loop (§8.3). ``model`` names a key in
+    """``llm`` node config. ``model`` names a key in
     ``IRDocument.models``; ``messages`` is the prompt template — content fields use the ONE
     port-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``
     (§8.5 / m10.md §1.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named
@@ -357,6 +397,18 @@ class LlmConfig(_Wire):
     # ``$in.<port>`` (a named in-port — so one llm node can compose ``$in.file`` AND
     # ``$in.question``), ``$in.<port>.<field>`` (drill into it). Unknown port / unknown token →
     # loud error (m10.md §1.2). The token lives inside the opaque content string — no schema change.
+    #
+    # M21 — autonomous tool-calling. ``tools`` lists keys into ``IRDocument.tools`` the model may
+    # call; EMPTY (the default) is a single-shot completion exactly as pre-M21 (the loop branch is
+    # taken only when ``tools`` is non-empty). ``tool_choice`` follows the OpenAI vocabulary;
+    # ``max_tool_iterations`` bounds the loop (>= 1, validated). ``Node.config`` is hashed as the
+    # opaque authored dict (not hydrated through this model), so adding these does NOT shift any
+    # llm graph's contentHash — no schemaVersion bump (m21.md §6 Q4). There is NO compile-time
+    # model-capability gate (plane-split: no inference Capabilities here) — a model that ignores
+    # ``tools`` emits no tool_calls, the loop runs zero iterations, you get plain content.
+    tools: list[str] = Field(default_factory=list)
+    tool_choice: ToolChoice = "auto"
+    max_tool_iterations: int = 8
 
 
 # M19 §2.1: the I/O modality vocabulary (DISTINCT from the model ``Modality`` in registration.py —
@@ -683,6 +735,41 @@ def parse_document(data: Any) -> IRDocument:
     return _IR_ADAPTER.validate_python(data)
 
 
+# ── M21 tool-calling: $in-slot extraction for the Q3 equivalence check ────────
+
+_IN_SLOT_RE = re.compile(r"\$in(?:\.([A-Za-z_][A-Za-z0-9_]*))?")
+
+
+def _in_slots(value: Any) -> tuple[set[str], bool]:
+    """Extract the named ``$in.<slot>`` references in an http tool template (a string, or a JSON
+    body scanned recursively over its string leaves). Returns ``(named_slots, has_whole)`` —
+    ``has_whole`` is true if a bare ``$in`` (the whole args object) appears. ``$$`` escapes ``$``
+    (M9), so it is stripped before scanning. Used to validate an http tool's slots against its
+    ``parameter_schema`` (m21.md §6 Q3)."""
+
+    named: set[str] = set()
+    saw_whole = False
+
+    def scan(v: Any) -> None:
+        nonlocal saw_whole
+        if isinstance(v, str):
+            for m in _IN_SLOT_RE.finditer(v.replace("$$", "")):
+                seg = m.group(1)
+                if seg is None:
+                    saw_whole = True
+                else:
+                    named.add(seg)
+        elif isinstance(v, dict):
+            for sub in v.values():
+                scan(sub)
+        elif isinstance(v, list):
+            for sub in v:
+                scan(sub)
+
+    scan(value)
+    return named, saw_whole
+
+
 def _expected_kind(node: Node, cfg: _Wire | None) -> NodeKind | None:
     """The ``kind`` a node MUST carry (§8.1). For most types this is the fixed ``NODE_TYPE_KIND``
     value. For a PER-INSTANCE-kind type (m19.md §1.2 — only ``guardrail`` today) it is DERIVED from
@@ -795,6 +882,64 @@ def validate_graph(ir: IRDocument) -> None:
                     f"(got {cfg.max_iterations}) — an unbounded or zero-iteration loop is "
                     "rejected (m14.md §1.3)"
                 )
+            # M21: an llm with autonomous tools (pure-IR checks only — runtime model-capability is
+            # NOT gated here, the plane-split). Empty `tools` is the pre-M21 single-shot path.
+            if isinstance(cfg, LlmConfig) and cfg.tools:
+                if cfg.max_tool_iterations < 1:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: llm `maxToolIterations` must be >= 1 "
+                        f"(got {cfg.max_tool_iterations}) — m21.md §2"
+                    )
+                if len(set(cfg.tools)) != len(cfg.tools):
+                    raise GraphValidationError(
+                        f"node {node.id!r}: duplicate key in llm `tools` {cfg.tools!r}"
+                    )
+                for tkey in cfg.tools:
+                    if tkey not in ir.tools:
+                        raise GraphValidationError(
+                            f"node {node.id!r}: llm references undeclared tool {tkey!r} "
+                            f"(declare it in the graph's `tools`)"
+                        )
+                if isinstance(cfg.tool_choice, _NamedToolChoice):
+                    forced = cfg.tool_choice.function.name
+                    if forced not in cfg.tools:
+                        raise GraphValidationError(
+                            f"node {node.id!r}: `toolChoice` names {forced!r}, which is not in "
+                            f"this node's `tools` {cfg.tools!r}"
+                        )
+                # An http tool a model can call must SELF-DESCRIBE (m21.md §0/§6 Q2) and its schema
+                # top-level properties must equal the `$in.*` slots its url/body reference (Q3): a
+                # slot with no property is unfillable, a property with no slot is dead. (MCP tools
+                # self-describe at runtime via list_tools; builtin describability is checked in the
+                # control-plane up-front, where the registry is visible.)
+                for tkey in cfg.tools:
+                    binding = ir.tools[tkey]
+                    if not isinstance(binding, HttpTool):
+                        continue
+                    if binding.description is None or binding.parameter_schema is None:
+                        raise GraphValidationError(
+                            f"node {node.id!r}: http tool {tkey!r} used by an llm must set "
+                            "`description` + `parameterSchema` (a model-callable tool "
+                            "self-describes — m21.md §0)"
+                        )
+                    props = set((binding.parameter_schema.get("properties") or {}).keys())
+                    named, saw_whole = _in_slots(binding.url_template)
+                    body_named, body_whole = _in_slots(binding.body_template)
+                    slots = named | body_named
+                    unfillable = slots - props
+                    if unfillable:
+                        raise GraphValidationError(
+                            f"node {node.id!r}: http tool {tkey!r} template references $in slot(s) "
+                            f"{sorted(unfillable)} with no matching `parameterSchema` property "
+                            "(unfillable — m21.md §6 Q3)"
+                        )
+                    dead = props - slots
+                    if dead and not (saw_whole or body_whole):
+                        raise GraphValidationError(
+                            f"node {node.id!r}: http tool {tkey!r} `parameterSchema` declares "
+                            f"propert(ies) {sorted(dead)} with no matching $in slot in the "
+                            "url/body template (dead — m21.md §6 Q3)"
+                        )
 
     # 4: edges reference existing nodes + declared handles.
     for edge in ir.edges:

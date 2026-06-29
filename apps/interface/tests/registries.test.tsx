@@ -78,6 +78,15 @@ function jsonResponse(data: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => data } as unknown as Response;
 }
 
+// Route a stubbed request by its API path, HERMETICALLY. The api client prefixes the configured
+// base URL, which a dev's `.env.local` may point at a relative proxy path (e.g. /__inf, /__cp) — so
+// the raw url can be `/__inf/admin/catalog/models` rather than `http://localhost:8081/admin/...`.
+// `new URL(relative)` throws and the `/__inf` prefix would break exact-path routing, so we tolerate a
+// relative url (dummy base) and strip the proxy prefix. Keeps the suite green regardless of env.
+function pathOf(url: string): string {
+  return new URL(url, "http://localhost").pathname.replace(/^\/__[a-z]+/, "");
+}
+
 function installMock() {
   // Records calls so we can assert the install payload + that the repo slash is NOT encoded.
   const calls: { url: string; method: string; body?: unknown }[] = [];
@@ -85,7 +94,7 @@ function installMock() {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(init.body as string) : undefined;
     calls.push({ url, method, body });
-    const path = new URL(url).pathname;
+    const path = pathOf(url);
     if (path === "/admin/catalog/models") return jsonResponse(LIST);
     if (path.startsWith("/admin/catalog/models/")) return jsonResponse(DETAIL);
     if (path === "/admin/catalog/install" && method === "POST")
@@ -184,7 +193,7 @@ describe("Browse — the hub browser", () => {
   it("engine chips: clicking one (from all-on) turns it off and narrows to the other", async () => {
     const urls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
-      const path = new URL(url).pathname;
+      const path = pathOf(url);
       if (path === "/admin/catalog/models") {
         urls.push(url);
         return jsonResponse(LIST);
@@ -219,7 +228,7 @@ describe("Browse — the hub browser", () => {
       error: null,
     });
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      const path = new URL(url).pathname;
+      const path = pathOf(url);
       const method = init?.method ?? "GET";
       if (path === "/admin/catalog/models") return jsonResponse(LIST);
       if (path.startsWith("/admin/catalog/models/")) return jsonResponse(DETAIL);
@@ -250,7 +259,7 @@ describe("Browse — the hub browser", () => {
 
   it("shows the air-gap empty state when no engine is ready", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      if (new URL(url).pathname === "/admin/catalog/models")
+      if (pathOf(url) === "/admin/catalog/models")
         return jsonResponse({ entries: [], engines: [] });
       return jsonResponse({});
     });
@@ -263,7 +272,7 @@ describe("Browse — the hub browser", () => {
 describe("Registries page — installed + add", () => {
   it("opens on installed models and probes capabilities on demand", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      const path = new URL(url).pathname;
+      const path = pathOf(url);
       if (path === "/admin/models")
         return jsonResponse({
           models: [
@@ -296,7 +305,7 @@ describe("Registries page — installed + add", () => {
 
   it("adds a model by pasting a Hugging Face id and offers a Browse link", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      const path = new URL(url).pathname;
+      const path = pathOf(url);
       if (path === "/admin/models") return jsonResponse({ models: [] });
       if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
       if (path.startsWith("/admin/catalog/models/")) return jsonResponse(DETAIL);
@@ -318,7 +327,7 @@ describe("Registries page — installed + add", () => {
 
   it("opens the hub browser in a pop-up modal (not a separate page)", async () => {
     const fetchMock = vi.fn(async (url: string) => {
-      const path = new URL(url).pathname;
+      const path = pathOf(url);
       if (path === "/admin/models") return jsonResponse({ models: [] });
       if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
       if (path === "/admin/catalog/models") return jsonResponse(LIST);

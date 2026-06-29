@@ -32,8 +32,16 @@ export type Schemaversion = string;
 export type Kind1 = "builtin";
 export type Ref = string;
 export type Connection = string;
+export type Description = string | null;
+export type Idempotencykey = string | null;
 export type Kind2 = "http";
+export type Method = string | null;
+export type Parameterschema = {
+  [k: string]: unknown;
+} | null;
+export type Responsemap = string | null;
 export type Template = string | null;
+export type Urltemplate = string | null;
 export type Connection1 = string | null;
 export type Kind3 = "mcp";
 export type Server = string | null;
@@ -163,9 +171,23 @@ export interface BuiltinTool {
  * small built-in action set; everything else is the raw http tool config on the node (§2.3).
  */
 export interface HttpTool {
+  bodyTemplate?: Bodytemplate;
   connection: Connection;
+  description?: Description;
+  headers?: Headers;
+  idempotencyKey?: Idempotencykey;
   kind: Kind2;
+  method?: Method;
+  parameterSchema?: Parameterschema;
+  responseMap?: Responsemap;
   template?: Template;
+  urlTemplate?: Urltemplate;
+}
+export interface Bodytemplate {
+  [k: string]: unknown;
+}
+export interface Headers {
+  [k: string]: string;
 }
 /**
  * An MCP tool binding (M7 + M19 §2.4). ``tool`` is the named tool the server exposes; the

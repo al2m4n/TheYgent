@@ -34,6 +34,7 @@ from typing import Any
 from dbos import DBOS, Queue, SetWorkflowID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from theygent_ir import (
+    BuiltinTool,
     GuardrailConfig,
     HttpTool,
     HumanConfig,
@@ -41,6 +42,7 @@ from theygent_ir import (
     LlmConfig,
     LoopConfig,
     MapConfig,
+    McpTool,
     McpToolConfig,
     Node,
     QuotaConfig,
@@ -71,6 +73,7 @@ from theygent_control_plane.walker import (
     _collect_in_ports,
     _io_input_snapshot,
     _io_output_snapshot,
+    _is_blank,
     _is_skipped,
     _node_span_status,
     _parse_if_json,
@@ -80,7 +83,10 @@ from theygent_control_plane.walker import (
     _resolve_ref,
     _single_in_value,
     _success_handles,
+    _to_openai_tool_choice,
+    assistant_tool_calls_message,
     build_http_call,
+    build_tool_schemas,
     evaluate_guardrail_rule,
     execute_guardrail_model,
     execute_http_tool,
@@ -101,7 +107,9 @@ from theygent_control_plane.walker import (
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
+    tool_result_message,
 )
+from theygent_control_plane.walker import ToolCall as _ToolCall
 
 from theygent_control_plane.durable.bus import DeltaBus  # isort: skip
 
@@ -245,10 +253,14 @@ async def _llm_step(
     model_id: str,
     params: dict[str, Any],
     messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None = None,
+    tool_choice: Any = None,
 ) -> dict[str, Any]:
-    """The ``llm`` activity as a durable step. Streams tokens to the in-process delta bus as a side
-    effect (§6 — non-durable), returns the assembled answer (the only journaled value). On replay
-    this body does NOT run, so tokens are not regenerated/re-streamed (D7)."""
+    """ONE ``llm`` model turn as a durable step. Streams tokens to the in-process bus as a side
+    effect (§6 — non-durable), returns the assembled answer + any ``tool_calls`` (the journaled
+    values). On replay this body does NOT run, so tokens are not regenerated/re-streamed and the
+    tool calls are re-derived from the journal, not re-requested (D7; M21 — each turn is one step so
+    the tool loop's progress is durable)."""
     res = _res()
     bus = res.bus
 
@@ -262,11 +274,16 @@ async def _llm_step(
         messages=messages,
         extra_headers={"x-theygent-run-id": run_id},
         on_delta=on_delta,
+        tools=tools,
+        tool_choice=tool_choice,
     )
     return {
         "output": out.output,
         "finish_reason": out.finish_reason,
         "truncated_empty": out.truncated_empty,
+        "tool_calls": [
+            {"id": c.id, "name": c.name, "arguments": c.arguments} for c in out.tool_calls
+        ],
     }
 
 
@@ -335,6 +352,68 @@ async def _http_step(
         timeout_s=timeout_s,
     )
     return {"ok": out.ok, "value": out.value}
+
+
+async def _durable_tool_call(
+    ir: IRDocument, call: _ToolCall, run_id: str, node_id: str, iteration: int
+) -> ActivityOutcome:
+    """Dispatch ONE model-emitted tool call to its EXISTING durable step (M21), so each call is
+    independently journaled — a crash mid-loop resumes at the first incomplete step (D9), completed
+    calls replay from the journal. Mirrors the interactive ``execute_tool_call`` but via @DBOS.step
+    bodies. Plain helper (not itself a step): it composes steps inside the workflow body."""
+    binding = ir.tools.get(call.name)
+    if binding is None:
+        if call.name in DEFAULT_REGISTRY:  # a directly-registered builtin
+            o = await _tool_step(run_id, node_id, call.name, call.arguments)
+            return ActivityOutcome(ok=o["ok"], value=o["value"])
+        return ActivityOutcome(ok=False, value=f"unknown tool {call.name!r}")
+    if isinstance(binding, BuiltinTool):
+        o = await _tool_step(run_id, node_id, binding.ref, call.arguments)
+        return ActivityOutcome(ok=o["ok"], value=o["value"])
+    if isinstance(binding, McpTool):
+        if binding.server:
+            o = await _mcp_step(run_id, node_id, binding.server, binding.tool, call.arguments)
+        else:
+            o = await _mcp_conn_step(
+                run_id, node_id, binding.connection or "", binding.tool, call.arguments
+            )
+        return ActivityOutcome(ok=o["ok"], value=o["value"])
+    if isinstance(binding, HttpTool):
+        props = frozenset((binding.parameter_schema or {}).get("properties", {}).keys())
+        ports = _PortInputs(
+            values=call.arguments, declared=props | frozenset(call.arguments.keys())
+        )
+        idem = binding.idempotency_key
+        if idem:  # D9 at-least-once: a write tool called twice in one loop mustn't collide
+            idem = f"{idem}-{node_id}-{iteration}-{call.id}"
+        cfg = ToolConfig(
+            tool=call.name,
+            method=binding.method,
+            url_template=binding.url_template,
+            body_template=binding.body_template,
+            headers=binding.headers,
+            response_map=binding.response_map,
+            idempotency_key=idem,
+            timeout_seconds=binding.timeout_seconds,
+        )
+        try:
+            hc = build_http_call(binding, cfg, ports, node_id=node_id, run_id=run_id)
+        except Exception as exc:  # template error → structured err (m6 §4)
+            return ActivityOutcome(ok=False, value=f"http tool {call.name!r}: {exc}")
+        o = await _http_step(
+            run_id,
+            node_id,
+            hc.connection_id,
+            hc.method,
+            hc.url,
+            hc.headers,
+            hc.body,
+            hc.response_map,
+            hc.idempotency_key,
+            hc.timeout,
+        )
+        return ActivityOutcome(ok=o["ok"], value=o["value"])
+    return ActivityOutcome(ok=False, value=f"tool {call.name!r}: unsupported binding")
 
 
 @DBOS.step(**_RETRY)
@@ -697,26 +776,73 @@ async def _durable_walk(
                     config = LlmConfig.model_validate(node.config)
                     model_id, params = resolve_model(ir, config)
                     messages = _render_messages(node, config, ports)
-                    # M17 §2: the journaled generation step is a `model.generate` phase span (child
-                    # of the node span), so a `model.load`/`engine.warmup` cold-start band can later
-                    # split out (the §10 demo). Carries the GenAI-semconv model/finish scalars.
+                    # M21 — the same bounded tool loop the interactive walker runs, but each model
+                    # turn is a journaled `_llm_step` and each tool call its existing journaled step
+                    # (`_durable_tool_call`), so a crash mid-loop resumes at the first incomplete
+                    # step
+                    # (D9). With no tools this is exactly one `_llm_step` — byte-identical to
+                    # pre-M21.
+                    tool_schemas = None
+                    tool_choice = None
+                    if config.tools:
+                        tool_schemas = await build_tool_schemas(
+                            ir, config.tools, registry=DEFAULT_REGISTRY, mcp=_res().mcp
+                        )
+                        tool_choice = _to_openai_tool_choice(config.tool_choice)
+                    # M17 §2: each journaled turn is a `model.generate` phase span (child of the
+                    # node
+                    # span). Carries the GenAI-semconv model/finish scalars.
                     gen_cm = (
                         scope.child_phase("model.generate") if scope is not None else _null_acm()
                     )
+                    final_output = ""
+                    final_finish: str | None = None
+                    truncated = False
+                    capped = False
                     async with gen_cm as gen_scope:
-                        res = await _llm_step(run_id, node.id, model_id, params, messages)
+                        iteration = 0
+                        while True:
+                            res = await _llm_step(
+                                run_id,
+                                node.id,
+                                model_id,
+                                params,
+                                messages,
+                                tool_schemas,
+                                tool_choice,
+                            )
+                            final_finish = res.get("finish_reason")
+                            calls = [
+                                _ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"])
+                                for c in res.get("tool_calls", [])
+                            ]
+                            if not (calls and config.tools):
+                                final_output = res["output"]
+                                truncated = res["truncated_empty"]
+                                break
+                            if iteration >= config.max_tool_iterations:
+                                capped = True
+                                final_output = res["output"]
+                                break
+                            messages.append(assistant_tool_calls_message(calls))
+                            for call in calls:
+                                outcome = await _durable_tool_call(
+                                    ir, call, run_id, node.id, iteration
+                                )
+                                messages.append(tool_result_message(call, outcome))
+                            iteration += 1
                         if gen_scope is not None:
                             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
-                            if res.get("finish_reason"):
-                                attrs["gen_ai.response.finish_reason"] = res["finish_reason"]
+                            if final_finish:
+                                attrs["gen_ai.response.finish_reason"] = final_finish
                             gen_scope.set_attributes(attrs)
-                    if res["truncated_empty"]:
+                    if truncated or (capped and _is_blank(final_output)):
                         truncated_empty_nodes.append(node.id)
                     if scope is not None:
                         scope.set_attributes({"gen_ai.request.model": model_id})
                     live_handles[node.id] = _success_handles(node)
                     for handle in live_handles[node.id]:
-                        values[(node.id, handle)] = res["output"]
+                        values[(node.id, handle)] = final_output
                 elif node.type == "tool":
                     config = ToolConfig.model_validate(node.config)
                     # M19 §2.3: route http-vs-builtin. An ``http`` binding → a journaled http step

@@ -375,6 +375,26 @@
             "title": "_Message",
             "type": "object"
           },
+          "_NamedToolChoice": {
+            "additionalProperties": false,
+            "description": "Force a specific tool \u2014 OpenAI's ``{\"type\":\"function\",\"function\":{\"name\":...}}``.",
+            "properties": {
+              "function": {
+                "$ref": "#/$defs/_ToolFunctionName"
+              },
+              "type": {
+                "const": "function",
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "function"
+            ],
+            "title": "_NamedToolChoice",
+            "type": "object"
+          },
           "_TextContentPart": {
             "additionalProperties": false,
             "description": "An OpenAI ``text`` content part. ``text`` is rendered through the same ``$in`` template\nlanguage as a plain-string ``content`` (so a part can still compose an upstream value).",
@@ -395,11 +415,30 @@
             ],
             "title": "_TextContentPart",
             "type": "object"
+          },
+          "_ToolFunctionName": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "title": "_ToolFunctionName",
+            "type": "object"
           }
         },
         "additionalProperties": false,
-        "description": "``llm`` node config: a single model call, no tool loop (\u00a78.3). ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)\n\nM20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +\nimage_url), not only a string, so a graph can drive a vision model (mlx_vlm on\n``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,\nso an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and\nhashes identically (see ``_Message``).",
+        "description": "``llm`` node config. ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)\n\nM20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +\nimage_url), not only a string, so a graph can drive a vision model (mlx_vlm on\n``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,\nso an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and\nhashes identically (see ``_Message``).",
         "properties": {
+          "maxToolIterations": {
+            "default": 8,
+            "title": "Maxtooliterations",
+            "type": "integer"
+          },
           "messages": {
             "items": {
               "$ref": "#/$defs/_Message"
@@ -410,6 +449,30 @@
           "model": {
             "title": "Model",
             "type": "string"
+          },
+          "toolChoice": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "none",
+                  "required"
+                ],
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/_NamedToolChoice"
+              }
+            ],
+            "default": "auto",
+            "title": "Toolchoice"
+          },
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
           }
         },
         "required": [
@@ -420,8 +483,11 @@
         "type": "object"
       },
       "defaultConfig": {
+        "maxToolIterations": 8,
         "messages": [],
-        "model": ""
+        "model": "",
+        "toolChoice": "auto",
+        "tools": []
       },
       "kind": "activity",
       "ports": {

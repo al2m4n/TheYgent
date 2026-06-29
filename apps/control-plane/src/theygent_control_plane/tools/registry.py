@@ -34,19 +34,34 @@ class ToolNotFound(KeyError):
 
 
 class ToolRegistry:
-    """A name → async-callable map. Built-in for M6 (no runtime registration API — §3.1)."""
+    """A name → async-callable map. Built-in for M6 (no runtime registration API — §3.1).
+
+    M21: a builtin may carry an OpenAI function ``(description, parameters)`` schema so it is
+    **model-callable** in an llm tool loop. Self-description is the invariant (m21.md §6 Q2): a
+    builtin without a schema can still be wired as a ``tool`` node, but the up-front check rejects
+    it from an llm's ``tools`` (a model needs the description to decide the call)."""
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolFn] = {}
+        self._schemas: dict[str, tuple[str, dict[str, Any]]] = {}
 
-    def register(self, name: str) -> Callable[[ToolFn], ToolFn]:
-        """Decorator: register ``fn`` under ``name``. Reused by MCP in M7 (different transport,
-        same contract — a named callable invoked with args, returning a value)."""
+    def register(
+        self,
+        name: str,
+        *,
+        description: str | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> Callable[[ToolFn], ToolFn]:
+        """Decorator: register ``fn`` under ``name``. Reused by MCP in M7 (different transport, same
+        contract). ``description`` + ``parameters`` (M21) make the tool model-callable — supply BOTH
+        to self-describe (the model reads the description to decide how to call it)."""
 
         def deco(fn: ToolFn) -> ToolFn:
             if name in self._tools:
                 raise ValueError(f"tool {name!r} already registered")
             self._tools[name] = fn
+            if description is not None and parameters is not None:
+                self._schemas[name] = (description, parameters)
             return fn
 
         return deco
@@ -56,6 +71,11 @@ class ToolRegistry:
             return self._tools[name]
         except KeyError as exc:
             raise ToolNotFound(name) from exc
+
+    def schema(self, name: str) -> tuple[str, dict[str, Any]] | None:
+        """The ``(description, parameters)`` OpenAI function schema for a model-callable builtin, or
+        ``None`` if the builtin doesn't self-describe (then it isn't allowed in an llm's tools)."""
+        return self._schemas.get(name)
 
     def __contains__(self, name: object) -> bool:
         return name in self._tools
@@ -69,7 +89,14 @@ DEFAULT_REGISTRY = ToolRegistry()
 register = DEFAULT_REGISTRY.register
 
 
-@register("echo")
+@register(
+    "echo",
+    description="Return the provided value unchanged — a no-op probe for testing tool calls.",
+    parameters={
+        "type": "object",
+        "properties": {"value": {"description": "any value to echo back verbatim"}},
+    },
+)
 async def echo(*, value: Any = None) -> Any:
     """Return ``value`` unchanged. The trivial tool the tests use to prove dispatch/templating
     without touching the network."""
@@ -77,7 +104,25 @@ async def echo(*, value: Any = None) -> Any:
     return value
 
 
-@register("http_fetch")
+@register(
+    "http_fetch",
+    description=(
+        "HTTP GET a URL and return its response as an object with keys `status` (int), `body` "
+        "(the response text), and `headers` (an object). Use this to fetch the contents of a web "
+        "page or a REST endpoint. A non-200 status is returned normally (not an error)."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "the absolute http(s) URL to GET"},
+            "timeout_s": {
+                "type": "number",
+                "description": "per-request timeout in seconds (default 10)",
+            },
+        },
+        "required": ["url"],
+    },
+)
 async def http_fetch(*, url: str, timeout_s: float = 10.0) -> dict[str, Any]:
     """HTTP GET ``url`` and return ``{status, body, headers}``. A non-200 is a *return value*,
     not an error (no ``raise_for_status``) — only a transport failure (timeout, DNS, refused)

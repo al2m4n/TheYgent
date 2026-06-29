@@ -1177,6 +1177,29 @@ def create_app(
                     code="tool_not_found",
                 )
 
+        # M21 §6 Q2: a builtin tool a model can CALL must self-describe. ``validate_graph`` already
+        # requires every llm ``tools`` key to be declared in ``ir.tools``; here we additionally
+        # reject
+        # a builtin binding with no registry schema — a model needs the description to call it (an
+        # http binding's self-description is enforced in validate_graph; mcp describes at runtime).
+        for node in ir.nodes:
+            if node.type != "llm":
+                continue
+            for tkey in (node.config or {}).get("tools") or []:
+                binding = ir.tools.get(tkey)
+                ref = (
+                    getattr(binding, "ref", None)
+                    if getattr(binding, "kind", "") == "builtin"
+                    else None
+                )
+                if ref is not None and DEFAULT_REGISTRY.schema(ref) is None:
+                    return _error(
+                        f"node {node.id!r}: builtin tool {tkey!r} is not model-callable: no "
+                        "description/parameters schema (a model needs it to decide the call)",
+                        status=400,
+                        code="tool_not_self_describing",
+                    )
+
         # mcp_tool nodes (m7.md §4): the server must be registered (400, no Run). The tool's checked
         # against the server's cached capability list ONLY if it's already connected; otherwise the
         # IR is accepted and the runtime handler binds err on a miss (lazy).
@@ -2311,11 +2334,15 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 
 def _graph_delta_sse(run_id: str, delta: Any) -> str:
-    """Relay one walker ``Delta`` to SSE, routing a model's *thinking* to ``event: reasoning`` and
-    its *answer* to ``event: delta`` — the same split the prompt-run path makes (so a reasoning node
-    in a graph streams visible progress and the cockpit never looks frozen)."""
-    if getattr(delta, "kind", "content") == "reasoning":
+    """Relay one walker ``Delta`` to SSE, routing a model's *thinking* to ``event: reasoning``, its
+    *answer* to ``event: delta``, and — M21 — a tool invocation to ``event: tool_call`` (visible
+    progress: which tool the autonomous loop is calling). Same split the prompt-run path makes, so a
+    graph node streams visible progress and the cockpit never looks frozen."""
+    kind = getattr(delta, "kind", "content")
+    if kind == "reasoning":
         return _sse("reasoning", {"runId": run_id, "reasoning": delta.content})
+    if kind == "tool_call":
+        return _sse("tool_call", {"runId": run_id, "toolCall": delta.content})
     return _sse("delta", {"runId": run_id, "delta": delta.content})
 
 

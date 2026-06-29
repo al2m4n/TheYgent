@@ -93,7 +93,7 @@ function BenchModal({ agentId, onClose }: { agentId: string; onClose: () => void
   });
   const agent = data as AgentDetail | undefined;
   return (
-    <Modal title={agent ? `Bench · ${agent.name}` : "Bench"} width="max-w-3xl" onClose={onClose}>
+    <Modal title={agent ? `Bench · ${agent.name}` : "Bench"} width="max-w-5xl" onClose={onClose}>
       {isLoading || !agent ? (
         <p className="text-sm text-slate-500">Loading…</p>
       ) : agent.versions.length === 0 ? (

@@ -254,16 +254,44 @@ export interface DownloadJob {
 
 // ── M18 observability trace span (snake_case — the run waterfall; M17 §3) ────
 // `name == node_id` for node spans is the canvas-overlay join (M17 §1.6 / M18 §2.3).
+// The full M17 span: `parent_span_id` makes the run → node → phase TREE explicit (the rich
+// waterfall builds hierarchy from it), `status`/`error` colour the bar, `attributes` carry the
+// scalar GenAI/tool metadata (never payloads — those come from `/nodes/{id}/io`).
 export interface TraceSpan {
   id: string;
+  span_id?: string;
+  parent_span_id?: string | null;
   node_id?: string | null;
   node_type?: string | null;
+  kind?: string | null;
   name: string;
   phase?: string | null;
+  branch_index?: number | null;
   status: string;
   start_ns: number;
   end_ns?: number | null;
   attributes?: Record<string, unknown> | null;
+  error?: string | null;
+  executor_id?: string | null;
+  worker_host?: string | null;
+  bytes_in?: number | null;
+  bytes_out?: number | null;
+}
+
+// ── Per-node I/O (the per-step CONTEXT behind a waterfall row; M17 §5) ───────
+// The gated payloads a node received + sent. `inputs`/`outputs` are null when capture is off /
+// metadata-only / not permitted — `reason` + `capture_level` say which (never an error/500). Raw
+// payloads stay in the user's plane; a hosted topology defaults to metadata-only (sovereignty).
+export interface RunNodeIo {
+  run_id: string;
+  node_id: string;
+  capture_level: "off" | "metadata" | "full";
+  inputs: Record<string, unknown> | null;
+  outputs: Record<string, unknown> | null;
+  bytes_in: number;
+  bytes_out: number;
+  truncated: boolean;
+  reason: string | null;
 }
 
 // ── M18 bench store wire shapes (snake_case — control-plane convention) ──────
@@ -418,6 +446,15 @@ export const api = {
     request<{ runId: string; status: string; spans: TraceSpan[] }>(
       CONTROL_PLANE_URL,
       `/runs/${encodeURIComponent(runId)}/trace`,
+    ),
+
+  // The per-step context behind a waterfall row: the input a node received + the output it sent
+  // (M17 §5). Gated by the agent's capture policy — null payloads + a `reason` when off/metadata,
+  // never an error. Lazy: fetched only when a node row is clicked.
+  getRunIo: (runId: string, nodeId: string) =>
+    request<RunNodeIo>(
+      CONTROL_PLANE_URL,
+      `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/io`,
     ),
 
   // Inference plane (separate base URL): the registered logical models, to populate the model

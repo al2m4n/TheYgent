@@ -758,3 +758,139 @@ def test_content_part_rejects_extra_keys() -> None:
     doc = parse_document(_with_content([{"type": "text", "text": "hi", "bogus": 1}]))
     with pytest.raises(GraphValidationError, match="invalid config"):
         validate_graph(doc)
+
+
+# ── M21 autonomous tool-calling (llm.tools) ───────────────────────────────────
+
+
+def _http_tool_binding(**over: object) -> dict:
+    """A self-describing http tool binding (M21): description + parameterSchema + request shape,
+    with a single ``$in.query`` slot matching the schema's one property."""
+    b: dict = {
+        "kind": "http",
+        "connection": "con_search",
+        "description": "Search the web and return results for a query.",
+        "parameterSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "what to search for"}},
+            "required": ["query"],
+        },
+        "method": "GET",
+        "urlTemplate": "https://api.example.com/search?q={$in.query}",
+    }
+    b.update(over)
+    return b
+
+
+def _llm_tools_doc(
+    *,
+    tools: list[str] | None = None,
+    tool_choice: object = "auto",
+    max_iter: int = 8,
+    bindings: dict | None = None,
+) -> dict:
+    """``_trivial`` with the llm node carrying M21 tool-calling config + a tool binding in ir.tools.
+    The tool is referenced by config (``llm.tools``), NOT wired by an edge — the M21 seam."""
+    doc = _trivial()
+    doc["tools"] = bindings if bindings is not None else {"search": _http_tool_binding()}
+    doc["nodes"][1]["config"] = {
+        "model": "default",
+        "messages": [{"role": "user", "content": "$in"}],
+        "tools": ["search"] if tools is None else tools,
+        "toolChoice": tool_choice,
+        "maxToolIterations": max_iter,
+    }
+    return doc
+
+
+def test_llm_with_http_tool_validates() -> None:
+    validate_graph(parse_document(_llm_tools_doc()))
+
+
+def test_llm_references_undeclared_tool_rejected() -> None:
+    with pytest.raises(GraphValidationError, match="undeclared tool"):
+        validate_graph(parse_document(_llm_tools_doc(tools=["ghost"])))
+
+
+def test_llm_max_tool_iterations_must_be_positive() -> None:
+    with pytest.raises(GraphValidationError, match="maxToolIterations"):
+        validate_graph(parse_document(_llm_tools_doc(max_iter=0)))
+
+
+def test_llm_duplicate_tool_key_rejected() -> None:
+    with pytest.raises(GraphValidationError, match="duplicate"):
+        validate_graph(parse_document(_llm_tools_doc(tools=["search", "search"])))
+
+
+def test_llm_named_tool_choice_must_be_in_tools() -> None:
+    tc = {"type": "function", "function": {"name": "not_listed"}}
+    with pytest.raises(GraphValidationError, match="toolChoice"):
+        validate_graph(parse_document(_llm_tools_doc(tool_choice=tc)))
+
+
+def test_llm_named_tool_choice_in_tools_ok() -> None:
+    tc = {"type": "function", "function": {"name": "search"}}
+    validate_graph(parse_document(_llm_tools_doc(tool_choice=tc)))
+
+
+def test_http_tool_for_llm_must_self_describe() -> None:
+    bare = {"search": {"kind": "http", "connection": "c", "urlTemplate": "https://x/{$in.query}"}}
+    with pytest.raises(GraphValidationError, match="self-describe"):
+        validate_graph(parse_document(_llm_tools_doc(bindings=bare)))
+
+
+def test_http_tool_unfillable_slot_rejected() -> None:
+    # url references $in.q, but the schema declares only `query` → `q` is unfillable.
+    bad = _http_tool_binding(urlTemplate="https://api.example.com/search?q={$in.q}")
+    with pytest.raises(GraphValidationError, match="unfillable"):
+        validate_graph(parse_document(_llm_tools_doc(bindings={"search": bad})))
+
+
+def test_http_tool_dead_property_rejected() -> None:
+    # schema declares `extra` with no matching slot in the url/body → dead.
+    bad = _http_tool_binding(
+        parameterSchema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "extra": {"type": "string"}},
+        }
+    )
+    with pytest.raises(GraphValidationError, match="dead"):
+        validate_graph(parse_document(_llm_tools_doc(bindings={"search": bad})))
+
+
+def test_http_tool_bare_in_relaxes_dead_check() -> None:
+    # A bare `$in` (the whole arguments object) as the body consumes all properties, so a property
+    # with no NAMED slot is not "dead".
+    whole = _http_tool_binding(
+        urlTemplate="https://api.example.com/post",
+        bodyTemplate="$in",
+        parameterSchema={
+            "type": "object",
+            "properties": {"a": {"type": "string"}, "b": {"type": "string"}},
+        },
+    )
+    validate_graph(parse_document(_llm_tools_doc(bindings={"search": whole})))
+
+
+def test_body_template_slot_satisfies_property() -> None:
+    # The slot may live in the body (scanned recursively), not just the url.
+    b = _http_tool_binding(
+        method="POST",
+        urlTemplate="https://api.example.com/search",
+        bodyTemplate={"q": "{$in.query}"},
+    )
+    validate_graph(parse_document(_llm_tools_doc(bindings={"search": b})))
+
+
+def test_llm_tools_field_is_hash_stable_when_omitted() -> None:
+    # M21 adds fields to LlmConfig, but `Node.config` is hashed as the opaque authored dict — so an
+    # llm graph that doesn't write the new fields is byte-identical to pre-M21 (no schemaVersion
+    # bump; m21.md §6 Q4). A tools-bearing llm is a genuine content change → a different hash.
+    assert content_hash(parse_document(_trivial())) == _PRE_M20_TRIVIAL_HASH
+    assert content_hash(parse_document(_llm_tools_doc())) != _PRE_M20_TRIVIAL_HASH
+
+
+def test_empty_tools_list_is_single_shot_no_checks() -> None:
+    # Empty `tools` is the pre-M21 single-shot path: the M21 checks don't fire (e.g. a 0 max is fine
+    # because the loop never runs).
+    validate_graph(parse_document(_llm_tools_doc(tools=[], max_iter=0, bindings={})))
