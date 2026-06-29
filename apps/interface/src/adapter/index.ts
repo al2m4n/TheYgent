@@ -233,6 +233,29 @@ export function relayout(ir: IRDocument): IRDocument {
 /** Drop a palette `type` onto the canvas: a new IR node with the registry's kind, default config,
  * and declared ports (§2.2). The type list/kind/ports are all derived from the registry — nothing
  * is hardcoded, so an M14-style type appears for free. */
+// No-code convenience: seed a friendlier starting config for a freshly DROPPED node than the IR
+// schema's bare default (which is intentionally empty). Builder-only and applied at add time — it
+// never changes the IR schema, the generated registry default, or any existing node. The llm's most
+// common shape is "send this node's input straight to the model", so seed one user message templated
+// to `$in` (the value on the default in-port) — the author edits/extends it from there, and because
+// `$in` is a runtime reference it already tracks whatever gets wired in, so no re-seed on rewiring.
+function builderDefaultConfig(
+  type: string,
+  base: Record<string, unknown>,
+): Record<string, unknown> {
+  const config = structuredClone(base);
+  if (type === "llm") {
+    if (Array.isArray(config.messages) && config.messages.length === 0) {
+      config.messages = [{ role: "user", content: "$in" }];
+    }
+    // M21 tool-calling fields default to "no tools" — keep a freshly dropped llm node clean (and
+    // hash-equivalent to a hand-authored {model, messages}); they're configured via the Tools panel
+    // once the tool-calling loop ships (m21.md Phase 6). The RawConfig/Code views still expose them.
+    for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete config[k];
+  }
+  return config;
+}
+
 export function addNode(ir: IRDocument, type: string, position: XYPosition): IRDocument {
   const spec = NODE_TYPES[type];
   if (!spec) throw new Error(`unknown node type ${type}`);
@@ -243,7 +266,7 @@ export function addNode(ir: IRDocument, type: string, position: XYPosition): IRD
     type,
     kind: spec.kind,
     label: type,
-    config: structuredClone(spec.defaultConfig),
+    config: builderDefaultConfig(type, spec.defaultConfig),
     ports: structuredClone(spec.ports),
   };
   const withNode = { ...ir, nodes: [...(ir.nodes ?? []), node] };

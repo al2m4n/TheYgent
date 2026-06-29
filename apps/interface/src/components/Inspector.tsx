@@ -5,7 +5,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   type Selection,
   type ViewBlock,
@@ -20,7 +20,7 @@ import {
 } from "../adapter";
 import { api } from "../lib/api";
 import { ICON_CHOICES, defaultIconFor } from "../lib/icons";
-import { Badge, Button, Field, Input } from "./ui";
+import { Badge, Button, Field, Input, Select } from "./ui";
 
 // node types whose config composes a saved, pinned agent (the `agent` field is an agent-id picker).
 const PINNED_BODY_TYPES = new Set(["subgraph", "loop", "map"]);
@@ -121,6 +121,21 @@ function NodePanel({
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
           Object.entries(properties).map(([key, schema]) => {
+            // M21 tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
+            // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
+            if (node.type === "llm" && key === "tools") {
+              return (
+                <LlmToolsPanel
+                  key={`${node.id}:${key}`}
+                  ir={ir}
+                  nodeId={node.id}
+                  onChange={onChange}
+                />
+              );
+            }
+            if (node.type === "llm" && (key === "toolChoice" || key === "maxToolIterations")) {
+              return null;
+            }
             // Specialized pickers for reference fields — populated from the live registries instead
             // of free text, so you pick a real value (and the validator catches a dangling ref).
             if (node.type === "llm" && key === "model") {
@@ -130,6 +145,17 @@ function NodePanel({
                   ir={ir}
                   nodeId={node.id}
                   onChange={onChange}
+                />
+              );
+            }
+            // No-code chat editor: a role dropdown + a plain text box per message (with an insert-$in
+            // helper) instead of raw JSON. Rich (vision) content falls back to a per-message JSON box.
+            if (node.type === "llm" && key === "messages") {
+              return (
+                <MessagesEditor
+                  key={`${node.id}:${key}`}
+                  value={config.messages}
+                  onChange={(v) => setConfigKey("messages", v)}
                 />
               );
             }
@@ -471,7 +497,9 @@ function JsonField({
   value,
   onChange,
 }: {
-  label: string;
+  // Optional: when omitted, the guarded textarea renders bare (no <Field> label) — used by the
+  // Messages "JSON" view, which already has its own section header.
+  label?: string;
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
@@ -485,8 +513,8 @@ function JsonField({
     // value identity is the trigger; stringifying inside is intentional.
   }, [value]);
 
-  return (
-    <Field label={label}>
+  const editor = (
+    <>
       <textarea
         spellCheck={false}
         className={`mono h-28 w-full rounded-md border bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none ${
@@ -505,14 +533,363 @@ function JsonField({
         }}
       />
       {error && <span className="text-[11px] text-red-400">{error}</span>}
-    </Field>
+    </>
+  );
+  return label ? <Field label={label}>{editor}</Field> : <div className="space-y-1">{editor}</div>;
+}
+
+// ── the llm Tools panel (M21 — attach tools the model may autonomously call) ─────
+
+/** Attach tools to an llm node (M21): pick which of the graph's ``ir.tools`` the model may call, the
+ * tool_choice, and the iteration cap. The bindings (http/mcp/builtin) live in the graph's ``tools``;
+ * this panel selects from them and writes config.tools/toolChoice/maxToolIterations. With nothing
+ * selected the loop config is dropped, so a tools-less llm stays a clean single-shot node. */
+function LlmToolsPanel({
+  ir,
+  nodeId,
+  onChange,
+}: {
+  ir: IRDocument;
+  nodeId: string;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
+  const config = (node?.config ?? {}) as Record<string, unknown>;
+  const selected = Array.isArray(config.tools) ? (config.tools as string[]) : [];
+  const choice = typeof config.toolChoice === "string" ? (config.toolChoice as string) : "auto";
+  const maxIter =
+    typeof config.maxToolIterations === "number" ? (config.maxToolIterations as number) : 8;
+  const toolKeys = Object.keys((ir.tools ?? {}) as Record<string, unknown>);
+
+  const commit = (tools: string[], extra: Record<string, unknown> = {}) => {
+    if (tools.length === 0) {
+      const rest = { ...config }; // no tools → drop the loop config (clean single-shot llm)
+      for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete rest[k];
+      onChange(updateNodeConfig(ir, nodeId, rest));
+      return;
+    }
+    onChange(
+      updateNodeConfig(ir, nodeId, {
+        ...config,
+        tools,
+        toolChoice: choice,
+        maxToolIterations: maxIter,
+        ...extra,
+      }),
+    );
+  };
+  const toggle = (k: string) =>
+    commit(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
+
+  return (
+    <div className="space-y-1.5">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        Tools (the model may call these)
+      </span>
+      {toolKeys.length === 0 ? (
+        <p className="text-[11px] text-slate-600">
+          No tools defined in this graph. Add an http / mcp / builtin tool to the graph's{" "}
+          <span className="mono">tools</span> (the Code view, for now), then select it here.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {toolKeys.map((k) => {
+            const binding = (ir.tools as Record<string, { kind?: string }>)[k];
+            return (
+              <label
+                key={k}
+                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-[#1d2433]"
+              >
+                <input type="checkbox" checked={selected.includes(k)} onChange={() => toggle(k)} />
+                <span className="mono text-slate-200">{k}</span>
+                {binding?.kind && <Badge>{binding.kind}</Badge>}
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {selected.length > 0 && (
+        <div className="mt-1 space-y-2 rounded-md border border-slate-800 p-2">
+          <label className="block space-y-1">
+            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+              tool choice
+            </span>
+            <Select
+              value={choice}
+              onChange={(e) => commit(selected, { toolChoice: e.target.value })}
+            >
+              <option value="auto">auto — model decides</option>
+              <option value="required">required — must call a tool</option>
+              <option value="none">none — never call</option>
+            </Select>
+          </label>
+          <label className="block space-y-1">
+            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+              max tool iterations
+            </span>
+            <Input
+              type="number"
+              min={1}
+              value={maxIter}
+              onChange={(e) =>
+                commit(selected, { maxToolIterations: Math.max(1, Number(e.target.value) || 1) })
+              }
+            />
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── the llm chat-message editor (no-code: role dropdown + text box per message) ─
+
+type ChatMessage = { role: string; content: unknown };
+type MsgRow = { key: string; role: string; content: unknown };
+const ROLE_OPTIONS = ["system", "user", "assistant"];
+
+function toMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((m) => {
+    const msg = (m ?? {}) as { role?: unknown; content?: unknown };
+    return {
+      role: typeof msg.role === "string" ? msg.role : "user",
+      content: msg.content ?? "",
+    };
+  });
+}
+
+// Keep system turn(s) first — OpenAI chat semantics steer behavior from the system message, and a
+// system turn placed after the user input is weakly honored (see the math-tutor debugging). A stable
+// partition: systems first in their existing order, everything else after in its existing order. So
+// adding a system turn (or flipping a role to system) snaps it to the top, in the wizard AND when a
+// JSON edit is committed; reordering among same-role turns is preserved.
+function sortSystemFirst<T extends { role: string }>(arr: T[]): T[] {
+  return [...arr.filter((m) => m.role === "system"), ...arr.filter((m) => m.role !== "system")];
+}
+
+/** Edit an llm node's `messages` as a list of chat turns: each turn has a role dropdown and a text
+ * box (with an "insert input ($in)" helper). A turn whose content is rich (a vision text+image list)
+ * falls back to a per-turn JSON box so the multimodal path is preserved, not clobbered. Rows carry a
+ * stable client-side key (never emitted) so reordering/editing doesn't remount the wrong row; the
+ * editor re-syncs if `messages` is changed from elsewhere (the Code view / raw-config escape). */
+function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unknown) => void }) {
+  const idRef = useRef(0);
+  const [rows, setRows] = useState<MsgRow[]>(() =>
+    toMessages(value).map((m) => ({ key: `m${idRef.current++}`, ...m })),
+  );
+  // Re-seed only when `messages` diverges from what we last emitted (an outside edit), so typing here
+  // is never clobbered by our own round-trip.
+  const lastEmitted = useRef(JSON.stringify(toMessages(value)));
+  useEffect(() => {
+    const incoming = JSON.stringify(toMessages(value));
+    if (incoming !== lastEmitted.current) {
+      lastEmitted.current = incoming;
+      setRows(toMessages(value).map((m) => ({ key: `m${idRef.current++}`, ...m })));
+    }
+  }, [value]);
+
+  const commit = (rowsNext: MsgRow[]) => {
+    const next = sortSystemFirst(rowsNext); // system turn(s) always float to the top
+    setRows(next);
+    const msgs = next.map((r) => ({ role: r.role, content: r.content }));
+    lastEmitted.current = JSON.stringify(msgs);
+    onChange(msgs);
+  };
+  const setRow = (i: number, patch: Partial<MsgRow>) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const removeRow = (i: number) => commit(rows.filter((_, j) => j !== i));
+  const moveRow = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= rows.length) return;
+    const next = rows.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const addRow = () => commit([...rows, { key: `m${idRef.current++}`, role: "user", content: "" }]);
+
+  // Wizard ⇄ JSON, mirroring the whole-editor's Visual ⇄ Code toggle: build the chat with role
+  // dropdowns + text boxes, or see/edit the final `messages` array as JSON. Both read `value` and
+  // write via `onChange`, so a JSON edit re-seeds the wizard rows (the re-sync effect above).
+  const [view, setView] = useState<"wizard" | "json">("wizard");
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          Messages *
+        </span>
+        <div className="flex items-center rounded-md border border-slate-700 p-0.5">
+          {(
+            [
+              ["wizard", "Wizard"],
+              ["json", "JSON"],
+            ] as const
+          ).map(([m, lbl]) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setView(m)}
+              className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                view === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === "json" ? (
+        <JsonField
+          value={value}
+          onChange={(v) =>
+            onChange(Array.isArray(v) ? sortSystemFirst(v as { role: string }[]) : v)
+          }
+        />
+      ) : (
+        <>
+          {rows.length === 0 ? (
+            <p className="text-[11px] text-slate-600">No messages yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {rows.map((r, i) => (
+                <MessageRow
+                  key={r.key}
+                  role={r.role}
+                  content={r.content}
+                  index={i}
+                  total={rows.length}
+                  onRole={(role) => setRow(i, { role })}
+                  onContent={(content) => setRow(i, { content })}
+                  onDelete={() => removeRow(i)}
+                  onMove={(dir) => moveRow(i, dir)}
+                />
+              ))}
+            </div>
+          )}
+          <Button className="!py-1 text-xs" onClick={addRow}>
+            ＋ Add message
+          </Button>
+          <p className="text-[10px] text-slate-600">
+            Use <span className="mono">$in</span> for this node's input.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MessageRow({
+  role,
+  content,
+  index,
+  total,
+  onRole,
+  onContent,
+  onDelete,
+  onMove,
+}: {
+  role: string;
+  content: unknown;
+  index: number;
+  total: number;
+  onRole: (role: string) => void;
+  onContent: (content: unknown) => void;
+  onDelete: () => void;
+  onMove: (dir: -1 | 1) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const isString = typeof content === "string";
+  const roles = ROLE_OPTIONS.includes(role) ? ROLE_OPTIONS : [...ROLE_OPTIONS, role];
+
+  const insertIn = () => {
+    const ta = taRef.current;
+    const text = typeof content === "string" ? content : "";
+    const start = ta?.selectionStart ?? text.length;
+    const end = ta?.selectionEnd ?? text.length;
+    onContent(`${text.slice(0, start)}$in${text.slice(end)}`);
+    // Restore the caret just after the inserted token once the controlled value updates.
+    requestAnimationFrame(() => {
+      if (!ta) return;
+      const pos = start + 3;
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+    });
+  };
+
+  const iconBtn =
+    "flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[#1d2433] hover:text-slate-200 disabled:opacity-30 disabled:hover:bg-transparent";
+
+  return (
+    <div className="space-y-1.5 rounded-md border border-slate-800 bg-[#0e131c] p-2">
+      <div className="flex items-center gap-1.5">
+        <select
+          value={role}
+          onChange={(e) => onRole(e.target.value)}
+          className="rounded border border-slate-700 bg-[#11161f] px-1.5 py-0.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+        >
+          {roles.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </select>
+        <div className="ml-auto flex items-center gap-0.5">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => onMove(-1)}
+            disabled={index === 0}
+            title="Move up"
+          >
+            ↑
+          </button>
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={() => onMove(1)}
+            disabled={index === total - 1}
+            title="Move down"
+          >
+            ↓
+          </button>
+          <button type="button" className={iconBtn} onClick={onDelete} title="Remove message">
+            ✕
+          </button>
+        </div>
+      </div>
+      {isString ? (
+        <>
+          <textarea
+            ref={taRef}
+            spellCheck={false}
+            value={content as string}
+            onChange={(e) => onContent(e.target.value)}
+            placeholder="Message text… use $in for the input"
+            className="mono h-20 w-full rounded border border-slate-700 bg-[#11161f] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
+          />
+          <button
+            type="button"
+            onClick={insertIn}
+            className="text-[11px] text-blue-400 hover:underline"
+          >
+            ＋ Insert input ($in)
+          </button>
+        </>
+      ) : (
+        // Rich (vision) content: text+image_url parts — keep it editable as JSON so it isn't lost.
+        <JsonField label="content (text + image parts)" value={content} onChange={onContent} />
+      )}
+    </div>
   );
 }
 
 // ── reference pickers (combobox over a live registry, free text still allowed) ─
 
-/** A free-text input with a native datalist of suggestions — pick a known value or type a custom
- * one (so an offline/empty registry never blocks editing). The validator flags a dangling ref. */
+/** A click-to-open, searchable dropdown over a live registry. Pick a known value from the list (with
+ * a search box for long lists) or type a custom one (the "Use …" row — so an offline/empty registry
+ * never blocks editing). The validator flags a dangling ref. */
 function ListPicker({
   label,
   value,
@@ -530,22 +907,109 @@ function ListPicker({
   placeholder?: string;
   onChange: (v: string) => void;
 }) {
-  const listId = useId();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  // Close on outside click / Escape (the popover floats inside the scrollable inspector); focus the
+  // search box on open so you can type to filter immediately.
+  useEffect(() => {
+    if (!open) return;
+    searchRef.current?.focus();
+    const onDown = (e: PointerEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q ? options.filter((o) => o.toLowerCase().includes(q)) : options;
+  const exact = options.some((o) => o.toLowerCase() === q);
+  const select = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  };
+
   return (
-    <Field label={label}>
-      <Input
-        list={listId}
-        value={value ?? ""}
-        placeholder={placeholder ?? (loading ? "loading…" : "type or pick…")}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <datalist id={listId}>
-        {options.map((o) => (
-          <option key={o} value={o} />
-        ))}
-      </datalist>
-      {hint && <span className="text-[10px] text-slate-600">{hint}</span>}
-    </Field>
+    // A plain label element (not <Field>'s <label>) — a <label> must not wrap the trigger button +
+    // popover, or every inner control inherits the label/option text as its accessible name.
+    <div className="space-y-1">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      <div ref={boxRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
+        >
+          <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
+            {value || placeholder || (loading ? "loading…" : "select…")}
+          </span>
+          <span className="shrink-0 text-slate-500" aria-hidden>
+            ▾
+          </span>
+        </button>
+        {open && (
+          <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-700 bg-[#11161f] shadow-xl">
+            <div className="border-b border-slate-800 p-1.5">
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search…"
+                className="w-full rounded border border-slate-700 bg-[#0e131c] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
+              />
+            </div>
+            <ul className="max-h-52 overflow-y-auto py-1">
+              {loading && options.length === 0 ? (
+                <li className="px-2.5 py-1.5 text-xs text-slate-500">loading…</li>
+              ) : filtered.length === 0 && !q ? (
+                <li className="px-2.5 py-1.5 text-xs text-slate-500">No options.</li>
+              ) : (
+                filtered.map((o) => (
+                  <li key={o}>
+                    <button
+                      type="button"
+                      onClick={() => select(o)}
+                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[#1d2433] ${
+                        o === value ? "text-blue-300" : "text-slate-200"
+                      }`}
+                    >
+                      <span className="mono truncate">{o}</span>
+                      {o === value && <span className="ml-auto text-blue-400">✓</span>}
+                    </button>
+                  </li>
+                ))
+              )}
+              {/* A value not in the registry stays allowed (offline / not-yet-registered ref). */}
+              {q && !exact && (
+                <li className="border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => select(query.trim())}
+                    className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-[#1d2433]"
+                  >
+                    Use “<span className="mono truncate">{query.trim()}</span>”
+                  </button>
+                </li>
+              )}
+            </ul>
+          </div>
+        )}
+      </div>
+      {hint && <span className="block text-[10px] text-slate-600">{hint}</span>}
+    </div>
   );
 }
 

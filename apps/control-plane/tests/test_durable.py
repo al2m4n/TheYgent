@@ -167,6 +167,42 @@ async def test_durable_run_matches_the_walker(pg_url: str) -> None:
             await engine.dispose()
 
 
+async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
+    # M21: an llm with tools runs its bounded tool loop on the DURABLE runtime — each model
+    # turn is a journaled `_llm_step`, each tool call a journaled step (`_durable_tool_call`).
+    # The scripted fake calls `echo` once, then answers; the durable run completes with the
+    # post-tool answer. Same primitives as the interactive loop, here through theygent_run.
+    await reset_dbos_schema(pg_url)
+    ir = trivial_ir()
+    ir["id"] = "agt_tool_loop"
+    ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+    ir["nodes"][1]["config"]["tools"] = ["echo"]
+    ir["nodes"][1]["config"]["maxToolIterations"] = 4
+    with FakeInference(
+        mode="tool_call",
+        tool_name="echo",
+        tool_args={"value": "hi"},
+        response="durable tool answer",
+    ) as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": aid, "version": ver, "content_hash": None}, "do it"
+            )
+            durable = await handle.get_result()
+            assert durable["status"] == "completed"
+            assert durable["output"] == "durable tool answer"
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
 async def test_durable_multimodal_content_survives_the_journal(pg_url: str) -> None:
     # M20 cross-plane follow-up on the durable path: the rendered ``messages`` are a DBOS step
     # argument, so a multimodal content (text + image_url) is serialized into the journal and handed

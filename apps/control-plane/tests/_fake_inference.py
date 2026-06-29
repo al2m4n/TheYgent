@@ -33,9 +33,16 @@ FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 
 
-def _build_app(mode: str, captured: dict[str, object], response: str | None) -> FastAPI:
+def _build_app(
+    mode: str,
+    captured: dict[str, object],
+    response: str | None,
+    tool_name: str = "search",
+    tool_args: dict[str, object] | None = None,
+) -> FastAPI:
     app = FastAPI()
     content = response if response is not None else FULL_MESSAGE
+    tool_args = {"query": "cats"} if tool_args is None else tool_args
 
     @app.get("/readyz")
     async def readyz() -> dict[str, str]:
@@ -99,9 +106,22 @@ def _build_app(mode: str, captured: dict[str, object], response: str | None) -> 
             )
 
         model = body.get("model", "fake")
+        # M21 tool-calling: the scripted loop emits a tool_call on the FIRST turn, then — once a
+        # ``{role: tool}`` result is in the transcript — the final answer. Stateless (driven by the
+        # request) so the control-plane's loop terminates naturally.
+        messages_in = body.get("messages") or []
+        has_tool_result = any(isinstance(m, dict) and m.get("role") == "tool" for m in messages_in)
+        # ``tool_call`` answers once a tool result is in the transcript; ``tool_loop`` NEVER answers
+        # (always re-requests the tool) — the cap test exercises maxToolIterations.
+        wants_answer = has_tool_result and mode != "tool_loop"
         if body.get("stream"):
             return StreamingResponse(
-                _stream(model, mode=mode, content=content),
+                _stream(
+                    model,
+                    mode="tool_call" if mode in ("tool_call", "tool_loop") else mode,
+                    content=content,
+                    tool_spec=(tool_name, tool_args, wants_answer),
+                ),
                 media_type="text/event-stream",
             )
         # Non-stream: a reasoning model carries its thinking in `reasoning_content`; the
@@ -113,6 +133,19 @@ def _build_app(mode: str, captured: dict[str, object], response: str | None) -> 
         elif mode == "empty_length":
             msg = {"role": "assistant", "content": "", "reasoning_content": "thinking step..."}
             finish = "length"
+        elif mode in ("tool_call", "tool_loop") and not wants_answer:
+            msg = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": tool_name, "arguments": json.dumps(tool_args)},
+                    }
+                ],
+            }
+            finish = "tool_calls"
         return JSONResponse(
             {
                 "id": "chatcmpl-fake",
@@ -143,7 +176,38 @@ def _chunk(model: str, delta: dict, finish: str | None = None) -> str:
     )
 
 
-async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE):
+async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_spec=None):
+    # M21 tool-calling: stream a tool_call (fragmented arguments — proves the accumulator) on the
+    # first turn, then the final answer once the tool result is in the transcript.
+    if mode == "tool_call":
+        name, args, has_result = tool_spec
+        if has_result:
+            yield _chunk(model, {"role": "assistant", "content": content})
+            yield _chunk(model, {}, finish="stop")
+            yield "data: [DONE]\n\n"
+            return
+        yield _chunk(
+            model,
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": name, "arguments": ""},
+                    }
+                ],
+            },
+        )
+        argstr = json.dumps(args)
+        mid = max(len(argstr) // 2, 1)
+        yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[:mid]}}]})
+        yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[mid:]}}]})
+        yield _chunk(model, {}, finish="tool_calls")
+        yield "data: [DONE]\n\n"
+        return
+
     # A reasoning model emits `reasoning_content` deltas BEFORE its `content` answer.
     if mode in ("reasoning", "empty_length"):
         yield _chunk(model, {"role": "assistant", "reasoning_content": "thinking "})
@@ -176,7 +240,13 @@ async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE):
 class FakeInference:
     """A real OpenAI-compatible HTTP server on an ephemeral port (context manager)."""
 
-    def __init__(self, mode: str = "normal", response: str | None = None) -> None:
+    def __init__(
+        self,
+        mode: str = "normal",
+        response: str | None = None,
+        tool_name: str = "search",
+        tool_args: dict[str, object] | None = None,
+    ) -> None:
         self.captured: dict[str, object] = {
             "run_id_header": None,
             "model": None,
@@ -185,7 +255,7 @@ class FakeInference:
             "audio_model": None,
             "audio_bytes_in": 0,
         }
-        app = _build_app(mode, self.captured, response)
+        app = _build_app(mode, self.captured, response, tool_name, tool_args)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)

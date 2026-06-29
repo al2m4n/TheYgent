@@ -80,14 +80,86 @@
       "additionalProperties": false,
       "description": "An http/REST/GraphQL tool binding (M19 \u00a72.3) \u2014 the workhorse + the substrate for action tools\n(\u00a72.5) and crawler tools (\u00a71.4). ``connection`` is the id of an ``http_auth`` connection (M19\n\u00a71.1) whose secret the handler injects SERVER-SIDE at step time \u2014 never inline in the IR. The\noptional ``template`` names a provider request shape (e.g. ``slack.chat.postMessage``) for the\nsmall built-in action set; everything else is the raw http tool config on the node (\u00a72.3).",
       "properties": {
+        "bodyTemplate": {
+          "default": null,
+          "title": "Bodytemplate"
+        },
         "connection": {
           "title": "Connection",
           "type": "string"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Headers",
+          "type": "object"
+        },
+        "idempotencyKey": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Idempotencykey"
         },
         "kind": {
           "const": "http",
           "title": "Kind",
           "type": "string"
+        },
+        "method": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Method"
+        },
+        "parameterSchema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameterschema"
+        },
+        "responseMap": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Responsemap"
         },
         "template": {
           "anyOf": [
@@ -100,6 +172,18 @@
           ],
           "default": null,
           "title": "Template"
+        },
+        "urlTemplate": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Urltemplate"
         }
       },
       "required": [

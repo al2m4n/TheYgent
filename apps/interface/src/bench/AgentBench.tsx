@@ -12,6 +12,7 @@ import type { Selection } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { Button, Card, Field, Input, Select } from "../components/ui";
 import { type AgentDetail, api } from "../lib/api";
+import { TraceWaterfall } from "./TraceWaterfall";
 import { applyPresetToBinding } from "./preset";
 
 export function AgentBench({ agent }: { agent: AgentDetail }) {
@@ -28,13 +29,6 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   const [highlight, setHighlight] = useState<Selection>(null);
   const [running, setRunning] = useState(false);
 
-  const trace = useQuery({
-    queryKey: ["trace", result?.runId],
-    queryFn: () => api.getRunTrace(result?.runId ?? ""),
-    enabled: Boolean(result?.runId),
-    retry: false, // observability may be absent → degrade, don't hammer
-  });
-
   async function run() {
     setRunning(true);
     setResult(null);
@@ -49,7 +43,6 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   }
 
   const ir = stored.data?.ir as IRDocument | undefined;
-  const nodeSpans = (trace.data?.spans ?? []).filter((s) => s.node_id && !s.phase);
 
   return (
     <div className="space-y-3">
@@ -79,14 +72,9 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
           {result.output}
         </pre>
       )}
-      {result?.runId && trace.isError && (
-        <p className="text-xs text-slate-500">
-          Trace unavailable (observability not enabled) — showing persisted output only.
-        </p>
-      )}
-      {nodeSpans.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
-          <Waterfall spans={nodeSpans} onHover={setHighlight} />
+      {result?.runId && (
+        <div className="space-y-3">
+          <TraceWaterfall runId={result.runId} onHover={setHighlight} />
           {ir && (
             <div className="h-64 overflow-hidden rounded-md border border-slate-800">
               <GraphCanvas
@@ -102,50 +90,6 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       )}
 
       {ir && <ApplyPreset agentId={agent.id} ir={ir} />}
-    </div>
-  );
-}
-
-function Waterfall({
-  spans,
-  onHover,
-}: {
-  spans: {
-    id: string;
-    node_id?: string | null;
-    name: string;
-    start_ns: number;
-    end_ns?: number | null;
-    status: string;
-  }[];
-  onHover: (s: Selection) => void;
-}) {
-  const t0 = Math.min(...spans.map((s) => s.start_ns));
-  const tEnd = Math.max(...spans.map((s) => s.end_ns ?? s.start_ns));
-  const span = Math.max(tEnd - t0, 1);
-  return (
-    <div className="space-y-1" data-testid="agent-waterfall">
-      {spans.map((s) => {
-        const left = ((s.start_ns - t0) / span) * 100;
-        const width = (((s.end_ns ?? s.start_ns) - s.start_ns) / span) * 100;
-        return (
-          <button
-            type="button"
-            key={s.id}
-            className="block w-full text-left"
-            onMouseEnter={() => onHover(s.node_id ? { kind: "node", id: s.node_id } : null)}
-            onMouseLeave={() => onHover(null)}
-          >
-            <span className="text-[11px] text-slate-400">{s.name}</span>
-            <span className="block h-2 rounded bg-slate-800">
-              <span
-                className="block h-full rounded bg-blue-500"
-                style={{ marginLeft: `${left}%`, width: `${Math.max(width, 2)}%` }}
-              />
-            </span>
-          </button>
-        );
-      })}
     </div>
   );
 }

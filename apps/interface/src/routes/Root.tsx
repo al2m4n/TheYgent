@@ -1,4 +1,5 @@
 import { Link, Outlet } from "@tanstack/react-router";
+import { NotificationCenter } from "../lib/notify";
 
 // The shell: a thin top bar + the routed view. The interface is canvas-first, so chrome stays out
 // of the way. Two pages: the canvas (Agents/Editor) and Registries (browse + install models).
@@ -27,6 +28,9 @@ export function Root() {
       <main className="min-h-0 flex-1">
         <Outlet />
       </main>
+      {/* The one central place for messages + live download progress, bottom-right, above every
+          page and persistent across navigation. */}
+      <NotificationCenter />
     </div>
   );
 }
