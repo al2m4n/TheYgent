@@ -187,6 +187,10 @@ class HttpTool(_Wire):
     headers: dict[str, str] = Field(default_factory=dict)  # connection adds auth headers at runtime
     response_map: str | None = None  # optional JSONPath ($.data) to shape the tool result
     idempotency_key: str | None = None  # §2.5 — replay-safe re-run for unsafe methods
+    # M22: a per-request timeout (mirrors ToolConfig.timeout_seconds), so a node-authored http tool
+    # wired as a CAPABILITY keeps its configured timeout instead of dropping to the httpx default
+    # (step-mode reads it from ToolConfig; capability-mode rebuilds a ToolConfig from this binding).
+    timeout_seconds: float | None = None
 
 
 class McpTool(_Wire):
@@ -216,7 +220,12 @@ ToolBinding = Annotated[BuiltinTool | HttpTool | McpTool, Field(discriminator="k
 # ── nodes & edges (§8.3) ──────────────────────────────────────────────────────
 
 
-PortRole = Literal["data", "control"]
+# M22: ``tool`` joins ``data``/``control`` as a port role + edge channel. A ``tool`` handle on an
+# ``llm`` (its ``tools`` in-port) receives capability edges from configured tool nodes — the model
+# may CALL those tools (autonomous tool-calling, M21), distinct from a ``data`` edge (the tool runs
+# as a step, output flows) and a ``control`` edge (pure sequencing). Additive value: every pre-M22
+# port/edge keeps ``data``/``control``, so old IRs parse + hash unchanged (no schemaVersion bump).
+PortRole = Literal["data", "control", "tool"]
 
 
 class Port(_Wire):
@@ -249,7 +258,7 @@ class Ports(_Wire):
     out: list[Port] = Field(default_factory=list)
 
 
-EdgeChannel = Literal["data", "control"]
+EdgeChannel = Literal["data", "control", "tool"]
 
 
 class Node(_Wire):
@@ -466,6 +475,15 @@ class ToolConfig(_Wire):
     timeout_seconds: float | None = None
     response_map: str | None = None  # optional JSONPath ($.data) to shape the step output
     idempotency_key: str | None = None  # §2.5 — set for unsafe methods (replay-safe re-run)
+    # M22 — the binding lives ON the node (m22.md D3). ``connection`` is the http_auth connection id
+    # (replaces the M19 ``ir.tools[tool].connection`` indirection for node-authored http tools —
+    # still an id, never a secret; resolved server-side). ``description`` is the "use this when…"
+    # hint the model reads to decide a call; ``parameter_schema`` is the OpenAI function schema —
+    # both REQUIRED for an http tool node wired as a CAPABILITY (validated), so it self-describes
+    # like the M21 http binding. A ``data``/``control``-wired (step-mode) tool node ignores them.
+    connection: str | None = None
+    description: str | None = None
+    parameter_schema: dict[str, Any] | None = None
 
 
 class RouterConfig(_Wire):
@@ -489,6 +507,10 @@ class McpToolConfig(_Wire):
     server: str | None = None
     connection: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
+    # M22 — the "use this when…" hint, surfaced when this mcp_tool is wired as an llm CAPABILITY
+    # (m22.md D3). Optional: an mcp tool already self-describes at runtime via the server's
+    # ``list_tools`` inputSchema, so a description only augments it; step-mode ignores it.
+    description: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> McpToolConfig:
@@ -973,12 +995,96 @@ def validate_graph(ir: IRDocument) -> None:
             )
         fed_ports.add(key)
 
+    # 4c: M22 — a ``tool``-channel edge wires a configured tool node to an llm as a CAPABILITY (the
+    # model may call it), distinct from a ``data`` edge (the tool runs as a step, output flows). It
+    # must source a tool/mcp_tool node and target an ``llm``'s ``tool``-role in-port. A tool node is
+    # a capability OR a step, never both (mixed out-channels are ambiguous). An http capability node
+    # must self-describe (description + parameterSchema + slot↔property equivalence) — the M21 http
+    # binding check, now read from the node's own config (m22.md §5 / D3).
+    role_by_in_port = {(n.id, p.id): p.role for n in ir.nodes for p in n.ports.in_}
+    for edge in ir.edges:
+        if edge.channel != "tool":
+            continue
+        src = node_by_id[edge.source]
+        tgt = node_by_id[edge.target]
+        if src.type not in {"tool", "mcp_tool"}:
+            raise GraphValidationError(
+                f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool node, "
+                f"not {src.type!r} (m22.md §2)"
+            )
+        if tgt.type != "llm":
+            raise GraphValidationError(
+                f"edge {edge.id!r}: a `tool` edge must target an llm node, not {tgt.type!r}"
+            )
+        role = role_by_in_port.get((tgt.id, edge.target_handle))
+        if role is not None and role != "tool":
+            raise GraphValidationError(
+                f"edge {edge.id!r}: a `tool` edge must target a `tool`-role port, but "
+                f"{tgt.id!r}.{edge.target_handle!r} is role {role!r}"
+            )
+
+    # The inverse: a `tool`-role in-port may ONLY be fed by a `tool`-channel edge — a data/control
+    # edge into an llm's tools port is a miswire (its value would never be consumed).
+    for edge in ir.edges:
+        if edge.channel == "tool":
+            continue
+        if role_by_in_port.get((edge.target, edge.target_handle)) == "tool":
+            raise GraphValidationError(
+                f"edge {edge.id!r}: a `{edge.channel}` edge cannot target the `tool`-role port "
+                f"{edge.target!r}.{edge.target_handle!r} — only a `tool` capability edge may "
+                "(m22.md §5)"
+            )
+
+    for node in ir.nodes:
+        if node.type not in {"tool", "mcp_tool"}:
+            continue
+        out_channels = {e.channel for e in ir.edges if e.source == node.id}
+        is_capability = "tool" in out_channels
+        if is_capability and out_channels - {"tool"}:
+            raise GraphValidationError(
+                f"node {node.id!r}: a tool node is either a capability (`tool` edges to an llm) "
+                f"or a step (`data`/`control` edges), not both (m22.md §5)"
+            )
+        # NOTE: a capability node's id IS its `ir.tools` key — the editor derives the global tool
+        # registry from the wired nodes (keyed by node id), so ``ir.tools[node.id]`` mirrors the
+        # node config (like ir.models). Dispatch resolves the node id via either source, so the
+        # id↔key coincidence is intentional, never a shadowing bug (m22.md D1).
+        if is_capability and node.type == "tool":
+            cfg = ToolConfig.model_validate(node.config)
+            if cfg.connection or cfg.url_template:  # an http tool (vs a builtin ref)
+                if cfg.description is None or cfg.parameter_schema is None:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: an http tool wired as a capability must set "
+                        "`description` + `parameterSchema` (a model-callable tool "
+                        "self-describes — m22.md §5)"
+                    )
+                props = set((cfg.parameter_schema.get("properties") or {}).keys())
+                named, saw_whole = _in_slots(cfg.url_template)
+                body_named, body_whole = _in_slots(cfg.body_template)
+                slots = named | body_named
+                unfillable = slots - props
+                if unfillable:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: http tool template references $in slot(s) "
+                        f"{sorted(unfillable)} with no matching `parameterSchema` property "
+                        "(unfillable — m22.md §5)"
+                    )
+                dead = props - slots
+                if dead and not (saw_whole or body_whole):
+                    raise GraphValidationError(
+                        f"node {node.id!r}: `parameterSchema` declares propert(ies) "
+                        f"{sorted(dead)} with no matching $in slot (dead — m22.md §5)"
+                    )
+
     # 5: every REQUIRED in-port must be fed by a ``data`` edge (M10 §3 — per-port, not per-node).
     # An ``input`` boundary legitimately has no inbound edge; an in-port declared ``required:
     # false`` may be unfed (resolves to null at runtime). Without this the walker would read an
-    # unbound port — the silent ``None`` M9 was written to forbid.
+    # unbound port — the silent ``None`` M9 was written to forbid. M22: a CAPABILITY tool node (a
+    # ``tool`` out-edge) is exempt — its args are supplied by the model at call time, not an
+    # upstream edge, so its (M6) ``in`` port is legitimately unfed.
+    capability_nodes = {e.source for e in ir.edges if e.channel == "tool"}
     for node in ir.nodes:
-        if node.type == "input":
+        if node.type == "input" or node.id in capability_nodes:
             continue
         for port in node.ports.in_:
             if port.required and (node.id, port.id) not in fed_ports:
@@ -1001,6 +1107,11 @@ def topological_order(ir: IRDocument) -> list[Node]:
     for edge in ir.edges:
         if edge.source not in node_by_id or edge.target not in node_by_id:
             # validate_graph reports this precisely; ignore here so topo can run standalone.
+            continue
+        # M22: a ``tool``-channel edge is a CAPABILITY wire (the llm may call the tool on-demand),
+        # NOT sequencing — it imposes no order, so it is excluded from the topo sort (the walker
+        # runs the capability lazily inside the llm step, never as a standalone node).
+        if edge.channel == "tool":
             continue
         successors[edge.source].append(edge.target)
         indegree[edge.target] += 1

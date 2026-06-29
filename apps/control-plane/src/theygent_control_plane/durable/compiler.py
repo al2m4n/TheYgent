@@ -70,6 +70,8 @@ from theygent_control_plane.walker import (
     _bind_gate,
     _bind_guardrail,
     _bind_outcome,
+    _capability_binding,
+    _capability_tool_nodes,
     _collect_in_ports,
     _io_input_snapshot,
     _io_output_snapshot,
@@ -85,6 +87,7 @@ from theygent_control_plane.walker import (
     _success_handles,
     _to_openai_tool_choice,
     assistant_tool_calls_message,
+    build_capability_schemas,
     build_http_call,
     build_tool_schemas,
     evaluate_guardrail_rule,
@@ -361,7 +364,9 @@ async def _durable_tool_call(
     independently journaled — a crash mid-loop resumes at the first incomplete step (D9), completed
     calls replay from the journal. Mirrors the interactive ``execute_tool_call`` but via @DBOS.step
     bodies. Plain helper (not itself a step): it composes steps inside the workflow body."""
-    binding = ir.tools.get(call.name)
+    # M22: an ir.tools key (M21) OR a tool/mcp_tool NODE id wired as a capability (binding from the
+    # node's inline config — D3/D6). Same dispatch below either way; legacy keys tried first.
+    binding = ir.tools.get(call.name) or _capability_binding(ir, call.name)
     if binding is None:
         if call.name in DEFAULT_REGISTRY:  # a directly-registered builtin
             o = await _tool_step(run_id, node_id, call.name, call.arguments)
@@ -394,7 +399,7 @@ async def _durable_tool_call(
             headers=binding.headers,
             response_map=binding.response_map,
             idempotency_key=idem,
-            timeout_seconds=binding.timeout_seconds,
+            timeout_seconds=getattr(binding, "timeout_seconds", None),
         )
         try:
             hc = build_http_call(binding, cfg, ports, node_id=node_id, run_id=run_id)
@@ -690,7 +695,13 @@ async def _durable_walk(
     output: Any = None
     output_produced = False
 
+    # M22 (parity with the interactive walker): a capability tool node (source of a `tool` edge) is
+    # not run as a step — the model calls it lazily inside the llm loop. Skip it in the topo walk.
+    capability_nodes = {e.source for e in ir.edges if e.channel == "tool"}
+
     for node in topological_order(ir):
+        if node.id in capability_nodes:
+            continue
         if _is_skipped(node, ir.edges, skipped, live_handles):
             skipped.add(node.id)
             _log_node(run_id, node, skipped=True)
@@ -782,13 +793,22 @@ async def _durable_walk(
                     # step
                     # (D9). With no tools this is exactly one `_llm_step` — byte-identical to
                     # pre-M21.
-                    tool_schemas = None
-                    tool_choice = None
+                    # M22 (parity with the walker): union the legacy ir.tools keys (config.tools)
+                    # with the capability nodes wired to this llm's `tools` port. Capability schemas
+                    # name the function by NODE id; both dispatch through _durable_tool_call.
+                    cap_nodes = _capability_tool_nodes(ir, node.id)
+                    schemas: list[dict[str, Any]] = []
                     if config.tools:
-                        tool_schemas = await build_tool_schemas(
+                        schemas += await build_tool_schemas(
                             ir, config.tools, registry=DEFAULT_REGISTRY, mcp=_res().mcp
                         )
-                        tool_choice = _to_openai_tool_choice(config.tool_choice)
+                    if cap_nodes:
+                        schemas += await build_capability_schemas(
+                            cap_nodes, registry=DEFAULT_REGISTRY, mcp=_res().mcp
+                        )
+                    has_tools = bool(schemas)
+                    tool_schemas = schemas if has_tools else None
+                    tool_choice = _to_openai_tool_choice(config.tool_choice) if has_tools else None
                     # M17 §2: each journaled turn is a `model.generate` phase span (child of the
                     # node
                     # span). Carries the GenAI-semconv model/finish scalars.
@@ -816,7 +836,7 @@ async def _durable_walk(
                                 _ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"])
                                 for c in res.get("tool_calls", [])
                             ]
-                            if not (calls and config.tools):
+                            if not (calls and has_tools):
                                 final_output = res["output"]
                                 truncated = res["truncated_empty"]
                                 break

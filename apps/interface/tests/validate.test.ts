@@ -78,4 +78,60 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     const issues = validateGraph(ir);
     expect(issues.some((i) => i.edgeId === "e1" && /no in-port/.test(i.message))).toBe(true);
   });
+
+  // M22: a capability tool node + an llm tools port wired by a `tool` edge.
+  function capabilityGraph() {
+    const ir = sampleGraph();
+    ir.nodes
+      ?.find((n) => n.id === "n_llm")
+      ?.ports?.in?.push({ id: "tools", type: "any", required: false, role: "tool" });
+    ir.nodes?.push({
+      id: "n_echo",
+      type: "tool",
+      kind: "activity",
+      label: null,
+      config: { tool: "echo", description: "echo" },
+      ports: {
+        in: [{ id: "in", type: "any", required: true }],
+        out: [{ id: "out", type: "any", required: true }],
+      },
+    });
+    ir.edges?.push({
+      id: "e_tool",
+      source: "n_echo",
+      sourceHandle: "out",
+      target: "n_llm",
+      targetHandle: "tools",
+      channel: "tool",
+      condition: null,
+    });
+    return ir;
+  }
+
+  it("M22: a capability tool node is NOT flagged for its unfed required in-port", () => {
+    // Regression: the validator must exempt a capability node (its args come from the model).
+    const issues = validateGraph(capabilityGraph());
+    expect(issues.some((i) => i.nodeId === "n_echo" && /not connected/.test(i.message))).toBe(
+      false,
+    );
+    expect(issues.filter((i) => i.severity === "error")).toEqual([]);
+  });
+
+  it("M22: flags a tool node wired as BOTH a capability and a step", () => {
+    const ir = capabilityGraph();
+    // also wire n_echo's output into n_out as a data edge → mixed mode.
+    ir.edges?.push({
+      id: "e_mixed",
+      source: "n_echo",
+      sourceHandle: "out",
+      target: "n_out",
+      targetHandle: "in",
+      channel: "data",
+      condition: null,
+    });
+    const issues = validateGraph(ir);
+    expect(
+      issues.some((i) => i.nodeId === "n_echo" && /capability .* or a step/.test(i.message)),
+    ).toBe(true);
+  });
 });

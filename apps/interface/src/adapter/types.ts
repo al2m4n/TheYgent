@@ -28,15 +28,16 @@ export interface PortView {
   /** Advisory port type (§8.3 — `any`/`error`/…); rendered/round-tripped, not yet enforced. */
   type: string;
   required: boolean;
-  /** The channel the handle carries (M19 §2.10): `data` (default — threads a value) or `control`
-   * (pure ordering). The canvas renders the two distinctly and only allows same-role connections;
-   * the edge `channel` is DERIVED from the handles it joins. Round-tripped to the IR `Port.role`. */
-  role: "data" | "control";
+  /** The channel the handle carries: `data` (default — threads a value), `control` (pure ordering,
+   * M19 §2.10), or `tool` (M22 — a capability wire: the llm's `tools` port and a tool node's
+   * out-handle). The canvas renders the three distinctly and only allows same-role connections; the
+   * edge `channel` is DERIVED from the handles it joins. Round-tripped to the IR `Port.role`. */
+  role: "data" | "control" | "tool";
 }
 
 /** What a canvas edge carries beyond its endpoints (the IR `channel` + router `condition`). */
 export interface TheygentEdgeData extends Record<string, unknown> {
-  channel: "data" | "control";
+  channel: "data" | "control" | "tool";
   condition: string | null;
 }
 

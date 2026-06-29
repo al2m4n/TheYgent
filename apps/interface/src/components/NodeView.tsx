@@ -8,7 +8,7 @@
 import { kindForType } from "@theygent/ir-types";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
 import type { TheygentRFNode } from "../adapter";
-import { resolveIcon } from "../lib/icons";
+import { NodeIcon, resolveIcon } from "../lib/icons";
 
 const KIND_STYLE: Record<string, { ring: string; dot: string; label: string }> = {
   boundary: { ring: "border-emerald-600/70", dot: "bg-emerald-400", label: "text-emerald-300" },
@@ -30,9 +30,15 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
   const outs = data.ports.out.filter((p) => (p.role ?? "data") === "data");
   const ctrlIns = data.ports.in.filter((p) => p.role === "control");
   const ctrlOuts = data.ports.out.filter((p) => p.role === "control");
+  // M22: `tool`-role handles — a third style (violet, on top/bottom), distinct from data (round,
+  // sides) and control (amber square). The llm's `tools` IN-port (bottom) RECEIVES; a tool/mcp_tool
+  // node's `use` OUT-port (top) OFFERS the tool. Wire `use` → `tools` to make the model able to call
+  // it (one edge declares the capability; the request→run→response is the runtime loop).
+  const toolIns = data.ports.in.filter((p) => p.role === "tool");
+  const toolOuts = data.ports.out.filter((p) => p.role === "tool");
   // The displayed icon: the user's override (a `view`-sourced display field) or the type default —
-  // derived here, never stored on the IR's hashed content.
-  const icon = resolveIcon(data.nodeType, data.icon);
+  // resolved here to a Lucide icon name, never stored on the IR's hashed content.
+  const iconName = resolveIcon(data.nodeType, data.icon);
 
   return (
     <div
@@ -42,9 +48,7 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
     >
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 text-base leading-none" aria-hidden>
-            {icon}
-          </span>
+          <NodeIcon name={iconName} className="shrink-0 text-slate-300" size={16} />
           <span className="truncate text-sm font-medium text-slate-100">{data.label}</span>
         </span>
         <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
@@ -95,6 +99,42 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
           position={Position.Bottom}
           style={{ left: handlePos(i, ctrlOuts.length), background: "#f59e0b", borderRadius: 2 }}
           title={`control out · ${p.id}`}
+        />
+      ))}
+      {/* M22: the llm's `tools` IN-port (violet, bottom) — a tool node's `use` handle wires here so
+          the model may CALL it. Distinct from data (sides) and control (amber). */}
+      {toolIns.map((p, i) => (
+        <Handle
+          key={`tin-${p.id}`}
+          id={p.id}
+          type="target"
+          position={Position.Bottom}
+          style={{
+            left: handlePos(i, toolIns.length),
+            background: "#a78bfa",
+            borderRadius: 2,
+            width: 11,
+            height: 11,
+          }}
+          title={`tools · ${p.id} — wire a tool node's "use" handle here (the model may call it)`}
+        />
+      ))}
+      {/* M22: a tool/mcp_tool node's `use` OUT-port (violet, top) — drag it into an llm's `tools`
+          handle to make the tool callable by the model. */}
+      {toolOuts.map((p, i) => (
+        <Handle
+          key={`tout-${p.id}`}
+          id={p.id}
+          type="source"
+          position={Position.Top}
+          style={{
+            left: handlePos(i, toolOuts.length),
+            background: "#a78bfa",
+            borderRadius: 2,
+            width: 11,
+            height: 11,
+          }}
+          title={`${p.id} — wire into an llm's tools port to let the model call this tool`}
         />
       ))}
     </div>

@@ -203,6 +203,64 @@ async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
             await engine.dispose()
 
 
+async def test_m22_durable_wired_capability_tool_then_answers(pg_url: str) -> None:
+    # M22 parity: a tool node wired to the llm's `tools` port (NO config.tools) is callable on the
+    # DURABLE runtime too — the model calls it by NODE id, `_durable_tool_call` resolves the binding
+    # from the node's inline config and journals each step. Same primitives as the interactive M22
+    # path (test_m22_tool_wiring.py), here through theygent_run.
+    await reset_dbos_schema(pg_url)
+    ir = trivial_ir()
+    ir["id"] = "agt_m22_capability"
+    llm = ir["nodes"][1]
+    llm["ports"]["in"].append({"id": "tools", "type": "any", "required": False, "role": "tool"})
+    llm["config"]["maxToolIterations"] = 4
+    ir["nodes"].append(
+        {
+            "id": "n_echo",
+            "type": "tool",
+            "kind": "activity",
+            "config": {"tool": "echo", "description": "echo the value back"},
+            "ports": {
+                "in": [{"id": "in", "type": "any", "required": True}],
+                "out": [{"id": "out", "type": "any"}, {"id": "err", "type": "error"}],
+            },
+        }
+    )
+    ir["edges"].append(
+        {
+            "id": "e_tool",
+            "source": "n_echo",
+            "sourceHandle": "out",
+            "target": llm["id"],
+            "targetHandle": "tools",
+            "channel": "tool",
+        }
+    )
+    with FakeInference(
+        mode="tool_call",
+        tool_name="n_echo",
+        tool_args={"value": "hi"},
+        response="durable wired answer",
+    ) as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": aid, "version": ver, "content_hash": None}, "do it"
+            )
+            durable = await handle.get_result()
+            assert durable["status"] == "completed"
+            assert durable["output"] == "durable wired answer"
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
 async def test_durable_multimodal_content_survives_the_journal(pg_url: str) -> None:
     # M20 cross-plane follow-up on the durable path: the rendered ``messages`` are a DBOS step
     # argument, so a multimodal content (text + image_url) is serialized into the journal and handed
