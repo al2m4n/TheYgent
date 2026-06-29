@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type SSEEvent, parseSSEBuffer, readSSE } from "../../src/lib/sse";
+import { type SSEEvent, parseSSEBuffer, readSSE } from "../src/lib/sse";
 
 describe("parseSSEBuffer", () => {
   it("parses event + data frames and keeps the incomplete tail", () => {

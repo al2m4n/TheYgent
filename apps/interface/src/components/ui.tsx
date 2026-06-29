@@ -6,8 +6,10 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
   useEffect,
 } from "react";
+import { statusClass } from "../lib/format";
 
 type Variant = "primary" | "default" | "ghost" | "danger";
 
@@ -47,6 +49,29 @@ export function Select({ className = "", ...props }: SelectHTMLAttributes<HTMLSe
       className={`w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
       {...props}
     />
+  );
+}
+
+export function Textarea({
+  className = "",
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={`w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
+      {...props}
+    />
+  );
+}
+
+// The run status pill (Runs list + run detail) — completed green, failed red, streaming amber.
+export function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusClass(status)}`}
+    >
+      {status}
+    </span>
   );
 }
 

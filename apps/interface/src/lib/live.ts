@@ -6,7 +6,7 @@
 
 import { useSyncExternalStore } from "react";
 import { ApiError, streamRun } from "./api";
-import type { DeltaFrame, ReasoningFrame, RunFrame, RunStatus } from "./types";
+import type { DeltaFrame, ReasoningFrame, RunFrame, RunStatus } from "./runtypes";
 
 export interface TimelineEntry {
   /** SSE event name: "run" | "delta" | "reasoning" | sentinel. */

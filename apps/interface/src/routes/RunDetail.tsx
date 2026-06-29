@@ -68,7 +68,7 @@ export function RunDetail() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+        <Link to="/runs" className="text-sm text-slate-400 hover:text-slate-200">
           ← Runs
         </Link>
         <h1 className="mono text-sm font-semibold text-slate-100">{run.id}</h1>

@@ -17,6 +17,15 @@ export function Root() {
           <Link to="/" className={navLink} activeOptions={{ exact: true }}>
             Agents
           </Link>
+          <Link to="/runs" className={navLink}>
+            Runs
+          </Link>
+          <Link to="/threads" className={navLink}>
+            Threads
+          </Link>
+          <Link to="/compose" className={navLink}>
+            Compose
+          </Link>
           <Link to="/registries" className={navLink}>
             Registries
           </Link>

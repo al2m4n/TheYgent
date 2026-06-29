@@ -6,6 +6,16 @@
 // (M15 §3): if a needed endpoint were missing we'd flag it, not work around it client-side.
 
 import type { IRDocument } from "@theygent/ir-types";
+import type {
+  CaptureLevel,
+  IoPolicy,
+  NodeIo,
+  Run,
+  Span,
+  ThreadDetail,
+  ThreadSummary,
+} from "./runtypes";
+import { type SSEEvent, readSSE } from "./sse";
 
 export const CONTROL_PLANE_URL =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined)?.replace(/\/$/, "") ??
@@ -380,6 +390,64 @@ export interface BenchPresetRecord extends BenchPresetInput {
 }
 
 export const api = {
+  // ── control-plane runs + threads (the operator surface, ported from the cockpit) ──
+  listRuns: (params: { limit?: number; before?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.before) q.set("before", params.before);
+    const qs = q.toString();
+    return request<{ runs: Run[] }>(CONTROL_PLANE_URL, `/runs${qs ? `?${qs}` : ""}`).then(
+      (r) => r.runs,
+    );
+  },
+
+  getRun: (id: string) => request<Run>(CONTROL_PLANE_URL, `/runs/${encodeURIComponent(id)}`),
+
+  listThreads: (params: { limit?: number; before?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.before) q.set("before", params.before);
+    const qs = q.toString();
+    return request<{ threads: ThreadSummary[] }>(
+      CONTROL_PLANE_URL,
+      `/threads${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.threads);
+  },
+
+  getThread: (id: string) =>
+    request<ThreadDetail>(CONTROL_PLANE_URL, `/threads/${encodeURIComponent(id)}`),
+
+  // ── control-plane observability (M17 — the run waterfall) ──────────────────
+  // The waterfall payload: the run's span tree (timing + status + worker attribution + edge sizes).
+  // NO payloads — those are the lazy /io call below. (The bench has its own getRunTrace/getRunIo that
+  // return the {runId,status,spans} envelope; this run-detail surface consumes the span list + the
+  // fuller Span shape the cockpit waterfall was built on.)
+  getTrace: (runId: string) =>
+    request<{ runId: string; status: string; spans: Span[] }>(
+      CONTROL_PLANE_URL,
+      `/runs/${encodeURIComponent(runId)}/trace`,
+    ).then((r) => r.spans),
+
+  // The click-through: the full per-node I/O. Gated states (off/metadata/not-permitted) come back
+  // as a 200 with inputs/outputs null + a `reason` — never an error, so the timeline stays legible.
+  getNodeIo: (runId: string, nodeId: string) =>
+    request<NodeIo>(
+      CONTROL_PLANE_URL,
+      `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/io`,
+    ),
+
+  getIoPolicy: (agentId: string) =>
+    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(agentId)}/io-policy`),
+
+  putIoPolicy: (
+    agentId: string,
+    body: { io_capture: CaptureLevel; io_retention_seconds?: number | null },
+  ) =>
+    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(agentId)}/io-policy`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
   listAgents: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set("limit", String(params.limit));
@@ -686,3 +754,52 @@ export const api = {
       method: "DELETE",
     }),
 };
+
+// ── streaming (the run composer + live trace; ported from the cockpit) ───────
+// POST + read the SSE body on the SAME request: the composer creates and streams from one POST,
+// and we need custom headers + programmatic abort — none of which `EventSource` supports. One SSE
+// frame parser (lib/sse.ts) is reused across every streaming surface.
+
+export interface StreamHandle {
+  /** Async iterator of parsed SSE events. */
+  events: AsyncGenerator<SSEEvent>;
+  /** Abort the in-flight request/stream. */
+  abort: () => void;
+}
+
+/**
+ * POST a run (or graph run) and stream its SSE body. Returns immediately with an event iterator so
+ * the caller drives the UI. A pre-stream error (non-2xx) is thrown before the first event, exactly
+ * as the backend surfaces 503/404/400 before the 200 SSE (M3/M5).
+ */
+export async function streamRun(
+  // /runs, /graphs/runs, or M11's /agents/{id}/runs (invoke-by-reference) — all share the SSE shape.
+  path: string,
+  body: unknown,
+): Promise<StreamHandle> {
+  const controller = new AbortController();
+  const res = await fetch(`${CONTROL_PLANE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+    signal: controller.signal,
+  });
+  if (!res.ok) throw await toError(res);
+  if (!res.body) throw new ApiError("response had no body", 502, "no_body");
+  return { events: readSSE(res.body, controller.signal), abort: () => controller.abort() };
+}
+
+/**
+ * GET an SSE stream (M17: the live trace waterfall `/runs/{id}/trace/stream`). Same frame parser as
+ * `streamRun`, but a GET — the run executes elsewhere; this only observes its span open/close events.
+ */
+export async function streamGet(path: string): Promise<StreamHandle> {
+  const controller = new AbortController();
+  const res = await fetch(`${CONTROL_PLANE_URL}${path}`, {
+    headers: { ...authHeaders() },
+    signal: controller.signal,
+  });
+  if (!res.ok) throw await toError(res);
+  if (!res.body) throw new ApiError("response had no body", 502, "no_body");
+  return { events: readSSE(res.body, controller.signal), abort: () => controller.abort() };
+}

@@ -1,6 +1,6 @@
 # theygent dev Makefile — one-command bring-up / tear-down of the local processes.
 #
-#   make up       install deps, run migrations, then spin up inference + control-plane + web + interface
+#   make up       install deps, run migrations, then spin up inference + control-plane + interface
 #   make restart  stop everything and start it again (use this to pick up backend code changes)
 #   make down     stop everything started by `make up`
 #
@@ -9,7 +9,7 @@
 # resolve the live process via `lsof` on the port and are robust to stale/missing pidfiles.
 #
 # Mirrors the planned topology (CLAUDE.md): inference plane (8081), control-plane API (8080),
-# cockpit SPA (5173), and the M15 visual interface SPA (5174). They run as detached background
+# and the visual interface SPA (5174). They run as detached background
 # processes; PIDs and logs land under .run/ (gitignored). Config is read from .env (see
 # .env.example); this Makefile sources it for the recipes that need DATABASE_URL / host+port.
 #
@@ -45,7 +45,6 @@ PY_TEST_DIRS := packages/ir apps/inference apps/control-plane
 # from .env (THEYGENT_*_PORT) with the same defaults `start` uses.
 INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
-WEB_PORT := $(or $(THEYGENT_WEB_PORT),5173)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
 .PHONY: help install migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint
@@ -83,7 +82,7 @@ restart: down start ## Stop everything, then start it again (picks up code chang
 # skipped LOUDLY instead of silently failing to bind and leaving the OLD process serving (the trap
 # that hid stale code). $$! (the uv/pnpm wrapper pid) is recorded only as a hint; `down` resolves the
 # real server by port.
-start: ## Start inference + control-plane + web + interface as background processes
+start: ## Start inference + control-plane + interface as background processes
 	@mkdir -p $(RUN_DIR)
 	@if lsof -ti tcp:$(INFERENCE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> inference already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
@@ -99,13 +98,6 @@ start: ## Start inference + control-plane + web + interface as background proces
 		nohup uv run --package theygent-control-plane theygent-control-plane > $(RUN_DIR)/control-plane.log 2>&1 & \
 		echo $$! > $(RUN_DIR)/control-plane.pid; \
 	fi
-	@if lsof -ti tcp:$(WEB_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "==> web already on :$(WEB_PORT) — skipping (use 'make restart')"; \
-	else \
-		echo "==> starting cockpit (web, :$(WEB_PORT))"; \
-		nohup pnpm --filter @theygent/web dev > $(RUN_DIR)/web.log 2>&1 & \
-		echo $$! > $(RUN_DIR)/web.pid; \
-	fi
 	@if lsof -ti tcp:$(INTERFACE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> interface already on :$(INTERFACE_PORT) — skipping (use 'make restart')"; \
 	else \
@@ -114,11 +106,11 @@ start: ## Start inference + control-plane + web + interface as background proces
 		echo $$! > $(RUN_DIR)/interface.pid; \
 	fi
 	@echo ""
-	@echo "Started (inference :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · web :$(WEB_PORT) · interface :$(INTERFACE_PORT))."
+	@echo "Started (inference :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT))."
 	@echo "Logs: make logs  |  Status: make status  |  Stop: make down  |  Restart: make restart"
 
 down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper pidfiles)
-	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "web:$(WEB_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; pidfile=$(RUN_DIR)/$$name.pid; \
 		recorded=""; if [ -f "$$pidfile" ]; then recorded=$$(cat "$$pidfile" 2>/dev/null); fi; \
 		listeners=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null || true); \
@@ -137,13 +129,13 @@ down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper
 	done
 
 status: ## Show whether each service is running (resolved by PORT)
-	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "web:$(WEB_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; \
 		pid=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null | head -1 || true); \
 		if [ -n "$$pid" ]; then echo "  $$name: running on :$$port (pid $$pid)"; else echo "  $$name: stopped"; fi; \
 	done
 
-test: test-py test-web ## Run all tests (Python suites + web unit tests)
+test: test-py test-web ## Run all tests (Python suites + interface unit tests)
 
 test-py: ## Run Python tests for every package (excludes integration; pass ARGS=… to forward)
 	@for d in $(PY_TEST_DIRS); do \
@@ -151,10 +143,8 @@ test-py: ## Run Python tests for every package (excludes integration; pass ARGS=
 		( cd $$d && uv run pytest $(ARGS) ) || exit 1; \
 	done
 
-test-web: ## Run web + interface unit tests (vitest)
-	@echo "==> vitest (apps/web)"
-	pnpm --filter @theygent/web test
-	@echo "==> vitest (apps/interface — M15)"
+test-web: ## Run interface unit tests (vitest)
+	@echo "==> vitest (apps/interface)"
 	pnpm --filter @theygent/interface test
 
 gen-ir-types: ## Regenerate @theygent/ir-types from packages/ir (schema + TS + node registry)
@@ -165,5 +155,5 @@ smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plan
 	@echo "==> interface hand-drive smoke (drag-doesn't-hash · content-does · runs unchanged)"
 	uv run --package theygent-control-plane python apps/interface/tests/smoke/hand_drive.py
 
-logs: ## Tail the logs of all four services
-	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/web.log $(RUN_DIR)/interface.log
+logs: ## Tail the logs of all services
+	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log

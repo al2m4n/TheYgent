@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { streamGet } from "../lib/api";
-import type { Span } from "../lib/types";
+import type { Span } from "../lib/runtypes";
 import { useNodeIo, useTrace } from "../queries";
 import { Badge, Card, Spinner } from "./ui";
 

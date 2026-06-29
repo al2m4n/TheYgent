@@ -254,7 +254,7 @@ export function Compose() {
             {submitting ? "Starting…" : "Run & stream"}
           </Button>
           {mode === "graph" && (
-            <Button variant="secondary" disabled={saving || irBlocking} onClick={saveAsAgent}>
+            <Button variant="default" disabled={saving || irBlocking} onClick={saveAsAgent}>
               {saving ? "Saving…" : "Save as agent"}
             </Button>
           )}
