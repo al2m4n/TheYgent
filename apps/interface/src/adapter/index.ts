@@ -115,12 +115,13 @@ function portFrom(view: {
   id: string;
   type: string;
   required: boolean;
-  role: "data" | "control";
+  role: "data" | "control" | "tool";
 }): Port {
   const port: Port = { id: view.id, type: view.type, required: view.required };
   // `role` defaults to `data` (the server fills it — D2), so OMIT the default and emit only an
-  // explicit `control` — a role-less (pre-M19) IR round-trips to itself, byte-for-byte (§2.10).
-  if (view.role === "control") port.role = "control";
+  // explicit `control`/`tool` — a role-less (pre-M19) IR round-trips to itself, byte-for-byte
+  // (§2.10 / M22).
+  if (view.role === "control" || view.role === "tool") port.role = view.role;
   return port;
 }
 
@@ -174,7 +175,8 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
   }
   const view: ViewBlock = { ...(base.view as ViewBlock | undefined), nodes: viewNodes };
 
-  return { ...base, nodes, edges, view };
+  // M22: keep `ir.tools` in sync with the wired tool nodes (the global registry — like ir.models).
+  return withDerivedTools({ ...base, nodes, edges, view });
 }
 
 // ── IR → IR mutation helpers (the canvas interactions, §2.2) ──────────────────
@@ -296,15 +298,18 @@ export function connect(ir: IRDocument, c: Connection): ConnectResult {
   if (!c.targetHandle || !inPort) {
     return { error: `node ${tgt.id} has no in-port ${c.targetHandle ?? "(none)"}` };
   }
-  // M19 §2.10: data↔data or control↔control only — a handle's `role` is the channel it carries.
+  // The edge `channel` is DERIVED from the handles it joins, never a separate toggle. Connect
+  // like-to-like: data↔data (M19 §2.10), control↔control, tool↔tool (M22 — a tool/mcp_tool node's
+  // `use` OUT-handle into an llm's `tools` port, making the tool model-callable). The roles match, so
+  // one rule covers all three channels.
   const srcRole = outPort.role ?? "data";
   const tgtRole = inPort.role ?? "data";
   if (srcRole !== tgtRole) {
     return {
-      error: `cannot connect a ${srcRole} handle to a ${tgtRole} handle — data connects to data, control to control`,
+      error: `cannot connect a ${srcRole} handle to a ${tgtRole} handle — connect like-to-like (data↔data, control↔control, tool↔tools)`,
     };
   }
-  const channel = srcRole; // the edge channel is DERIVED from the handles, not a toggle (§2.10)
+  const channel: "data" | "control" | "tool" = srcRole;
   // The ambiguous-multi-input rule applies to DATA edges only (a control edge imposes no value).
   const dup =
     channel === "data" &&
@@ -398,6 +403,116 @@ export function setHttpToolBinding(
     n.id === nodeId ? { ...n, config: { ...(n.config ?? {}), tool: toolKey } } : n,
   );
   return { ...ir, tools, nodes };
+}
+
+/** A tool binding declared once in `ir.tools` (M21) — the model-callable tools any llm node may then
+ * select. The three kinds: `builtin` (a registered backend tool), `http` (connection-backed REST),
+ * `mcp` (a server + tool). Adding/removing one changes hashed *content* (it's authoring, like a
+ * node), never the `view`. */
+export type ToolBinding = NonNullable<IRDocument["tools"]>[string];
+
+/** The ir.tools BINDING for a tool/mcp_tool node, derived from its inline config — the mirror of the
+ * runtime's `_capability_binding` (walker.py). `mcp_tool` → mcp; a `tool` with a connection/url →
+ * http; else a builtin ref. Returns null for any other node type. */
+function toolBindingFromNode(n: IRNode): ToolBinding | null {
+  const cfg = (n.config ?? {}) as Record<string, unknown>;
+  if (n.type === "mcp_tool") {
+    const b: Record<string, unknown> = { kind: "mcp", tool: cfg.tool ?? "" };
+    if (cfg.server) b.server = cfg.server;
+    if (cfg.connection) b.connection = cfg.connection;
+    return b as unknown as ToolBinding;
+  }
+  if (n.type === "tool") {
+    if (cfg.connection || cfg.urlTemplate) {
+      const b: Record<string, unknown> = { kind: "http", connection: cfg.connection ?? "" };
+      for (const k of [
+        "description",
+        "parameterSchema",
+        "method",
+        "urlTemplate",
+        "bodyTemplate",
+        "headers",
+        "responseMap",
+        "idempotencyKey",
+        "timeoutSeconds",
+      ]) {
+        if (cfg[k] != null) b[k] = cfg[k];
+      }
+      return b as unknown as ToolBinding;
+    }
+    return { kind: "builtin", ref: (cfg.tool as string) ?? "" } as unknown as ToolBinding;
+  }
+  return null;
+}
+
+/** Re-derive `ir.tools` as a GLOBAL REGISTRY of the tools wired into the agent (M22, like `ir.models`
+ * auto-fills as you add llm bindings). A capability tool node — the source of a `channel:"tool"` edge
+ * — contributes `ir.tools[<node id>] = <its binding>` (the binding LIVES on the node; this is the
+ * index, tagged with its `kind`). Pre-existing legacy keys that aren't a node id (the M6/M19
+ * step-tool refs via `config.tool`) are preserved; stale node-id mirrors are dropped. Idempotent, so
+ * a load→save round-trip is identity. */
+export function withDerivedTools(ir: IRDocument): IRDocument {
+  const nodes = ir.nodes ?? [];
+  const edges = ir.edges ?? [];
+  const nodeById = new Map(nodes.map((n) => [n.id, n]));
+  const capabilityIds = new Set(
+    edges.filter((e) => (e.channel ?? "data") === "tool").map((e) => e.source),
+  );
+  const tools: Record<string, ToolBinding> = {};
+  // keep legacy entries whose key is NOT a current node id (M6/M19 config.tool refs); drop stale.
+  for (const [k, v] of Object.entries(ir.tools ?? {})) {
+    if (!nodeById.has(k)) tools[k] = v as ToolBinding;
+  }
+  for (const id of capabilityIds) {
+    const n = nodeById.get(id);
+    const b = n ? toolBindingFromNode(n) : null;
+    if (b) tools[id] = b;
+  }
+  return { ...ir, tools };
+}
+
+/** The three tool kinds, presented as ONE "Tool" node with a kind picker (M22 D1) rather than two
+ * palette entries. `builtin`/`rest` are the `tool` node type; `mcp` is the `mcp_tool` type. */
+export type ToolKind = "builtin" | "rest" | "mcp";
+
+/** The current kind of a tool/mcp_tool node — DERIVED from config, the same rule as
+ * `toolBindingFromNode` and the backend's `_capability_binding`: `mcp_tool` ⇒ `mcp`; a `tool` node
+ * carrying a connection or url ⇒ `rest`; otherwise a `builtin` ref. */
+export function toolKindOf(n: IRNode): ToolKind {
+  if (n.type === "mcp_tool") return "mcp";
+  const cfg = (n.config ?? {}) as Record<string, unknown>;
+  return cfg.connection || cfg.urlTemplate ? "rest" : "builtin";
+}
+
+/** Switch a tool node between its three kinds (M22 D1 — one node, the kind is a picker, not two
+ * palette types). `builtin`/`rest` keep the `tool` node type; `mcp` swaps to `mcp_tool`. The swap
+ * reseeds `config` from the target type's default shape (carrying `description`/`tool` across) so the
+ * kind is re-derivable: `rest` seeds a `urlTemplate` placeholder so an empty REST tool still reads as
+ * http (matching the backend's `_capability_binding`). Ports/label/icon/edges are preserved — both
+ * types declare the identical `use` capability handle — and `ir.tools` is re-derived so the registry
+ * shows the new kind. A no-op if the node already has that kind. */
+export function setToolKind(ir: IRDocument, nodeId: string, kind: ToolKind): IRDocument {
+  const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
+  if (!node || toolKindOf(node) === kind) return ir;
+  const cfg = (node.config ?? {}) as Record<string, unknown>;
+  const targetType = kind === "mcp" ? "mcp_tool" : "tool";
+  const spec = NODE_TYPES[targetType];
+  const next: Record<string, unknown> = structuredClone(spec.defaultConfig);
+  if (cfg.description) next.description = cfg.description;
+  if (cfg.tool) next.tool = cfg.tool;
+  if (kind === "rest") {
+    if (cfg.connection) next.connection = cfg.connection;
+    if (cfg.urlTemplate) next.urlTemplate = cfg.urlTemplate;
+    if (!next.connection && !next.urlTemplate) next.urlTemplate = "https://";
+    if (cfg.method) next.method = cfg.method;
+  } else if (kind === "mcp") {
+    if (cfg.server) next.server = cfg.server;
+    if (cfg.connection) next.connection = cfg.connection;
+  }
+  const nodes = (ir.nodes ?? []).map((n) =>
+    n.id === nodeId ? { ...n, type: targetType, kind: spec.kind as NodeKind, config: next } : n,
+  );
+  return withDerivedTools({ ...ir, nodes });
 }
 
 /** Duplicate a node: a fresh id, the same type/config/ports, label suffixed " copy", offset on the

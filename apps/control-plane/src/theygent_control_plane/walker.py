@@ -1170,34 +1170,123 @@ def _fn_schema(
     }
 
 
+async def _schema_for_binding(
+    name: str, binding: Any, *, registry: ToolRegistry, mcp: McpManager
+) -> dict[str, Any] | None:
+    """One OpenAI function schema from a tool BINDING object — the shared core of the M21 ir.tools
+    path and the M22 capability-node path. ``name`` is the function name the model echoes back: an
+    ir.tools key (M21) or a tool node id (M22). None when no schema resolves (skip it)."""
+    if isinstance(binding, HttpTool):
+        return _fn_schema(name, binding.description, binding.parameter_schema)
+    if isinstance(binding, BuiltinTool):
+        meta = registry.schema(binding.ref)
+        return _fn_schema(name, meta[0], meta[1]) if meta is not None else None
+    if isinstance(binding, McpTool) and binding.server:
+        with contextlib.suppress(Exception):  # server unreachable → no schema (best-effort)
+            for d in await mcp.list_tools(binding.server):
+                if d.name == binding.tool:
+                    return _fn_schema(name, d.description, d.input_schema)
+    return None
+
+
 async def build_tool_schemas(
     ir: IRDocument, tool_keys: list[str], *, registry: ToolRegistry, mcp: McpManager
 ) -> list[dict[str, Any]]:
-    """Build the OpenAI ``tools`` array the model sees from an llm node's ``tools`` keys (M21). The
-    function NAME is the ir.tools key (dispatch maps a tool_call back to its binding); description +
-    parameters come from the self-describing binding — an http binding carries them directly, an mcp
-    binding from the server's cached ``list_tools`` descriptor, a builtin from the registry's
-    hand-authored schema (m21.md §6 Q2). A key with no resolvable schema is skipped."""
+    """Build the OpenAI ``tools`` array from an llm node's ``tools`` keys (the M21 ir.tools path).
+    The function NAME is the ir.tools key (so a tool_call maps back to its binding); a key with no
+    resolvable schema is skipped. (M22 capability edges go through ``build_capability_schemas``.)"""
 
     schemas: list[dict[str, Any]] = []
     for key in tool_keys:
         binding = ir.tools.get(key)
-        if isinstance(binding, HttpTool):
-            schemas.append(_fn_schema(key, binding.description, binding.parameter_schema))
-        elif isinstance(binding, BuiltinTool):
-            meta = registry.schema(binding.ref)
-            if meta is not None:
-                schemas.append(_fn_schema(key, meta[0], meta[1]))
-        elif isinstance(binding, McpTool) and binding.server:
-            with contextlib.suppress(Exception):  # server unreachable → skip (best-effort)
-                for d in await mcp.list_tools(binding.server):
-                    if d.name == binding.tool:
-                        schemas.append(_fn_schema(key, d.description, d.input_schema))
-                        break
-        elif binding is None and key in registry:  # a directly-registered builtin (echo/http_fetch)
+        if binding is None and key in registry:  # a directly-registered builtin (echo/http_fetch)
             meta = registry.schema(key)
             if meta is not None:
                 schemas.append(_fn_schema(key, meta[0], meta[1]))
+            continue
+        schema = await _schema_for_binding(key, binding, registry=registry, mcp=mcp)
+        if schema is not None:
+            schemas.append(schema)
+    return schemas
+
+
+def _capability_tool_nodes(ir: IRDocument, llm_node_id: str) -> list[Node]:
+    """The tool/mcp_tool nodes wired to this llm's ``tool``-role port (M22 capability edges) — the
+    source of every inbound ``channel:"tool"`` edge. These are the tools the model may CALL; they
+    are NOT run in topological order (a capability executes lazily inside the llm loop, args from
+    the model). Deduped, source order preserved."""
+    by_id = {n.id: n for n in ir.nodes}
+    nodes: list[Node] = []
+    seen: set[str] = set()
+    for edge in ir.edges:
+        if edge.channel != "tool" or edge.target != llm_node_id or edge.source in seen:
+            continue
+        src = by_id.get(edge.source)
+        if src is not None and src.type in ("tool", "mcp_tool"):
+            nodes.append(src)
+            seen.add(edge.source)
+    return nodes
+
+
+def _capability_binding(ir: IRDocument, name: str) -> Any | None:
+    """Resolve a model tool_call ``name`` (a tool/mcp_tool NODE id — M22) to an ir.tools-style
+    BINDING built from the node's INLINE config, so the existing ``execute_tool_call`` dispatch (and
+    the durable ``_durable_tool_call``) handle it unchanged. Returns None if ``name`` is not a tool
+    node id — the caller then falls back to the legacy ir.tools / registry lookup (m22.md D3/D6)."""
+    node = next((n for n in ir.nodes if n.id == name and n.type in ("tool", "mcp_tool")), None)
+    if node is None:
+        return None
+    if node.type == "mcp_tool":
+        c = McpToolConfig.model_validate(node.config)
+        return McpTool(kind="mcp", server=c.server, connection=c.connection, tool=c.tool)
+    c = ToolConfig.model_validate(node.config)
+    if c.connection or c.url_template:  # an http tool (vs a builtin ref held in c.tool)
+        return HttpTool(
+            kind="http",
+            connection=c.connection or "",
+            description=c.description,
+            parameter_schema=c.parameter_schema,
+            method=c.method,
+            url_template=c.url_template,
+            body_template=c.body_template,
+            headers=c.headers,
+            response_map=c.response_map,
+            idempotency_key=c.idempotency_key,
+            timeout_seconds=c.timeout_seconds,
+        )
+    return BuiltinTool(kind="builtin", ref=c.tool)
+
+
+async def build_capability_schemas(
+    nodes: list[Node], *, registry: ToolRegistry, mcp: McpManager
+) -> list[dict[str, Any]]:
+    """OpenAI tool schemas for M22 capability nodes — the function NAME is the NODE id (collision-
+    safe: two llms may wire different nodes that share a builtin/server). Description + parameters
+    come from each node's inline config: builtin from the registry, http from ``description`` +
+    ``parameterSchema``, mcp from the server's ``list_tools`` (a connection-based or unreachable mcp
+    falls back to its authored ``description`` with no parameter schema — m22.md D3)."""
+    schemas: list[dict[str, Any]] = []
+    for node in nodes:
+        if node.type == "mcp_tool":
+            cfg = McpToolConfig.model_validate(node.config)
+            schema: dict[str, Any] | None = None
+            if cfg.server:
+                with contextlib.suppress(Exception):
+                    for d in await mcp.list_tools(cfg.server):
+                        if d.name == cfg.tool:
+                            schema = _fn_schema(
+                                node.id, cfg.description or d.description, d.input_schema
+                            )
+                            break
+            schemas.append(schema or _fn_schema(node.id, cfg.description, None))
+        else:  # a tool node — builtin or http
+            tcfg = ToolConfig.model_validate(node.config)
+            if tcfg.connection or tcfg.url_template:
+                schemas.append(_fn_schema(node.id, tcfg.description, tcfg.parameter_schema))
+            else:
+                meta = registry.schema(tcfg.tool)
+                if meta is not None:
+                    schemas.append(_fn_schema(node.id, meta[0], meta[1]))
     return schemas
 
 
@@ -1244,7 +1333,10 @@ async def execute_tool_call(
     ``idempotency_suffix`` (the call id / iteration) is appended to the http idempotency key so a
     write tool called twice in one loop under at-least-once (D9) doesn't collide."""
 
-    binding = ir.tools.get(call.name)
+    # M21: ``call.name`` is an ir.tools key. M22: if it isn't, it may be a tool/mcp_tool NODE id
+    # wired as a capability — resolve the binding from that node's inline config (D3/D6). Either way
+    # the same dispatch below runs. Legacy ir.tools keys keep working (tried first).
+    binding = ir.tools.get(call.name) or _capability_binding(ir, call.name)
     if binding is None:
         if call.name in registry:  # a directly-registered builtin (echo / http_fetch)
             return await execute_tool(registry, call.name, call.arguments)
@@ -1279,7 +1371,7 @@ async def execute_tool_call(
             headers=binding.headers,
             response_map=binding.response_map,
             idempotency_key=idem,
-            timeout_seconds=binding.timeout_seconds,
+            timeout_seconds=getattr(binding, "timeout_seconds", None),
         )
         return await run_http_tool(
             binding, config, ports, node_id=node_id, run_id=run_id, resolver=tool_auth
@@ -1584,7 +1676,15 @@ async def walk(
     skipped: set[str] = set()
     live_handles: dict[str, set[str]] = {}
 
+    # M22: tool/mcp_tool nodes wired as CAPABILITIES (the source of a `tool`-channel edge) are not
+    # run as standalone steps — the model calls them lazily inside the llm loop (build_capability_
+    # schemas + execute_tool_call). Skip them in the topo walk. (topological_order already drops
+    # `tool` edges, so they don't sequence anything; this stops the node body from executing.)
+    capability_nodes = {e.source for e in ir.edges if e.channel == "tool"}
+
     for node in topological_order(ir):
+        if node.id in capability_nodes:
+            continue
         if _is_skipped(node, ir.edges, skipped, live_handles):
             skipped.add(node.id)
             _log_node(ctx, node, skipped=True)
@@ -1816,11 +1916,19 @@ async def _walk_llm(
     # streaming/parse body lives ONCE in `execute_llm`, wrapped here (interactive) and in the
     # durable
     # compiler (parity). M17 §2: each turn streams inside a `model.generate` phase span.
-    tool_schemas: list[dict[str, Any]] | None = None
-    tool_choice: Any = None
+    # M22: the available-tool set is the UNION of the legacy ir.tools keys (config.tools — M21) and
+    # the tool/mcp_tool nodes wired to this llm's `tools` port (capability edges). Capability
+    # schemas use the NODE id as the function name; legacy schemas use the ir.tools key. Both
+    # dispatch through the same execute_tool_call. Empty union → single-shot (pre-M21).
+    cap_nodes = _capability_tool_nodes(ir, node.id)
+    schemas: list[dict[str, Any]] = []
     if config.tools:
-        tool_schemas = await build_tool_schemas(ir, config.tools, registry=ctx.tools, mcp=ctx.mcp)
-        tool_choice = _to_openai_tool_choice(config.tool_choice)
+        schemas += await build_tool_schemas(ir, config.tools, registry=ctx.tools, mcp=ctx.mcp)
+    if cap_nodes:
+        schemas += await build_capability_schemas(cap_nodes, registry=ctx.tools, mcp=ctx.mcp)
+    has_tools = bool(schemas)
+    tool_schemas: list[dict[str, Any]] | None = schemas if has_tools else None
+    tool_choice: Any = _to_openai_tool_choice(config.tool_choice) if has_tools else None
 
     gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
     first_token_ns: int | None = None
@@ -1880,8 +1988,8 @@ async def _walk_llm(
                         await task
 
             final_finish = turn.finish_reason
-            # No tool calls (or the node has no tools) → this turn's answer is final.
-            if not (turn.tool_calls and config.tools):
+            # No tool calls (or the node has no tools — legacy or capability) → answer is final.
+            if not (turn.tool_calls and has_tools):
                 final_output = turn.output
                 truncated = turn.truncated_empty
                 break

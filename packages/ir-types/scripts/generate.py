@@ -44,9 +44,13 @@ from theygent_ir.graph import (
 _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "input": {"in": [], "out": ["out"]},
     "output": {"in": ["in"], "out": []},
-    "llm": {"in": ["in"], "out": ["out"]},
-    "tool": {"in": ["in"], "out": ["out", "err"]},
-    "mcp_tool": {"in": ["in"], "out": ["out", "err"]},
+    # M22: the llm declares a `tools` in-port (role "tool", optional) — capability edges from tool
+    # nodes target it (the model may CALL those tools). See _PORT_OVERRIDES for its role/required.
+    "llm": {"in": ["in", "tools"], "out": ["out"]},
+    # M22: tool/mcp_tool gain a `use` out-port (role "tool") — the capability connector that wires
+    # into an llm's `tools` port. The data `out`/`err` stay for STEP-mode (run as a graph step).
+    "tool": {"in": ["in"], "out": ["out", "err", "use"]},
+    "mcp_tool": {"in": ["in"], "out": ["out", "err", "use"]},
     "router": {"in": ["in"], "out": ["out"]},
     "human": {"in": ["in"], "out": ["out"]},
     "subgraph": {"in": ["in"], "out": ["out"]},
@@ -63,6 +67,31 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "transform": {"in": ["in"], "out": ["out"]},
 }
 _FALLBACK_PORTS: dict[str, list[str]] = {"in": ["in"], "out": ["out"]}
+
+# M22: ports whose default role/required differ from the (data, required) norm. The llm's `tools`
+# IN-port and the tool/mcp_tool `use` OUT-port both carry role "tool" (the capability wire); the
+# llm's is optional (an llm with no wired tools is valid).
+_PORT_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
+    ("llm", "tools"): {"role": "tool", "required": False},
+    ("tool", "use"): {"role": "tool"},
+    ("mcp_tool", "use"): {"role": "tool"},
+}
+
+
+def _in_port(node_type: str, pid: str) -> dict[str, Any]:
+    """A default in-port for a freshly-dropped node. ``data``+required by default; ``_PORT_OVERRIDES``
+    carries the few that differ (e.g. the llm ``tools`` port — role ``tool``, optional)."""
+    port: dict[str, Any] = {"id": pid, "type": "any", "required": True}
+    port.update(_PORT_OVERRIDES.get((node_type, pid), {}))
+    return port
+
+
+def _out_port(node_type: str, pid: str) -> dict[str, Any]:
+    """A default out-port. ``err`` is error-typed (the ok/err contract); ``_PORT_OVERRIDES`` carries
+    role differences (e.g. the tool/mcp_tool ``use`` capability port — role ``tool``)."""
+    port: dict[str, Any] = {"id": pid, "type": "error" if pid == "err" else "any"}
+    port.update(_PORT_OVERRIDES.get((node_type, pid), {}))
+    return port
 
 
 def _default_for(prop_schema: dict[str, Any]) -> Any:
@@ -114,13 +143,11 @@ def build_node_types() -> dict[str, Any]:
             "configSchema": config_schema,
             "defaultConfig": _default_config(config_schema),
             "ports": {
-                "in": [{"id": pid, "type": "any", "required": True} for pid in ports["in"]],
+                "in": [_in_port(node_type, pid) for pid in ports["in"]],
                 # An out-port named ``err`` is error-typed (the tool/llm/transcribe/speak ok-err
                 # contract — m6.md §4); the walker keys ``_error_handles`` off ``type == "error"``,
                 # so the palette default must match how real IRs declare it (tests/_ir.py).
-                "out": [
-                    {"id": pid, "type": "error" if pid == "err" else "any"} for pid in ports["out"]
-                ],
+                "out": [_out_port(node_type, pid) for pid in ports["out"]],
             },
         }
     return {"types": types}

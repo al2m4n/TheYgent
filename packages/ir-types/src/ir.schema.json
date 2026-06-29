@@ -28,7 +28,8 @@
           "default": "data",
           "enum": [
             "data",
-            "control"
+            "control",
+            "tool"
           ],
           "title": "Channel",
           "type": "string"
@@ -172,6 +173,18 @@
           ],
           "default": null,
           "title": "Template"
+        },
+        "timeoutSeconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Timeoutseconds"
         },
         "urlTemplate": {
           "anyOf": [
@@ -353,7 +366,8 @@
           "default": "data",
           "enum": [
             "data",
-            "control"
+            "control",
+            "tool"
           ],
           "title": "Role",
           "type": "string"

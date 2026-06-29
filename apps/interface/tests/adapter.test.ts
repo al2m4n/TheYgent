@@ -9,12 +9,56 @@ import {
   relayout,
   setNodeIcon,
   setNodePositions,
+  setToolKind,
+  toolKindOf,
   updateEdge,
   updateNodeConfig,
+  withDerivedTools,
 } from "../src/adapter";
 import type { ViewBlock } from "../src/adapter/types";
 import { sameHashedContent, viewStrippedContent } from "../src/lib/canonical";
 import { nastyGraph, sampleGraph, sampleGraphNoView } from "./fixtures";
+
+// M22 capability wiring: sampleGraph + an `echo` tool node + a `tool`-role `tools` port on the llm.
+// `capabilityBase` has no tool edge yet (for connect() tests); `capabilityWired` adds the edge.
+function capabilityBase() {
+  const ir = sampleGraph();
+  const llm = ir.nodes?.find((n) => n.id === "n_llm");
+  llm?.ports?.in?.push({ id: "tools", type: "any", required: false, role: "tool" });
+  ir.nodes?.push({
+    id: "n_echo",
+    type: "tool",
+    kind: "activity",
+    label: null,
+    config: { tool: "echo", description: "echo the value back" },
+    ports: {
+      in: [{ id: "in", type: "any", required: true }],
+      out: [
+        { id: "out", type: "any", required: true },
+        { id: "err", type: "error", required: true },
+        { id: "use", type: "any", required: true, role: "tool" },
+      ],
+    },
+  });
+  return ir;
+}
+
+function capabilityWired() {
+  const ir = capabilityBase();
+  ir.edges?.push({
+    id: "e_tool",
+    source: "n_echo",
+    sourceHandle: "use",
+    target: "n_llm",
+    targetHandle: "tools",
+    channel: "tool",
+    condition: null,
+  });
+  // M22: ir.tools is the DERIVED registry (keyed by node id) — a saved capability graph carries it,
+  // so the load→save round-trip is identity (reactFlowToIr re-derives the same).
+  ir.tools = { n_echo: { kind: "builtin", ref: "echo" } };
+  return ir;
+}
 
 describe("adapter round-trip (the headline — §4)", () => {
   it("IR → React Flow → IR is identity on view-stripped content", () => {
@@ -105,40 +149,40 @@ describe("view isolation (§4, decision §1.4)", () => {
 describe("node icon override (a `view`-only display field, §1.4)", () => {
   it("setNodeIcon is layout-only — would-be contentHash is unchanged", () => {
     const ir = sampleGraph();
-    const next = setNodeIcon(ir, "n_llm", "🤖");
+    const next = setNodeIcon(ir, "n_llm", "bot");
     expect(sameHashedContent(next, ir)).toBe(true);
-    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("bot");
     // pure function — the original is untouched.
     expect((ir.view as ViewBlock).nodes?.n_llm.icon).toBeUndefined();
   });
 
   it("an override surfaces on the RF node and round-trips back into the view", () => {
-    const ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    const ir = setNodeIcon(sampleGraph(), "n_llm", "bot");
     const rf = irToReactFlow(ir);
-    expect(rf.nodes.find((n) => n.id === "n_llm")?.data.icon).toBe("🤖");
+    expect(rf.nodes.find((n) => n.id === "n_llm")?.data.icon).toBe("bot");
     // nodes with NO override carry no icon key (the one rule holds for them).
     expect(rf.nodes.find((n) => n.id === "n_in")?.data).not.toHaveProperty("icon");
     // save → the override is back in the view, content still identical.
     const back = reactFlowToIr(rf, ir);
-    expect((back.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect((back.view as ViewBlock).nodes?.n_llm.icon).toBe("bot");
     expect(sameHashedContent(back, ir)).toBe(true);
   });
 
   it("clearing reverts to the default and survives a later drag", () => {
-    let ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    let ir = setNodeIcon(sampleGraph(), "n_llm", "bot");
     ir = setNodeIcon(ir, "n_llm", null);
     expect((ir.view as ViewBlock).nodes?.n_llm.icon).toBeUndefined();
     // a drag must not wipe an existing override.
-    let withIcon = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    let withIcon = setNodeIcon(sampleGraph(), "n_llm", "bot");
     withIcon = setNodePositions(withIcon, { n_llm: { x: 1, y: 2 } });
-    expect((withIcon.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect((withIcon.view as ViewBlock).nodes?.n_llm.icon).toBe("bot");
     expect((withIcon.view as ViewBlock).nodes?.n_llm.position).toEqual({ x: 1, y: 2 });
   });
 
   it("relayout keeps the override while rewriting positions", () => {
-    const ir = setNodeIcon(sampleGraph(), "n_llm", "🤖");
+    const ir = setNodeIcon(sampleGraph(), "n_llm", "bot");
     const next = relayout(ir);
-    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("🤖");
+    expect((next.view as ViewBlock).nodes?.n_llm.icon).toBe("bot");
   });
 });
 
@@ -161,7 +205,9 @@ describe("canvas edits produce valid IR (§4)", () => {
     const added = next.nodes?.find((n) => n.type === "tool" && n.id !== "n_in");
     expect(added).toBeDefined();
     expect(added?.kind).toBe("activity");
-    expect(added?.ports?.out?.map((p) => p.id)).toEqual(["out", "err"]); // tool ok/err contract
+    // ok/err (the M6 contract) + the M22 `use` capability handle.
+    expect(added?.ports?.out?.map((p) => p.id)).toEqual(["out", "err", "use"]);
+    expect(added?.ports?.out?.find((p) => p.id === "use")?.role).toBe("tool");
     expect(added?.config).toHaveProperty("tool"); // default config from the per-type schema
     // its position landed in the view, not in hashed content.
     const view = next.view as ViewBlock;
@@ -205,6 +251,128 @@ describe("canvas edits produce valid IR (§4)", () => {
       targetHandle: "in",
     });
     expect(r.error).toMatch(/already fed|ambiguous/);
+  });
+
+  it("M22: connect wires a tool node's `use` handle into the llm tools port as a channel:tool edge", () => {
+    const r = connect(capabilityBase(), {
+      source: "n_echo",
+      sourceHandle: "use",
+      target: "n_llm",
+      targetHandle: "tools",
+    });
+    expect(r.error).toBeUndefined();
+    const e = r.ir?.edges?.find((x) => x.source === "n_echo" && x.target === "n_llm");
+    expect(e?.channel).toBe("tool");
+    expect(e?.targetHandle).toBe("tools");
+  });
+
+  it("M22: rejects a data handle wired into a tools port (role mismatch)", () => {
+    // n_in's `out` is a data handle; the llm `tools` port is role tool → like-to-like rejects it.
+    const r = connect(capabilityBase(), {
+      source: "n_in",
+      sourceHandle: "out",
+      target: "n_llm",
+      targetHandle: "tools",
+    });
+    expect(r.ir).toBeUndefined();
+    expect(r.error).toMatch(/cannot connect a data handle to a tool handle/);
+  });
+
+  it("M22: allows several tool capabilities into one llm tools port (no dedup)", () => {
+    let ir = capabilityBase();
+    ir.nodes?.push({
+      id: "n_echo2",
+      type: "tool",
+      kind: "activity",
+      label: null,
+      config: { tool: "http_fetch", description: "fetch" },
+      ports: {
+        in: [{ id: "in", type: "any", required: true }],
+        out: [
+          { id: "out", type: "any", required: true },
+          { id: "use", type: "any", required: true, role: "tool" },
+        ],
+      },
+    });
+    const r1 = connect(ir, {
+      source: "n_echo",
+      sourceHandle: "use",
+      target: "n_llm",
+      targetHandle: "tools",
+    });
+    expect(r1.error).toBeUndefined();
+    ir = r1.ir as typeof ir;
+    const r2 = connect(ir, {
+      source: "n_echo2",
+      sourceHandle: "use",
+      target: "n_llm",
+      targetHandle: "tools",
+    });
+    expect(r2.error).toBeUndefined(); // a tools port takes many capabilities (not deduped like data)
+  });
+
+  it("M22: round-trips a capability graph (tool edge + tools port) identically", () => {
+    const ir = capabilityWired();
+    const back = reactFlowToIr(irToReactFlow(ir), ir);
+    expect(sameHashedContent(back, ir)).toBe(true);
+    const e = back.edges?.find((x) => x.channel === "tool");
+    expect(e?.source).toBe("n_echo");
+    expect(e?.target).toBe("n_llm");
+    const toolsPort = back.nodes
+      ?.find((n) => n.id === "n_llm")
+      ?.ports?.in?.find((p) => p.id === "tools");
+    expect(toolsPort?.role).toBe("tool");
+  });
+
+  it("M22 D1: toolKindOf derives the kind from config (builtin / rest / mcp)", () => {
+    const ir = capabilityBase();
+    const echo = ir.nodes?.find((n) => n.id === "n_echo");
+    if (!echo) throw new Error("fixture");
+    expect(toolKindOf(echo)).toBe("builtin");
+    expect(toolKindOf({ ...echo, config: { connection: "c_api" } })).toBe("rest");
+    expect(toolKindOf({ ...echo, config: { urlTemplate: "https://x" } })).toBe("rest");
+    expect(toolKindOf({ ...echo, type: "mcp_tool", config: { server: "fs", tool: "read" } })).toBe(
+      "mcp",
+    );
+  });
+
+  it("M22 D1: setToolKind builtin→rest seeds a url placeholder, keeps the tool type", () => {
+    const next = setToolKind(capabilityBase(), "n_echo", "rest");
+    const n = next.nodes?.find((x) => x.id === "n_echo");
+    expect(n?.type).toBe("tool");
+    expect(toolKindOf(n!)).toBe("rest");
+    // an empty REST tool still reads as http (matches the backend's _capability_binding).
+    expect((n?.config as Record<string, unknown>).urlTemplate).toBe("https://");
+    // the description carries across the kind switch.
+    expect((n?.config as Record<string, unknown>).description).toBe("echo the value back");
+  });
+
+  it("M22 D1: setToolKind builtin→mcp swaps to the mcp_tool type and re-derives ir.tools", () => {
+    const wired = (() => {
+      // wire the capability edge, then derive ir.tools the way the Editor's applyIr does.
+      const r = connect(capabilityBase(), {
+        source: "n_echo",
+        sourceHandle: "use",
+        target: "n_llm",
+        targetHandle: "tools",
+      });
+      return withDerivedTools(r.ir!);
+    })();
+    expect(wired.tools?.n_echo).toEqual({ kind: "builtin", ref: "echo" });
+    const next = setToolKind(wired, "n_echo", "mcp");
+    const n = next.nodes?.find((x) => x.id === "n_echo");
+    expect(n?.type).toBe("mcp_tool");
+    expect(toolKindOf(n!)).toBe("mcp");
+    // the `use` capability handle (and the edge) survive the swap — both types declare it.
+    expect(n?.ports?.out?.some((p) => p.id === "use")).toBe(true);
+    expect(next.edges?.some((e) => e.channel === "tool" && e.source === "n_echo")).toBe(true);
+    // the derived registry now tags it mcp.
+    expect((next.tools?.n_echo as { kind?: string }).kind).toBe("mcp");
+  });
+
+  it("M22 D1: setToolKind is a no-op when the kind is unchanged", () => {
+    const ir = capabilityBase();
+    expect(setToolKind(ir, "n_echo", "builtin")).toBe(ir);
   });
 
   it("deleteNodes removes the node, its incident edges, and its view entry", () => {

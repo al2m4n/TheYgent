@@ -3,11 +3,11 @@
 // over one IR held as the single source of truth. Loading and saving go through M11; the IR
 // (with its `view`) is what crosses the wire, and the server owns the contentHash.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useBlocker, useNavigate } from "@tanstack/react-router";
 import type { IRDocument } from "@theygent/ir-types";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { type Selection, relayout } from "../adapter";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Selection, relayout, withDerivedTools } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IRCodeEditor } from "../components/IRCodeEditor";
 import { Inspector } from "../components/Inspector";
@@ -17,6 +17,7 @@ import { Badge, Button, Input } from "../components/ui";
 import { blankGraph, fromStoredVersion } from "../lib/agent";
 import { ApiError, api } from "../lib/api";
 import { sameHashedContent } from "../lib/canonical";
+import { notify } from "../lib/notify";
 import { latestHash, saveAgent } from "../lib/save";
 import { type ValidationIssue, validateGraph } from "../lib/validate";
 
@@ -26,6 +27,7 @@ export function Editor() {
   const { agent: agentId, version } = routeApi.useSearch();
   const navigate = useNavigate();
   const loadingExisting = Boolean(agentId && version);
+  const qc = useQueryClient();
 
   // The loaded registry version (when opening an existing agent).
   const {
@@ -42,7 +44,6 @@ export function Editor() {
   const [selection, setSelection] = useState<Selection>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<IRDocument | null>(null);
   const [savedHash, setSavedHash] = useState<string | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // Bumped by "Tidy" to force the canvas to re-seed positions (a layout-only change is otherwise
   // invisible to the structural re-seed).
@@ -120,7 +121,7 @@ export function Editor() {
     if (savedSnapshot) {
       setIr(savedSnapshot);
       setSelection(null);
-      setSaveError(null);
+      notify.dismiss("editor-save-error"); // clear a stale save error — the edits causing it are gone
     }
   };
 
@@ -148,6 +149,13 @@ export function Editor() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // M22: every structural/config edit re-derives `ir.tools` (the global tool registry) from the
+  // wired tool nodes, so it stays in sync as you build — like `ir.models` fills in when you bind a
+  // model. Load/revert/relayout use the raw setter (no derive needed; load is already in sync).
+  // Declared BEFORE the early returns below so the hook order is identical on the loading and the
+  // loaded renders (Rules of Hooks — an early `return` must never sit between two hook calls).
+  const applyIr = useCallback((next: IRDocument) => setIr(withDerivedTools(next)), []);
+
   if (loadError) {
     return (
       <Centered>
@@ -164,13 +172,20 @@ export function Editor() {
 
   const onSave = async () => {
     setSaving(true);
-    setSaveError(null);
     try {
       const detail = await saveAgent(ir, existsRef.current);
       existsRef.current = true;
       const hash = latestHash(detail);
       if (hash) setSavedHash(hash.contentHash);
       setSavedSnapshot(ir);
+      notify.dismiss("editor-save-error"); // a prior failure (e.g. version_conflict) is now resolved
+      // Refresh the registry caches so a freshly-saved version is visible everywhere it's consumed —
+      // notably the per-agent bench, which pins a version from this list. Without this, saving a new
+      // version (e.g. a model swap) leaves the bench running the STALE latest (the "model change
+      // didn't apply" bug): the cached agent detail never re-fetched the new version.
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["agent", ir.id] });
+      qc.invalidateQueries({ queryKey: ["agentVersion", ir.id] });
       // Re-point the URL at the now-saved version so a reload re-opens it (M15 acceptance). Suppress
       // the leave-guard for this programmatic nav (dirty hasn't recomputed to false yet this tick).
       savingNavRef.current = true;
@@ -183,7 +198,9 @@ export function Editor() {
         e instanceof ApiError
           ? `${e.message} (${e.code})`
           : ((e as Error).message ?? "save failed");
-      setSaveError(msg);
+      // One place for errors: the global toast. A stable id replaces a prior save error rather than
+      // stacking, and lets a later success/revert dismiss it (see onSave success + onRevert).
+      notify.error(msg, { id: "editor-save-error" });
     } finally {
       setSaving(false);
     }
@@ -368,16 +385,10 @@ export function Editor() {
         </div>
       )}
 
-      {saveError && (
-        <div className="border-b border-red-900 bg-red-950 px-3 py-1.5 text-xs text-red-200">
-          {saveError}
-        </div>
-      )}
-
       {/* body — Visual: three resizable columns (palette · canvas · inspector); Code: the raw IR */}
       {mode === "code" ? (
         <div className="min-h-0 flex-1">
-          <IRCodeEditor ir={ir} onChange={setIr} onValidityChange={setCodeValid} />
+          <IRCodeEditor ir={ir} onChange={applyIr} onValidityChange={setCodeValid} />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
@@ -414,7 +425,7 @@ export function Editor() {
             <GraphCanvas
               key={agentId ? `${agentId}@${version}` : "new"}
               ir={ir}
-              onChange={setIr}
+              onChange={applyIr}
               selection={selection}
               onSelect={setSelection}
               reseedKey={reseedKey}
@@ -444,7 +455,12 @@ export function Editor() {
                 style={{ width: inspectorWidth }}
               >
                 <CollapseButton side="right" onClick={() => setInspectorCollapsed(true)} />
-                <Inspector ir={ir} selection={selection} onChange={setIr} onSelect={setSelection} />
+                <Inspector
+                  ir={ir}
+                  selection={selection}
+                  onChange={applyIr}
+                  onSelect={setSelection}
+                />
               </aside>
             </>
           )}

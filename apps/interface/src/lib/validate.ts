@@ -173,9 +173,15 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     fed.add(key);
   }
 
-  // 5: every REQUIRED in-port is fed by a data edge (input boundaries excepted).
+  // M22: a CAPABILITY tool node (the source of a `tool` edge) supplies its args from the model, not
+  // an upstream edge — so it is exempt from the required-in-port rule (mirrors graph.py §5).
+  const capabilityNodes = new Set(
+    edges.filter((e) => (e.channel ?? "data") === "tool").map((e) => e.source),
+  );
+
+  // 5: every REQUIRED in-port is fed by a data edge (input boundaries + capability tools excepted).
   for (const n of nodes) {
-    if (n.type === "input") continue;
+    if (n.type === "input" || capabilityNodes.has(n.id)) continue;
     for (const p of n.ports?.in ?? []) {
       if ((p.required ?? true) && !fed.has(`${n.id} ${p.id}`)) {
         issues.push({
@@ -195,8 +201,29 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     }
   }
 
-  // 6: cycle detection (Kahn over data + control edges — both impose ordering).
-  if (detectCycle(nodes, edges)) {
+  // M22: a tool/mcp_tool node is a CAPABILITY (wired to an llm via `tool` edges) OR a STEP
+  // (data/control edges) — not both (mirrors graph.py §4c, so the editor flags it before a 400).
+  for (const n of nodes) {
+    if (n.type !== "tool" && n.type !== "mcp_tool") continue;
+    const chans = new Set(edges.filter((e) => e.source === n.id).map((e) => e.channel ?? "data"));
+    if (chans.has("tool") && [...chans].some((c) => c !== "tool")) {
+      issues.push({
+        severity: "error",
+        message: "a tool node is either a capability (wired to an llm) or a step, not both",
+        nodeId: n.id,
+      });
+    }
+  }
+
+  // 6: cycle detection (Kahn over data + control edges — both impose ordering). M22: `tool` edges
+  // are a capability wire (no ordering — the model calls lazily), so EXCLUDE them, matching the
+  // backend's topological_order (graph.py).
+  if (
+    detectCycle(
+      nodes,
+      edges.filter((e) => (e.channel ?? "data") !== "tool"),
+    )
+  ) {
     issues.push({ severity: "error", message: "graph has a cycle (not allowed)" });
   }
 

@@ -1,7 +1,7 @@
 /* AUTO-GENERATED from packages/ir via pnpm --filter @theygent/ir-types generate. DO NOT EDIT. */
 
 export type Contenthash = string | null;
-export type Channel = "data" | "control";
+export type Channel = "data" | "control" | "tool";
 export type Condition = string | null;
 export type Id = string;
 export type Source = string;
@@ -22,7 +22,7 @@ export type Kind = "activity" | "orchestration" | "boundary";
 export type Label = string | null;
 export type Id3 = string;
 export type Required = boolean;
-export type Role = "data" | "control";
+export type Role = "data" | "control" | "tool";
 export type Type = string;
 export type In = Port[];
 export type Out = Port[];
@@ -41,6 +41,7 @@ export type Parameterschema = {
 } | null;
 export type Responsemap = string | null;
 export type Template = string | null;
+export type Timeoutseconds = number | null;
 export type Urltemplate = string | null;
 export type Connection1 = string | null;
 export type Kind3 = "mcp";
@@ -181,6 +182,7 @@ export interface HttpTool {
   parameterSchema?: Parameterschema;
   responseMap?: Responsemap;
   template?: Template;
+  timeoutSeconds?: Timeoutseconds;
   urlTemplate?: Urltemplate;
 }
 export interface Bodytemplate {

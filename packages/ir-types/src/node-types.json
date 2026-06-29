@@ -496,6 +496,12 @@
             "id": "in",
             "required": true,
             "type": "any"
+          },
+          {
+            "id": "tools",
+            "required": false,
+            "role": "tool",
+            "type": "any"
           }
         ],
         "out": [
@@ -709,6 +715,18 @@
             "default": null,
             "title": "Connection"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
           "server": {
             "anyOf": [
               {
@@ -735,6 +753,7 @@
       "defaultConfig": {
         "args": {},
         "connection": null,
+        "description": null,
         "server": null,
         "tool": ""
       },
@@ -755,6 +774,11 @@
           {
             "id": "err",
             "type": "error"
+          },
+          {
+            "id": "use",
+            "role": "tool",
+            "type": "any"
           }
         ]
       },
@@ -1100,6 +1124,30 @@
             "default": null,
             "title": "Bodytemplate"
           },
+          "connection": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Connection"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
           "headers": {
             "additionalProperties": {
               "type": "string"
@@ -1130,6 +1178,19 @@
             ],
             "default": null,
             "title": "Method"
+          },
+          "parameterSchema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parameterschema"
           },
           "responseMap": {
             "anyOf": [
@@ -1181,9 +1242,12 @@
       "defaultConfig": {
         "args": {},
         "bodyTemplate": null,
+        "connection": null,
+        "description": null,
         "headers": {},
         "idempotencyKey": null,
         "method": null,
+        "parameterSchema": null,
         "responseMap": null,
         "timeoutSeconds": null,
         "tool": "",
@@ -1206,6 +1270,11 @@
           {
             "id": "err",
             "type": "error"
+          },
+          {
+            "id": "use",
+            "role": "tool",
+            "type": "any"
           }
         ]
       },

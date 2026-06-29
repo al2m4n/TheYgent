@@ -20,11 +20,20 @@ function renderWithClient(ui: ReactNode) {
 }
 
 describe("Palette (derived from the registry, never hardcoded)", () => {
-  it("renders one draggable item per registry node type", () => {
+  it("renders one draggable item per registry node type (minus the hidden ones)", () => {
     render(<Palette />);
+    // M22 D1: `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
+    // palette shows every registry type EXCEPT the deliberately-hidden ones.
+    const hidden = new Set(["mcp_tool"]);
     for (const spec of NODE_TYPE_LIST) {
-      expect(screen.getByText(spec.type)).toBeInTheDocument();
+      if (hidden.has(spec.type)) {
+        expect(screen.queryByText(spec.type)).not.toBeInTheDocument();
+      } else {
+        expect(screen.getByText(spec.type)).toBeInTheDocument();
+      }
     }
+    // the unified Tool entry is present (its MCP kind absorbs the old mcp_tool drag target).
+    expect(screen.getByText("tool")).toBeInTheDocument();
   });
 
   it("filters to a single category when its chip is clicked", () => {
@@ -283,5 +292,17 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
     );
     expect(screen.getByText("Model bindings")).toBeInTheDocument();
     expect(screen.getByText("default")).toBeInTheDocument();
+  });
+
+  it("shows the graph's derived tool registry (read-only) when nothing is selected", () => {
+    // M22: ir.tools is the derived global registry (keyed by node id, like ir.models). The graph
+    // panel lists it read-only; tools are added by wiring tool nodes on the canvas, not here.
+    const ir = sampleGraph();
+    ir.tools = { n_echo: { kind: "builtin", ref: "echo" } };
+    renderWithClient(
+      <Inspector ir={ir} selection={null} onChange={() => {}} onSelect={() => {}} />,
+    );
+    expect(screen.getByText("n_echo")).toBeInTheDocument();
+    expect(screen.getByText("builtin")).toBeInTheDocument();
   });
 });

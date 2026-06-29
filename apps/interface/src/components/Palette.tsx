@@ -8,8 +8,9 @@
 // hardcoded, so a new kind/type just appears.
 
 import { NODE_TYPE_LIST, type NodeTypeSpec } from "@theygent/ir-types";
+import { ChevronRight, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { defaultIconFor } from "../lib/icons";
+import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { Badge } from "./ui";
 
 const KIND_TONE: Record<string, string> = {
@@ -17,6 +18,10 @@ const KIND_TONE: Record<string, string> = {
   activity: "blue",
   orchestration: "amber",
 };
+
+// M22 D1: types the palette deliberately hides because they're a *kind* of another node rather than
+// a separate drag target. `mcp_tool` is the MCP kind of the one "Tool" node (chosen in the inspector).
+const HIDDEN_PALETTE_TYPES = new Set(["mcp_tool"]);
 
 // Friendlier category labels (the chip + group header text). A kind without an entry falls back to
 // its raw name, so an unknown future kind still groups correctly.
@@ -57,6 +62,10 @@ export function Palette() {
 
   const q = query.trim().toLowerCase();
   const matches = (spec: NodeTypeSpec) =>
+    // M22 D1: `mcp_tool` is not its own palette entry — it's the MCP *kind* of the one "Tool" node
+    // (pick it in the inspector). A loaded graph's mcp_tool nodes still render; you just don't drop a
+    // separate one. The type still exists in the registry (runtime/IR unchanged).
+    !HIDDEN_PALETTE_TYPES.has(spec.type) &&
     (!activeKind || spec.kind === activeKind) &&
     (q === "" ||
       spec.type.toLowerCase().includes(q) ||
@@ -80,9 +89,11 @@ export function Palette() {
       {/* search */}
       <div className="border-b border-slate-800 p-2">
         <div className="relative">
-          <span className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 text-xs text-slate-600">
-            🔍
-          </span>
+          <Search
+            size={13}
+            aria-hidden
+            className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 text-slate-600"
+          />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -94,9 +105,9 @@ export function Palette() {
               type="button"
               onClick={() => setQuery("")}
               title="Clear search"
-              className="-translate-y-1/2 absolute top-1/2 right-1.5 text-xs text-slate-500 hover:text-slate-300"
+              className="-translate-y-1/2 absolute top-1/2 right-1.5 flex items-center text-slate-500 hover:text-slate-300"
             >
-              ✕
+              <X size={13} aria-hidden />
             </button>
           )}
         </div>
@@ -135,12 +146,11 @@ export function Palette() {
                   className="flex w-full items-center justify-between rounded px-1 pb-1 hover:bg-[#11161f]"
                 >
                   <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                    <span
-                      className={`text-slate-600 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
+                    <ChevronRight
+                      size={12}
                       aria-hidden
-                    >
-                      ▸
-                    </span>
+                      className={`shrink-0 text-slate-600 transition-transform ${isCollapsed ? "" : "rotate-90"}`}
+                    />
                     {kindLabel(g.kind)}
                   </span>
                   <span className="text-[10px] text-slate-600">{g.items.length}</span>
@@ -159,9 +169,11 @@ export function Palette() {
                         title={`Drag to add a ${spec.type} node (${spec.kind})`}
                       >
                         <span className="flex items-center gap-1.5">
-                          <span className="text-base leading-none" aria-hidden>
-                            {defaultIconFor(spec.type)}
-                          </span>
+                          <NodeIcon
+                            name={defaultIconFor(spec.type)}
+                            className="text-slate-300"
+                            size={16}
+                          />
                           <span className="mono text-xs text-slate-200">{spec.type}</span>
                         </span>
                         <Badge tone={KIND_TONE[spec.kind] ?? "slate"}>{spec.kind}</Badge>

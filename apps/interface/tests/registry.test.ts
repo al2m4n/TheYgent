@@ -25,7 +25,9 @@ describe("node-type registry (derived from packages/ir)", () => {
   it("declares default ports per type (tool carries the ok/err contract)", () => {
     expect(NODE_TYPES.input.ports.out?.map((p) => p.id)).toEqual(["out"]);
     expect(NODE_TYPES.output.ports.in?.map((p) => p.id)).toEqual(["in"]);
-    expect(NODE_TYPES.tool.ports.out?.map((p) => p.id)).toEqual(["out", "err"]);
+    // ok/err (the M6 contract) + the M22 `use` capability handle (role "tool").
+    expect(NODE_TYPES.tool.ports.out?.map((p) => p.id)).toEqual(["out", "err", "use"]);
+    expect(NODE_TYPES.llm.ports.in?.find((p) => p.id === "tools")?.role).toBe("tool");
   });
 
   it("exposes a shaped default config drawn from the per-type schema", () => {

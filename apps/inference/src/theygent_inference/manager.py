@@ -46,6 +46,12 @@ class Upstream:
     api_base: str
     model: str
     api_key: str
+    # M22 follow-up: the resident engine is MLX chat (`mlx_lm.server`), which returns Llama's native
+    # text tool call as `content` instead of structured `tool_calls`. The gateway applies
+    # `tool_parse` normalization ONLY when this is set — never for llama.cpp/hosted (they already
+    # emit structured calls; double-parsing is the hazard). The flag is engine *behaviour*, set by
+    # the manager from the binding — it carries no engine NAME onto `/v1/*` (§9.1 rule holds).
+    needs_tool_parse: bool = False
 
 
 @dataclass
@@ -255,8 +261,13 @@ class EngineManager:
 
     def _upstream_for(self, eng: _Resident) -> Upstream:
         # llama-server serves the OpenAI surface under /v1; no auth locally.
+        # MLX chat (mlx_lm.server) does not emit structured tool_calls — flag it so the gateway
+        # normalizes Llama's text tool call into the OpenAI shape (tool_parse). llama.cpp/vLLM and
+        # reachable upstreams emit structured calls already, so they keep the flag False.
+        needs_tool_parse = eng.binding.binding == "mlx" and eng.binding.modality == "chat"
         return Upstream(
             api_base=f"{eng.handle.base_url}/v1",
             model=eng.binding.model,
             api_key="sk-noauth",
+            needs_tool_parse=needs_tool_parse,
         )

@@ -25,6 +25,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
+import { CircleHelp } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Selection,
@@ -38,6 +39,7 @@ import {
   irToReactFlow,
   setNodePositions,
 } from "../adapter";
+import { notify } from "../lib/notify";
 import { TheygentNode } from "./NodeView";
 
 const nodeTypes = { theygent: TheygentNode };
@@ -92,7 +94,6 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
   const { screenToFlowPosition, fitView } = useReactFlow();
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheygentRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheygentRFEdge>([]);
-  const [connectError, setConnectError] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu>(null);
 
   // Read-latest refs so event handlers stay stable but always see current state.
@@ -181,8 +182,9 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
     (c: Connection) => {
       const r = connect(irRef.current, c);
       if (r.error) {
-        setConnectError(r.error);
-        window.setTimeout(() => setConnectError(null), 4000);
+        // Surface in the one global toast (a stable id replaces, rather than stacks, when the user
+        // fumbles several connections in a row) — not a canvas-local banner.
+        notify.error(r.error, { id: "canvas-connect-error" });
         return;
       }
       if (r.ir) onChange(r.ir);
@@ -307,9 +309,9 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
         <button
           type="button"
           aria-label="Canvas help"
-          className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[#0e131c]/80 text-xs font-semibold text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+          className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[#0e131c]/80 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
         >
-          ?
+          <CircleHelp size={14} aria-hidden />
         </button>
         <div className="pointer-events-none invisible absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[#0e131c]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
           <div>
@@ -348,19 +350,6 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
             onClick={() => runMenu("delete")}
           >
             Delete {menu.kind}
-          </button>
-        </div>
-      )}
-
-      {connectError && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-md border border-red-900 bg-red-950 px-3 py-1.5 text-xs text-red-200 shadow-lg">
-          {connectError}
-          <button
-            type="button"
-            className="ml-2 text-red-400 hover:text-red-200"
-            onClick={() => setConnectError(null)}
-          >
-            ✕
           </button>
         </div>
       )}

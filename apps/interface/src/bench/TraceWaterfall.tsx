@@ -11,7 +11,7 @@ import { type ReactNode, useMemo, useState } from "react";
 import type { Selection } from "../adapter";
 import { Badge, Card, Spinner } from "../components/ui";
 import { type TraceSpan, api } from "../lib/api";
-import { defaultIconFor } from "../lib/icons";
+import { NodeIcon, defaultIconFor } from "../lib/icons";
 
 const LABEL_W = "13rem";
 const MIN_ZOOM = 1;
@@ -218,8 +218,14 @@ export function TraceWaterfall({
                     ) : (
                       <span className="w-3 shrink-0" />
                     )}
-                    <span className="shrink-0 text-xs leading-none">
-                      {s.phase ? "•" : s.node_id ? defaultIconFor(s.node_type ?? "") : "◆"}
+                    <span className="flex w-3.5 shrink-0 items-center justify-center text-xs leading-none text-slate-400">
+                      {s.phase ? (
+                        "•"
+                      ) : s.node_id ? (
+                        <NodeIcon name={defaultIconFor(s.node_type ?? "")} size={13} />
+                      ) : (
+                        "◆"
+                      )}
                     </span>
                     <button
                       type="button"

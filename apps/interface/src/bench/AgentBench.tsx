@@ -16,7 +16,14 @@ import { TraceWaterfall } from "./TraceWaterfall";
 import { applyPresetToBinding } from "./preset";
 
 export function AgentBench({ agent }: { agent: AgentDetail }) {
-  const [version, setVersion] = useState(agent.versions[0]?.version ?? "");
+  // Default the pin to the LATEST version (the detail endpoint returns versions seq-desc, newest
+  // first) and KEEP following it as fresh data arrives — until the user deliberately picks one.
+  // Capturing `versions[0]` once in useState was the "model change didn't apply" bug: if react-query
+  // served stale cached detail at mount (then re-fetched the new version), the pin stuck to the old
+  // version. `picked ?? latest` recomputes from the freshest `agent` every render.
+  const latest = agent.versions[0]?.version ?? "";
+  const [picked, setPicked] = useState<string | null>(null);
+  const version = picked ?? latest;
   const stored = useQuery({
     queryKey: ["agentver", agent.id, version],
     queryFn: () => api.getAgentVersion(agent.id, version),
@@ -49,7 +56,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-slate-200">{agent.name}</span>
         <Field label="Pin">
-          <Select value={version} onChange={(e) => setVersion(e.target.value)} className="w-48">
+          <Select value={version} onChange={(e) => setPicked(e.target.value)} className="w-48">
             {agent.versions.map((v) => (
               <option key={v.version} value={v.version}>
                 v{v.version} · {v.content_hash.slice(0, 12)}

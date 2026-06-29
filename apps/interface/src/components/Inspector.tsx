@@ -1,26 +1,43 @@
 // The node/edge inspector (M15 §2.3): edit the selected node's `config` (schema-driven from the
 // per-type JSON Schema) or the selected edge's `channel`/`condition`, with explicit Delete /
-// Duplicate controls. Graph-level `models`/`tools` are exposed READ-ONLY (full binding/tool editors
-// are out of scope, §2.3). When nothing is selected, the panel shows the graph's bindings.
+// Duplicate controls. With nothing selected, the graph-level panel shows `models` (read-only) and
+// editable `tools` / `connections` — adding a tool here makes it selectable on every llm node.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
-import { useEffect, useId, useRef, useState } from "react";
+import { type IRDocument, type Node as IRNode, NODE_TYPES } from "@theygent/ir-types";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Diamond,
+  Lock,
+  Search,
+  X,
+} from "lucide-react";
+import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import {
   type Selection,
+  type ToolBinding,
+  type ToolKind,
   type ViewBlock,
   deleteEdges,
   deleteNodes,
   duplicateNode,
-  setHttpToolBinding,
   setNodeIcon,
+  setToolKind,
+  toolKindOf,
   updateEdge,
   updateNodeConfig,
   updateNodeLabel,
 } from "../adapter";
 import { api } from "../lib/api";
-import { ICON_CHOICES, defaultIconFor } from "../lib/icons";
+import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { Badge, Button, Field, Input, Select } from "./ui";
+
+// The full-icon search grid is lazy: its ~1,700-icon set (iconsFull) loads only when a user actually
+// opens the icon picker, so the main editor bundle stays lean.
+const IconPickerGrid = lazy(() => import("./IconPickerGrid"));
 
 // node types whose config composes a saved, pinned agent (the `agent` field is an agent-id picker).
 const PINNED_BODY_TYPES = new Set(["subgraph", "loop", "map"]);
@@ -117,7 +134,11 @@ function NodePanel({
 
         <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
 
-        {Object.keys(properties).length === 0 ? (
+        {node.type === "tool" || node.type === "mcp_tool" ? (
+          // M22 D1: tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
+          // kind chooses the binding shape and (for mcp) the underlying node type.
+          <ToolNodePanel ir={ir} node={node} onChange={onChange} />
+        ) : Object.keys(properties).length === 0 ? (
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
           Object.entries(properties).map(([key, schema]) => {
@@ -156,27 +177,6 @@ function NodePanel({
                   key={`${node.id}:${key}`}
                   value={config.messages}
                   onChange={(v) => setConfigKey("messages", v)}
-                />
-              );
-            }
-            if (node.type === "mcp_tool" && key === "server") {
-              return (
-                <McpServerPicker
-                  key={`${node.id}:${key}`}
-                  value={config.server as string | undefined}
-                  onChange={(v) => setConfigKey("server", v)}
-                />
-              );
-            }
-            // M19 §2.10: the http tool's `tool` key + the connection that supplies its auth (resolved
-            // server-side; the IR stores only the connection id, never the secret — §1.1).
-            if (node.type === "tool" && key === "tool") {
-              return (
-                <ConnectionPicker
-                  key={`${node.id}:${key}`}
-                  ir={ir}
-                  nodeId={node.id}
-                  onChange={onChange}
                 />
               );
             }
@@ -258,8 +258,9 @@ function TriggerPanel({ agentId }: { agentId: string }) {
 
 // ── icon picker (a `view`-only display change — never hashed, §1.4) ────────────
 
-/** Pick an emoji icon for a node, or reset to its type default. The override lives in the `view`
- * block, so it round-trips through save/load but never affects logic or version identity. */
+/** Pick a Lucide icon for a node, or reset to its type default. The override (a Lucide icon name)
+ * lives in the `view` block, so it round-trips through save/load but never affects logic or version
+ * identity. */
 function IconPicker({
   ir,
   nodeId,
@@ -274,9 +275,10 @@ function IconPicker({
   const override = (ir.view as ViewBlock | undefined)?.nodes?.[nodeId]?.icon;
   const fallback = defaultIconFor(nodeType);
   const current = override && override.length > 0 ? override : fallback;
-  // The icon grid is collapsible and COLLAPSED by default — the header shows the current icon so the
-  // picker stays unobtrusive until you want to change it. UI-only state, not persisted.
+  // The picker is collapsible and COLLAPSED by default — the header shows the current icon so it stays
+  // unobtrusive until you want to change it. `query` searches the full Lucide set. UI-only state.
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   return (
     <Field label="Icon">
@@ -286,44 +288,44 @@ function IconPicker({
         title={open ? "Hide icon choices" : "Change icon"}
         className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-500"
       >
-        <span className="text-base leading-none">{current}</span>
+        <NodeIcon name={current} className="text-slate-300" size={16} />
         <span className="text-slate-500">Change icon</span>
-        <span
-          className={`ml-auto text-slate-600 transition-transform ${open ? "rotate-90" : ""}`}
+        <ChevronRight
+          size={13}
           aria-hidden
-        >
-          ▸
-        </span>
+          className={`ml-auto text-slate-600 transition-transform ${open ? "rotate-90" : ""}`}
+        />
       </button>
       {open && (
-        <div className="mt-1.5">
-          <div className="flex flex-wrap gap-1">
-            {ICON_CHOICES.map((emoji) => {
-              const active = current === emoji;
-              return (
-                <button
-                  key={emoji}
-                  type="button"
-                  title={override === emoji ? "current icon" : `use ${emoji}`}
-                  onClick={() => onChange(setNodeIcon(ir, nodeId, emoji))}
-                  className={`flex h-7 w-7 items-center justify-center rounded border text-base leading-none transition-colors ${
-                    active
-                      ? "border-blue-500 bg-blue-950"
-                      : "border-slate-700 bg-[#0e131c] hover:border-slate-500"
-                  }`}
-                >
-                  {emoji}
-                </button>
-              );
-            })}
+        <div className="mt-1.5 space-y-1.5">
+          <div className="relative">
+            <Search
+              size={13}
+              aria-hidden
+              className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 text-slate-600"
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search all icons…"
+              className="w-full rounded-md border border-slate-700 bg-[#0e131c] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
+            />
           </div>
+          {/* The grid (and its full-icon set) is lazy — show a tiny placeholder while it loads. */}
+          <Suspense fallback={<p className="mt-1.5 text-[11px] text-slate-600">Loading icons…</p>}>
+            <IconPickerGrid
+              query={query}
+              current={current}
+              onPick={(name) => onChange(setNodeIcon(ir, nodeId, name))}
+            />
+          </Suspense>
           <button
             type="button"
             onClick={() => onChange(setNodeIcon(ir, nodeId, null))}
             disabled={!override}
-            className="mt-1 text-[10px] text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Reset to default ({fallback})
+            Reset to default <NodeIcon name={fallback} size={12} />
           </button>
         </div>
       )}
@@ -375,23 +377,37 @@ function EdgePanel({
         </div>
 
         <Field label="Channel">
-          <div className="flex gap-2">
-            {(["data", "control"] as const).map((c) => (
-              <Button
-                key={c}
-                variant={channel === c ? "primary" : "default"}
-                className="!py-1 text-xs"
-                onClick={() => onChange(updateEdge(ir, edge.id, { channel: c }))}
-              >
-                {c}
-              </Button>
-            ))}
-          </div>
-          <p className="mt-1 text-[10px] text-slate-600">
-            {channel === "data"
-              ? "passes a value along the edge"
-              : "pure sequencing — no value passed"}
-          </p>
+          {channel === "tool" ? (
+            // M22: a `tool` (capability) edge's channel is DERIVED from the handles it joins (a tool
+            // node → an llm `tools` port). It must not be flipped to data/control here — that would
+            // silently break the capability. Show it read-only.
+            <>
+              <Badge tone="blue">tool (capability)</Badge>
+              <p className="mt-1 text-[10px] text-slate-600">
+                a tool the model may call — delete and re-wire to change it
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex gap-2">
+                {(["data", "control"] as const).map((c) => (
+                  <Button
+                    key={c}
+                    variant={channel === c ? "primary" : "default"}
+                    className="!py-1 text-xs"
+                    onClick={() => onChange(updateEdge(ir, edge.id, { channel: c }))}
+                  >
+                    {c}
+                  </Button>
+                ))}
+              </div>
+              <p className="mt-1 text-[10px] text-slate-600">
+                {channel === "data"
+                  ? "passes a value along the edge"
+                  : "pure sequencing — no value passed"}
+              </p>
+            </>
+          )}
         </Field>
 
         <Field label="Condition (router-driven, optional)">
@@ -538,12 +554,33 @@ function JsonField({
   return label ? <Field label={label}>{editor}</Field> : <div className="space-y-1">{editor}</div>;
 }
 
-// ── the llm Tools panel (M21 — attach tools the model may autonomously call) ─────
+// ── the llm Tools panel (M22 — the tools wired into this llm, the model may call them) ─────
 
-/** Attach tools to an llm node (M21): pick which of the graph's ``ir.tools`` the model may call, the
- * tool_choice, and the iteration cap. The bindings (http/mcp/builtin) live in the graph's ``tools``;
- * this panel selects from them and writes config.tools/toolChoice/maxToolIterations. With nothing
- * selected the loop config is dropped, so a tools-less llm stays a clean single-shot node. */
+/** A tool the model can call: the source node of a `tool` (capability) edge into this llm. The kind
+ * is derived from the source node like the runtime's _capability_binding (mcp_tool → mcp; a tool with
+ * a connection/url → http; else builtin). */
+function llmCapabilityTools(
+  ir: IRDocument,
+  llmId: string,
+): { id: string; label: string; kind: string }[] {
+  const byId = new Map((ir.nodes ?? []).map((n) => [n.id, n]));
+  const out: { id: string; label: string; kind: string }[] = [];
+  for (const e of ir.edges ?? []) {
+    if ((e.channel ?? "data") !== "tool" || e.target !== llmId) continue;
+    const n = byId.get(e.source);
+    if (!n) continue;
+    const cfg = (n.config ?? {}) as Record<string, unknown>;
+    const kind =
+      n.type === "mcp_tool" ? "mcp" : cfg.connection || cfg.urlTemplate ? "http" : "builtin";
+    out.push({ id: n.id, label: n.label || (cfg.tool as string) || n.id, kind });
+  }
+  return out;
+}
+
+/** Show the tools this llm may autonomously call (M22): the tool/mcp_tool nodes wired into its
+ * `tools` port (read-only — wire/unwire on the canvas), plus the tool_choice + iteration cap. Any
+ * legacy `config.tools` keys (pre-M22 ir.tools refs) are listed too. The loop runs whenever the llm
+ * has ANY tool (wired or legacy). */
 function LlmToolsPanel({
   ir,
   nodeId,
@@ -555,69 +592,62 @@ function LlmToolsPanel({
 }) {
   const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
   const config = (node?.config ?? {}) as Record<string, unknown>;
-  const selected = Array.isArray(config.tools) ? (config.tools as string[]) : [];
   const choice = typeof config.toolChoice === "string" ? (config.toolChoice as string) : "auto";
   const maxIter =
     typeof config.maxToolIterations === "number" ? (config.maxToolIterations as number) : 8;
-  const toolKeys = Object.keys((ir.tools ?? {}) as Record<string, unknown>);
+  const wired = llmCapabilityTools(ir, nodeId);
+  const legacy = Array.isArray(config.tools) ? (config.tools as string[]) : [];
+  const hasTools = wired.length > 0 || legacy.length > 0;
 
-  const commit = (tools: string[], extra: Record<string, unknown> = {}) => {
-    if (tools.length === 0) {
-      const rest = { ...config }; // no tools → drop the loop config (clean single-shot llm)
-      for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete rest[k];
-      onChange(updateNodeConfig(ir, nodeId, rest));
-      return;
-    }
+  const set = (extra: Record<string, unknown>) =>
     onChange(
       updateNodeConfig(ir, nodeId, {
         ...config,
-        tools,
         toolChoice: choice,
         maxToolIterations: maxIter,
         ...extra,
       }),
     );
-  };
-  const toggle = (k: string) =>
-    commit(selected.includes(k) ? selected.filter((x) => x !== k) : [...selected, k]);
 
   return (
     <div className="space-y-1.5">
       <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
-        Tools (the model may call these)
+        Tools the model can call
       </span>
-      {toolKeys.length === 0 ? (
-        <p className="text-[11px] text-slate-600">
-          No tools defined in this graph. Add an http / mcp / builtin tool to the graph's{" "}
-          <span className="mono">tools</span> (the Code view, for now), then select it here.
+      {!hasTools ? (
+        <p className="text-[11px] leading-relaxed text-slate-600">
+          None yet — drop a <span className="mono">tool</span> node, then drag its violet capability
+          handle into this node's <span className="mono">tools</span> port (the violet handle on the
+          bottom). The model decides when to call it.
         </p>
       ) : (
         <div className="space-y-1">
-          {toolKeys.map((k) => {
-            const binding = (ir.tools as Record<string, { kind?: string }>)[k];
-            return (
-              <label
-                key={k}
-                className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-[#1d2433]"
-              >
-                <input type="checkbox" checked={selected.includes(k)} onChange={() => toggle(k)} />
-                <span className="mono text-slate-200">{k}</span>
-                {binding?.kind && <Badge>{binding.kind}</Badge>}
-              </label>
-            );
-          })}
+          {wired.map((t) => (
+            <div
+              key={t.id}
+              className="flex items-center gap-2 rounded px-1 py-0.5 text-xs"
+              title={`wired from ${t.id} — unwire on the canvas to remove`}
+            >
+              <Diamond size={11} className="shrink-0 fill-violet-400 text-violet-400" aria-hidden />
+              <span className="mono text-slate-200">{t.label}</span>
+              <Badge>{t.kind}</Badge>
+            </div>
+          ))}
+          {legacy.map((k) => (
+            <div key={k} className="flex items-center gap-2 rounded px-1 py-0.5 text-xs">
+              <span className="mono text-slate-200">{k}</span>
+              <Badge tone="slate">legacy</Badge>
+            </div>
+          ))}
         </div>
       )}
-      {selected.length > 0 && (
+      {hasTools && (
         <div className="mt-1 space-y-2 rounded-md border border-slate-800 p-2">
           <label className="block space-y-1">
             <span className="block text-[10px] uppercase tracking-wide text-slate-500">
               tool choice
             </span>
-            <Select
-              value={choice}
-              onChange={(e) => commit(selected, { toolChoice: e.target.value })}
-            >
+            <Select value={choice} onChange={(e) => set({ toolChoice: e.target.value })}>
               <option value="auto">auto — model decides</option>
               <option value="required">required — must call a tool</option>
               <option value="none">none — never call</option>
@@ -631,9 +661,7 @@ function LlmToolsPanel({
               type="number"
               min={1}
               value={maxIter}
-              onChange={(e) =>
-                commit(selected, { maxToolIterations: Math.max(1, Number(e.target.value) || 1) })
-              }
+              onChange={(e) => set({ maxToolIterations: Math.max(1, Number(e.target.value) || 1) })}
             />
           </label>
         </div>
@@ -843,7 +871,7 @@ function MessageRow({
             disabled={index === 0}
             title="Move up"
           >
-            ↑
+            <ChevronUp size={14} aria-hidden />
           </button>
           <button
             type="button"
@@ -852,10 +880,10 @@ function MessageRow({
             disabled={index === total - 1}
             title="Move down"
           >
-            ↓
+            <ChevronDown size={14} aria-hidden />
           </button>
           <button type="button" className={iconBtn} onClick={onDelete} title="Remove message">
-            ✕
+            <X size={14} aria-hidden />
           </button>
         </div>
       </div>
@@ -956,9 +984,7 @@ function ListPicker({
           <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
             {value || placeholder || (loading ? "loading…" : "select…")}
           </span>
-          <span className="shrink-0 text-slate-500" aria-hidden>
-            ▾
-          </span>
+          <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
         </button>
         {open && (
           <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-700 bg-[#11161f] shadow-xl">
@@ -987,7 +1013,9 @@ function ListPicker({
                       }`}
                     >
                       <span className="mono truncate">{o}</span>
-                      {o === value && <span className="ml-auto text-blue-400">✓</span>}
+                      {o === value && (
+                        <Check size={14} className="ml-auto shrink-0 text-blue-400" aria-hidden />
+                      )}
                     </button>
                   </li>
                 ))
@@ -1129,23 +1157,152 @@ function AgentPicker({
   );
 }
 
-/** The http tool's `tool` key + the connection that supplies its auth (M19 §2.10/§1.1). Picking a
- * connection declares `ir.tools[key] = {kind:"http", connection}` — the IR stores the connection
- * **id**, NEVER the secret (resolved server-side at step time). Leaving it as a builtin (echo/
- * http_fetch) keeps the M6 path. */
-function ConnectionPicker({
+// ── the unified Tool node panel (M22 D1 — one node, the kind is a picker) ──────────────────────────
+
+const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
+  { kind: "builtin", label: "Builtin", hint: "A tool theygent ships (echo, http_fetch, …)." },
+  {
+    kind: "rest",
+    label: "REST",
+    hint: "Call an HTTP API — optionally with a saved connection for server-side auth.",
+  },
+  { kind: "mcp", label: "MCP", hint: "A tool exposed by a connected MCP server." },
+];
+
+/** The one editor for tool + mcp_tool nodes (M22 D1). A kind picker (Builtin / REST / MCP) chooses
+ * the binding shape; switching kind reseeds the node via `setToolKind` (which, for MCP, swaps the
+ * underlying node type). The binding LIVES on the node config; `ir.tools` is the derived registry.
+ * Advanced REST fields (headers/body/responseMap/…) stay in the Raw config editor below. */
+function ToolNodePanel({
   ir,
-  nodeId,
+  node,
   onChange,
 }: {
   ir: IRDocument;
-  nodeId: string;
+  node: IRNode;
   onChange: (ir: IRDocument) => void;
 }) {
-  const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
-  const config = (node?.config ?? {}) as Record<string, unknown>;
-  const toolKey = (config.tool as string) ?? "";
-  const listId = useId();
+  const kind = toolKindOf(node);
+  const config = (node.config ?? {}) as Record<string, unknown>;
+  const builtinListId = useId();
+  const setKey = (key: string, value: unknown) =>
+    onChange(updateNodeConfig(ir, node.id, { ...config, [key]: value }));
+
+  return (
+    <>
+      <Field label="Kind">
+        <div className="grid grid-cols-3 gap-1">
+          {TOOL_KINDS.map((k) => (
+            <button
+              key={k.kind}
+              type="button"
+              onClick={() => onChange(setToolKind(ir, node.id, k.kind))}
+              className={`rounded-md border px-2 py-1.5 text-xs ${
+                kind === k.kind
+                  ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                  : "border-slate-700 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {k.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px] text-slate-600">
+          {TOOL_KINDS.find((k) => k.kind === kind)?.hint}
+        </span>
+      </Field>
+
+      {kind === "builtin" && (
+        <Field label="builtin *">
+          <Input
+            list={builtinListId}
+            value={(config.tool as string) ?? ""}
+            placeholder="echo / http_fetch / a registered tool"
+            onChange={(e) => setKey("tool", e.target.value)}
+          />
+          <datalist id={builtinListId}>
+            {["echo", "http_fetch"].map((o) => (
+              <option key={o} value={o} />
+            ))}
+          </datalist>
+        </Field>
+      )}
+
+      {kind === "rest" && (
+        <>
+          <Field label="URL template *">
+            <Input
+              value={(config.urlTemplate as string) ?? ""}
+              placeholder="https://api.example.com/{path}"
+              onChange={(e) => setKey("urlTemplate", e.target.value)}
+            />
+          </Field>
+          <Field label="method">
+            <Select
+              value={(config.method as string) ?? "GET"}
+              onChange={(e) => setKey("method", e.target.value)}
+            >
+              {["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <ConnectionSelect
+            value={config.connection as string | undefined}
+            onChange={(v) => setKey("connection", v)}
+          />
+          <JsonField
+            label="parameterSchema (what the model fills in)"
+            value={config.parameterSchema}
+            onChange={(v) => setKey("parameterSchema", v)}
+          />
+        </>
+      )}
+
+      {kind === "mcp" && (
+        <>
+          <McpServerPicker
+            value={config.server as string | undefined}
+            onChange={(v) => setKey("server", v)}
+          />
+          <Field label="tool *">
+            <Input
+              value={(config.tool as string) ?? ""}
+              placeholder="the tool name exposed by that server"
+              onChange={(e) => setKey("tool", e.target.value)}
+            />
+          </Field>
+        </>
+      )}
+
+      <Field label="description (what the model sees)">
+        <Input
+          value={(config.description as string) ?? ""}
+          placeholder="one line describing when to call this tool"
+          onChange={(e) => setKey("description", e.target.value)}
+        />
+      </Field>
+
+      <p className="text-[10px] text-slate-600">
+        Wire this node's violet <span className="text-violet-300">use</span> handle (top) into an
+        llm's <span className="text-violet-300">tools</span> port to let the model call it. Advanced
+        REST fields (headers, body, response map…) are in the Raw config below.
+      </p>
+    </>
+  );
+}
+
+/** A dropdown of `http_auth` connections (M19 §1.1) for a REST tool — the IR stores the connection
+ * **id**, never the secret (resolved server-side at step time). "none" leaves it auth-less. */
+function ConnectionSelect({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
   const { data: connections, isError } = useQuery({
     queryKey: ["connections"],
     queryFn: api.listConnections,
@@ -1153,58 +1310,24 @@ function ConnectionPicker({
     staleTime: 30_000,
   });
   const httpConns = (connections ?? []).filter((c) => c.kind === "http_auth");
-  const binding = ir.tools?.[toolKey] as { kind?: string; connection?: string } | undefined;
-  const boundConn = binding?.kind === "http" ? binding.connection : undefined;
-  const builtins = ["echo", "http_fetch"];
-
   return (
-    <>
-      <Field label="tool *">
-        <Input
-          list={listId}
-          value={toolKey}
-          placeholder="a builtin (echo/http_fetch) or a connection-backed key"
-          onChange={(e) =>
-            onChange(updateNodeConfig(ir, nodeId, { ...config, tool: e.target.value }))
-          }
-        />
-        <datalist id={listId}>
-          {[...new Set([...builtins, ...Object.keys(ir.tools ?? {})])].map((o) => (
-            <option key={o} value={o} />
-          ))}
-        </datalist>
-      </Field>
-      <Field label="Connection (http auth)">
-        <select
-          className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
-          value={boundConn ?? ""}
-          onChange={(e) => {
-            const cid = e.target.value;
-            if (cid) onChange(setHttpToolBinding(ir, nodeId, toolKey || "http_tool", cid));
-          }}
-        >
-          <option value="">— none (builtin tool) —</option>
-          {httpConns.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </select>
-        {boundConn ? (
-          <span className="text-[10px] text-emerald-500">
-            ✓ auth via {boundConn} — resolved server-side; no secret in the IR
-          </span>
-        ) : isError ? (
-          <span className="text-[10px] text-slate-600">
-            connections unreachable — this is a builtin tool
-          </span>
-        ) : (
-          <span className="text-[10px] text-slate-600">
-            pick a connection to make this an http tool with server-side auth
-          </span>
-        )}
-      </Field>
-    </>
+    <Field label="connection (http auth)">
+      <Select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
+        <option value="">— none (no server-side auth) —</option>
+        {httpConns.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </Select>
+      {value ? (
+        <span className="text-[10px] text-emerald-500">
+          ✓ auth via {value} — resolved server-side; no secret in the IR
+        </span>
+      ) : isError ? (
+        <span className="text-[10px] text-slate-600">connections unreachable</span>
+      ) : null}
+    </Field>
   );
 }
 
@@ -1242,15 +1365,15 @@ function RawConfigEditor({
   );
 }
 
-// ── graph-level panel (read-only models/tools) ────────────────────────────────
+// ── graph-level panel (read-only models · editable tools/connections) ──────────
 
 function GraphPanel({ ir }: { ir: IRDocument }) {
   const models = Object.entries(ir.models ?? {});
-  const tools = Object.entries(ir.tools ?? {});
   return (
     <div className="flex h-full flex-col overflow-y-auto p-3 text-sm">
       <p className="mb-3 text-xs text-slate-600">
-        Select a node or edge to edit it. Graph-level bindings are shown read-only.
+        Select a node or edge to edit it. Model bindings and tools are derived from the canvas
+        (added as you place + wire nodes); connections are managed below.
       </p>
       <Section title="Model bindings">
         {models.length === 0 ? (
@@ -1266,20 +1389,45 @@ function GraphPanel({ ir }: { ir: IRDocument }) {
           ))
         )}
       </Section>
-      <Section title="Tools">
-        {tools.length === 0 ? (
-          <Empty>No tools declared.</Empty>
-        ) : (
-          tools.map(([key, t]) => (
-            <div key={key} className="rounded border border-slate-800 px-2 py-1.5">
-              <span className="mono text-xs text-slate-200">{key}</span>
-              <div className="mono mt-0.5 text-[11px] text-slate-500">{JSON.stringify(t)}</div>
-            </div>
-          ))
-        )}
-      </Section>
+      <ToolsRegistry ir={ir} />
       <ConnectionsPanel />
     </div>
+  );
+}
+
+// ── tools registry (a READ-ONLY view of `ir.tools` — derived from the canvas tool nodes) ──────────
+
+/** A one-line summary of a tool binding for the list row. */
+function summarizeTool(t: ToolBinding): string {
+  if (t.kind === "builtin") return t.ref;
+  if (t.kind === "mcp") return [t.server ?? t.connection, t.tool].filter(Boolean).join(" · ");
+  return t.connection ? `connection ${t.connection}` : "http";
+}
+
+/** The graph's tool registry (M22): `ir.tools` is DERIVED from the tool nodes on the canvas — like
+ * `ir.models` fills in as you bind models — so this lists, read-only, every tool currently in the
+ * agent with its kind. To add or remove a tool, drop/delete a tool node and wire it to an llm. */
+function ToolsRegistry({ ir }: { ir: IRDocument }) {
+  const tools = Object.entries((ir.tools ?? {}) as Record<string, ToolBinding>);
+  return (
+    <Section title="Tools">
+      {tools.length === 0 ? (
+        <Empty>No tools yet — drop a tool node and wire it to an llm.</Empty>
+      ) : (
+        tools.map(([key, t]) => (
+          <div
+            key={key}
+            className="flex items-center gap-2 rounded border border-slate-800 px-2 py-1.5"
+          >
+            <span className="mono text-xs text-slate-200">{key}</span>
+            <Badge>{t.kind}</Badge>
+            <span className="mono ml-auto truncate text-[10px] text-slate-600">
+              {summarizeTool(t)}
+            </span>
+          </div>
+        ))
+      )}
+    </Section>
   );
 }
 
@@ -1340,7 +1488,11 @@ function ConnectionsPanel() {
             </div>
             <div className="mono mt-0.5 flex items-center gap-2 text-[10px] text-slate-600">
               <span>{c.id}</span>
-              {c.hasSecret && <span className="text-emerald-600">🔒 secret set</span>}
+              {c.hasSecret && (
+                <span className="flex items-center gap-1 text-emerald-600">
+                  <Lock size={10} aria-hidden /> secret set
+                </span>
+              )}
             </div>
           </div>
         ))

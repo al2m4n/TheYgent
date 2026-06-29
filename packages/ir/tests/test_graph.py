@@ -894,3 +894,179 @@ def test_empty_tools_list_is_single_shot_no_checks() -> None:
     # Empty `tools` is the pre-M21 single-shot path: the M21 checks don't fire (e.g. a 0 max is fine
     # because the loop never runs).
     validate_graph(parse_document(_llm_tools_doc(tools=[], max_iter=0, bindings={})))
+
+
+# ── M22: tool wiring as capability edges (tool node → llm `tools` port) ─────────
+
+
+def _capability_graph(tool_node: dict, *, channel: str = "tool", to_handle: str = "tools") -> dict:
+    """input → llm → output, with `tool_node` wired to the llm's `tools` port as a CAPABILITY (a
+    `tool`-channel edge). The llm gains a `tool`-role `tools` in-port to receive it."""
+    doc = _trivial()
+    llm = next(n for n in doc["nodes"] if n["id"] == "n_llm")
+    llm["ports"]["in"].append({"id": "tools", "type": "any", "role": "tool", "required": False})
+    doc["nodes"].append(tool_node)
+    doc["edges"].append(
+        {
+            "id": "e_tool",
+            "source": tool_node["id"],
+            "sourceHandle": "out",
+            "target": "n_llm",
+            "targetHandle": to_handle,
+            "channel": channel,
+        }
+    )
+    return doc
+
+
+def _builtin_tool_node(node_id: str = "n_tool", ref: str = "echo") -> dict:
+    return {
+        "id": node_id,
+        "type": "tool",
+        "kind": "activity",
+        "config": {"tool": ref, "description": "echo the value back"},
+        "ports": {
+            "in": [{"id": "in", "type": "any"}],  # required (M6) but unfed — capability exemption
+            "out": [{"id": "out", "type": "any"}, {"id": "err", "type": "error"}],
+        },
+    }
+
+
+def _http_tool_node(
+    node_id: str = "n_http",
+    *,
+    description: str | None = "fetch a page",
+    parameter_schema: dict | None = None,
+    url: str = "https://api.example.com/$in.q",
+) -> dict:
+    cfg: dict = {"tool": node_id, "connection": "c1", "method": "GET", "urlTemplate": url}
+    if description is not None:
+        cfg["description"] = description
+    if parameter_schema is not None:
+        cfg["parameterSchema"] = parameter_schema
+    return {
+        "id": node_id,
+        "type": "tool",
+        "kind": "activity",
+        "config": cfg,
+        "ports": {
+            "in": [{"id": "in", "type": "any"}],
+            "out": [{"id": "out", "type": "any"}, {"id": "err", "type": "error"}],
+        },
+    }
+
+
+_Q_SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
+
+
+def test_m22_builtin_capability_wired_to_llm_validates() -> None:
+    # A builtin tool node wired to the llm's tools-port is a valid capability — and its required
+    # (M6) `in` port may be unfed (the model supplies args at call time, §5 exemption).
+    validate_graph(parse_document(_capability_graph(_builtin_tool_node())))
+
+
+def test_m22_http_capability_self_describing_validates() -> None:
+    node = _http_tool_node(parameter_schema=_Q_SCHEMA)
+    validate_graph(parse_document(_capability_graph(node)))
+
+
+def test_m22_tool_edge_from_non_tool_node_rejected() -> None:
+    # Re-point the capability edge's source to the input node — only a tool/mcp_tool may source it.
+    doc = _capability_graph(_builtin_tool_node())
+    doc["edges"][-1]["source"] = "n_in"
+    doc["edges"][-1]["sourceHandle"] = "out"
+    with pytest.raises(GraphValidationError, match="must come from a tool"):
+        validate_graph(parse_document(doc))
+
+
+def test_m22_tool_edge_to_non_llm_rejected() -> None:
+    doc = _capability_graph(_builtin_tool_node())
+    doc["nodes"][2]["ports"]["in"].append({"id": "tools", "type": "any", "role": "tool"})
+    doc["edges"][-1]["target"] = "n_out"  # output, not an llm
+    doc["edges"][-1]["targetHandle"] = "tools"
+    with pytest.raises(GraphValidationError, match="must target an llm"):
+        validate_graph(parse_document(doc))
+
+
+def test_m22_tool_edge_into_non_tool_role_port_rejected() -> None:
+    # Target the llm's data `in` port with a tool-channel edge — role mismatch.
+    doc = _capability_graph(_builtin_tool_node(), to_handle="in")
+    with pytest.raises(GraphValidationError, match="must target a `tool`-role port"):
+        validate_graph(parse_document(doc))
+
+
+def test_m22_mixed_mode_tool_node_rejected() -> None:
+    # A tool node that is BOTH a capability (tool edge to llm) and a step (data edge out) is
+    # ambiguous — rejected.
+    doc = _capability_graph(_builtin_tool_node())
+    doc["nodes"][2]["ports"]["in"].append({"id": "extra", "type": "any", "required": False})
+    doc["edges"].append(
+        {
+            "id": "e_step",
+            "source": "n_tool",
+            "sourceHandle": "out",
+            "target": "n_out",
+            "targetHandle": "extra",
+            "channel": "data",
+        }
+    )
+    with pytest.raises(GraphValidationError, match=r"capability .* or a step"):
+        validate_graph(parse_document(doc))
+
+
+def test_m22_http_capability_without_schema_rejected() -> None:
+    node = _http_tool_node(description="x", parameter_schema=None)
+    with pytest.raises(GraphValidationError, match="self-describes"):
+        validate_graph(parse_document(_capability_graph(node)))
+
+
+def test_m22_http_capability_unfillable_slot_rejected() -> None:
+    # url references $in.q but the schema has no `q` property → unfillable.
+    node = _http_tool_node(
+        url="https://api.example.com/$in.q",
+        parameter_schema={"type": "object", "properties": {"other": {"type": "string"}}},
+    )
+    with pytest.raises(GraphValidationError, match="unfillable"):
+        validate_graph(parse_document(_capability_graph(node)))
+
+
+def test_m22_tool_channel_widening_is_hash_stable() -> None:
+    # The PortRole/EdgeChannel widening + the optional ToolConfig fields must NOT shift a pre-M22
+    # graph's contentHash (Node.config is hashed as authored; existing role/channel values intact).
+    assert content_hash(parse_document(_trivial())) == content_hash(parse_document(_trivial()))
+    # A capability wiring IS real content → a different hash from the plain trivial graph.
+    cap = content_hash(parse_document(_capability_graph(_builtin_tool_node())))
+    assert cap != content_hash(parse_document(_trivial()))
+
+
+def test_m22_capability_tool_excluded_from_topo_order() -> None:
+    # A capability tool node is NOT sequenced (the `tool` edge imposes no order) — topo still
+    # succeeds and the llm does not depend on the tool running first.
+    order = topological_order(parse_document(_capability_graph(_builtin_tool_node())))
+    assert [n.id for n in order if n.id in {"n_in", "n_llm", "n_out"}] == ["n_in", "n_llm", "n_out"]
+
+
+def test_m22_capability_node_id_may_equal_its_ir_tools_key() -> None:
+    # M22 (D1): the editor derives ir.tools keyed by node id (a mirror of the node binding), so a
+    # capability node id EQUAL to its ir.tools key is the norm — it must validate, not be rejected.
+    doc = _capability_graph(_builtin_tool_node(node_id="n_echo"))
+    doc["tools"] = {"n_echo": {"kind": "builtin", "ref": "echo"}}
+    validate_graph(parse_document(doc))
+
+
+def test_m22_data_edge_into_tools_port_rejected() -> None:
+    # The inverse of the tool-edge rule: a `tool`-role in-port may ONLY be fed by a `tool` edge — a
+    # data edge into the llm's tools port is a miswire whose value would never be consumed.
+    doc = _capability_graph(_builtin_tool_node())
+    doc["edges"].append(
+        {
+            "id": "e_bad",
+            "source": "n_in",
+            "sourceHandle": "out",
+            "target": "n_llm",
+            "targetHandle": "tools",
+            "channel": "data",
+        }
+    )
+    with pytest.raises(GraphValidationError, match=r"cannot target the .tool.-role port"):
+        validate_graph(parse_document(doc))
