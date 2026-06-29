@@ -168,10 +168,10 @@ async def test_durable_run_matches_the_walker(pg_url: str) -> None:
 
 
 async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
-    # M21: an llm with tools runs its bounded tool loop on the DURABLE runtime — each model turn is a
-    # journaled `_llm_step`, each tool call a journaled step (`_durable_tool_call`). The scripted fake
-    # calls `echo` once, then answers; the durable run completes with the post-tool answer. Same
-    # primitives as the interactive loop (test_m21_tool_calling), here through theygent_run.
+    # M21: an llm with tools runs its bounded tool loop on the DURABLE runtime — each model
+    # turn is a journaled `_llm_step`, each tool call a journaled step (`_durable_tool_call`).
+    # The scripted fake calls `echo` once, then answers; the durable run completes with the
+    # post-tool answer. Same primitives as the interactive loop, here through theygent_run.
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
     ir["id"] = "agt_tool_loop"
@@ -179,7 +179,10 @@ async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
     ir["nodes"][1]["config"]["tools"] = ["echo"]
     ir["nodes"][1]["config"]["maxToolIterations"] = 4
     with FakeInference(
-        mode="tool_call", tool_name="echo", tool_args={"value": "hi"}, response="durable tool answer"
+        mode="tool_call",
+        tool_name="echo",
+        tool_args={"value": "hi"},
+        response="durable tool answer",
     ) as fake:
         engine = db.create_engine(pg_url)
         sm = db.create_sessionmaker(engine)
