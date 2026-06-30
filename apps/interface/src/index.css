@@ -1,18 +1,69 @@
 @import "tailwindcss";
 
-/* The interface baseline (M15: Tailwind, mirrors the cockpit's neutral dark surface). The canvas
-   is the product here, so chrome stays quiet and the graph carries the colour. */
-:root {
+/* Drive the `dark:` variant off our explicit `.dark` class (set by lib/theme on <html>), not the OS
+   media query — so `dark:`/light pairs follow the in-app theme switch. Used for SEMANTIC colours
+   (blue/red/amber chips) that the slate-ramp inversion below doesn't cover: e.g. a badge is
+   `bg-blue-100 … dark:bg-blue-950` so it's light in light mode, dark in dark mode. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Theme tokens ────────────────────────────────────────────────────────────
+   The surface palette is a set of CSS variables so a theme switch flips every surface at once.
+   `--c-*` are the app's elevated surfaces (bg → surface → surface-2 → elev → hover); components use
+   them via `bg-[var(--c-*)]`. Light mode (`html.light`) overrides these AND the Tailwind slate ramp,
+   so the 450+ `slate-*` text/border utilities invert with zero per-component edits. Theme is set on
+   <html> by lib/theme.tsx (class + color-scheme). The default (no class) is dark. */
+:root,
+html.dark {
   color-scheme: dark;
+  --c-bg: #0b0e14;
+  --c-surface: #0e131c;
+  --c-surface-2: #11161f;
+  --c-elev: #161b26;
+  --c-hover: #1d2433;
+}
+
+html.light {
+  color-scheme: light;
+  --c-bg: #eef1f6;
+  --c-surface: #ffffff;
+  --c-surface-2: #ffffff;
+  --c-elev: #ffffff;
+  --c-hover: #e7ebf2;
+  /* Invert the slate ramp: dark-mode `text-slate-100` (near-white) becomes near-black, borders
+     (`border-slate-800`) become light, muted text stays mid — so the whole UI reads in light. */
+  --color-slate-50: #020617;
+  --color-slate-100: #0f172a;
+  --color-slate-200: #1e293b;
+  --color-slate-300: #334155;
+  --color-slate-400: #475569;
+  --color-slate-500: #64748b;
+  --color-slate-600: #94a3b8;
+  --color-slate-700: #cbd5e1;
+  --color-slate-800: #dde3ec;
+  --color-slate-900: #eef1f6;
+  --color-slate-950: #f8fafc;
 }
 
 html,
 body {
   margin: 0;
-  background-color: #0b0e14;
-  color: #d8dee9;
+  height: 100%;
+  background-color: var(--c-bg);
+  color: var(--color-slate-100);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
     sans-serif;
+}
+
+/* The app is a fixed shell: the document itself never scrolls. Scroll lives inside the content
+   region (the routed <main>), so the left sidebar — and its pinned settings/profile footer —
+   stays put while a page scrolls. The full height chain (html → body → #root) must be explicit
+   for the shell's `h-full` to resolve to the viewport. */
+body {
+  overflow: hidden;
+}
+
+#root {
+  height: 100%;
 }
 
 .mono {
@@ -22,21 +73,34 @@ body {
 /* React Flow theming via its CSS variables (kept here so the renderer stays swappable — the
    adapter is the only code that knows React Flow; this is pure styling). */
 .react-flow {
-  --xy-background-color: #0b0e14;
-  --xy-edge-stroke: #4b5563;
-  --xy-edge-stroke-selected: #60a5fa;
-  --xy-connectionline-stroke: #60a5fa;
+  --xy-background-color: var(--c-bg);
+  --xy-edge-stroke: #64748b;
+  --xy-edge-stroke-selected: #3b82f6;
+  --xy-connectionline-stroke: #3b82f6;
 }
 
 .react-flow__attribution {
   display: none;
 }
 
+/* Control-toolbar buttons: the RF default paints them white with the icon inheriting the app's
+   near-white text colour → invisible on the dark canvas. Theme the button surface (the className on
+   <Controls> only styles the container, not each button) so the icons read in both themes; the icon
+   fill/stroke follows the inherited `color` set by the <Controls> className. !important beats RF's
+   own stylesheet. */
+.react-flow__controls-button {
+  background-color: var(--c-elev) !important;
+  border-bottom-color: var(--c-hover) !important;
+}
+.react-flow__controls-button:hover {
+  background-color: var(--c-hover) !important;
+}
+
 .react-flow__handle {
   width: 9px;
   height: 9px;
   border-radius: 9999px;
-  border: 1px solid #0b0e14;
+  border: 1px solid var(--c-bg);
 }
 
 /* Transient highlight: pulse the node/edge an issue (or other UI affordance) points at, so hovering

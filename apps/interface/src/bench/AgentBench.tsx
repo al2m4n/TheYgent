@@ -75,7 +75,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
 
       {result?.error && <p className="text-sm text-red-400">{result.error}</p>}
       {result?.output && (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[#0e131c] p-3 text-sm text-slate-200">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
           {result.output}
         </pre>
       )}
@@ -90,6 +90,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
                 selection={null}
                 onSelect={() => {}}
                 highlight={highlight}
+                minimal
               />
             </div>
           )}

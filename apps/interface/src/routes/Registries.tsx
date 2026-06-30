@@ -11,6 +11,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
+import { CategoryBadge, FilterBar } from "../components/Filters";
 import {
   Badge,
   Button,
@@ -20,6 +21,7 @@ import {
   Field,
   Input,
   Modal,
+  Page,
   Select,
   Spinner,
   Table,
@@ -27,6 +29,7 @@ import {
   Th,
 } from "../components/ui";
 import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api } from "../lib/api";
+import { countBy, engineTone, toggle } from "../lib/categories";
 import { formatBytes } from "../lib/format";
 import { notify, trackDownload } from "../lib/notify";
 
@@ -113,7 +116,7 @@ export function Registries() {
   const [browsing, setBrowsing] = useState(false);
 
   return (
-    <div className="mx-auto h-full max-w-5xl overflow-y-auto px-6 py-6">
+    <Page>
       <div className="mb-5 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold text-slate-100">Registries</h1>
@@ -131,7 +134,7 @@ export function Registries() {
       <InstalledPanel />
 
       {browsing && <BrowseModal onClose={() => setBrowsing(false)} />}
-    </div>
+    </Page>
   );
 }
 
@@ -252,11 +255,64 @@ function InstalledPanel() {
   // M18: the per-model bench opens in a modal (no separate page) — test/benchmark right here.
   const [benchModel, setBenchModel] = useState<ModelView | null>(null);
 
+  // Filters: by engine (the model's binding — the category) and by resident/cold state, plus a
+  // free-text search over the logical id + underlying model. Counts come from the full list.
+  const [engineSel, setEngineSel] = useState<string[]>([]);
+  const [stateSel, setStateSel] = useState<string[]>([]);
+  const [q, setQ] = useState("");
+
+  const list = models ?? [];
+  const engineCounts = useMemo(() => countBy(list, (m) => m.binding.binding), [list]);
+  const stateCounts = useMemo(
+    () => countBy(list, (m) => (isResident(m) ? "resident" : "cold")),
+    [list],
+  );
+
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return list.filter((m) => {
+      if (engineSel.length && !engineSel.includes(m.binding.binding)) return false;
+      const st = isResident(m) ? "resident" : "cold";
+      if (stateSel.length && !stateSel.includes(st)) return false;
+      if (needle && !`${m.logicalId} ${m.binding.model ?? ""}`.toLowerCase().includes(needle)) {
+        return false;
+      }
+      return true;
+    });
+  }, [list, engineSel, stateSel, q]);
+
   const residentCount = engines
     ? Array.isArray(engines.resident)
       ? engines.resident.length
       : Object.keys((engines.resident as Record<string, unknown>) ?? {}).length
     : 0;
+
+  const engineFacet = {
+    label: "Engine",
+    selected: engineSel,
+    onToggle: (v: string) => setEngineSel((s) => toggle(s, v)),
+    options: Object.keys(engineCounts)
+      .sort()
+      .map((b) => ({
+        value: b,
+        label: engineLabel(b),
+        tone: engineTone(b),
+        count: engineCounts[b],
+      })),
+  };
+  const stateFacet = {
+    label: "State",
+    selected: stateSel,
+    onToggle: (v: string) => setStateSel((s) => toggle(s, v)),
+    options: ["resident", "cold"]
+      .filter((s) => stateCounts[s])
+      .map((s) => ({
+        value: s,
+        label: s,
+        tone: s === "resident" ? ("green" as const) : ("slate" as const),
+        count: stateCounts[s],
+      })),
+  };
 
   return (
     <div className="space-y-4">
@@ -269,57 +325,93 @@ function InstalledPanel() {
       <ErrorBanner error={error ?? warm.error ?? evict.error ?? remove.error} />
       {isLoading ? (
         <Spinner />
-      ) : !models || models.length === 0 ? (
+      ) : list.length === 0 ? (
         <Empty>No models registered yet. Use “＋ Add model” above.</Empty>
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              <Th>Logical id</Th>
-              <Th>Engine</Th>
-              <Th>Model</Th>
-              <Th>State</Th>
-              <Th>Capabilities</Th>
-              <Th>Actions</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {models.map((m: ModelView) => (
-              <tr key={m.logicalId} className="align-top hover:bg-slate-800/30">
-                <Td className="mono text-slate-100">{m.logicalId}</Td>
-                <Td>
-                  <Badge>{engineLabel(m.binding.binding)}</Badge>
-                </Td>
-                <Td className="mono text-slate-300">
-                  <span
-                    className="block max-w-[220px] truncate"
-                    title={m.binding.model ?? undefined}
-                  >
-                    {m.binding.model ?? "—"}
-                  </span>
-                </Td>
-                <Td>
-                  {isResident(m) ? <Badge tone="green">resident</Badge> : <Badge>cold</Badge>}
-                </Td>
-                <Td>
-                  <CapabilitiesCell logicalId={m.logicalId} />
-                </Td>
-                <Td>
-                  <div className="flex flex-wrap gap-1">
-                    <Button variant="primary" onClick={() => setBenchModel(m)}>
-                      bench
-                    </Button>
-                    <Button onClick={() => warm.mutate(m.logicalId)}>warm</Button>
-                    <Button onClick={() => evict.mutate(m.logicalId)}>evict</Button>
-                    <Button variant="danger" onClick={() => remove.mutate(m.logicalId)}>
-                      delete
-                    </Button>
-                  </div>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+        <>
+          <FilterBar
+            search={q}
+            onSearch={setQ}
+            searchPlaceholder="Search id, model…"
+            facets={[engineFacet, stateFacet]}
+            total={list.length}
+            shown={filtered.length}
+            onClear={() => {
+              setEngineSel([]);
+              setStateSel([]);
+              setQ("");
+            }}
+          />
+          {filtered.length === 0 ? (
+            <Empty>No models match the current filters.</Empty>
+          ) : (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Logical id</Th>
+                  <Th>Engine</Th>
+                  <Th>Model</Th>
+                  <Th>State</Th>
+                  <Th>Capabilities</Th>
+                  <Th>Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((m: ModelView) => {
+                  const st = isResident(m) ? "resident" : "cold";
+                  return (
+                    <tr key={m.logicalId} className="align-top hover:bg-slate-800/30">
+                      <Td className="mono text-slate-100">{m.logicalId}</Td>
+                      <Td>
+                        <CategoryBadge
+                          tone={engineTone(m.binding.binding)}
+                          active={engineSel.includes(m.binding.binding)}
+                          onClick={() => setEngineSel((s) => toggle(s, m.binding.binding))}
+                          title={`Filter by ${engineLabel(m.binding.binding)}`}
+                        >
+                          {engineLabel(m.binding.binding)}
+                        </CategoryBadge>
+                      </Td>
+                      <Td className="mono text-slate-300">
+                        <span
+                          className="block max-w-[220px] truncate"
+                          title={m.binding.model ?? undefined}
+                        >
+                          {m.binding.model ?? "—"}
+                        </span>
+                      </Td>
+                      <Td>
+                        <CategoryBadge
+                          tone={st === "resident" ? "green" : "slate"}
+                          active={stateSel.includes(st)}
+                          onClick={() => setStateSel((s) => toggle(s, st))}
+                          title={`Filter by ${st}`}
+                        >
+                          {st}
+                        </CategoryBadge>
+                      </Td>
+                      <Td>
+                        <CapabilitiesCell logicalId={m.logicalId} />
+                      </Td>
+                      <Td>
+                        <div className="flex flex-wrap gap-1">
+                          <Button variant="primary" onClick={() => setBenchModel(m)}>
+                            bench
+                          </Button>
+                          <Button onClick={() => warm.mutate(m.logicalId)}>warm</Button>
+                          <Button onClick={() => evict.mutate(m.logicalId)}>evict</Button>
+                          <Button variant="danger" onClick={() => remove.mutate(m.logicalId)}>
+                            delete
+                          </Button>
+                        </div>
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </>
       )}
       {benchModel && (
         <Modal
@@ -593,7 +685,7 @@ function BrowsePanel() {
                 onClick={() => toggleEngine(e)}
                 className={`rounded border px-2 py-0.5 ${
                   on
-                    ? "border-blue-500/40 bg-blue-950 text-blue-300"
+                    ? "border-blue-500/40 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
                     : "border-slate-700 text-slate-500 hover:text-slate-300"
                 }`}
               >
@@ -645,7 +737,7 @@ function SkeletonList() {
       {[0, 1, 2, 3, 4].map((i) => (
         <div
           key={i}
-          className="animate-pulse rounded-lg border border-slate-800 bg-[#11161f] px-4 py-3"
+          className="animate-pulse rounded-lg border border-slate-800 bg-[var(--c-surface-2)] px-4 py-3"
         >
           <div className="h-3.5 w-1/3 rounded bg-slate-800" />
           <div className="mt-2 h-2.5 w-1/2 rounded bg-slate-800/70" />
@@ -779,7 +871,7 @@ function ModelDetail({
 
 function VariantRow({ variant, onInstall }: { variant: CatalogVariant; onInstall: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded border border-slate-800 bg-[#0e131c] px-3 py-2">
+    <div className="flex items-center justify-between gap-3 rounded border border-slate-800 bg-[var(--c-surface)] px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
         <span className="mono text-sm text-slate-100">{variant.label}</span>
         <Badge>{engineLabel(variant.engine)}</Badge>
@@ -853,7 +945,7 @@ function InstallDialog({
           </p>
         </div>
         {variant.fit === "too-large" && (
-          <div className="rounded border border-amber-900 bg-amber-950 px-3 py-2 text-xs text-amber-200">
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
             This variant likely exceeds your machine's memory. It may fail to load or run slowly.
           </div>
         )}

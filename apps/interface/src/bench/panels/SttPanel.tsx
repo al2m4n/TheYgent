@@ -93,7 +93,7 @@ export function SttPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pan
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
       {text && (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[#0e131c] p-3 text-sm text-slate-200">
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
           {text}
         </pre>
       )}

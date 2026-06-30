@@ -85,9 +85,9 @@ restart: down start ## Stop everything, then start it again (picks up code chang
 start: ## Start inference + control-plane + interface as background processes
 	@mkdir -p $(RUN_DIR)
 	@if lsof -ti tcp:$(INFERENCE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "==> inference already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
+		echo "==> inference-plane already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
 	else \
-		echo "==> starting inference plane (:$(INFERENCE_PORT))"; \
+		echo "==> starting inference-plane (:$(INFERENCE_PORT))"; \
 		nohup uv run --package theygent-inference theygent-inference > $(RUN_DIR)/inference.log 2>&1 & \
 		echo $$! > $(RUN_DIR)/inference.pid; \
 	fi
@@ -106,11 +106,11 @@ start: ## Start inference + control-plane + interface as background processes
 		echo $$! > $(RUN_DIR)/interface.pid; \
 	fi
 	@echo ""
-	@echo "Started (inference :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT))."
+	@echo "Started (inference-plane :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT))."
 	@echo "Logs: make logs  |  Status: make status  |  Stop: make down  |  Restart: make restart"
 
 down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper pidfiles)
-	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; pidfile=$(RUN_DIR)/$$name.pid; \
 		recorded=""; if [ -f "$$pidfile" ]; then recorded=$$(cat "$$pidfile" 2>/dev/null); fi; \
 		listeners=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null || true); \

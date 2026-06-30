@@ -42,7 +42,7 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
 
   return (
     <div
-      className={`relative min-w-[150px] rounded-lg border bg-[#161b26] px-3 py-2 shadow-md ${
+      className={`relative min-w-[150px] rounded-lg border bg-[var(--c-elev)] px-3 py-2 shadow-md ${
         selected ? "border-blue-400 ring-1 ring-blue-400/50" : style.ring
       }`}
     >

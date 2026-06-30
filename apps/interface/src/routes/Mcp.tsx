@@ -5,14 +5,16 @@
 // see its detections drawn through the shared overlay (the same one a grounding VLM uses).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ToolTester } from "../bench/ToolTester";
-import { Badge, Button, Card, Empty, ErrorBanner, Field, Input, Spinner } from "../components/ui";
+import { CategoryBadge, FilterBar } from "../components/Filters";
+import { Button, Card, Empty, ErrorBanner, Field, Input, Page, Spinner } from "../components/ui";
 import { type McpServerConfig, type McpServerSummary, api } from "../lib/api";
+import { countBy, toggle, transportTone } from "../lib/categories";
 
 export function Mcp() {
   return (
-    <div className="mx-auto max-w-4xl space-y-8 overflow-auto p-6">
+    <Page className="space-y-8">
       <div>
         <h1 className="text-lg font-semibold text-slate-100">MCP servers</h1>
         <p className="text-xs text-slate-500">
@@ -21,7 +23,7 @@ export function Mcp() {
       </div>
       <ServerList />
       <ToolTester />
-    </div>
+    </Page>
   );
 }
 
@@ -33,6 +35,53 @@ function ServerList() {
   const close = useMutation({ mutationFn: api.closeMcpServer, onSuccess: invalidate });
   const remove = useMutation({ mutationFn: api.deleteMcpServer, onSuccess: invalidate });
   const [adding, setAdding] = useState(false);
+
+  // Filters: by transport (the server's category) and connected/idle state, plus a name search.
+  const [transportSel, setTransportSel] = useState<string[]>([]);
+  const [statusSel, setStatusSel] = useState<string[]>([]);
+  const [q, setQ] = useState("");
+
+  const list = servers.data ?? [];
+  const transportCounts = useMemo(() => countBy(list, (s) => s.transport), [list]);
+  const statusCounts = useMemo(
+    () => countBy(list, (s) => (s.connected ? "connected" : "idle")),
+    [list],
+  );
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return list.filter((s) => {
+      if (transportSel.length && !transportSel.includes(s.transport)) return false;
+      const st = s.connected ? "connected" : "idle";
+      if (statusSel.length && !statusSel.includes(st)) return false;
+      if (needle && !s.name.toLowerCase().includes(needle)) return false;
+      return true;
+    });
+  }, [list, transportSel, statusSel, q]);
+
+  const toggleTransport = (v: string) => setTransportSel((s) => toggle(s, v));
+  const toggleStatus = (v: string) => setStatusSel((s) => toggle(s, v));
+
+  const transportFacet = {
+    label: "Transport",
+    selected: transportSel,
+    onToggle: toggleTransport,
+    options: Object.keys(transportCounts)
+      .sort()
+      .map((t) => ({ value: t, label: t, tone: transportTone(t), count: transportCounts[t] })),
+  };
+  const statusFacet = {
+    label: "Status",
+    selected: statusSel,
+    onToggle: toggleStatus,
+    options: ["connected", "idle"]
+      .filter((s) => statusCounts[s])
+      .map((s) => ({
+        value: s,
+        label: s,
+        tone: s === "connected" ? ("green" as const) : ("slate" as const),
+        count: statusCounts[s],
+      })),
+  };
 
   return (
     <section className="space-y-3">
@@ -55,22 +104,45 @@ function ServerList() {
       <ErrorBanner error={servers.error ?? warm.error ?? close.error ?? remove.error} />
       {servers.isLoading ? (
         <Spinner label="Loading MCP servers…" />
-      ) : !servers.data || servers.data.length === 0 ? (
+      ) : list.length === 0 ? (
         <Empty>
           No MCP servers yet. Define one above (e.g. a filesystem or YOLO/SAM CV server).
         </Empty>
       ) : (
-        <div className="space-y-2">
-          {servers.data.map((s) => (
-            <ServerRow
-              key={s.name}
-              server={s}
-              onWarm={() => warm.mutate(s.name)}
-              onClose={() => close.mutate(s.name)}
-              onRemove={() => remove.mutate(s.name)}
-            />
-          ))}
-        </div>
+        <>
+          <FilterBar
+            search={q}
+            onSearch={setQ}
+            searchPlaceholder="Search name…"
+            facets={[transportFacet, statusFacet]}
+            total={list.length}
+            shown={filtered.length}
+            onClear={() => {
+              setTransportSel([]);
+              setStatusSel([]);
+              setQ("");
+            }}
+          />
+          {filtered.length === 0 ? (
+            <Empty>No servers match the current filters.</Empty>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map((s) => (
+                <ServerRow
+                  key={s.name}
+                  server={s}
+                  transportSel={transportSel}
+                  statusSel={statusSel}
+                  onToggleTransport={toggleTransport}
+                  onToggleStatus={toggleStatus}
+                  onWarm={() => warm.mutate(s.name)}
+                  onClose={() => close.mutate(s.name)}
+                  onRemove={() => remove.mutate(s.name)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </section>
   );
@@ -78,11 +150,19 @@ function ServerList() {
 
 function ServerRow({
   server,
+  transportSel,
+  statusSel,
+  onToggleTransport,
+  onToggleStatus,
   onWarm,
   onClose,
   onRemove,
 }: {
   server: McpServerSummary;
+  transportSel: string[];
+  statusSel: string[];
+  onToggleTransport: (value: string) => void;
+  onToggleStatus: (value: string) => void;
   onWarm: () => void;
   onClose: () => void;
   onRemove: () => void;
@@ -94,12 +174,27 @@ function ServerRow({
     enabled: showTools,
     retry: false,
   });
+  const st = server.connected ? "connected" : "idle";
   return (
     <Card className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-slate-100">{server.name}</span>
-        <Badge>{server.transport}</Badge>
-        {server.connected ? <Badge tone="green">connected</Badge> : <Badge>idle</Badge>}
+        <CategoryBadge
+          tone={transportTone(server.transport)}
+          active={transportSel.includes(server.transport)}
+          onClick={() => onToggleTransport(server.transport)}
+          title={`Filter by ${server.transport}`}
+        >
+          {server.transport}
+        </CategoryBadge>
+        <CategoryBadge
+          tone={server.connected ? "green" : "slate"}
+          active={statusSel.includes(st)}
+          onClick={() => onToggleStatus(st)}
+          title={`Filter by ${st}`}
+        >
+          {st}
+        </CategoryBadge>
         <div className="ml-auto flex items-center gap-1">
           <Button onClick={() => setShowTools((v) => !v)}>
             {showTools ? "hide tools" : "tools"}
@@ -182,7 +277,7 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
           onChange={(e) => setEnv(e.target.value)}
           rows={2}
           placeholder={"API_KEY=…\nMODEL_PATH=…"}
-          className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
+          className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
         />
       </Field>
       <Field label="Working dir (optional)">

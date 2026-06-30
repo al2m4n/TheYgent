@@ -104,7 +104,7 @@ function DownloadToast({
   }
 
   return (
-    <div className="w-[360px] space-y-1.5 rounded-lg border border-slate-700 bg-[#11161f] p-3 shadow-xl">
+    <div className="w-[360px] space-y-1.5 rounded-lg border border-slate-700 bg-[var(--c-surface-2)] p-3 shadow-xl">
       <div className="flex items-center justify-between gap-2 text-xs">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-slate-500">⬇</span>

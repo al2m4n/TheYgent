@@ -164,7 +164,7 @@ export function TraceWaterfall({
             {/* time ruler — tick labels scale with the timeline as you zoom */}
             <div className="flex border-b border-slate-800/60 text-[10px] text-slate-500">
               <div
-                className="sticky left-0 z-10 shrink-0 bg-[#11161f]"
+                className="sticky left-0 z-10 shrink-0 bg-[var(--c-surface-2)]"
                 style={{ width: LABEL_W }}
               />
               <div className="relative h-5 flex-1">
@@ -202,7 +202,7 @@ export function TraceWaterfall({
                 >
                   <div
                     className={`sticky left-0 z-10 flex shrink-0 items-center gap-1 py-1.5 pr-2 ${
-                      isSel ? "bg-[#16202e]" : "bg-[#11161f]"
+                      isSel ? "bg-[#16202e]" : "bg-[var(--c-surface-2)]"
                     }`}
                     style={{ width: LABEL_W, paddingLeft: 6 + depth * 14 }}
                   >
@@ -301,7 +301,7 @@ function ZoomButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className="rounded border border-slate-700 px-1.5 text-[12px] text-slate-300 hover:bg-[#1d2433] disabled:cursor-not-allowed disabled:opacity-40"
+      className="rounded border border-slate-700 px-1.5 text-[12px] text-slate-300 hover:bg-[var(--c-hover)] disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -397,7 +397,7 @@ function IoPane({
         Object.entries(data).map(([port, value]) => (
           <div key={port} className="space-y-0.5">
             <div className="mono text-[10px] text-blue-400">{port}</div>
-            <pre className="mono max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-[#0b0e14] px-2 py-1 text-xs text-slate-200">
+            <pre className="mono max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-[var(--c-bg)] px-2 py-1 text-xs text-slate-200">
               {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
             </pre>
           </div>

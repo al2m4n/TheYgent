@@ -154,7 +154,7 @@ export function ToolTester() {
                 onChange={(e) => setJson(e.target.value)}
                 placeholder='{ "text": "hello" }'
                 rows={4}
-                className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
+                className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
               />
             </Field>
           )}
@@ -183,7 +183,7 @@ export function ToolTester() {
             <DetectionOverlay src={imageSrc} detections={detections} normalized={normalized} />
           )}
           {rawOutput && (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[#0e131c] p-3 text-xs text-slate-300">
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-xs text-slate-300">
               {rawOutput}
             </pre>
           )}
