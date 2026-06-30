@@ -1,7 +1,6 @@
 # pnpm workspace (theygent-stack.md §4/§6). TS apps live here; the Python apps/packages
 # are governed by the uv workspace (pyproject.toml) and are ignored by pnpm (no package.json).
 packages:
-  - "apps/web"
   - "apps/interface"
   - "packages/ir-types"
 

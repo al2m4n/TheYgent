@@ -6,16 +6,20 @@ import {
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
   useEffect,
 } from "react";
+import { toneOf } from "../lib/categories";
+import { statusClass } from "../lib/format";
 
 type Variant = "primary" | "default" | "ghost" | "danger";
 
 const VARIANT: Record<Variant, string> = {
   primary: "bg-blue-600 hover:bg-blue-500 text-white border-blue-500",
-  default: "bg-[#161b26] hover:bg-[#1d2433] text-slate-200 border-slate-700",
-  ghost: "bg-transparent hover:bg-[#1d2433] text-slate-300 border-transparent",
-  danger: "bg-transparent hover:bg-red-950 text-red-300 border-red-900",
+  default: "bg-[var(--c-elev)] hover:bg-[var(--c-hover)] text-slate-200 border-slate-700",
+  ghost: "bg-transparent hover:bg-[var(--c-hover)] text-slate-300 border-transparent",
+  danger:
+    "bg-transparent text-red-600 border-red-200 hover:bg-red-50 dark:text-red-300 dark:border-red-900 dark:hover:bg-red-950",
 };
 
 export function Button({
@@ -35,7 +39,7 @@ export function Button({
 export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
+      className={`w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
       {...props}
     />
   );
@@ -44,23 +48,41 @@ export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInpu
 export function Select({ className = "", ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
+      className={`w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
       {...props}
     />
   );
 }
 
-export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: string }) {
-  const tones: Record<string, string> = {
-    slate: "bg-slate-800 text-slate-300",
-    blue: "bg-blue-950 text-blue-300",
-    green: "bg-emerald-950 text-emerald-300",
-    amber: "bg-amber-950 text-amber-300",
-    red: "bg-red-950 text-red-300",
-  };
+export function Textarea({
+  className = "",
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={`w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 ${className}`}
+      {...props}
+    />
+  );
+}
+
+// The run status pill (Runs list + run detail) — completed green, failed red, streaming amber.
+export function StatusBadge({ status }: { status: string }) {
   return (
     <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${tones[tone] ?? tones.slate}`}
+      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusClass(status)}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?: string }) {
+  // The tone palette is centralized in lib/categories so a Badge, a filter chip, and a table cell
+  // all paint the same category the same colour. Unknown tones fall back to slate.
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${toneOf(tone).badge}`}
     >
       {children}
     </span>
@@ -78,11 +100,22 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
+// The standard content-page container. Every routed page wraps in this so the page width and the
+// responsive side/top padding stay IDENTICAL across the app — change the gutter once, here, and it
+// moves everywhere. Pages are full-width (no centered max-width cap); pass spacing via `className`
+// (e.g. "space-y-4"). The canvas Editor is the one exception — it's a full-bleed, full-height tool
+// view, not a scrolling content page, so it does not use Page.
+export function Page({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <div className={`w-full px-4 py-6 sm:px-6 lg:px-8 ${className}`}>{children}</div>;
+}
+
 // ── M16 Registries primitives (mirrors the cockpit's ui.tsx, in this app's palette) ──
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-lg border border-slate-800 bg-[#11161f] ${className}`}>{children}</div>
+    <div className={`rounded-lg border border-slate-800 bg-[var(--c-surface-2)] ${className}`}>
+      {children}
+    </div>
   );
 }
 
@@ -96,7 +129,7 @@ export function Table({ children }: { children: ReactNode }) {
 
 export function Th({ children }: { children: ReactNode }) {
   return (
-    <th className="border-b border-slate-800 bg-[#0e131c] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+    <th className="border-b border-slate-800 bg-[var(--c-surface)] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
       {children}
     </th>
   );
@@ -110,7 +143,7 @@ export function ErrorBanner({ error }: { error: unknown }) {
   if (!error) return null;
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    <div className="rounded-md border border-red-900 bg-red-950 px-3 py-2 text-sm text-red-200">
+    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
       {msg}
     </div>
   );
@@ -160,7 +193,7 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
-        className={`relative flex max-h-[90vh] w-full ${width} flex-col overflow-hidden rounded-lg border border-slate-700 bg-[#0e131c] shadow-xl`}
+        className={`relative flex max-h-[90vh] w-full ${width} flex-col overflow-hidden rounded-lg border border-slate-700 bg-[var(--c-surface)] shadow-xl`}
       >
         <header className="flex shrink-0 items-center justify-between border-b border-slate-800 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-100">{title}</h2>

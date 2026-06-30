@@ -1,13 +1,53 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { Compose } from "./routes/Compose";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
 import { Mcp } from "./routes/Mcp";
 import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
+import { RunDetail } from "./routes/RunDetail";
+import { RunsList } from "./routes/RunsList";
+import { ThreadDetail } from "./routes/ThreadDetail";
+import { ThreadsList } from "./routes/ThreadsList";
 
 const rootRoute = createRootRoute({ component: Root });
 
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Home });
+
+// ── operator surface (ported from the cockpit): runs, threads, compose ──
+const runsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/runs",
+  component: RunsList,
+});
+
+const runDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/runs/$runId",
+  component: RunDetail,
+});
+
+const threadsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/threads",
+  component: ThreadsList,
+});
+
+const threadDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/threads/$threadId",
+  component: ThreadDetail,
+});
+
+const composeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/compose",
+  component: Compose,
+  // The "new run in this thread" link pre-fills the composer via ?threadId=.
+  validateSearch: (search: Record<string, unknown>): { threadId?: string } => ({
+    threadId: typeof search.threadId === "string" ? search.threadId : undefined,
+  }),
+});
 
 const registriesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -32,7 +72,17 @@ const mcpRoute = createRoute({
   component: Mcp,
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, editorRoute, registriesRoute, mcpRoute]);
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  runsRoute,
+  runDetailRoute,
+  threadsRoute,
+  threadDetailRoute,
+  composeRoute,
+  editorRoute,
+  registriesRoute,
+  mcpRoute,
+]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
 

@@ -15,17 +15,19 @@ import {
   Background,
   BackgroundVariant,
   type Connection,
+  ControlButton,
   Controls,
   MiniMap,
   type Node as RFNode,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useEdgesState,
   useNodesInitialized,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { CircleHelp } from "lucide-react";
+import { CircleHelp, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Selection,
@@ -40,6 +42,7 @@ import {
   setNodePositions,
 } from "../adapter";
 import { notify } from "../lib/notify";
+import { useTheme } from "../lib/theme";
 import { TheygentNode } from "./NodeView";
 
 const nodeTypes = { theygent: TheygentNode };
@@ -52,8 +55,20 @@ interface Props {
   // Bumped by the editor (e.g. the "Tidy" button) to force a re-seed + refit from the IR even when
   // only `view` positions changed — those are excluded from the structural signature on purpose.
   reseedKey?: number;
+  // Like reseedKey, forces a re-seed from the IR (so positions land back on the canvas), but WITHOUT
+  // refitting the viewport. Bumped by undo/redo — a position-only undo changes no structural signature,
+  // so RF would otherwise keep the post-drag positions and the undo would look like a no-op.
+  resyncKey?: number;
   // A node/edge to transiently flash (e.g. the one an issue points at, on hover) — display only.
   highlight?: Selection;
+  // "minimal" strips the chrome (controls, minimap, help) — used by the bench, where the canvas is a
+  // read-only preview and the controls would only clutter it.
+  minimal?: boolean;
+  // Undo/redo wired into the Controls toolbar (the editor owns the history). Absent ⇒ no buttons.
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
 }
 
 type Menu = { x: number; y: number; kind: "node" | "edge"; id: string } | null;
@@ -90,8 +105,23 @@ function withSelection(
   };
 }
 
-function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, highlight }: Props) {
+function GraphCanvasInner({
+  ir,
+  onChange,
+  selection,
+  onSelect,
+  reseedKey = 0,
+  resyncKey = 0,
+  highlight,
+  minimal = false,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+}: Props) {
   const { screenToFlowPosition, fitView } = useReactFlow();
+  const { resolved } = useTheme();
+  const dark = resolved === "dark";
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheygentRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheygentRFEdge>([]);
   const [menu, setMenu] = useState<Menu>(null);
@@ -101,22 +131,26 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
   irRef.current = ir;
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
+  // When a selection change originates IN-PANE (a click / box-select), skip the next external-sync
+  // effect — otherwise it forces RF back to the single parent selection and collapses a multi-select.
+  const inPaneSelRef = useRef(false);
 
   // Re-seed RF from the IR ONLY when the structure changes (the signature differs). The effect runs
   // on every `ir` change, but a position-only change (drag commit) has an identical signature and
   // early-returns — so React Flow keeps its measured dimensions + live state untouched.
   const lastSigRef = useRef<string | null>(null);
   useEffect(() => {
-    // `reseedKey` is part of the trigger so an explicit re-seed (Tidy) refreshes positions even
-    // though they're excluded from the structural signature (drags must NOT re-seed).
-    const sig = `${structuralSignature(ir)}#${reseedKey}`;
+    // `reseedKey`/`resyncKey` are part of the trigger so an explicit re-seed (Tidy) or an undo/redo
+    // refreshes positions even though they're excluded from the structural signature (a live drag
+    // must NOT re-seed, or it would fight the in-flight motion).
+    const sig = `${structuralSignature(ir)}#${reseedKey}#${resyncKey}`;
     if (lastSigRef.current === sig) return;
     lastSigRef.current = sig;
     const g = irToReactFlow(ir);
     const sel = withSelection(g.nodes, g.edges, selectionRef.current);
     setRfNodes(sel.nodes);
     setRfEdges(sel.edges);
-  }, [ir, reseedKey, setRfNodes, setRfEdges]);
+  }, [ir, reseedKey, resyncKey, setRfNodes, setRfEdges]);
 
   // After an explicit re-seed (Tidy), refit the freshly laid-out graph.
   useEffect(() => {
@@ -127,8 +161,14 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
   }, [reseedKey, fitView]);
 
   // Reflect EXTERNAL selection changes (e.g. the inspector's "Duplicate" selects the new node) into
-  // React Flow's highlight. Normal in-pane clicks flow the other way (onSelectionChange → parent).
+  // React Flow's highlight. Normal in-pane clicks flow the other way (onSelectionChange → parent) and
+  // are skipped here via `inPaneSelRef` — forcing the single parent selection back onto RF would
+  // collapse a box/shift multi-selection the instant it's made.
   useEffect(() => {
+    if (inPaneSelRef.current) {
+      inPaneSelRef.current = false;
+      return;
+    }
     setRfNodes((ns) =>
       ns.map((n) => ({ ...n, selected: selection?.kind === "node" && selection.id === n.id })),
     );
@@ -220,7 +260,12 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
 
   const onSelectionChange = useCallback(
     ({ nodes: sn, edges: se }: { nodes: RFNode[]; edges: { id: string }[] }) => {
-      if (sn[0]) onSelect({ kind: "node", id: sn[0].id });
+      // This change came from the canvas, so don't let the external-sync effect re-apply over it.
+      inPaneSelRef.current = true;
+      // A multi-selection has no single inspector target — clear the parent selection (RF keeps the
+      // multi-selection internally, so drag-move-together still works), otherwise track the one.
+      if (sn.length > 1) onSelect(null);
+      else if (sn[0]) onSelect({ kind: "node", id: sn[0].id });
       else if (se[0]) onSelect({ kind: "edge", id: se[0].id });
       else onSelect(null);
     },
@@ -292,53 +337,95 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
         minZoom={0.15}
         proOptions={{ hideAttribution: true }}
         deleteKeyCode={["Backspace", "Delete"]}
+        // Marquee select: left-drag on the pane draws a selection box (drag any selected node to move
+        // them together). Panning moves to middle/right-drag (and Space-drag via the default
+        // panActivationKeyCode); scroll still zooms.
+        selectionOnDrag
+        panOnDrag={[1, 2]}
+        selectionMode={SelectionMode.Partial}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#1c2430" />
-        <Controls className="!bg-[#161b26] !text-slate-300" showInteractive={false} />
-        <MiniMap
-          pannable
-          zoomable
-          className="!bg-[#0e131c]"
-          maskColor="rgba(11,14,20,0.6)"
-          nodeColor="#334155"
+        <Background
+          variant={BackgroundVariant.Dots}
+          gap={20}
+          size={1}
+          color={dark ? "#1c2430" : "#c9d2de"}
         />
+        {!minimal && (
+          // bg + icon colour set here (the RF default leaves the icons inheriting the near-white
+          // body colour → invisible on the white default button). slate-300 inverts via the theme
+          // ramp, so icons stay legible in both themes.
+          <Controls className="!bg-[var(--c-elev)] !text-slate-300" showInteractive={false}>
+            {(onUndo || onRedo) && (
+              <>
+                <ControlButton onClick={() => onUndo?.()} disabled={!canUndo} title="Undo">
+                  <Undo2 size={14} />
+                </ControlButton>
+                <ControlButton onClick={() => onRedo?.()} disabled={!canRedo} title="Redo">
+                  <Redo2 size={14} />
+                </ControlButton>
+              </>
+            )}
+          </Controls>
+        )}
+        {!minimal && (
+          <MiniMap
+            pannable
+            zoomable
+            // A border + an elevated background (lighter than the canvas in dark, white in light) so
+            // the minimap reads against the pane instead of blending in (the "barely visible" fix).
+            className="!rounded-md !border !border-slate-700 !bg-[var(--c-elev)]"
+            maskColor={dark ? "rgba(11,14,20,0.55)" : "rgba(226,232,240,0.7)"}
+            nodeColor={dark ? "#64748b" : "#94a3b8"}
+            nodeStrokeColor={dark ? "#94a3b8" : "#64748b"}
+          />
+        )}
       </ReactFlow>
 
-      {/* interaction legend — collapsed behind a help icon, revealed on hover */}
-      <div className="group absolute left-3 top-3">
-        <button
-          type="button"
-          aria-label="Canvas help"
-          className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[#0e131c]/80 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
-        >
-          <CircleHelp size={14} aria-hidden />
-        </button>
-        <div className="pointer-events-none invisible absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[#0e131c]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
-          <div>
-            <span className="text-slate-300">Drag</span> a node from the palette to add
-          </div>
-          <div>
-            <span className="text-slate-300">Drag handle → handle</span> to connect ports
-          </div>
-          <div>
-            <span className="text-slate-300">Click</span> a node to select &amp; edit its config
-          </div>
-          <div>
-            <span className="text-slate-300">Del</span> to remove ·{" "}
-            <span className="text-slate-300">Right-click</span> for menu
+      {/* interaction legend — collapsed behind a help icon, revealed on hover (hidden in minimal) */}
+      {!minimal && (
+        <div className="group absolute left-3 top-3">
+          <button
+            type="button"
+            aria-label="Canvas help"
+            className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[var(--c-surface)]/80 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
+          >
+            <CircleHelp size={14} aria-hidden />
+          </button>
+          <div className="pointer-events-none invisible absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[var(--c-surface)]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
+            <div>
+              <span className="text-slate-300">Drag</span> a node from the palette to add
+            </div>
+            <div>
+              <span className="text-slate-300">Drag handle → handle</span> to connect ports
+            </div>
+            <div>
+              <span className="text-slate-300">Click</span> a node to select &amp; edit its config
+            </div>
+            <div>
+              <span className="text-slate-300">Del</span> to remove ·{" "}
+              <span className="text-slate-300">Right-click</span> for menu
+            </div>
+            <div>
+              <span className="text-slate-300">Drag</span> empty canvas to box-select; drag any
+              selected to move together
+            </div>
+            <div>
+              <span className="text-slate-300">Middle/right-drag</span> or{" "}
+              <span className="text-slate-300">Space-drag</span> to pan · scroll to zoom
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {menu && (
         <div
-          className="absolute z-10 min-w-[140px] overflow-hidden rounded-md border border-slate-700 bg-[#161b26] py-1 text-sm shadow-xl"
+          className="absolute z-10 min-w-[140px] overflow-hidden rounded-md border border-slate-700 bg-[var(--c-elev)] py-1 text-sm shadow-xl"
           style={{ left: menu.x, top: menu.y }}
         >
           {menu.kind === "node" && (
             <button
               type="button"
-              className="block w-full px-3 py-1.5 text-left text-slate-200 hover:bg-[#1d2433]"
+              className="block w-full px-3 py-1.5 text-left text-slate-200 hover:bg-[var(--c-hover)]"
               onClick={() => runMenu("duplicate")}
             >
               Duplicate node
@@ -346,7 +433,7 @@ function GraphCanvasInner({ ir, onChange, selection, onSelect, reseedKey = 0, hi
           )}
           <button
             type="button"
-            className="block w-full px-3 py-1.5 text-left text-red-300 hover:bg-red-950"
+            className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
             onClick={() => runMenu("delete")}
           >
             Delete {menu.kind}

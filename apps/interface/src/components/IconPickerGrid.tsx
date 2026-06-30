@@ -46,8 +46,8 @@ export default function IconPickerGrid({
               onClick={() => onPick(name)}
               className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
                 active
-                  ? "border-blue-500 bg-blue-950 text-blue-200"
-                  : "border-slate-700 bg-[#0e131c] text-slate-300 hover:border-slate-500"
+                  ? "border-blue-500 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+                  : "border-slate-700 bg-[var(--c-surface)] text-slate-300 hover:border-slate-500"
               }`}
             >
               <Icon size={16} aria-hidden />

@@ -38,20 +38,12 @@ repos:
         pass_filenames: false
         require_serial: true
 
-      # ── TS: Biome — gates the two SPAs, mirrors `pnpm --filter <app> check`. Scoped by
-      # `files:` so each only runs when that app's sources change. ──
+      # ── TS: Biome — gates the interface SPA, mirrors `pnpm --filter @theygent/interface check`.
+      # Scoped by `files:` so it only runs when that app's sources change. ──
       - id: biome-interface
         name: biome check (apps/interface)
         entry: pnpm --filter @theygent/interface check
         language: system
         files: ^apps/interface/
-        pass_filenames: false
-        require_serial: true
-
-      - id: biome-web
-        name: biome check (apps/web)
-        entry: pnpm --filter @theygent/web check
-        language: system
-        files: ^apps/web/
         pass_filenames: false
         require_serial: true

@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { streamGet } from "../lib/api";
-import type { Span } from "../lib/types";
+import type { Span } from "../lib/runtypes";
 import { useNodeIo, useTrace } from "../queries";
 import { Badge, Card, Spinner } from "./ui";
 
@@ -288,7 +288,7 @@ function IoDrawer({
   const ttft = node?.attributes?.ttft_ms;
 
   return (
-    <Card className="space-y-3 border-indigo-500/30 p-4">
+    <Card className="space-y-3 border-blue-500/30 p-4">
       <div className="flex items-start justify-between">
         <div>
           <h3 className="mono text-sm font-semibold text-slate-100">{nodeId}</h3>
@@ -343,7 +343,7 @@ function IoPane({
       {data && Object.keys(data).length > 0 ? (
         Object.entries(data).map(([port, value]) => (
           <div key={port} className="space-y-0.5">
-            <div className="mono text-[10px] text-indigo-400">{port}</div>
+            <div className="mono text-[10px] text-blue-400">{port}</div>
             <pre className="mono max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-200">
               {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
             </pre>

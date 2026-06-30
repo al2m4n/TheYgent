@@ -116,7 +116,7 @@ export function ChatPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pa
         <DetectionOverlay src={imageUrl.trim()} detections={grounding} />
       )}
       {output && (
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[#0e131c] p-3 text-sm text-slate-200">
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
           {output}
         </pre>
       )}

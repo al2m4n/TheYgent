@@ -1,8 +1,13 @@
-// Wire shapes, consumed as-is (M8 §0: the backend contracts are frozen; the UI adapts).
+// Run / thread / trace wire shapes for the operator surface (Runs, Threads, Compose) ported from
+// the cockpit (apps/web). Consumed as-is (the backend contracts are frozen; the UI adapts).
 //
 // Two conventions coexist by surface and we honor both rather than normalize:
 //  - /runs + /threads payloads are snake_case (thread_id, created_at) — the run surface.
-//  - SSE frames and /admin/* payloads are camelCase (runId, logicalId) — see api.ts.
+//  - SSE frames are camelCase (runId) — see the SSE frame types at the bottom + lib/sse.ts.
+//
+// The agent-registry + inference-plane (camelCase /admin/*) shapes the interface already needs for
+// the canvas live in lib/api.ts; this file adds only the run/thread/trace shapes the cockpit views
+// brought with them.
 
 export type RunStatus = "created" | "streaming" | "completed" | "failed";
 
@@ -44,45 +49,6 @@ export interface ThreadDetail {
   created_at: string;
   updated_at: string;
   messages: ThreadMessage[];
-}
-
-// ── control-plane /agents/* (snake_case — the run surface convention) ────────
-// M11: a saved agent has a stable id + immutable, content-addressed versions, invoked by
-// reference. The registry stores the canonical §8.2 IR; these are its read shapes.
-
-export interface AgentVersionMeta {
-  version: string;
-  content_hash: string;
-  seq: number;
-  created_at: string;
-}
-
-export interface AgentSummary {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  latest_version: string | null;
-  latest_content_hash: string | null;
-  version_count: number;
-}
-
-export interface AgentDetail {
-  id: string;
-  name: string;
-  created_at: string;
-  updated_at: string;
-  versions: AgentVersionMeta[]; // newest first
-}
-
-export interface StoredVersion {
-  agent_id: string;
-  version: string;
-  content_hash: string;
-  seq: number;
-  created_at: string;
-  ir: Record<string, unknown>;
-  view: Record<string, unknown> | null;
 }
 
 // ── control-plane observability /runs/{id}/trace + /io + /io-policy (M17, snake_case) ──
@@ -143,67 +109,6 @@ export interface IoPolicy {
   redact_rules: Record<string, unknown> | null;
   updated_at: string | null;
   has_explicit_policy: boolean;
-}
-
-// ── inference plane /admin/* (camelCase) ────────────────────────────────────
-
-export interface Capabilities {
-  maxContext?: number;
-  approximate?: boolean;
-  tools?: boolean;
-  structuredOutput?: boolean;
-  vision?: boolean;
-  [k: string]: unknown;
-}
-
-export interface ModelView {
-  logicalId: string;
-  binding: {
-    binding: string; // mlx | vllm | llamacpp | openai-compatible
-    model?: string;
-    source?: string;
-    baseUrl?: string;
-    [k: string]: unknown;
-  };
-  // The inference plane returns a structured engine state (manager.state) — NOT a string.
-  // A reachable binding is never "resident" (it bypasses the manager); resident applies to
-  // managed engines only.
-  state: {
-    resident: boolean;
-    inflight: number;
-    draining: boolean;
-    baseUrl?: string;
-  };
-}
-
-export interface EnginesView {
-  maxResident: number;
-  resident: Record<string, unknown> | unknown[];
-}
-
-// ── control-plane /admin/mcp/* (camelCase) ──────────────────────────────────
-
-// GET /admin/mcp/servers returns a LIST of these summaries (mcp.states()) — not a dict.
-export interface McpServerSummary {
-  name: string;
-  transport: string;
-  connected: boolean;
-}
-
-// GET /admin/mcp/servers/{name} — the fuller per-server view (adds command/args/envKeys).
-export interface McpServerView {
-  name: string;
-  transport: string;
-  command: string | null;
-  args: string[];
-  envKeys: string[];
-  connected: boolean;
-}
-
-export interface McpToolView {
-  name: string;
-  description: string | null;
-  inputSchema: unknown;
 }
 
 // ── SSE event payloads (camelCase) ──────────────────────────────────────────

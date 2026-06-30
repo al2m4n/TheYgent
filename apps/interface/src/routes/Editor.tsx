@@ -6,7 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useBlocker, useNavigate } from "@tanstack/react-router";
 import type { IRDocument } from "@theygent/ir-types";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { type Selection, relayout, withDerivedTools } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IRCodeEditor } from "../components/IRCodeEditor";
@@ -22,6 +22,49 @@ import { latestHash, saveAgent } from "../lib/save";
 import { type ValidationIssue, validateGraph } from "../lib/validate";
 
 const routeApi = getRouteApi("/editor");
+
+// Undo/redo history for the edited IR. `present` is the live document; `commit` pushes the prior
+// present onto `past` and clears the redo stack; `reset` (load / new) starts a fresh, empty history.
+// Bounded so a long editing session can't grow it without limit. Layout-only edits (drags) are
+// commits too, so undo restores positions — exactly what an undo button is expected to do.
+interface IrHistory {
+  past: IRDocument[];
+  present: IRDocument | null;
+  future: IRDocument[];
+}
+type IrHistAction =
+  | { type: "reset"; ir: IRDocument }
+  | { type: "commit"; ir: IRDocument }
+  | { type: "undo" }
+  | { type: "redo" };
+
+const HISTORY_LIMIT = 100;
+
+function irHistoryReducer(s: IrHistory, a: IrHistAction): IrHistory {
+  switch (a.type) {
+    case "reset":
+      return { past: [], present: a.ir, future: [] };
+    case "commit":
+      if (!s.present || s.present === a.ir) return { ...s, present: a.ir };
+      return { past: [...s.past, s.present].slice(-HISTORY_LIMIT), present: a.ir, future: [] };
+    case "undo": {
+      if (!s.past.length || !s.present) return s;
+      return {
+        past: s.past.slice(0, -1),
+        present: s.past[s.past.length - 1],
+        future: [s.present, ...s.future],
+      };
+    }
+    case "redo": {
+      if (!s.future.length || !s.present) return s;
+      return {
+        past: [...s.past, s.present],
+        present: s.future[0],
+        future: s.future.slice(1),
+      };
+    }
+  }
+}
 
 export function Editor() {
   const { agent: agentId, version } = routeApi.useSearch();
@@ -40,7 +83,25 @@ export function Editor() {
     enabled: loadingExisting,
   });
 
-  const [ir, setIr] = useState<IRDocument | null>(null);
+  const [hist, dispatch] = useReducer(irHistoryReducer, {
+    past: [],
+    present: null,
+    future: [],
+  });
+  const ir = hist.present;
+  const canUndo = hist.past.length > 0;
+  const canRedo = hist.future.length > 0;
+  // Undo/redo can revert position-only edits, which don't change the canvas's structural signature —
+  // so bump a resync counter to force the canvas to re-seed the reverted positions (without refit).
+  const [resyncKey, setResyncKey] = useState(0);
+  const undo = useCallback(() => {
+    dispatch({ type: "undo" });
+    setResyncKey((k) => k + 1);
+  }, []);
+  const redo = useCallback(() => {
+    dispatch({ type: "redo" });
+    setResyncKey((k) => k + 1);
+  }, []);
   const [selection, setSelection] = useState<Selection>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<IRDocument | null>(null);
   const [savedHash, setSavedHash] = useState<string | null>(null);
@@ -51,8 +112,8 @@ export function Editor() {
   const [showIssues, setShowIssues] = useState(false);
   // Side-panel widths (px) — drag the splitters to resize, double-click to reset. Pure UI layout
   // state (kept in memory, not the IR or localStorage — persistence is the registry, §Do-NOT).
-  const [paletteWidth, setPaletteWidth] = useState(200);
-  const [inspectorWidth, setInspectorWidth] = useState(320);
+  const [paletteWidth, setPaletteWidth] = useState(280);
+  const [inspectorWidth, setInspectorWidth] = useState(450);
   // Either side panel can be collapsed to a thin rail to give the canvas more room. UI-only state.
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
@@ -77,7 +138,7 @@ export function Editor() {
       if (seededRef.current === key) return; // already seeded this exact version
       seededRef.current = key;
       const loaded = fromStoredVersion(stored);
-      setIr(loaded);
+      dispatch({ type: "reset", ir: loaded });
       setSavedSnapshot(loaded);
       setSavedHash(stored.content_hash);
       setSelection(null);
@@ -86,7 +147,7 @@ export function Editor() {
       if (seededRef.current === "new") return; // already seeded the blank graph
       seededRef.current = "new";
       const blank = blankGraph("agent.untitled", "Untitled agent");
-      setIr(blank);
+      dispatch({ type: "reset", ir: blank });
       setSavedSnapshot(blank);
       setSavedHash(null);
       setSelection(null);
@@ -119,7 +180,8 @@ export function Editor() {
 
   const onRevert = () => {
     if (savedSnapshot) {
-      setIr(savedSnapshot);
+      dispatch({ type: "commit", ir: savedSnapshot });
+      setResyncKey((k) => k + 1); // revert may restore positions — re-seed them onto the canvas
       setSelection(null);
       notify.dismiss("editor-save-error"); // clear a stale save error — the edits causing it are gone
     }
@@ -132,15 +194,32 @@ export function Editor() {
 
   // Keyboard shortcuts (Cmd/Ctrl+S save, Esc deselect). Registered once; reads the latest handlers
   // through a ref so the listener never needs re-binding (the handlers close over post-guard state).
-  const actionsRef = useRef<{ save: () => void; deselect: () => void }>({
+  const actionsRef = useRef<{
+    save: () => void;
+    deselect: () => void;
+    undo: () => void;
+    redo: () => void;
+  }>({
     save: () => {},
     deselect: () => {},
+    undo: () => {},
+    redo: () => {},
   });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === "s") {
         e.preventDefault();
         actionsRef.current.save();
+      } else if (mod && (key === "z" || key === "y")) {
+        // Let native text-undo win inside form fields / the code editor — only the canvas graph
+        // gets the IR undo/redo.
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        e.preventDefault();
+        if (key === "y" || e.shiftKey) actionsRef.current.redo();
+        else actionsRef.current.undo();
       } else if (e.key === "Escape") {
         actionsRef.current.deselect();
       }
@@ -154,7 +233,10 @@ export function Editor() {
   // model. Load/revert/relayout use the raw setter (no derive needed; load is already in sync).
   // Declared BEFORE the early returns below so the hook order is identical on the loading and the
   // loaded renders (Rules of Hooks — an early `return` must never sit between two hook calls).
-  const applyIr = useCallback((next: IRDocument) => setIr(withDerivedTools(next)), []);
+  const applyIr = useCallback(
+    (next: IRDocument) => dispatch({ type: "commit", ir: withDerivedTools(next) }),
+    [],
+  );
 
   if (loadError) {
     return (
@@ -168,7 +250,7 @@ export function Editor() {
   }
 
   const patchEnvelope = (patch: Partial<IRDocument>) =>
-    setIr((prev) => (prev ? { ...prev, ...patch } : prev));
+    dispatch({ type: "commit", ir: { ...ir, ...patch } });
 
   const onSave = async () => {
     setSaving(true);
@@ -207,7 +289,7 @@ export function Editor() {
   };
 
   const onTidy = () => {
-    setIr((prev) => (prev ? relayout(prev) : prev));
+    dispatch({ type: "commit", ir: relayout(ir) });
     setReseedKey((k) => k + 1);
   };
 
@@ -218,12 +300,14 @@ export function Editor() {
       if (!saving && errorCount === 0 && !(mode === "code" && !codeValid)) onSave();
     },
     deselect: () => setSelection(null),
+    undo,
+    redo,
   };
 
   return (
     <div className="relative flex h-full flex-col">
       {/* toolbar */}
-      <div className="flex items-center gap-3 border-b border-slate-800 bg-[#0e131c] px-3 py-2">
+      <div className="flex items-center gap-3 border-b border-slate-800 bg-[var(--c-surface)] px-3 py-2">
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-slate-500">id</label>
           <Input
@@ -278,7 +362,7 @@ export function Editor() {
             type="button"
             onClick={() => setShowIssues((s) => !s)}
             title="Show validation issues"
-            className="rounded px-1.5 py-0.5 text-[11px] font-medium hover:bg-[#1d2433]"
+            className="rounded px-1.5 py-0.5 text-[11px] font-medium hover:bg-[var(--c-hover)]"
           >
             {errorCount > 0 ? (
               <span className="text-red-300">
@@ -323,7 +407,7 @@ export function Editor() {
       {/* Issues panel — FLOATS over the canvas (absolute) so toggling it never reflows the editor.
           Hovering an item flashes the node/edge it points at; clicking selects it. */}
       {showIssues && (
-        <div className="absolute top-[46px] right-3 z-30 max-h-[60vh] w-[380px] overflow-hidden rounded-lg border border-slate-700 bg-[#0e131c] shadow-2xl">
+        <div className="absolute top-[46px] right-3 z-30 max-h-[60vh] w-[380px] overflow-hidden rounded-lg border border-slate-700 bg-[var(--c-surface)] shadow-2xl">
           <div className="flex items-center justify-between border-b border-slate-800 px-3 py-1.5">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
               Validation
@@ -354,7 +438,7 @@ export function Editor() {
                     <li key={`${issue.nodeId ?? issue.edgeId ?? "g"}:${i}`}>
                       <button
                         type="button"
-                        className="flex w-full items-start gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[#1d2433]"
+                        className="flex w-full items-start gap-2 rounded px-1.5 py-1 text-left text-xs hover:bg-[var(--c-hover)]"
                         onMouseEnter={() => setHighlight(target)}
                         onMouseLeave={() => setHighlight(null)}
                         onClick={() => {
@@ -402,7 +486,7 @@ export function Editor() {
           ) : (
             <>
               <aside
-                className="relative min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[#0b0e14]"
+                className="relative min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[var(--c-bg)]"
                 style={{ width: paletteWidth }}
               >
                 <CollapseButton side="left" onClick={() => setPaletteCollapsed(true)} />
@@ -413,8 +497,8 @@ export function Editor() {
                 onResize={setPaletteWidth}
                 side="left"
                 min={150}
-                max={360}
-                defaultWidth={200}
+                max={420}
+                defaultWidth={280}
                 label="node palette"
               />
             </>
@@ -429,7 +513,12 @@ export function Editor() {
               selection={selection}
               onSelect={setSelection}
               reseedKey={reseedKey}
+              resyncKey={resyncKey}
               highlight={highlight}
+              onUndo={undo}
+              onRedo={redo}
+              canUndo={canUndo}
+              canRedo={canRedo}
             />
           </section>
           {inspectorCollapsed ? (
@@ -446,12 +535,12 @@ export function Editor() {
                 onResize={setInspectorWidth}
                 side="right"
                 min={260}
-                max={520}
-                defaultWidth={320}
+                max={620}
+                defaultWidth={450}
                 label="inspector"
               />
               <aside
-                className="relative min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[#0b0e14]"
+                className="relative min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[var(--c-bg)]"
                 style={{ width: inspectorWidth }}
               >
                 <CollapseButton side="right" onClick={() => setInspectorCollapsed(true)} />
@@ -471,7 +560,7 @@ export function Editor() {
           prompt covers tab close / reload via enableBeforeUnload). */}
       {blocker.status === "blocked" && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
-          <div className="w-[380px] rounded-lg border border-slate-700 bg-[#161b26] p-5 shadow-2xl">
+          <div className="w-[380px] rounded-lg border border-slate-700 bg-[var(--c-elev)] p-5 shadow-2xl">
             <h2 className="text-sm font-semibold text-slate-100">Leave with unsaved changes?</h2>
             <p className="mt-1.5 text-xs text-slate-400">
               This agent has changes that haven’t been saved. If you leave now they’ll be lost.
@@ -503,7 +592,7 @@ function CollapseButton({ side, onClick }: { side: "left" | "right"; onClick: ()
       type="button"
       onClick={onClick}
       title={side === "left" ? "Collapse palette" : "Collapse inspector"}
-      className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[#1d2433] hover:text-slate-200"
+      className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-slate-200"
     >
       {side === "left" ? "‹" : "›"}
     </button>
@@ -525,7 +614,7 @@ function CollapsedRail({
 }) {
   return (
     <div
-      className={`flex w-8 min-h-0 shrink-0 flex-col items-center bg-[#0b0e14] ${
+      className={`flex w-8 min-h-0 shrink-0 flex-col items-center bg-[var(--c-bg)] ${
         side === "left" ? "border-r" : "border-l"
       } border-slate-800`}
     >
@@ -533,7 +622,7 @@ function CollapsedRail({
         type="button"
         onClick={onExpand}
         title={title}
-        className="mt-2 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-[#1d2433] hover:text-slate-100"
+        className="mt-2 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-[var(--c-hover)] hover:text-slate-100"
       >
         {side === "left" ? "›" : "‹"}
       </button>

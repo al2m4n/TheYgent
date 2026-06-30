@@ -98,7 +98,7 @@ export function Palette() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search nodes…"
-            className="w-full rounded-md border border-slate-700 bg-[#0e131c] py-1 pr-6 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
+            className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-6 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
           />
           {query && (
             <button
@@ -143,7 +143,7 @@ export function Palette() {
                   type="button"
                   onClick={() => toggleCollapsed(g.kind)}
                   title={isCollapsed ? "Expand category" : "Collapse category"}
-                  className="flex w-full items-center justify-between rounded px-1 pb-1 hover:bg-[#11161f]"
+                  className="flex w-full items-center justify-between rounded px-1 pb-1 hover:bg-[var(--c-surface-2)]"
                 >
                   <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                     <ChevronRight
@@ -165,7 +165,7 @@ export function Palette() {
                           e.dataTransfer.setData("application/theygent-node-type", spec.type);
                           e.dataTransfer.effectAllowed = "move";
                         }}
-                        className="flex cursor-grab items-center justify-between rounded-md border border-slate-800 bg-[#11161f] px-2.5 py-2 hover:border-slate-600 active:cursor-grabbing"
+                        className="flex cursor-grab items-center justify-between rounded-md border border-slate-800 bg-[var(--c-surface-2)] px-2.5 py-2 hover:border-slate-600 active:cursor-grabbing"
                         title={`Drag to add a ${spec.type} node (${spec.kind})`}
                       >
                         <span className="flex items-center gap-1.5">
@@ -212,8 +212,8 @@ function Chip({
       onClick={onClick}
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
         active
-          ? "border-blue-500 bg-blue-950 text-blue-200"
-          : "border-slate-700 bg-[#11161f] text-slate-400 hover:border-slate-500 hover:text-slate-200"
+          ? "border-blue-500 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+          : "border-slate-700 bg-[var(--c-surface-2)] text-slate-400 hover:border-slate-500 hover:text-slate-200"
       }`}
     >
       {tone && <span className={`h-1.5 w-1.5 rounded-full ${dot[tone] ?? "bg-slate-400"}`} />}

@@ -14,9 +14,15 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-json": "^6.0.1",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/lint": "^6.8.4",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-router": "^1.95.0",
     "@theygent/ir-types": "workspace:*",
+    "@uiw/react-codemirror": "^4.23.7",
     "@xyflow/react": "^12.3.5",
     "ajv": "^8.20.0",
     "lucide-react": "^1.21.0",

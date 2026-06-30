@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateIR } from "../../src/lib/ir-validate";
+import { validateIR } from "../src/lib/ir-validate";
 
 const GOOD = JSON.stringify({
   schemaVersion: "1.0",

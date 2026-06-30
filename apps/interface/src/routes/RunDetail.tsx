@@ -1,7 +1,7 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { Waterfall } from "../components/Waterfall";
-import { Card, ErrorBanner, Spinner, StatusBadge } from "../components/ui";
+import { Card, ErrorBanner, Page, Spinner, StatusBadge } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useLiveRun } from "../lib/live";
 import { useRun, useThread } from "../queries";
@@ -66,9 +66,9 @@ export function RunDetail() {
   const isNote = !!run.error && status === "completed";
 
   return (
-    <div className="space-y-4">
+    <Page className="space-y-4">
       <div className="flex items-center gap-3">
-        <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+        <Link to="/runs" className="text-sm text-slate-400 hover:text-slate-200">
           ← Runs
         </Link>
         <h1 className="mono text-sm font-semibold text-slate-100">{run.id}</h1>
@@ -88,7 +88,7 @@ export function RunDetail() {
               <Link
                 to="/threads/$threadId"
                 params={{ threadId }}
-                className="text-indigo-400 hover:text-indigo-300"
+                className="text-blue-400 hover:text-blue-300"
               >
                 {threadId}
               </Link>
@@ -152,6 +152,6 @@ export function RunDetail() {
           I/O — replacing the M8 per-node-log stub (it read the SSE event stream; this reads the
           persisted span tree + the live /trace/stream overlay). */}
       <Waterfall runId={run.id} isLive={isStreaming} />
-    </div>
+    </Page>
   );
 }

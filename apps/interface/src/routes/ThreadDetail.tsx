@@ -1,5 +1,5 @@
 import { Link, useParams } from "@tanstack/react-router";
-import { Card, ErrorBanner, Spinner } from "../components/ui";
+import { Card, ErrorBanner, Page, Spinner } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useThread } from "../queries";
 
@@ -12,7 +12,7 @@ export function ThreadDetail() {
   if (!thread) return <ErrorBanner error="thread not found" />;
 
   return (
-    <div className="space-y-4">
+    <Page className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Link to="/threads" className="text-sm text-slate-400 hover:text-slate-200">
           ← Threads
@@ -24,7 +24,7 @@ export function ThreadDetail() {
         <Link
           to="/compose"
           search={{ threadId: thread.id }}
-          className="ml-auto rounded-md border border-indigo-500 bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+          className="ml-auto shrink-0 rounded-md border border-blue-500 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
         >
           New run in this thread
         </Link>
@@ -37,7 +37,7 @@ export function ThreadDetail() {
             <div key={m.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
               <Card
                 className={`max-w-2xl p-3 ${
-                  isUser ? "border-indigo-500/30 bg-indigo-500/10" : "bg-slate-900/60"
+                  isUser ? "border-blue-500/30 bg-blue-500/10" : "bg-slate-900/60"
                 }`}
               >
                 <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
@@ -58,6 +58,6 @@ export function ThreadDetail() {
           );
         })}
       </div>
-    </div>
+    </Page>
   );
 }

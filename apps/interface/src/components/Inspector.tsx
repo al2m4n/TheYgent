@@ -286,7 +286,7 @@ function IconPicker({
         type="button"
         onClick={() => setOpen((o) => !o)}
         title={open ? "Hide icon choices" : "Change icon"}
-        className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-500"
+        className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-500"
       >
         <NodeIcon name={current} className="text-slate-300" size={16} />
         <span className="text-slate-500">Change icon</span>
@@ -308,7 +308,7 @@ function IconPicker({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search all icons…"
-              className="w-full rounded-md border border-slate-700 bg-[#0e131c] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
+              className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
             />
           </div>
           {/* The grid (and its full-icon set) is lazy — show a tiny placeholder while it loads. */}
@@ -457,7 +457,7 @@ function ConfigField({
     return (
       <Field label={label}>
         <select
-          className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+          className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
           value={value === null || value === undefined ? "" : String(value)}
           onChange={(e) => onChange(e.target.value)}
         >
@@ -533,7 +533,7 @@ function JsonField({
     <>
       <textarea
         spellCheck={false}
-        className={`mono h-28 w-full rounded-md border bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100 outline-none ${
+        className={`mono h-28 w-full rounded-md border bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none ${
           error ? "border-red-700 focus:border-red-500" : "border-slate-700 focus:border-blue-500"
         }`}
         value={text}
@@ -847,15 +847,15 @@ function MessageRow({
   };
 
   const iconBtn =
-    "flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[#1d2433] hover:text-slate-200 disabled:opacity-30 disabled:hover:bg-transparent";
+    "flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-slate-200 disabled:opacity-30 disabled:hover:bg-transparent";
 
   return (
-    <div className="space-y-1.5 rounded-md border border-slate-800 bg-[#0e131c] p-2">
+    <div className="space-y-1.5 rounded-md border border-slate-800 bg-[var(--c-surface)] p-2">
       <div className="flex items-center gap-1.5">
         <select
           value={role}
           onChange={(e) => onRole(e.target.value)}
-          className="rounded border border-slate-700 bg-[#11161f] px-1.5 py-0.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+          className="rounded border border-slate-700 bg-[var(--c-surface-2)] px-1.5 py-0.5 text-xs text-slate-200 outline-none focus:border-blue-500"
         >
           {roles.map((r) => (
             <option key={r} value={r}>
@@ -895,7 +895,7 @@ function MessageRow({
             value={content as string}
             onChange={(e) => onContent(e.target.value)}
             placeholder="Message text… use $in for the input"
-            className="mono h-20 w-full rounded border border-slate-700 bg-[#11161f] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
+            className="mono h-20 w-full rounded border border-slate-700 bg-[var(--c-surface-2)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
           />
           <button
             type="button"
@@ -979,7 +979,7 @@ function ListPicker({
         <button
           type="button"
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
+          className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
         >
           <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
             {value || placeholder || (loading ? "loading…" : "select…")}
@@ -987,14 +987,14 @@ function ListPicker({
           <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
         </button>
         {open && (
-          <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-700 bg-[#11161f] shadow-xl">
+          <div className="absolute z-30 mt-1 w-full overflow-hidden rounded-md border border-slate-700 bg-[var(--c-surface-2)] shadow-xl">
             <div className="border-b border-slate-800 p-1.5">
               <input
                 ref={searchRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search…"
-                className="w-full rounded border border-slate-700 bg-[#0e131c] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
+                className="w-full rounded border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
               />
             </div>
             <ul className="max-h-52 overflow-y-auto py-1">
@@ -1008,7 +1008,7 @@ function ListPicker({
                     <button
                       type="button"
                       onClick={() => select(o)}
-                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[#1d2433] ${
+                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--c-hover)] ${
                         o === value ? "text-blue-300" : "text-slate-200"
                       }`}
                     >
@@ -1026,7 +1026,7 @@ function ListPicker({
                   <button
                     type="button"
                     onClick={() => select(query.trim())}
-                    className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-[#1d2433]"
+                    className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-[var(--c-hover)]"
                   >
                     Use “<span className="mono truncate">{query.trim()}</span>”
                   </button>
@@ -1519,7 +1519,7 @@ function ConnectionsPanel() {
           </Field>
           <Field label="Kind">
             <select
-              className="w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100"
+              className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
               value={kind}
               onChange={(e) => setKind(e.target.value as "http_auth" | "mcp_server")}
             >
@@ -1530,7 +1530,7 @@ function ConnectionsPanel() {
           <Field label="Config (non-secret JSON)">
             <textarea
               spellCheck={false}
-              className="mono h-20 w-full rounded-md border border-slate-700 bg-[#0e131c] px-2.5 py-1.5 text-xs text-slate-100"
+              className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
               value={configText}
               onChange={(e) => setConfigText(e.target.value)}
             />

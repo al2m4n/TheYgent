@@ -3,7 +3,7 @@ import { type Diagnostic, linter } from "@codemirror/lint";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import CodeMirror from "@uiw/react-codemirror";
 import { useMemo, useState } from "react";
-import { Button, Card, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
+import { Button, Card, ErrorBanner, Field, Input, Page, Select, Textarea } from "../components/ui";
 import { ApiError } from "../lib/api";
 import { validateIR } from "../lib/ir-validate";
 import { startLiveRun } from "../lib/live";
@@ -147,8 +147,8 @@ export function Compose() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
-      <div className="flex items-center justify-between">
+    <Page className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-slate-100">Compose a run</h1>
         <div className="flex rounded-md border border-slate-700 p-0.5">
           {(["prompt", "graph"] as const).map((m) => (
@@ -254,7 +254,7 @@ export function Compose() {
             {submitting ? "Starting…" : "Run & stream"}
           </Button>
           {mode === "graph" && (
-            <Button variant="secondary" disabled={saving || irBlocking} onClick={saveAsAgent}>
+            <Button variant="default" disabled={saving || irBlocking} onClick={saveAsAgent}>
               {saving ? "Saving…" : "Save as agent"}
             </Button>
           )}
@@ -266,6 +266,6 @@ export function Compose() {
           )}
         </div>
       </Card>
-    </div>
+    </Page>
   );
 }

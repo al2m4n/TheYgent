@@ -2,12 +2,14 @@
 // host, so we cover the two pure-DOM surfaces: the palette (derived from the registry) and the
 // inspector (schema-driven config editing → valid IR mutations).
 
+import type { CompletionContext } from "@codemirror/autocomplete";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { NODE_TYPE_LIST } from "@theygent/ir-types";
 import type { IRDocument } from "@theygent/ir-types";
+import { EditorView } from "@uiw/react-codemirror";
 import { type ReactNode, useState } from "react";
-import { IRCodeEditor } from "../src/components/IRCodeEditor";
+import { IRCodeEditor, irCompletions } from "../src/components/IRCodeEditor";
 import { Inspector } from "../src/components/Inspector";
 import { Palette } from "../src/components/Palette";
 import { sampleGraph } from "./fixtures";
@@ -73,10 +75,24 @@ describe("Palette (derived from the registry, never hardcoded)", () => {
 });
 
 describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
+  // CodeMirror is a contenteditable, not a <textarea> — drive it through the real EditorView so the
+  // component's parse → commit pipeline runs exactly as it does for a user keystroke.
+  const editorView = (container: HTMLElement): EditorView => {
+    const content = container.querySelector(".cm-content");
+    if (!content) throw new Error("CodeMirror content not mounted");
+    const view = EditorView.findFromDOM(content as HTMLElement);
+    if (!view) throw new Error("EditorView not found");
+    return view;
+  };
+  const setDoc = (view: EditorView, text: string) =>
+    act(() => {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text } });
+    });
+
   it("shows the IR as JSON and commits a valid edit straight to the IR", () => {
     const ir = sampleGraph();
     let next: IRDocument | null = null;
-    render(
+    const { container } = render(
       <IRCodeEditor
         ir={ir}
         onChange={(x) => {
@@ -84,10 +100,9 @@ describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
         }}
       />,
     );
-    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
-    expect(textarea.value).toContain(`"id": "${ir.id}"`);
-    const edited = JSON.stringify({ ...ir, name: "Renamed via code" }, null, 2);
-    fireEvent.change(textarea, { target: { value: edited } });
+    const view = editorView(container);
+    expect(view.state.doc.toString()).toContain(`"id": "${ir.id}"`);
+    setDoc(view, JSON.stringify({ ...ir, name: "Renamed via code" }, null, 2));
     expect(next).not.toBeNull();
     expect((next as unknown as IRDocument).name).toBe("Renamed via code");
   });
@@ -95,7 +110,7 @@ describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
   it("holds invalid JSON locally — never commits, reports invalid", () => {
     let next: IRDocument | null = null;
     let valid = true;
-    render(
+    const { container } = render(
       <IRCodeEditor
         ir={sampleGraph()}
         onChange={(x) => {
@@ -106,11 +121,45 @@ describe("IRCodeEditor (the Code view — one IR, two editors)", () => {
         }}
       />,
     );
-    const textarea = screen.getByRole("textbox");
-    fireEvent.change(textarea, { target: { value: "{ not valid json" } });
+    setDoc(editorView(container), "{ not valid json");
     expect(valid).toBe(false);
     expect(next).toBeNull();
     expect(screen.getByText(/invalid JSON/)).toBeInTheDocument();
+  });
+});
+
+describe("irCompletions (schema-aware autocomplete source)", () => {
+  // A minimal CompletionContext: a single-line doc + matchBefore anchored to the cursor.
+  const ctx = (line: string, pos = line.length): CompletionContext =>
+    ({
+      pos,
+      state: { doc: { lineAt: () => ({ text: line, from: 0 }) } },
+      matchBefore: (re: RegExp) => {
+        const before = line.slice(0, pos);
+        const m = before.match(new RegExp(`(?:${re.source})$`));
+        return m ? { from: pos - m[0].length, to: pos, text: m[0] } : null;
+      },
+    }) as unknown as CompletionContext;
+  const labels = (line: string) => irCompletions(ctx(line))?.options.map((o) => o.label) ?? [];
+
+  it("suggests registry node types in a `type` value context", () => {
+    expect(labels('      "type": "')).toEqual(expect.arrayContaining(["llm", "input", "output"]));
+  });
+  it("suggests the kind enum in a `kind` value context", () => {
+    expect(labels('      "kind": "')).toEqual(
+      expect.arrayContaining(["boundary", "activity", "orchestration"]),
+    );
+  });
+  it("suggests channels in a `channel` value context", () => {
+    expect(labels('      "channel": "')).toEqual(
+      expect.arrayContaining(["data", "control", "tool"]),
+    );
+  });
+  it("suggests property keys when typing a key", () => {
+    expect(labels('  { "')).toEqual(expect.arrayContaining(["nodes", "edges", "config"]));
+  });
+  it("returns null outside a known context", () => {
+    expect(irCompletions(ctx('      "id": "agent.x"'))).toBeNull();
   });
 });
 
