@@ -1,11 +1,12 @@
 // Client-side graph validation — a FAST, in-editor mirror of the backend's authoritative
 // `validate_graph` (packages/ir/graph.py). It surfaces the same structural problems inline so you
 // see them before Save instead of as a 400. The backend stays authoritative: this never blocks a
-// save (a real run re-validates and returns the precise error); it is a hint surface, the M15
-// analogue of the cockpit's `ir-validate.ts`. Checks mirror graph.py's order where it makes sense.
+// save (a real run re-validates and returns the precise error); it is a hint surface. Checks mirror
+// the backend's order where it makes sense.
 
-import { type IRDocument, NODE_TYPES, kindForType } from "@theygent/ir-types";
+import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
 import Ajv, { type ValidateFunction } from "ajv";
+import { expectedKind } from "./kind";
 
 export interface ValidationIssue {
   severity: "error" | "warning";
@@ -64,15 +65,18 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
   // 1–3: per-node — known type, correct kind, per-type config sanity.
   for (const n of nodes) {
     const spec = NODE_TYPES[n.type];
-    const expectedKind = kindForType(n.type);
-    if (!expectedKind) {
+    // The expected kind is per-instance for a guardrail (a model check ⇒ activity, a rule check ⇒
+    // orchestration) and fixed for every other type — so a correctly-stamped model guardrail is
+    // accepted, matching the server, instead of being false-rejected against the static rule kind.
+    const expected = expectedKind(n);
+    if (!expected) {
       issues.push({ severity: "error", message: `unknown node type '${n.type}'`, nodeId: n.id });
       continue;
     }
-    if (n.kind !== expectedKind) {
+    if (n.kind !== expected) {
       issues.push({
         severity: "error",
-        message: `type '${n.type}' must have kind '${expectedKind}', got '${n.kind}'`,
+        message: `type '${n.type}' must have kind '${expected}', got '${n.kind}'`,
         nodeId: n.id,
       });
     }
@@ -101,7 +105,7 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
         });
       }
     }
-    // llm references a declared model binding (§8.4).
+    // llm references a declared model binding.
     if (n.type === "llm") {
       const m = config.model;
       if (typeof m === "string" && m !== "" && !(m in models)) {
@@ -110,6 +114,43 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
           message: `references undeclared model '${m}' (declare it in Model bindings)`,
           nodeId: n.id,
         });
+      }
+    }
+    // A guardrail's check must be COMPLETE, so an unfinished one shows a clear inline error here
+    // instead of a confusing run-time failure (an empty judge model otherwise reaches the backend as
+    // an undeclared-model reference). A rule check needs its rule; a model check needs a declared
+    // judge model and a prompt.
+    if (n.type === "guardrail") {
+      const check = config.check as
+        | { type?: string; rule?: unknown; model?: { model?: unknown; prompt?: unknown } | null }
+        | null
+        | undefined;
+      if (check?.type === "rule" && !check.rule) {
+        issues.push({ severity: "error", message: "a rule guardrail needs a rule", nodeId: n.id });
+      }
+      if (check?.type === "model") {
+        const jm = check.model;
+        if (!jm) {
+          issues.push({
+            severity: "error",
+            message: "a model guardrail needs a judge model and a prompt",
+            nodeId: n.id,
+          });
+        } else {
+          const model = jm.model;
+          if (typeof model !== "string" || model === "") {
+            issues.push({ severity: "error", message: "pick a judge model", nodeId: n.id });
+          } else if (!(model in models)) {
+            issues.push({
+              severity: "error",
+              message: `references undeclared model '${model}' (declare it in Model bindings)`,
+              nodeId: n.id,
+            });
+          }
+          if (typeof jm.prompt !== "string" || jm.prompt === "") {
+            issues.push({ severity: "error", message: "add a judge prompt", nodeId: n.id });
+          }
+        }
       }
     }
     // subgraph/loop/map pin EXACTLY ONE of version / contentHash (m14.md §1.2).

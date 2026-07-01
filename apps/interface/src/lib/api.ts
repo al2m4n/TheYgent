@@ -209,6 +209,13 @@ export interface Capabilities {
   approximate?: boolean;
 }
 
+// A user-side named secret (for reachable bindings' `secret://NAME` credentialRefs). The value is
+// WRITE-ONLY — the wire only ever returns the name + `hasValue`, never the secret itself.
+export interface Credential {
+  name: string;
+  hasValue: boolean;
+}
+
 // ── M16 catalog (discovery + install) wire shapes — NOT IR, just /admin/* shapes ─
 // These mirror the inference plane's normalized CatalogProvider types. They are catalog metadata,
 // never the agent IR (the IR stays a typed @theygent/ir-types IRDocument), so M15's "no hand-written
@@ -619,6 +626,25 @@ export const api = {
       INFERENCE_URL,
       `/admin/models/${encodeURIComponent(logicalId)}/capabilities`,
     ),
+
+  // ── inference plane: local credentials (user-side named secrets) ───────────
+  // Manage `secret://NAME` refs for reachable bindings. Values are write-only (never returned);
+  // the list is names + hasValue only. All on the user-controlled inference plane, called directly.
+  listCredentials: () =>
+    request<{ credentials: Credential[] }>(INFERENCE_URL, "/admin/credentials").then(
+      (r) => r.credentials,
+    ),
+
+  putCredential: (name: string, value: string) =>
+    request<Credential>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    }),
+
+  deleteCredential: (name: string) =>
+    request<void>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
 
   putModel: (logicalId: string, body: unknown) =>
     request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {

@@ -16,6 +16,7 @@ import {
   User,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
+import { LocalCredentials } from "../components/LocalCredentials";
 import { Modal } from "../components/ui";
 import { NotificationCenter } from "../lib/notify";
 import { type ThemePref, useTheme } from "../lib/theme";
@@ -263,7 +264,7 @@ const THEME_OPTIONS: { pref: ThemePref; icon: LucideIcon; label: string }[] = [
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const { pref, setTheme } = useTheme();
   return (
-    <Modal title="Settings" width="max-w-md" onClose={onClose}>
+    <Modal title="Settings" width="max-w-lg" onClose={onClose}>
       <div className="flex min-h-[200px] flex-col">
         {/* Identity + placeholder for the user configuration to come. */}
         <div className="flex items-center gap-3">
@@ -275,8 +276,8 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="text-xs text-slate-500">single-user · localhost</div>
           </div>
         </div>
-        <div className="mt-4 rounded-lg border border-dashed border-slate-800 px-4 py-6 text-center text-xs text-slate-500">
-          Account &amp; preferences will live here. More coming soon.
+        <div className="mt-4 border-t border-slate-800 pt-4">
+          <LocalCredentials />
         </div>
 
         {/* Theme switch — icon-only buttons pinned to the bottom-right corner. */}

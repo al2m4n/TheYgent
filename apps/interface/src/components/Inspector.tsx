@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import {
+  type GuardrailCheck,
   type Selection,
   type ToolBinding,
   type ToolKind,
@@ -24,6 +25,7 @@ import {
   deleteEdges,
   deleteNodes,
   duplicateNode,
+  setGuardrailCheck,
   setNodeIcon,
   setToolKind,
   toolKindOf,
@@ -138,6 +140,10 @@ function NodePanel({
           // M22 D1: tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
           // kind chooses the binding shape and (for mcp) the underlying node type.
           <ToolNodePanel ir={ir} node={node} onChange={onChange} />
+        ) : node.type === "guardrail" ? (
+          // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
+          // node's kind, so it's edited through a dedicated panel rather than raw JSON.
+          <GuardrailPanel ir={ir} node={node} onChange={onChange} />
         ) : Object.keys(properties).length === 0 ? (
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
@@ -1328,6 +1334,419 @@ function ConnectionSelect({
         <span className="text-[10px] text-slate-600">connections unreachable</span>
       ) : null}
     </Field>
+  );
+}
+
+// ── the guardrail panel (rule vs model check — the node's kind follows the choice) ─────────────────
+
+// The check-type + rule-kind option lists are DERIVED from the generated schema, never hardcoded, so
+// a rule kind added in the IR shows up here after a `generate`.
+const GUARDRAIL_DEFS = (
+  NODE_TYPES.guardrail?.configSchema as { $defs?: Record<string, any> } | undefined
+)?.$defs;
+const CHECK_TYPES: string[] = GUARDRAIL_DEFS?.GuardrailCheck?.properties?.type?.enum ?? [
+  "rule",
+  "model",
+];
+const RULE_KINDS: string[] = GUARDRAIL_DEFS?.GuardrailRule?.properties?.kind?.enum ?? [
+  "regex",
+  "length",
+  "json_schema",
+  "allow",
+  "deny",
+  "pii",
+];
+
+// What each rule PASSES on (a guardrail blocks by taking its `block` port; `pass` carries the input
+// through). Shown as a hint under the rule picker.
+const RULE_HINTS: Record<string, string> = {
+  regex: "matches (or, in deny mode, does NOT match) a regular expression",
+  length: "the text length is within min/max",
+  allow: "the value is one of an allowed list",
+  deny: "the value is NOT in a blocked list",
+  json_schema: "the value is an object carrying all the required keys",
+  pii: "no PII pattern matches (blocks emails / SSNs / card-like numbers)",
+};
+
+function numOr(v: unknown): string {
+  return typeof v === "number" ? String(v) : "";
+}
+
+/** The one editor for a `guardrail` node. A check-type picker (rule / model) chooses the backend and
+ * — through `setGuardrailCheck` — STAMPS the node's kind (rule ⇒ orchestration, model ⇒ activity),
+ * so the author never touches kind directly. Rule kinds get structured spec fields; a model check
+ * gets a judge-model picker + prompt + pass-on. Unusual spec keys stay reachable via Raw config. */
+function GuardrailPanel({
+  ir,
+  node,
+  onChange,
+}: {
+  ir: IRDocument;
+  node: IRNode;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const config = (node.config ?? {}) as Record<string, unknown>;
+  const check = (config.check ?? null) as GuardrailCheck | null;
+  const onBlock = (config.onBlock ?? {}) as Record<string, unknown>;
+  const checkType = check?.type;
+
+  // Preserve the last-entered rule/model sub-config across a type toggle within the session, so
+  // flipping rule↔model and back doesn't wipe what you typed. Only the ACTIVE sub-config is written
+  // into the IR (the backend reads only the one matching `check.type`).
+  const stash = useRef<{
+    rule: NonNullable<GuardrailCheck["rule"]>;
+    model: NonNullable<GuardrailCheck["model"]>;
+  }>({ rule: { kind: "pii", spec: {} }, model: { model: "", prompt: "", passOn: "yes" } });
+  if (check?.type === "rule" && check.rule) stash.current.rule = check.rule;
+  if (check?.type === "model" && check.model) stash.current.model = check.model;
+
+  const write = (next: GuardrailCheck) => onChange(setGuardrailCheck(ir, node.id, next, onBlock));
+
+  const pickType = (t: string) => {
+    if (t === checkType) return;
+    write(
+      t === "model"
+        ? { type: "model", model: stash.current.model }
+        : { type: "rule", rule: stash.current.rule },
+    );
+  };
+
+  const rule = check?.type === "rule" ? (check.rule ?? { kind: "pii", spec: {} }) : null;
+  const spec = (rule?.spec ?? {}) as Record<string, unknown>;
+  const setRule = (patch: Partial<NonNullable<GuardrailCheck["rule"]>>) =>
+    write({ type: "rule", rule: { kind: rule?.kind ?? "pii", spec, ...patch } });
+  const setSpec = (patch: Record<string, unknown>) => {
+    const merged: Record<string, unknown> = { ...spec, ...patch };
+    for (const k of Object.keys(merged)) if (merged[k] === undefined) delete merged[k];
+    write({ type: "rule", rule: { kind: rule?.kind ?? "pii", spec: merged } });
+  };
+
+  const model = check?.type === "model" ? (check.model ?? stash.current.model) : null;
+  const setModel = (patch: Partial<NonNullable<GuardrailCheck["model"]>>) =>
+    write({
+      type: "model",
+      model: {
+        model: model?.model ?? "",
+        prompt: model?.prompt ?? "",
+        passOn: model?.passOn ?? "yes",
+        ...patch,
+      },
+    });
+
+  return (
+    <>
+      <Field label="Check">
+        <div className="grid grid-cols-2 gap-1">
+          {CHECK_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => pickType(t)}
+              className={`rounded-md border px-2 py-1.5 text-xs capitalize ${
+                checkType === t
+                  ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                  : "border-slate-700 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px] text-slate-600">
+          Rule = an inline check, no model call. Model = an LLM judge decides (a real inference
+          call).
+        </span>
+      </Field>
+
+      {checkType === undefined && (
+        <p className="text-xs text-amber-300/80">Pick a check type to configure this guardrail.</p>
+      )}
+
+      {checkType === "rule" && (
+        <>
+          <Field label="Rule">
+            <Select value={rule?.kind ?? "pii"} onChange={(e) => setRule({ kind: e.target.value })}>
+              {RULE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </Select>
+            <span className="text-[10px] text-slate-600">
+              passes when {RULE_HINTS[rule?.kind ?? "pii"] ?? "the check holds"}
+            </span>
+          </Field>
+          <RuleSpecFields kind={rule?.kind ?? "pii"} spec={spec} setSpec={setSpec} />
+        </>
+      )}
+
+      {checkType === "model" && (
+        <>
+          <GuardrailModelField
+            ir={ir}
+            nodeId={node.id}
+            value={model?.model}
+            model={model}
+            onBlock={onBlock}
+            onChange={onChange}
+          />
+          <Field label="prompt *">
+            <textarea
+              spellCheck={false}
+              value={model?.prompt ?? ""}
+              placeholder="e.g. Is this request about booking a table? Answer yes or no."
+              onChange={(e) => setModel({ prompt: e.target.value })}
+              className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+            />
+            <span className="text-[10px] text-slate-600">
+              The judge question — keep it a terse yes/no. The check passes when the answer starts
+              with “pass on”.
+            </span>
+          </Field>
+          <Field label="pass on">
+            <Input
+              value={model?.passOn ?? "yes"}
+              placeholder="yes"
+              onChange={(e) => setModel({ passOn: e.target.value })}
+            />
+          </Field>
+        </>
+      )}
+
+      <JsonField
+        label="onBlock (payload returned when the check blocks)"
+        value={config.onBlock}
+        onChange={(v) =>
+          onChange(
+            updateNodeConfig(ir, node.id, {
+              ...config,
+              onBlock: v && typeof v === "object" && !Array.isArray(v) ? v : {},
+            }),
+          )
+        }
+      />
+
+      <p className="text-[10px] text-slate-600">
+        The <span className="text-slate-300">pass</span> port carries the input through;{" "}
+        <span className="text-slate-300">block</span> carries the onBlock payload. Unusual spec keys
+        are editable in the Raw config below.
+      </p>
+    </>
+  );
+}
+
+/** The structured spec fields for a rule check, keyed by the rule kind — the exact knobs the runtime
+ * reads (pattern+mode, min/max, an allow/deny list, required keys, optional PII patterns). */
+function RuleSpecFields({
+  kind,
+  spec,
+  setSpec,
+}: {
+  kind: string;
+  spec: Record<string, unknown>;
+  setSpec: (patch: Record<string, unknown>) => void;
+}) {
+  if (kind === "regex") {
+    return (
+      <>
+        <Field label="pattern *">
+          <Input
+            value={(spec.pattern as string) ?? ""}
+            placeholder="e.g. (?i)ignore previous"
+            onChange={(e) => setSpec({ pattern: e.target.value })}
+          />
+        </Field>
+        <Field label="mode">
+          <Select
+            value={(spec.mode as string) ?? "allow"}
+            onChange={(e) => setSpec({ mode: e.target.value })}
+          >
+            <option value="allow">allow — pass when it matches</option>
+            <option value="deny">deny — pass when it does NOT match</option>
+          </Select>
+        </Field>
+      </>
+    );
+  }
+  if (kind === "length") {
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="min">
+          <Input
+            type="number"
+            value={numOr(spec.min)}
+            onChange={(e) =>
+              setSpec({ min: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+        <Field label="max">
+          <Input
+            type="number"
+            value={numOr(spec.max)}
+            onChange={(e) =>
+              setSpec({ max: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+      </div>
+    );
+  }
+  if (kind === "allow" || kind === "deny") {
+    return (
+      <StringListField
+        label={kind === "allow" ? "allowed values *" : "blocked values *"}
+        value={spec.values}
+        placeholder="one value per line"
+        onChange={(v) => setSpec({ values: v })}
+      />
+    );
+  }
+  if (kind === "json_schema") {
+    return (
+      <StringListField
+        label="required keys"
+        value={spec.required}
+        placeholder="one key per line"
+        onChange={(v) => setSpec({ required: v })}
+      />
+    );
+  }
+  if (kind === "pii") {
+    return (
+      <StringListField
+        label="patterns (optional)"
+        value={spec.patterns}
+        placeholder="leave empty for built-in email / SSN / card patterns"
+        onChange={(v) => setSpec({ patterns: v })}
+      />
+    );
+  }
+  return null;
+}
+
+/** A newline-separated list edited as a string[]. Keeps a local raw buffer (so blank lines / spaces
+ * type naturally) and re-syncs only when the value changes from elsewhere, mirroring the message
+ * editor's buffer discipline. */
+function StringListField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: unknown;
+  placeholder?: string;
+  onChange: (v: string[]) => void;
+}) {
+  const initial = Array.isArray(value) ? (value as string[]).join("\n") : "";
+  const [text, setText] = useState(initial);
+  const lastEmitted = useRef(initial);
+  useEffect(() => {
+    const incoming = Array.isArray(value) ? (value as string[]).join("\n") : "";
+    if (incoming !== lastEmitted.current) {
+      lastEmitted.current = incoming;
+      setText(incoming);
+    }
+  }, [value]);
+  const emit = (raw: string) => {
+    setText(raw);
+    const arr = raw
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    lastEmitted.current = arr.join("\n");
+    onChange(arr);
+  };
+  return (
+    <Field label={label}>
+      <textarea
+        spellCheck={false}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => emit(e.target.value)}
+        className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+      />
+      <span className="text-[10px] text-slate-600">one per line</span>
+    </Field>
+  );
+}
+
+/** The model guardrail's judge-model picker. Reuses the same live registry the llm node's model
+ * picker uses (declared graph bindings ∪ reachable inference-plane models) and auto-declares a
+ * binding when you pick an inference model not on the document yet — writing the choice into
+ * `check.model.model`. Offline, it still lists declared bindings and hints to declare manually. */
+function GuardrailModelField({
+  ir,
+  nodeId,
+  value,
+  model,
+  onBlock,
+  onChange,
+}: {
+  ir: IRDocument;
+  nodeId: string;
+  value: string | undefined;
+  model: NonNullable<GuardrailCheck["model"]> | null;
+  onBlock: Record<string, unknown>;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const declared = Object.keys(ir.models ?? {});
+  const { data: models, isError } = useQuery({
+    queryKey: ["inferenceModels"],
+    queryFn: api.listModels,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const inferenceIds = (models ?? []).map((m) => m.logicalId);
+  const options = [...new Set([...declared, ...inferenceIds])];
+
+  const pick = (v: string) => {
+    let next = setGuardrailCheck(
+      ir,
+      nodeId,
+      {
+        type: "model",
+        model: { model: v, prompt: model?.prompt ?? "", passOn: model?.passOn ?? "yes" },
+      },
+      onBlock,
+    );
+    // Auto-declare a graph binding when picking an inference model not already on the document.
+    if (v && !(v in (ir.models ?? {}))) {
+      const im = models?.find((m) => m.logicalId === v);
+      if (im) {
+        next = {
+          ...next,
+          models: {
+            ...(next.models ?? {}),
+            [v]: { binding: im.binding.binding as never, model: v },
+          },
+        };
+      }
+    }
+    onChange(next);
+  };
+
+  const declaredHere = value ? value in (ir.models ?? {}) : false;
+  const hint = !value
+    ? undefined
+    : declaredHere
+      ? "✓ declared graph binding"
+      : inferenceIds.includes(value)
+        ? "will declare a binding from the inference plane"
+        : isError
+          ? "inference plane unreachable — declare this binding manually"
+          : "not a declared binding (declare it or pick another)";
+
+  return (
+    <ListPicker
+      label="judge model *"
+      value={value}
+      options={options}
+      hint={hint}
+      placeholder="pick a binding or inference model…"
+      onChange={pick}
+    />
   );
 }
 

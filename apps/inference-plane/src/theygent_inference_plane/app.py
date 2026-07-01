@@ -30,7 +30,12 @@ from theygent_inference_plane.catalog import (
     Sort,
 )
 from theygent_inference_plane.clock import Clock
-from theygent_inference_plane.credentials import CredentialResolutionError, resolve_credential
+from theygent_inference_plane.credentials import (
+    CredentialResolutionError,
+    CredentialStore,
+    InvalidCredentialName,
+    resolve_credential,
+)
 from theygent_inference_plane.downloader import Downloader, _sanitize
 from theygent_inference_plane.eviction import EvictionPolicy, ResourceProbe
 from theygent_inference_plane.gateway import Gateway, merge_params
@@ -142,6 +147,12 @@ def create_app(
     # control-plane's Postgres — the plane boundary). `state_path=None` keeps it in-memory (the
     # fast suite never touches disk); the real entrypoint passes a path under the plane's state dir.
     registry = Registry(state_path)
+    # User-side credential store for reachable bindings' `secret://NAME` refs — local to the
+    # inference plane (the user's trust domain), never the control plane. Sits next to registry.json
+    # in the state dir; `state_path=None` keeps it in-memory (the fast suite never touches disk).
+    credential_store = CredentialStore(
+        state_path.with_name("credentials.json") if state_path is not None else None
+    )
     # One launcher per (engine, modality), behind a single dispatcher so the manager stays
     # engine-agnostic (MLX/vLLM — and now the non-chat modalities — added with zero EngineManager
     # changes). Tests inject a single fake launcher that serves every binding. M20: llama.cpp serves
@@ -211,6 +222,7 @@ def create_app(
     app.state.launcher = engine_launcher
     app.state.catalog = catalog
     app.state.downloader = downloads
+    app.state.credential_store = credential_store
 
     # ── management plane: /admin/* ──────────────────────────────────────
 
@@ -321,6 +333,46 @@ def create_app(
             )
         await manager.evict(logical_id)
         return JSONResponse(_model_view(logical_id))
+
+    # ── management plane: /admin/credentials (user-side named secrets) ───
+    # A local named-secret store for reachable bindings' `secret://NAME` refs. Values are
+    # WRITE-ONLY: the listing returns names + `hasValue` only, never a value, and nothing here
+    # crosses to the control plane (the sovereignty invariant). A ref resolves NAME from this store
+    # first, then the process environment.
+
+    @app.get("/admin/credentials")
+    async def list_credentials() -> dict[str, Any]:
+        return {"credentials": [{"name": n, "hasValue": True} for n in credential_store.names()]}
+
+    @app.put("/admin/credentials/{name}")
+    async def put_credential(name: str, request: Request) -> Response:
+        raw = await request.json()
+        value = raw.get("value") if isinstance(raw, dict) else None
+        if not isinstance(value, str) or value == "":
+            return _openai_error(
+                "credential 'value' must be a non-empty string",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_credential",
+            )
+        try:
+            credential_store.set(name, value)
+        except InvalidCredentialName as exc:
+            return _openai_error(
+                str(exc), status=422, type_="invalid_request_error", code="invalid_credential"
+            )
+        return JSONResponse({"name": name, "hasValue": True})
+
+    @app.delete("/admin/credentials/{name}", status_code=204)
+    async def delete_credential(name: str) -> Response:
+        if not credential_store.delete(name):
+            return _openai_error(
+                f"unknown credential {name!r}",
+                status=404,
+                type_="invalid_request_error",
+                code="credential_not_found",
+            )
+        return Response(status_code=204)
 
     # ── management plane: /admin/catalog/* (M16 discovery + install) ─────
     # Browse a provider, then install the chosen variant by downloading it HERE and registering it
@@ -556,7 +608,7 @@ def create_app(
 
     async def _serve_reachable(binding: Any, req: ChatRequest, params: dict[str, Any]) -> Response:
         try:
-            api_key = resolve_credential(binding.credential_ref) or "sk-noauth"
+            api_key = resolve_credential(binding.credential_ref, credential_store) or "sk-noauth"
         except CredentialResolutionError as exc:
             return _openai_error(
                 str(exc), status=502, type_="server_error", code="credential_error"
@@ -591,7 +643,7 @@ def create_app(
             async with manager.lease(model) as upstream:
                 yield binding, upstream
         else:
-            api_key = resolve_credential(binding.credential_ref) or "sk-noauth"
+            api_key = resolve_credential(binding.credential_ref, credential_store) or "sk-noauth"
             yield binding, Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
 
     def _upstream_error(exc: Exception, model: str) -> JSONResponse | None:

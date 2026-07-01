@@ -374,6 +374,29 @@ describe("Registries page — installed + add", () => {
     expect(screen.getByText("balanced")).toBeInTheDocument();
   });
 
+  it("hosted/local form offers stored credentials as secret:// options (no hf/url source)", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/models") return jsonResponse({ models: [] });
+      if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+      if (path === "/admin/credentials")
+        return jsonResponse({ credentials: [{ name: "OPENAI_API_KEY", hasValue: true }] });
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderRegistries();
+
+    await screen.findByText(/No models registered yet/);
+    fireEvent.click(screen.getByRole("button", { name: /Add model/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Hosted / local" }));
+
+    // The credential picker lists the stored secret (openai-compatible is the default binding).
+    await screen.findByRole("option", { name: "OPENAI_API_KEY" });
+    // The old hf/url Source options are gone — manual managed registration is local-path only.
+    expect(screen.queryByRole("option", { name: "url" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "hf" })).not.toBeInTheDocument();
+  });
+
   it("opens the hub browser in a pop-up modal (not a separate page)", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       const path = pathOf(url);

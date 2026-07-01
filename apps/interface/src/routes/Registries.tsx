@@ -481,24 +481,33 @@ function ManualRegisterForm({
 }) {
   const [logicalId, setLogicalId] = useState("");
   const [binding, setBinding] = useState("openai-compatible");
-  const [sourceKind, setSourceKind] = useState("hf");
   const [model, setModel] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [credentialRef, setCredentialRef] = useState("");
+  const [customCred, setCustomCred] = useState(false);
   const reachable = binding === "openai-compatible";
+
+  // Reachable bindings pick a stored credential (a secret://NAME ref) from the user-side store.
+  const { data: creds } = useQuery({
+    queryKey: ["credentials"],
+    queryFn: () => api.listCredentials(),
+    enabled: reachable,
+  });
 
   function submit() {
     if (!logicalId || !model) return;
+    // A managed binding registered by hand means "weights already on disk" → source=local-path
+    // (to DOWNLOAD a model instead, use the Hugging Face tab). Reachable = a passthrough URL + ref.
     const body = reachable
       ? { binding, model, baseUrl, ...(credentialRef ? { credentialRef } : {}) }
-      : { binding, source: sourceKind, model };
+      : { binding, source: "local-path", model };
     onSubmit(logicalId, body);
   }
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        Register a hosted API (OpenAI-compatible) or a model already on disk / in another engine.
+        Register a hosted API (OpenAI-compatible) or a model whose weights are already on disk.
       </p>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Logical id">
@@ -516,10 +525,10 @@ function ManualRegisterForm({
             <option value="llamacpp">llamacpp</option>
           </Select>
         </Field>
-        <Field label="Model (weights / upstream id)">
+        <Field label={reachable ? "Model (upstream id)" : "Model (path to weights on disk)"}>
           <Input
             value={model}
-            placeholder="gpt-4o-mini"
+            placeholder={reachable ? "gpt-4o-mini" : "/path/to/model"}
             onChange={(e) => setModel(e.target.value)}
           />
         </Field>
@@ -532,24 +541,49 @@ function ManualRegisterForm({
                 onChange={(e) => setBaseUrl(e.target.value)}
               />
             </Field>
-            <Field label="Credential ref (resolved locally only)">
-              <Input
-                value={credentialRef}
-                placeholder="env:OPENAI_API_KEY"
-                onChange={(e) => setCredentialRef(e.target.value)}
-              />
+            <Field label="Credential (resolved locally)">
+              {customCred ? (
+                <Input
+                  value={credentialRef}
+                  placeholder="secret://OPENAI_API_KEY"
+                  onChange={(e) => setCredentialRef(e.target.value)}
+                />
+              ) : (
+                <Select
+                  value={credentialRef}
+                  onChange={(e) => {
+                    if (e.target.value === "__custom__") {
+                      setCustomCred(true);
+                      setCredentialRef("");
+                    } else setCredentialRef(e.target.value);
+                  }}
+                >
+                  <option value="">— no credential —</option>
+                  {(creds ?? []).map((c) => (
+                    <option key={c.name} value={`secret://${c.name}`}>
+                      {c.name}
+                    </option>
+                  ))}
+                  <option value="__custom__">Custom ref…</option>
+                </Select>
+              )}
             </Field>
           </>
         ) : (
-          <Field label="Source">
-            <Select value={sourceKind} onChange={(e) => setSourceKind(e.target.value)}>
-              <option value="hf">hf</option>
-              <option value="local-path">local-path</option>
-              <option value="url">url</option>
-            </Select>
-          </Field>
+          <div className="col-span-2 text-[11px] leading-relaxed text-slate-500">
+            Registers with <span className="mono">source: local-path</span> — point “Model” at
+            weights already on disk (a GGUF for <span className="mono">llamacpp</span>, an MLX model
+            directory for <span className="mono">mlx</span>). To download a model, use the Hugging
+            Face tab.
+          </div>
         )}
       </div>
+      {reachable && (
+        <p className="text-[11px] leading-relaxed text-slate-500">
+          Credentials resolve on your machine (<span className="mono">secret://NAME</span>) and
+          never leave it. Add or edit them in Settings → Local credentials.
+        </p>
+      )}
       <ErrorBanner error={error} />
       <Button variant="primary" onClick={submit}>
         Register
