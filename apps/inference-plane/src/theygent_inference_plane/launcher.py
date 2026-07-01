@@ -35,6 +35,10 @@ from theygent_inference_plane.binary import (
     resolve_engine_command,
     resolve_llama_server_binary,
 )
+from theygent_inference_plane.capabilities import (
+    REASONING_MARKERS,
+    template_implies_reasoning,
+)
 
 
 @runtime_checkable
@@ -242,23 +246,12 @@ def _fetch_hf_config(model: str) -> str | None:
 
 
 # ── reasoning ("thinking") detection from the chat template ─────────────────
-# A reasoning model exposes its hidden chain-of-thought via a chat template that opens a
-# ``<think>`` section (Qwen3, DeepSeek-R1 distills, …) or gates it behind ``enable_thinking``.
-# That template is the honest *local* signal — no network, no model-name guessing.
-_REASONING_MARKERS = ("<think>", "enable_thinking", "reasoning_content")
-
-
-def _template_implies_reasoning(template: object) -> bool:
-    """True if a chat template (a string, or the list-of-{name,template} form some repos use)
-    contains a thinking marker. Best-effort: an unrecognised shape returns False."""
-    if isinstance(template, list):
-        text = " ".join(str(t.get("template", "")) for t in template if isinstance(t, dict))
-    elif isinstance(template, str):
-        text = template
-    else:
-        return False
-    low = text.lower()
-    return any(marker in low for marker in _REASONING_MARKERS)
+# The pure detector lives in ``capabilities.py`` — shared with the M16 catalog, which runs the SAME
+# heuristic against Hugging Face metadata at browse time (no download). Re-exported here under the
+# module-private names the probe and tests already use, so the probe's honest *local* signal (no
+# network, no model-name guessing) and the catalog's browse-time hint can never drift apart.
+_REASONING_MARKERS = REASONING_MARKERS
+_template_implies_reasoning = template_implies_reasoning
 
 
 def _locate_repo_file(model: str, source: str, filename: str) -> str | None:

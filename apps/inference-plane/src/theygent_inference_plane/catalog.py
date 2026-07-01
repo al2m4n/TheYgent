@@ -15,11 +15,12 @@ no SQLAlchemy / asyncpg / control-plane code (asserted by ``tests/test_catalog_p
 
 The Hugging Face adapter (the only one shipped now) filters listings by the engines the user
 has ready (never surface a model that can't run here — M16 §6) and surfaces quant variants sized
-against this machine's RAM with a fit badge (the LM Studio pattern — M16 §3.1).
+against this machine's RAM with a fit badge (M16 §3.1).
 """
 
 from __future__ import annotations
 
+import json
 import re
 from itertools import islice
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -28,11 +29,18 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from theygent_ir import Modality
 
+from theygent_inference_plane.capabilities import (
+    chat_template_from_config,
+    detect_vision,
+    template_implies_reasoning,
+    template_implies_tools,
+)
+
 # The managed engines an entry can be installed for (the binding enum, §8.4). ``openai-compatible``
 # is a reachable passthrough — never installed — so it is not an install target.
 EngineName = Literal["mlx", "llamacpp", "vllm"]
 Sort = Literal["trending", "downloads", "likes"]
-#: How a variant's weight size compares to this machine's RAM (the LM Studio green/yellow badge).
+#: How a variant's weight size compares to this machine's RAM (the green/yellow fit badge).
 Fit = Literal["fits", "tight", "too-large", "unknown"]
 
 #: Engine → Hugging Face ``library`` tag used to filter the listing. ``vllm`` uses plain safetensors
@@ -95,7 +103,7 @@ class CatalogQuery(BaseModel):
 
 
 class CatalogVariant(_Wire):
-    """One downloadable precision/quant of an entry — a row in the LM Studio variant picker."""
+    """One downloadable precision/quant of an entry — a row in the variant picker."""
 
     id: str  # gguf filename for llamacpp; "" for a whole MLX repo (engine-unique within an entry)
     label: str  # "Q4_K_M", "4bit", ...
@@ -127,6 +135,18 @@ class CatalogEntry(_Wire):
     license: str | None = None  # "apache-2.0" / "llama3" — from the repo's license tag
     gated: bool = False  # needs an HF token to download (show a 🔒 before the user clicks)
     updated_at: str | None = None  # ISO timestamp of the last repo update (FE shows "X ago")
+    # ── browse-time capability hints (no download) ──────────────────────────────────────────────
+    # Derived at list()/get() time from the small metadata HF returns WITHOUT weights: the chat
+    # template (→ reasoning / tool_calling), architectures + config keys (→ vision), and the GGUF
+    # header / model config (→ max_context). These are best-effort STATIC hints; the authoritative
+    # source stays the post-install capability PROBE (``/admin/models/{id}/capabilities``), which
+    # interrogates the running engine. A deliberate, named additive extension of the normalized
+    # CatalogEntry seam — a non-HF provider simply leaves them at their defaults. Field names mirror
+    # ``theygent_ir.Capabilities`` so the UI badges catalog hints and probe results the same way.
+    reasoning: bool = False
+    tool_calling: bool = False
+    vision: bool = False
+    max_context: int | None = None
     installed: bool = False  # already in the local registry (cross-referenced by the route)
     installed_as: str | None = None  # the logical id it's installed under, if any
     variants: list[CatalogVariant] = Field(
@@ -174,14 +194,14 @@ class CatalogError(RuntimeError):
     """A provider could not be reached / returned an unusable response."""
 
 
-# ── fit heuristic (LM Studio's green/yellow badge) ──────────────────────────────
+# ── fit heuristic (the green/yellow fit badge) ──────────────────────────────────
 
 
 def fit_for(size_bytes: int | None, ram_total: int) -> Fit:
     """Classify a variant's weight size against this machine's total RAM.
 
     Apple Silicon unified memory ⇒ RAM *is* the budget. We leave headroom for the OS + the KV cache,
-    so "fits" is conservative (the LM Studio posture: green only when it comfortably runs)."""
+    so "fits" is conservative (green only when it comfortably runs)."""
     if not size_bytes or ram_total <= 0:
         return "unknown"
     if size_bytes * 1.25 <= ram_total * 0.7:
@@ -193,7 +213,7 @@ def fit_for(size_bytes: int | None, ram_total: int) -> Fit:
 
 def _mark_recommended(variants: list[CatalogVariant]) -> None:
     """Mark one variant recommended: the largest that *fits* (more quality for the headroom), else
-    the smallest (best chance of running at all). Mirrors LM Studio defaulting to a sane quant."""
+    the smallest (best chance of running at all) — defaulting to a sane quant."""
     if not variants:
         return
     fitting = [v for v in variants if v.fit == "fits" and v.size_bytes]
@@ -251,7 +271,7 @@ def _updated_iso(mi: Any) -> str | None:
         return None
 
 
-# ── per-variant quality hint + fit reason (the LM Studio explainers) ─────────────
+# ── per-variant quality hint + fit reason (the fit explainers) ───────────────────
 
 
 def _variant_quality(label: str, engine: str) -> str | None:
@@ -305,6 +325,64 @@ def _card_summary(ref: str) -> str | None:
     return None
 
 
+# ── browse-time capability hints (reuse the probe's chat-template heuristic) ──────
+
+
+def _apply_hf_capabilities(entry: CatalogEntry, mi: Any) -> None:
+    """Fill an entry's capability hints from an HF item fetched with ``expand=["config","gguf"]``.
+
+    Reads only metadata already present on ``mi`` — **never a network call**. The safetensors/MLX
+    path carries ``config`` (chat template + architectures); the GGUF path carries ``gguf`` (chat
+    template + architecture + ``context_length``); a repo can carry both. Absent fields leave the
+    entry's defaults untouched, so an unenriched ``model_info`` (list without the expand, a non-HF
+    provider) is a clean no-op. The chat-template detectors are the *same* ones the live probe runs
+    (``capabilities.py``), so a browse-time hint and the post-install probe can never disagree by
+    construction — only by the metadata being stale vs. the running engine."""
+    config = getattr(mi, "config", None)
+    gguf = getattr(mi, "gguf", None)
+    template: object | None = None
+    architectures: list[str] = []
+    model_type: str | None = None
+    config_keys: list[str] = []
+    if isinstance(config, dict):
+        config_keys = [str(k) for k in config]
+        architectures = [str(a) for a in (config.get("architectures") or [])]
+        model_type = config.get("model_type")
+        template = chat_template_from_config(config)
+    if isinstance(gguf, dict):
+        template = template or gguf.get("chat_template")
+        if arch := gguf.get("architecture"):
+            architectures = [*architectures, arch]
+        ctx = gguf.get("context_length")
+        if isinstance(ctx, int) and ctx > 0:
+            entry.max_context = ctx
+    if template is None and not architectures and not config_keys:
+        return  # nothing to derive from — leave defaults
+    entry.reasoning = template_implies_reasoning(template)
+    entry.tool_calling = template_implies_tools(template)
+    entry.vision = detect_vision(
+        architectures=architectures,
+        model_type=model_type,
+        config_keys=config_keys,
+        template=template,
+    )
+
+
+def _hf_config_max_context(ref: str) -> int | None:
+    """Best-effort real context window from an HF repo's ``config.json``
+    (``max_position_embeddings``), fetching just that small file — never weights. Detail-view only
+    (the ``expand=config`` metadata omits it, unlike the GGUF header); None on any failure."""
+    try:
+        from huggingface_hub import hf_hub_download
+
+        with open(hf_hub_download(repo_id=ref, filename="config.json")) as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    mpe = data.get("max_position_embeddings")
+    return mpe if isinstance(mpe, int) and mpe > 0 else None
+
+
 # ── the Hugging Face adapter ─────────────────────────────────────────────────────
 
 
@@ -320,6 +398,9 @@ class HuggingFaceProvider:
 
     def __init__(self, *, hf_api: Any | None = None, ram_bytes: int | None = None) -> None:
         self._api = hf_api
+        # An injected Hub (the fast suite) means "no network" — skip the real config.json context
+        # fetch in get() (the fake fixtures supply what they mean to). True only for the real HfApi.
+        self._real_hub = hf_api is None
         self._ram_bytes = ram_bytes
 
     def _hf(self) -> Any:
@@ -365,6 +446,13 @@ class HuggingFaceProvider:
                         "gated",
                         "lastModified",
                         "safetensors",
+                        # ``config`` (safetensors/MLX repos) + ``gguf`` (GGUF repos) ride the SAME
+                        # list call — they carry the chat template, architectures and GGUF context
+                        # inline, so browse-time capability hints (reasoning / tool_calling / vision
+                        # / max_context) cost zero extra per-repo fetches. Verified present together
+                        # in huggingface_hub 1.x for both the ``mlx`` and ``gguf`` library filters.
+                        "config",
+                        "gguf",
                     ],
                     **({"num_parameters": q.num_params} if q.num_params else {}),
                 )
@@ -391,7 +479,7 @@ class HuggingFaceProvider:
         if pt := getattr(mi, "pipeline_tag", None):
             badges["pipelineTag"] = pt
         author = getattr(mi, "author", None) or (ref.split("/")[0] if "/" in ref else "")
-        return CatalogEntry(
+        entry = CatalogEntry(
             provider=self.id,
             ref=ref,
             title=ref.split("/")[-1],
@@ -402,6 +490,10 @@ class HuggingFaceProvider:
             gated=bool(getattr(mi, "gated", None)),
             updated_at=_updated_iso(mi),
         )
+        # When the caller fetched with ``expand=["config","gguf"]`` (list, or get's caps call), this
+        # fills the capability hints from inline metadata; otherwise it is a clean no-op.
+        _apply_hf_capabilities(entry, mi)
+        return entry
 
     # ── get (variants + fit) ────────────────────────────────────────────────
 
@@ -411,6 +503,17 @@ class HuggingFaceProvider:
         except Exception as exc:
             raise CatalogError(f"hugging face model_info failed for {ref!r}: {exc}") from exc
         entry = self._entry_from_model_info(info)
+        # Capability hints for the detail view. ``files_metadata`` (needed above for sibling sizes)
+        # and ``expand`` are mutually exclusive on HF's model_info, so caps ride a second small
+        # request — best-effort, like the model-card blurb below.
+        try:
+            _apply_hf_capabilities(entry, self._hf().model_info(ref, expand=["config", "gguf"]))
+        except Exception:
+            pass
+        # The ``expand=config`` metadata omits max_position_embeddings (unlike the GGUF header), so
+        # the safetensors/MLX real context comes from one tiny config.json fetch — real Hub only.
+        if entry.max_context is None and self._real_hub:
+            entry.max_context = _hf_config_max_context(ref)
         siblings = list(getattr(info, "siblings", None) or [])
         ram = self._ram()
         requested = set(q.engines) if q.engines else set(ENGINE_LIBRARY)

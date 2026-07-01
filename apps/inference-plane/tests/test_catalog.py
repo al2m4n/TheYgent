@@ -56,6 +56,11 @@ class FakeModelInfo:
     gated: object = None  # "auto" | "manual" | False | None (HF's shape)
     safetensors: FakeSafetensors | None = None
     last_modified: object = None
+    # HF ``expand=["config","gguf"]`` metadata (browse-time capability hints). ``config`` mirrors a
+    # safetensors/MLX repo (architectures + tokenizer_config.chat_template); ``gguf`` mirrors a GGUF
+    # repo (architecture + context_length + chat_template). None = not expanded (list without it).
+    config: dict[str, Any] | None = None
+    gguf: dict[str, Any] | None = None
 
 
 class FakeHfApi:
@@ -79,7 +84,9 @@ class FakeHfApi:
         self.num_params.append(num_parameters)
         return list(self._by_library.get(filter, []))
 
-    def model_info(self, repo_id, *, files_metadata=False):
+    def model_info(self, repo_id, *, files_metadata=False, expand=None):
+        # HF rejects files_metadata + expand together; get() therefore makes two calls. The fake
+        # returns the same fixture for both — it already carries siblings AND config/gguf.
         if repo_id in self._by_repo:
             return self._by_repo[repo_id]
         raise KeyError(repo_id)
@@ -161,7 +168,7 @@ def test_no_ready_engine_lists_nothing() -> None:
     assert api.list_filters == []  # no query issued at all
 
 
-# ── get(): variants + fit (the LM Studio picker) ─────────────────────────────────
+# ── get(): variants + fit (the variant picker) ───────────────────────────────────
 
 
 def test_get_builds_gguf_variants_with_fit() -> None:
@@ -627,3 +634,149 @@ def test_cancel_download(tmp_path: Path) -> None:
     view = anyio.run(_drive)
     assert view["status"] == "cancelled"
     assert registry.get("cancel-me") is None  # a cancelled install registers nothing
+
+
+# ── browse-time capabilities: reasoning / tool_calling / vision / max_context ────
+# Derived from the chat template + architectures + GGUF header HF returns WITHOUT a download.
+# Best-effort static hints — the authoritative source stays the post-install probe — but they let
+# the browser badge + filter models before install.
+
+# Minimal chat templates carrying just the marker each detector looks for.
+_TPL_THINK = "sys\n{%- if enable_thinking %}<think>{% endif %}{%- if tools %}<tool_call>{% endif %}"
+_TPL_TOOLS_ONLY = "{%- if tools %}<tools>{{ tools }}</tools><tool_call>{% endif %}\nplain chat"
+_TPL_VISION = "<|vision_start|><|image_pad|><|vision_end|>{{ content }}"
+
+
+def _mlx_reasoning() -> FakeModelInfo:
+    # A reasoning MLX repo: expand=config carries the thinking template + arch.
+    return FakeModelInfo(
+        id="mlx-community/Qwen3-4B-4bit",
+        library_name="mlx",
+        tags=["mlx"],
+        safetensors=FakeSafetensors(total=4 * GB),
+        siblings=[FakeSibling("model.safetensors", 2 * GB), FakeSibling("config.json", 1000)],
+        config={
+            "architectures": ["Qwen3ForCausalLM"],
+            "model_type": "qwen3",
+            "tokenizer_config": {"chat_template": _TPL_THINK},
+        },
+    )
+
+
+def _mlx_plain() -> FakeModelInfo:
+    # A plain instruct MLX repo: tool-calling template, NO thinking marker → reasoning=False.
+    return FakeModelInfo(
+        id="mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+        library_name="mlx",
+        tags=["mlx"],
+        safetensors=FakeSafetensors(total=494_000_000),
+        siblings=[FakeSibling("model.safetensors", 300_000_000), FakeSibling("config.json", 1000)],
+        config={
+            "architectures": ["Qwen2ForCausalLM"],
+            "model_type": "qwen2",
+            "chat_template_jinja": _TPL_TOOLS_ONLY,  # the top-level form HF sometimes returns
+        },
+    )
+
+
+def _mlx_vision() -> FakeModelInfo:
+    # A VLM: the structural ``processor_config`` key + a VL architecture → vision=True.
+    return FakeModelInfo(
+        id="mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+        library_name="mlx",
+        pipeline_tag="image-text-to-text",
+        tags=["mlx"],
+        safetensors=FakeSafetensors(total=3 * GB),
+        siblings=[FakeSibling("model.safetensors", 2 * GB), FakeSibling("config.json", 1000)],
+        config={
+            "architectures": ["Qwen2_5_VLForConditionalGeneration"],
+            "model_type": "qwen2_5_vl",
+            "processor_config": {"image_processor_type": "Qwen2VLImageProcessor"},
+            "tokenizer_config": {"chat_template": _TPL_VISION},
+        },
+    )
+
+
+def _gguf_with_ctx() -> FakeModelInfo:
+    # A GGUF repo: the header (expand=gguf) carries arch + real context_length + tool template.
+    return FakeModelInfo(
+        id="Qwen/Qwen2.5-3B-Instruct-GGUF",
+        tags=["gguf"],
+        siblings=[FakeSibling("qwen2.5-3b-instruct-q4_k_m.gguf", 2 * GB)],
+        gguf={
+            "architecture": "qwen2",
+            "context_length": 32768,
+            "chat_template": _TPL_TOOLS_ONLY,
+            "total": 3 * GB,
+        },
+    )
+
+
+def test_list_derives_capabilities_inline() -> None:
+    # list() adds config+gguf to the expand, so caps come back with ZERO extra per-repo fetches.
+    api = FakeHfApi(
+        by_library={
+            "mlx": [_mlx_reasoning(), _mlx_plain(), _mlx_vision()],
+            "gguf": [_gguf_with_ctx()],
+        }
+    )
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=32 * GB)
+    by_ref = {e.ref: e for e in p.list(CatalogQuery(engines=["mlx", "llamacpp"]))}
+
+    r = by_ref["mlx-community/Qwen3-4B-4bit"]
+    assert (r.reasoning, r.tool_calling, r.vision) == (True, True, False)
+
+    plain = by_ref["mlx-community/Qwen2.5-0.5B-Instruct-4bit"]
+    assert (plain.reasoning, plain.tool_calling, plain.vision) == (False, True, False)
+
+    vlm = by_ref["mlx-community/Qwen2.5-VL-3B-Instruct-4bit"]
+    assert vlm.vision is True
+    assert vlm.reasoning is False
+
+    gguf = by_ref["Qwen/Qwen2.5-3B-Instruct-GGUF"]
+    assert gguf.tool_calling is True
+    assert gguf.max_context == 32768  # the real context window, straight from the GGUF header
+
+
+def test_list_without_expanded_metadata_leaves_defaults() -> None:
+    # A repo HF returned without config/gguf (older provider path) → hints stay at their defaults,
+    # never a crash. Uses the plain _qwen_gguf fixture (no config/gguf attrs).
+    api = FakeHfApi(by_library={"gguf": [_qwen_gguf()]})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)
+    [entry] = p.list(CatalogQuery(engines=["llamacpp"]))
+    assert (entry.reasoning, entry.tool_calling, entry.vision, entry.max_context) == (
+        False,
+        False,
+        False,
+        None,
+    )
+
+
+def test_get_derives_capabilities_for_detail_view() -> None:
+    api = FakeHfApi(by_repo={"mlx-community/Qwen3-4B-4bit": _mlx_reasoning()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=32 * GB)
+    entry = p.get("mlx-community/Qwen3-4B-4bit", CatalogQuery(engines=["mlx"]))
+    # caps come from the separate expand call get() makes (files_metadata + expand are exclusive)
+    assert entry.reasoning is True
+    assert entry.tool_calling is True
+    assert entry.variants  # variants still built from the files_metadata call
+
+
+def test_get_gguf_context_from_header() -> None:
+    api = FakeHfApi(by_repo={"Qwen/Qwen2.5-3B-Instruct-GGUF": _gguf_with_ctx()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=32 * GB)
+    entry = p.get("Qwen/Qwen2.5-3B-Instruct-GGUF", CatalogQuery(engines=["llamacpp"]))
+    assert entry.max_context == 32768
+    assert entry.tool_calling is True
+
+
+def test_capabilities_ride_the_wire_camelcase() -> None:
+    # The additive fields serialize camelCase (the /admin/* convention) for the FE badges.
+    api = FakeHfApi(by_repo={"mlx-community/Qwen3-4B-4bit": _mlx_reasoning()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=32 * GB)
+    dumped = p.get("mlx-community/Qwen3-4B-4bit", CatalogQuery(engines=["mlx"])).model_dump(
+        by_alias=True
+    )
+    assert dumped["reasoning"] is True
+    assert dumped["toolCalling"] is True
+    assert "maxContext" in dumped and "vision" in dumped

@@ -241,6 +241,14 @@ export interface CatalogEntry {
   license?: string | null; // "apache-2.0"
   gated?: boolean; // needs an HF token
   updatedAt?: string | null; // ISO timestamp
+  // Browse-time capability hints — derived from HF metadata WITHOUT a download (chat template,
+  // architectures, GGUF header). Best-effort STATIC hints; the authoritative source stays the
+  // post-install probe (getModelCapabilities). Field names mirror `Capabilities` so both badge
+  // the same way. Present on model entries; a non-HF provider leaves them at their defaults.
+  reasoning?: boolean;
+  toolCalling?: boolean;
+  vision?: boolean;
+  maxContext?: number | null;
   installed?: boolean; // already in the local registry
   installedAs?: string | null; // the logical id it's installed under
   variants: CatalogVariant[];

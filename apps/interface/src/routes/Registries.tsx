@@ -596,12 +596,22 @@ export function BrowseModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// Capability filters — matched against the browse-time hints on each entry (client-side; HF has no
+// server-side capability filter). Keys are CatalogEntry boolean fields.
+const CAP_FILTERS = [
+  { key: "reasoning", label: "Reasoning" },
+  { key: "toolCalling", label: "Tools" },
+  { key: "vision", label: "Vision" },
+] as const;
+type CapKey = (typeof CAP_FILTERS)[number]["key"];
+
 function BrowsePanel() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState("trending");
   const [size, setSize] = useState("");
   const [engineSel, setEngineSel] = useState<string[]>([]); // empty ⇒ all ready engines
+  const [capsFilter, setCapsFilter] = useState<CapKey[]>([]); // client-side capability filter
   const [limit, setLimit] = useState(30);
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -638,6 +648,17 @@ function BrowsePanel() {
       if (next.length === 0) return active; // keep at least one engine on
       return next.length === ready.length ? [] : next;
     });
+
+  const toggleCap = (k: CapKey) =>
+    setCapsFilter((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
+
+  // Capability filter is CLIENT-SIDE over the loaded page (HF exposes no capability filter). An
+  // entry passes only if it has every active cap; "Load more" pulls further pages to widen the set.
+  const shownEntries = useMemo(() => {
+    const entries = data?.entries ?? [];
+    if (capsFilter.length === 0) return entries;
+    return entries.filter((e) => capsFilter.every((k) => Boolean(e[k])));
+  }, [data, capsFilter]);
 
   return (
     <div className="space-y-4">
@@ -696,6 +717,31 @@ function BrowsePanel() {
         </div>
       )}
 
+      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>Capabilities:</span>
+        {CAP_FILTERS.map(({ key, label }) => {
+          const on = capsFilter.includes(key);
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => toggleCap(key)}
+              title={`Show only ${label.toLowerCase()} models (from metadata hints)`}
+              className={`rounded border px-2 py-0.5 ${
+                on
+                  ? "border-blue-500/40 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                  : "border-slate-700 text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+        {capsFilter.length > 0 && (
+          <span className="text-[11px] text-slate-600">· filters the loaded list</span>
+        )}
+      </div>
+
       <ErrorBanner error={error} />
 
       {noEngine ? (
@@ -708,9 +754,14 @@ function BrowsePanel() {
         <SkeletonList />
       ) : !data || data.entries.length === 0 ? (
         <Empty>No matching models. Try a different search.</Empty>
+      ) : shownEntries.length === 0 ? (
+        <Empty>
+          None of the {data.entries.length} loaded models match the capability filter — try “Load
+          more” to fetch further pages, or clear the filter.
+        </Empty>
       ) : (
         <div className="space-y-2">
-          {data.entries.map((entry) => (
+          {shownEntries.map((entry) => (
             <ModelCard
               key={entry.ref}
               entry={entry}
@@ -749,6 +800,33 @@ function SkeletonList() {
 
 // ── shared catalog pieces (used by Browse cards + the Add-panel paste flow) ────
 
+// Browse-time capability hints — the SAME badges the probe (CapabilitiesCell) shows, but derived
+// from Hugging Face metadata WITHOUT a download (chat template + architectures + GGUF header). The
+// install-time probe stays authoritative; `showApprox` marks these as hints it will confirm.
+function CapabilityBadges({
+  caps,
+  showApprox = false,
+}: {
+  caps: Pick<CatalogEntry, "reasoning" | "toolCalling" | "vision" | "maxContext">;
+  showApprox?: boolean;
+}) {
+  if (!caps.reasoning && !caps.toolCalling && !caps.vision && !caps.maxContext) return null;
+  return (
+    <>
+      {caps.reasoning && <Badge tone="blue">reasoning</Badge>}
+      {caps.toolCalling && <Badge tone="green">tools</Badge>}
+      {caps.vision && <Badge tone="green">vision</Badge>}
+      {/* Context windows are powers of two (32768 = 32k), so divide by 1024, not 1000. */}
+      {caps.maxContext ? <Badge>{`${Math.round(caps.maxContext / 1024)}k ctx`}</Badge> : null}
+      {showApprox && (
+        <span title="static hint from model metadata — the probe confirms it on install">
+          <Badge tone="amber">approx</Badge>
+        </span>
+      )}
+    </>
+  );
+}
+
 function ModelCard({
   entry,
   expanded,
@@ -778,6 +856,9 @@ function ModelCard({
             {formatRelativeTime(entry.updatedAt) && (
               <span>updated {formatRelativeTime(entry.updatedAt)}</span>
             )}
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            <CapabilityBadges caps={entry} />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-400">
@@ -837,6 +918,15 @@ function ModelDetail({
         </a>
       </div>
       {blurb && <p className="text-xs leading-relaxed text-slate-400">{blurb}</p>}
+      {data && (data.reasoning || data.toolCalling || data.vision || data.maxContext) && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500">Capabilities</span>
+          <CapabilityBadges caps={data} showApprox />
+          <span className="text-[10px] text-slate-600">
+            from model metadata — the probe confirms these once installed
+          </span>
+        </div>
+      )}
       <ErrorBanner error={error} />
       {isLoading ? (
         <Spinner label="Loading variants…" />

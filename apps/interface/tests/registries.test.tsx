@@ -190,6 +190,55 @@ describe("Browse — the hub browser", () => {
     await waitFor(() => expect(screen.getByText("Installed ✓")).toBeInTheDocument());
   });
 
+  it("shows browse-time capability badges and filters to reasoning models client-side", async () => {
+    const base = LIST.entries[0];
+    const listWithCaps = {
+      engines: ["mlx", "llamacpp"],
+      entries: [
+        {
+          ...base,
+          ref: "org/reasoner",
+          title: "Reasoner",
+          engines: ["mlx"],
+          reasoning: true,
+          toolCalling: true,
+          vision: false,
+          maxContext: 32768,
+        },
+        {
+          ...base,
+          ref: "org/plain-vlm",
+          title: "PlainVLM",
+          reasoning: false,
+          toolCalling: false,
+          vision: true,
+          maxContext: null,
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/catalog/models") return jsonResponse(listWithCaps);
+      if (path.startsWith("/admin/catalog/models/")) return jsonResponse(DETAIL);
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBrowse();
+
+    // Both cards list; capability hints render as badges WITHOUT any probe/install (lowercase badge
+    // text vs the Capitalized filter chips keeps them distinct).
+    await screen.findByText("Reasoner");
+    await screen.findByText("PlainVLM");
+    expect(screen.getByText("reasoning")).toBeInTheDocument(); // on the reasoner card
+    expect(screen.getByText("vision")).toBeInTheDocument(); // on the VLM card
+    expect(screen.getByText("32k ctx")).toBeInTheDocument();
+
+    // The "Reasoning" capability chip filters the loaded list to just the reasoning model.
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    await waitFor(() => expect(screen.queryByText("PlainVLM")).not.toBeInTheDocument());
+    expect(screen.getByText("Reasoner")).toBeInTheDocument();
+  });
+
   it("engine chips: clicking one (from all-on) turns it off and narrows to the other", async () => {
     const urls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {

@@ -51,3 +51,40 @@ def test_capabilities_endpoint_carries_reasoning() -> None:
         caps = c.get("/admin/models/cap-probe/capabilities").json()
         assert caps["reasoning"] is False
         assert "toolCalling" in caps
+
+
+# ── the shared, pure detectors (also drive the M16 browse-time catalog hints) ────
+
+
+def test_tool_marker_detection() -> None:
+    from theygent_inference_plane.capabilities import template_implies_tools
+
+    assert template_implies_tools("{%- if tools %}<tool_call>{% endif %}") is True
+    assert template_implies_tools("emits <tool_call>{{name}}</tool_call>") is True
+    assert template_implies_tools("{%- for tool in tools %}") is True
+    assert template_implies_tools("just a plain chat template") is False
+    assert template_implies_tools(None) is False
+
+
+def test_vision_detection_signals() -> None:
+    from theygent_inference_plane.capabilities import detect_vision
+
+    # structural config key (an image processor) — the strongest signal
+    assert detect_vision(config_keys=["processor_config", "tokenizer_config"]) is True
+    # a VL architecture / model_type marker
+    assert detect_vision(architectures=["Qwen2_5_VLForConditionalGeneration"]) is True
+    assert detect_vision(model_type="qwen2vl") is True
+    # image handling in the template alone
+    assert detect_vision(template="<|vision_start|><|image_pad|>") is True
+    # a text model that shares ...ForConditionalGeneration (T5/BART) is NOT vision
+    assert detect_vision(architectures=["T5ForConditionalGeneration"], model_type="t5") is False
+    assert detect_vision(architectures=["Qwen2ForCausalLM"], model_type="qwen2") is False
+
+
+def test_chat_template_from_config_both_shapes() -> None:
+    from theygent_inference_plane.capabilities import chat_template_from_config
+
+    assert chat_template_from_config({"chat_template_jinja": "A"}) == "A"
+    assert chat_template_from_config({"tokenizer_config": {"chat_template": "B"}}) == "B"
+    assert chat_template_from_config({"architectures": ["X"]}) is None
+    assert chat_template_from_config(None) is None
