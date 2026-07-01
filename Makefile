@@ -1,6 +1,6 @@
 # theygent dev Makefile — one-command bring-up / tear-down of the local processes.
 #
-#   make up       install deps, run migrations, then spin up inference + control-plane + interface
+#   make up       install deps, run migrations, then spin up inference-plane + control-plane + interface
 #   make restart  stop everything and start it again (use this to pick up backend code changes)
 #   make down     stop everything started by `make up`
 #
@@ -35,7 +35,7 @@ endif
 # Python test suites run per-package: the apps share test-file basenames
 # (test_fast_suite.py, test_integration_mlx.py) with no package __init__, so a single
 # root pytest collides on import. Each entry is run with its own dir as rootdir.
-PY_TEST_DIRS := packages/ir apps/inference apps/control-plane
+PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane
 
 # Each service is identified by the PORT it listens on — that is the authoritative "is it up and
 # which process is it", NOT a recorded pid. `start` records `$!`, but that is the `uv run`/`pnpm`
@@ -43,7 +43,7 @@ PY_TEST_DIRS := packages/ir apps/inference apps/control-plane
 # misses the real server (and a stale/reused pidfile makes it kill the wrong thing or nothing).
 # `down`/`status`/`restart` therefore resolve the live process via `lsof` on the port. Ports come
 # from .env (THEYGENT_*_PORT) with the same defaults `start` uses.
-INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PORT),8081)
+INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
@@ -82,14 +82,14 @@ restart: down start ## Stop everything, then start it again (picks up code chang
 # skipped LOUDLY instead of silently failing to bind and leaving the OLD process serving (the trap
 # that hid stale code). $$! (the uv/pnpm wrapper pid) is recorded only as a hint; `down` resolves the
 # real server by port.
-start: ## Start inference + control-plane + interface as background processes
+start: ## Start inference-plane + control-plane + interface as background processes
 	@mkdir -p $(RUN_DIR)
 	@if lsof -ti tcp:$(INFERENCE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> inference-plane already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
 	else \
 		echo "==> starting inference-plane (:$(INFERENCE_PORT))"; \
-		nohup uv run --package theygent-inference theygent-inference > $(RUN_DIR)/inference.log 2>&1 & \
-		echo $$! > $(RUN_DIR)/inference.pid; \
+		nohup uv run --package theygent-inference-plane theygent-inference-plane > $(RUN_DIR)/inference-plane.log 2>&1 & \
+		echo $$! > $(RUN_DIR)/inference-plane.pid; \
 	fi
 	@if lsof -ti tcp:$(CONTROL_PLANE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> control-plane already on :$(CONTROL_PLANE_PORT) — skipping (use 'make restart')"; \
@@ -129,7 +129,7 @@ down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper
 	done
 
 status: ## Show whether each service is running (resolved by PORT)
-	@for svc in "inference:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; \
 		pid=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null | head -1 || true); \
 		if [ -n "$$pid" ]; then echo "  $$name: running on :$$port (pid $$pid)"; else echo "  $$name: stopped"; fi; \
@@ -156,4 +156,4 @@ smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plan
 	uv run --package theygent-control-plane python apps/interface/tests/smoke/hand_drive.py
 
 logs: ## Tail the logs of all services
-	@tail -n +1 -f $(RUN_DIR)/inference.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log
+	@tail -n +1 -f $(RUN_DIR)/inference-plane.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log

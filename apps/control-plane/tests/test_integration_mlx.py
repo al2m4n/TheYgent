@@ -100,11 +100,11 @@ def test_runs_against_real_mlx_subprocess() -> None:
     base = f"http://127.0.0.1:{port}"
     env = {
         **os.environ,
-        "THEYGENT_INFERENCE_PORT": str(port),
-        "THEYGENT_INFERENCE_HOST": "127.0.0.1",
+        "THEYGENT_INFERENCE_PLANE_PORT": str(port),
+        "THEYGENT_INFERENCE_PLANE_HOST": "127.0.0.1",
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "theygent_inference"],
+        [sys.executable, "-m", "theygent_inference_plane"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -166,11 +166,11 @@ def _real_inference_plane():
     base = f"http://127.0.0.1:{port}"
     env = {
         **os.environ,
-        "THEYGENT_INFERENCE_PORT": str(port),
-        "THEYGENT_INFERENCE_HOST": "127.0.0.1",
+        "THEYGENT_INFERENCE_PLANE_PORT": str(port),
+        "THEYGENT_INFERENCE_PLANE_HOST": "127.0.0.1",
     }
     proc = subprocess.Popen(
-        [sys.executable, "-m", "theygent_inference"],
+        [sys.executable, "-m", "theygent_inference_plane"],
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

@@ -9,7 +9,7 @@ Skipped by default (``-m 'not integration'``); skips clean without prerequisites
 Silicon, an inference plane already serving a logical id ``triage-fast``)::
 
     DATABASE_URL=postgresql+asyncpg://localhost/theygent \
-    THEYGENT_INFERENCE_BASE_URL=http://127.0.0.1:8081/v1 \
+    THEYGENT_INFERENCE_PLANE_BASE_URL=http://127.0.0.1:8081/v1 \
         uv run --package theygent-control-plane pytest -m integration \
         apps/control-plane/tests/test_integration_m14.py
 
@@ -30,12 +30,13 @@ from _ir import _doc, _edge, _node
 pytestmark = pytest.mark.integration
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
-_INFERENCE_BASE_URL = os.environ.get("THEYGENT_INFERENCE_BASE_URL")
+_INFERENCE_BASE_URL = os.environ.get("THEYGENT_INFERENCE_PLANE_BASE_URL")
 _MODEL = os.environ.get("THEYGENT_LOGICAL_MODEL", "triage-fast")
 
 _skip = pytest.mark.skipif(
     not _DATABASE_URL or not _INFERENCE_BASE_URL,
-    reason="needs DATABASE_URL (real PG) and THEYGENT_INFERENCE_BASE_URL (a live inference plane)",
+    reason="needs DATABASE_URL (real PG) and THEYGENT_INFERENCE_PLANE_BASE_URL "
+    "(a live inference plane)",
 )
 
 

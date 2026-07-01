@@ -32,7 +32,7 @@ repos:
       # findings but never blocks a commit. Drop the `|| true` to make it a hard gate later. ──
       - id: ty
         name: ty type-check (non-blocking — CI §6 hedge)
-        entry: bash -c 'uv run ty check apps/inference apps/control-plane packages/ir packages/gateway-client || true'
+        entry: bash -c 'uv run ty check apps/inference-plane apps/control-plane packages/ir packages/gateway-client || true'
         language: system
         types_or: [python, pyi]
         pass_filenames: false
