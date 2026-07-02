@@ -169,3 +169,120 @@ def test_quota_denies_over_budget(client: TestClient, pg_url: str) -> None:
     out = _run(client, ir, {"q": "hi"})
     assert "denied" in out["output"]
     assert "token budget exceeded" in out["output"]
+
+
+def _quota_llm_agent(budget_tokens: int) -> dict[str, Any]:
+    """input -> quota -> (allow) -> llm -> out_allow; (deny) -> out_deny — the real cost-control
+    shape: the gate meters the very model calls the graph makes."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_quota_llm",
+        "name": "quota-llm-agent",
+        "version": "0.1.0",
+        "models": {"default": {"binding": "mlx", "model": "triage-fast", "params": {}}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_gate",
+                "type": "quota",
+                "kind": "activity",
+                "config": {
+                    "keyExpr": "$caller.token",
+                    "budgetTokens": budget_tokens,
+                    "windowSeconds": 3600,
+                },
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "allow", "type": "any"}, {"id": "deny", "type": "any"}],
+                },
+            },
+            {
+                "id": "n_llm",
+                "type": "llm",
+                "kind": "activity",
+                "config": {"model": "default", "messages": [{"role": "user", "content": "$in"}]},
+                "ports": {
+                    "in": [{"id": "in", "type": "any"}],
+                    "out": [{"id": "ok", "type": "any"}, {"id": "err", "type": "error"}],
+                },
+            },
+            {
+                "id": "out_allow",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+            {
+                "id": "out_deny",
+                "type": "output",
+                "kind": "boundary",
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            _edge("e1", "n_in", "out", "n_gate", "in"),
+            _edge("e2", "n_gate", "allow", "n_llm", "in"),
+            _edge("e3", "n_llm", "ok", "out_allow", "in"),
+            _edge("e4", "n_gate", "deny", "out_deny", "in"),
+        ],
+    }
+
+
+def test_quota_meters_real_llm_usage_and_denies(client: TestClient) -> None:
+    # The closed loop, with NO hand-seeded spans: run 1 passes the gate (no usage yet) and its llm
+    # streams — the model.generate span records the usage the (fake-engine) server reported on the
+    # stream's final chunk. Run 2 reads that accumulated usage back through the gate and DENIES.
+    # This is the fail-closed proof: if the capture ever stops writing usage, run 2 would allow
+    # and this test fails.
+    ir = _quota_llm_agent(budget_tokens=2)  # one fake turn reports total_tokens=3
+    first = _run(client, ir, "hi")
+    assert first["status"] == "completed"
+    assert first["output"] == "hello world"
+    spans = client.get(f"/runs/{first['runId']}/trace").json()["spans"]
+    gen = next(s for s in spans if s["phase"] == "model.generate")
+    attrs = gen["attributes"] or {}
+    assert attrs["gen_ai.usage.total_tokens"] == 3  # streamed usage landed on the span
+    assert attrs["gen_ai.usage.input_tokens"] == 1
+    assert attrs["gen_ai.usage.output_tokens"] == 2
+    node = next(s for s in spans if s["name"] == "n_llm" and s["phase"] is None)
+    assert "gen_ai.usage.total_tokens" not in (node["attributes"] or {})  # no double-count mirror
+
+    denied = _run(client, ir, "hi")
+    assert "denied" in denied["output"]
+    assert "token budget exceeded" in denied["output"]
+
+
+def test_usage_is_read_from_both_streaming_wire_shapes() -> None:
+    # The two REAL shapes of the terminal usage chunk: engines emit it with an EMPTY choices
+    # list; a proxying router re-emits it with a non-empty choices list whose delta is all-null.
+    # Both must yield the same normalized usage — reading usage gated on the choices shape is
+    # exactly the bug that would silently drop one of them.
+    from types import SimpleNamespace as NS
+
+    from theygent_control_plane.walker import parse_chunk
+
+    usage = NS(prompt_tokens=31, completion_tokens=5, total_tokens=36)
+    engine_shape = NS(choices=[], usage=usage)
+    proxy_shape = NS(
+        choices=[
+            NS(finish_reason=None, delta=NS(reasoning_content=None, content=None, tool_calls=None))
+        ],
+        usage=usage,
+    )
+    expected = {"prompt_tokens": 31, "completion_tokens": 5, "total_tokens": 36}
+    assert parse_chunk(engine_shape).usage == expected
+    assert parse_chunk(proxy_shape).usage == expected
+    # And an ordinary content chunk (no usage attribute value) reports None, never zeros.
+    plain = NS(
+        choices=[
+            NS(finish_reason=None, delta=NS(reasoning_content=None, content="hi", tool_calls=None))
+        ],
+        usage=None,
+    )
+    assert parse_chunk(plain).usage is None

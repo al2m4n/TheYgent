@@ -535,31 +535,89 @@ class ToolCall:
 class ChunkDelta:
     """One parsed streaming chunk. M21 extends the M9 reasoning/content split with ``tool_calls`` —
     the raw per-chunk ``delta.tool_calls`` fragment list (each {index, id?, function:{name?,
-    arguments?}}). A non-tool chunk has ``tool_calls=None`` — byte-identical to pre-M21."""
+    arguments?}}). A non-tool chunk has ``tool_calls=None`` — byte-identical to pre-M21.
+    ``usage`` is the normalized token accounting a stream's final chunk carries when the request
+    asked for it (``stream_options.include_usage``); ``None`` on every other chunk."""
 
     reasoning: str | None
     content: str | None
     finish_reason: str | None
     tool_calls: list[Any] | None = None
+    usage: dict[str, int] | None = None
+
+
+def read_usage(response: Any) -> dict[str, int] | None:
+    """Normalize a chunk's (or a completion's) ``usage`` object to plain int fields. Two real
+    wire shapes for the usage chunk: engines emit it with ``choices: []``, while a proxying
+    router re-emits it with a non-empty choices list whose delta is all-null — so usage is read
+    off the top-level object, never gated on the choices shape. A missing ``total_tokens`` is
+    derived from the two parts when both are present; a server that reports nothing → ``None``
+    (recorded as "not reported", never faked)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    out: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, (int, float)):
+            out[key] = int(value)
+    if "total_tokens" not in out and "prompt_tokens" in out and "completion_tokens" in out:
+        out["total_tokens"] = out["prompt_tokens"] + out["completion_tokens"]
+    return out or None
+
+
+def merge_usage(
+    acc: dict[str, int] | None, turn: Mapping[str, int] | None
+) -> dict[str, int] | None:
+    """Sum one model turn's token usage into the accumulator — a multi-turn tool loop is one llm
+    node, so its span carries the node's TOTAL usage across turns. ``None`` in, ``acc`` out (a
+    turn without usage never zeroes what earlier turns reported)."""
+    if not turn:
+        return acc
+    merged = dict(acc or {})
+    for key, value in turn.items():
+        merged[key] = merged.get(key, 0) + int(value)
+    return merged
+
+
+def usage_attributes(usage: Mapping[str, int] | None) -> dict[str, Any]:
+    """GenAI-semconv span attributes for accumulated token usage. ``total_tokens`` is the key the
+    quota gate sums over spans (read, not re-metered); input/output are the semconv splits the
+    waterfall reads (tok/s). Empty when the server reported nothing — an absent attribute is an
+    honest 'unreported', a zero would be a fake measurement."""
+    if not usage:
+        return {}
+    attrs: dict[str, Any] = {}
+    if "prompt_tokens" in usage:
+        attrs["gen_ai.usage.input_tokens"] = usage["prompt_tokens"]
+    if "completion_tokens" in usage:
+        attrs["gen_ai.usage.output_tokens"] = usage["completion_tokens"]
+    if "total_tokens" in usage:
+        attrs["gen_ai.usage.total_tokens"] = usage["total_tokens"]
+    return attrs
 
 
 def parse_chunk(chunk: Any) -> ChunkDelta:
     """The one streaming-chunk parser the ``execute_llm`` body uses (and, via it, both runtimes): a
     reasoning model emits ``reasoning_content`` (thinking) before ``content`` (the answer), kept
-    distinct (m9.md reasoning split); M21 also surfaces ``tool_calls`` for the loop."""
+    distinct (m9.md reasoning split); M21 also surfaces ``tool_calls`` for the loop. Token usage is
+    read before the choices guard — the usage chunk's choices list is empty (or all-null through a
+    proxy), so gating on choices would drop it."""
 
+    usage = read_usage(chunk)
     if not chunk.choices:
-        return ChunkDelta(None, None, None)
+        return ChunkDelta(None, None, None, usage=usage)
     choice = chunk.choices[0]
     finish_reason = choice.finish_reason
     delta = choice.delta
     if delta is None:
-        return ChunkDelta(None, None, finish_reason)
+        return ChunkDelta(None, None, finish_reason, usage=usage)
     return ChunkDelta(
         reasoning=getattr(delta, "reasoning_content", None),
         content=getattr(delta, "content", None),
         finish_reason=finish_reason,
         tool_calls=getattr(delta, "tool_calls", None),
+        usage=usage,
     )
 
 
@@ -617,6 +675,9 @@ class LlmActivityResult:
     finish_reason: str | None
     truncated_empty: bool
     tool_calls: tuple[ToolCall, ...] = ()
+    # This turn's token usage as the server reported it ({prompt,completion,total}_tokens), or
+    # None when the upstream didn't report any — the caller aggregates turns onto the node span.
+    usage: dict[str, int] | None = None
 
 
 async def execute_llm(
@@ -646,14 +707,18 @@ async def execute_llm(
         extra_headers=extra_headers,
         tools=tools,
         tool_choice=tool_choice,
+        include_usage=True,  # the final chunk carries token usage → the node span / quota gate
     )
     output = ""
     finish_reason: str | None = None
+    usage: dict[str, int] | None = None
     tool_acc: dict[int, dict[str, Any]] = {}
     async for chunk in upstream:
         parsed = parse_chunk(chunk)
         if parsed.finish_reason:
             finish_reason = parsed.finish_reason
+        if parsed.usage:
+            usage = parsed.usage
         if parsed.reasoning and on_delta is not None:
             on_delta(parsed.reasoning, "reasoning")
         if parsed.content:
@@ -668,6 +733,7 @@ async def execute_llm(
         finish_reason=finish_reason,
         truncated_empty=truncated_empty,
         tool_calls=tuple(_finalize_tool_calls(tool_acc)),
+        usage=usage,
     )
 
 
@@ -1994,6 +2060,7 @@ async def _walk_llm(
     first_token_ns: int | None = None
     final_output = ""
     final_finish: str | None = None
+    usage_acc: dict[str, int] | None = None
     truncated = False
     capped = False
     async with gen_cm as gen_scope:
@@ -2051,6 +2118,7 @@ async def _walk_llm(
                         await task
 
             final_finish = turn.finish_reason
+            usage_acc = merge_usage(usage_acc, turn.usage)  # node total across tool-loop turns
             # No tool calls (or the node has no tools — legacy or capability) → answer is final.
             if not (turn.tool_calls and has_tools):
                 final_output = turn.output
@@ -2101,13 +2169,16 @@ async def _walk_llm(
                 tool_choice = "auto"
             iteration += 1
 
-        # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model).
+        # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model,
+        # token usage). Usage lands on THIS span only (never mirrored onto the node span) — the
+        # quota gate SUMS the attribute across a run's spans, so a mirror would double-count.
         if gen_scope is not None:
             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
             if final_finish is not None:
                 attrs["gen_ai.response.finish_reason"] = final_finish
             if first_token_ns is not None:
                 attrs["ttft_ms"] = round((first_token_ns - gen_scope.span.start_ns) / 1e6, 1)
+            attrs.update(usage_attributes(usage_acc))
             gen_scope.set_attributes(attrs)
 
     # Mirror the model id onto the node span too, so the waterfall's left rail can label the llm

@@ -84,6 +84,7 @@ class GatewayClient:
         extra_headers: Mapping[str, str] | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_choice: Any = None,
+        include_usage: bool = False,
     ) -> Any:
         """Open a streaming completion and return the async stream of chunks.
 
@@ -96,6 +97,13 @@ class GatewayClient:
         contract is explicit and type-checked. The inference plane forwards them to the engine
         (no inference-side change); a model that ignores them simply streams content. Forwarded
         only when set, so a tools-less call is byte-identical to pre-M21.
+
+        ``include_usage`` requests token accounting on the stream via the OpenAI
+        ``stream_options`` field: the server appends a final chunk carrying ``usage``
+        (verified against real local engines, which emit it only when asked). Another
+        named transport-seam extension — off by default, so a plain call is unchanged;
+        an upstream that ignores the field simply streams without usage (the caller must
+        treat missing usage as "not reported", never fail on it).
         """
         # The SDK's typed overloads can't model a dynamic **params splat alongside the
         # stream literal, so the checker can't pick an overload; the call is correct.
@@ -104,6 +112,7 @@ class GatewayClient:
             messages=messages,  # type: ignore[arg-type]
             stream=True,
             extra_headers=dict(extra_headers) if extra_headers else None,
+            **({"stream_options": {"include_usage": True}} if include_usage else {}),
             **_tool_kwargs(tools, tool_choice),
             **_clean_params(params),
         )

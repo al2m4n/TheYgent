@@ -63,6 +63,13 @@ describe("Palette (derived from the registry, never hardcoded)", () => {
     expect(screen.queryByText(boundary.type)).not.toBeInTheDocument();
   });
 
+  it("click-to-add: clicking an item calls onAdd with its node type", () => {
+    const added: string[] = [];
+    render(<Palette onAdd={(t) => added.push(t)} />);
+    fireEvent.click(screen.getByText("llm"));
+    expect(added).toEqual(["llm"]);
+  });
+
   it("filters by the search box and shows an empty state when nothing matches", () => {
     const some = NODE_TYPE_LIST[0];
     render(<Palette />);

@@ -107,10 +107,12 @@ from theygent_control_plane.walker import (
     is_http_tool,
     llm_models,
     mcp_config_from_connection,
+    merge_usage,
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
     tool_result_message,
+    usage_attributes,
 )
 from theygent_control_plane.walker import ToolCall as _ToolCall
 
@@ -296,6 +298,10 @@ async def _llm_step(
         "tool_calls": [
             {"id": c.id, "name": c.name, "arguments": c.arguments} for c in out.tool_calls
         ],
+        # Token usage journals WITH the turn: a replayed step re-reports the same usage instead of
+        # re-metering (and a resumed run never loses a completed turn's accounting). None when the
+        # upstream reported nothing; readers use .get() so pre-usage journal entries replay fine.
+        "usage": out.usage,
     }
 
 
@@ -875,6 +881,7 @@ async def _durable_walk(
                     )
                     final_output = ""
                     final_finish: str | None = None
+                    usage_acc: dict[str, int] | None = None
                     truncated = False
                     capped = False
                     async with gen_cm as gen_scope:
@@ -890,6 +897,9 @@ async def _durable_walk(
                                 tool_choice,
                             )
                             final_finish = res.get("finish_reason")
+                            # Node total across tool-loop turns (.get: pre-usage journal entries
+                            # replay without the key).
+                            usage_acc = merge_usage(usage_acc, res.get("usage"))
                             calls = [
                                 _ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"])
                                 for c in res.get("tool_calls", [])
@@ -933,10 +943,14 @@ async def _durable_walk(
                             if tool_choice is not None and tool_choice != "auto":
                                 tool_choice = "auto"
                             iteration += 1
+                        # Usage lands on the generate span only (never mirrored onto the node
+                        # span) — the quota gate sums across a run's spans; a mirror would
+                        # double-count.
                         if gen_scope is not None:
                             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
                             if final_finish:
                                 attrs["gen_ai.response.finish_reason"] = final_finish
+                            attrs.update(usage_attributes(usage_acc))
                             gen_scope.set_attributes(attrs)
                     if truncated or (capped and _is_blank(final_output)):
                         truncated_empty_nodes.append(node.id)

@@ -98,8 +98,10 @@ from theygent_control_plane.walker import (
     audio_model_nodes,
     llm_models,
     mcp_tool_nodes,
+    read_usage,
     resolve_model_key,
     tool_nodes,
+    usage_attributes,
     walk,
 )
 
@@ -755,7 +757,11 @@ def create_app(
         # stream (mirrors inference `_serve_managed`).
         try:
             upstream = await gw.open_stream(
-                model=run.model, messages=messages, params=params, extra_headers=_headers(run)
+                model=run.model,
+                messages=messages,
+                params=params,
+                extra_headers=_headers(run),
+                include_usage=True,  # final chunk carries token usage → the llm span
             )
         except APIStatusError as exc:
             status, code, message = _map_inference_error(exc)
@@ -784,10 +790,14 @@ def create_app(
                 output = ""
                 finish_reason: str | None = None
                 first_token_ns: int | None = None
+                usage: dict[str, int] | None = None
                 # M17: the generation is the run's single ``llm`` node span (under the run-root) —
                 # the gap before it is the open_stream/engine latency; the bar is the generation.
                 async with run_trace.node_span(_PROMPT_NODE) as scope:
                     async for chunk in upstream:
+                        # Usage rides the stream's final chunk, whose choices list is empty (or
+                        # all-null through a proxy) — read it BEFORE the choices guard.
+                        usage = read_usage(chunk) or usage
                         if not chunk.choices:
                             continue
                         choice = chunk.choices[0]
@@ -814,6 +824,7 @@ def create_app(
                         attrs["gen_ai.response.finish_reason"] = finish_reason
                     if first_token_ns is not None:
                         attrs["ttft_ms"] = round((first_token_ns - scope.span.start_ns) / 1e6, 1)
+                    attrs.update(usage_attributes(usage))
                     scope.set_attributes(attrs)
                 # Success: mark completed AND append the turn pair in ONE transaction (§4). M9 §2.2
                 # persists the output; an empty answer (model hit its token cap before producing
@@ -893,6 +904,8 @@ def create_app(
                     {
                         "gen_ai.request.model": run.model,
                         "gen_ai.response.finish_reason": finish_reason,
+                        # A non-stream completion carries usage on the response body itself.
+                        **usage_attributes(read_usage(completion)),
                     }
                 )
         except APIStatusError as exc:

@@ -140,6 +140,13 @@ async def test_durable_run_records_worker_attribution_and_queue_wait(pg_url: str
         assert s.worker_host  # host:pid
     queue_wait = next((s for s in spans if s.phase == "queue_wait"), None)
     assert queue_wait is not None and queue_wait.end_ns >= queue_wait.start_ns
+    # The streamed token usage the llm step journals lands on the model.generate span on the
+    # DURABLE path too — the quota gate reads it back regardless of which runtime ran the agent.
+    gen = next(s for s in spans if s.phase == "model.generate")
+    gen_attrs = gen.attributes or {}
+    assert gen_attrs["gen_ai.usage.total_tokens"] == 3
+    assert gen_attrs["gen_ai.usage.input_tokens"] == 1
+    assert gen_attrs["gen_ai.usage.output_tokens"] == 2
 
 
 async def test_resume_does_not_duplicate_spans_and_preserves_worker(pg_url: str) -> None:

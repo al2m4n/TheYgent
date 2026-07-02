@@ -1,6 +1,7 @@
 import {
   addNode,
   connect,
+  defaultAddPosition,
   deleteEdges,
   deleteNodes,
   duplicateNode,
@@ -212,6 +213,26 @@ describe("canvas edits produce valid IR (§4)", () => {
     // its position landed in the view, not in hashed content.
     const view = next.view as ViewBlock;
     expect(view.nodes?.[added?.id ?? ""]?.position).toEqual({ x: 200, y: 300 });
+  });
+
+  it("defaultAddPosition cascades off the last node so click-added nodes never stack", () => {
+    // Click-to-add has no drop point — the position is derived from the IR alone.
+    const ir = sampleGraph();
+    const lastId = ir.nodes?.[ir.nodes.length - 1]?.id ?? "";
+    const lastPos = (ir.view as ViewBlock).nodes?.[lastId]?.position;
+    if (!lastPos) throw new Error("fixture needs a view position on the last node");
+    expect(defaultAddPosition(ir)).toEqual({ x: lastPos.x + 40, y: lastPos.y + 40 });
+
+    // Two successive click-adds land at DIFFERENT spots (each cascades off the previous add).
+    const once = addNode(ir, "tool", defaultAddPosition(ir));
+    const twice = addNode(once, "tool", defaultAddPosition(once));
+    const view = twice.view as ViewBlock;
+    const added = (twice.nodes ?? []).slice(-2).map((n) => view.nodes?.[n.id]?.position);
+    expect(added[1]).toEqual({ x: (added[0]?.x ?? 0) + 40, y: (added[0]?.y ?? 0) + 40 });
+
+    // An empty graph starts at the layout origin.
+    const empty = { ...sampleGraph(), nodes: [], edges: [], view: {} };
+    expect(defaultAddPosition(empty)).toEqual({ x: 60, y: 60 });
   });
 
   it("connect creates a valid data edge referencing real handles", () => {
