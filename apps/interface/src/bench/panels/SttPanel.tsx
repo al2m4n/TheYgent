@@ -1,15 +1,15 @@
-// Speech-to-text panel (M18 §2.2) — upload audio → transcript; metric = latency + real-time factor
-// (audio-sec ÷ processing-sec). Data plane direct (multipart → {text}), §10.
+// Speech-to-text panel — upload audio → transcript; metric = latency + real-time factor
+// (audio-sec ÷ processing-sec). Data plane direct (multipart → {text}).
 
 import { useRef, useState } from "react";
-import { Button, Field } from "../../components/ui";
+import { Button, ErrorBanner, Field } from "../../components/ui";
 import type { BenchRunInput } from "../../lib/api";
 import { ParamForm } from "../ParamForm";
 import { transcribe } from "../dataplane";
 import { type BenchMetrics, computeSttMetrics } from "../metrics";
 import { type ParamSpec, coerceParam, paramsForModality } from "../params";
 import type { PanelProps } from "../registry";
-import { MetricsView, SaveResultButton, useParams } from "../shared";
+import { MetricsView, SavePresetButton, SaveResultButton, useParams } from "../shared";
 
 // STT params are string form fields forwarded to the multipart body.
 function stringParams(specs: ParamSpec[], values: Record<string, string>): Record<string, string> {
@@ -68,7 +68,7 @@ export function SttPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pan
         <input
           type="file"
           accept="audio/*"
-          className="text-sm text-slate-300"
+          className="w-full text-sm text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-slate-200"
           onChange={(e) => {
             const f = e.target.files?.[0] ?? null;
             setFile(f);
@@ -91,13 +91,21 @@ export function SttPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pan
         </Button>
         {metrics && <SaveResultButton build={buildRecord} onSaved={onRecorded} />}
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <ErrorBanner error={error} />
       {text && (
         <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
           {text}
         </pre>
       )}
       {metrics && <MetricsView metrics={metrics} />}
+      {metrics && (
+        <SavePresetButton
+          modality="audio.transcription"
+          logicalId={logicalId}
+          params={form.params}
+          caps={caps}
+        />
+      )}
     </div>
   );
 }

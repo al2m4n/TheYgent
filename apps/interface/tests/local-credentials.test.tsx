@@ -71,8 +71,9 @@ describe("Local credentials", () => {
     expect(put?.body).toEqual({ value: "sk-ant" });
     expect(put?.path).toContain("ANTHROPIC_API_KEY");
 
-    // remove one → a DELETE fires
-    fireEvent.click(screen.getAllByRole("button", { name: "remove" })[0]);
+    // remove one — the first click arms the confirmation, the second fires the DELETE
+    fireEvent.click(screen.getAllByRole("button", { name: "Remove" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm remove?" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
   });
 });

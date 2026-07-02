@@ -1,17 +1,28 @@
-// Home — the Agents page: saved agents (M11) as a compact card grid. Each card shows a live preview
-// of the agent's graph (rendered from its latest IR; falls back to a placeholder identicon for an
-// agent with no saved version), the name + key metadata (version, node count, last modified), and a
-// footer with the author + a "bench" action. Click a card to open the agent on the canvas. A search
-// + sort bar sits on top. Read-only over the registry; no new endpoints.
+// Home — the Agents page: saved agents from the registry as a compact card grid. Each card shows a
+// live preview of the agent's graph (rendered from its latest IR; falls back to a placeholder
+// identicon for an agent with no saved version), the name + key metadata (version, node count, last
+// modified), and a footer with the author + a Bench action. Click a card to open the agent on the
+// canvas. A search + sort bar sits on top. Read-only over the registry; no new endpoints.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentBench } from "../bench/AgentBench";
 import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
 import { FilterBar } from "../components/Filters";
 import { GraphPreview } from "../components/GraphPreview";
-import { Badge, Button, Modal, Page } from "../components/ui";
+import {
+  Badge,
+  Button,
+  Empty,
+  ErrorBanner,
+  Modal,
+  Page,
+  Select,
+  Spinner,
+  buttonClass,
+} from "../components/ui";
 import { fromStoredVersion } from "../lib/agent";
 import { type AgentDetail, type AgentSummary, api } from "../lib/api";
 import { relativeTime } from "../lib/format";
@@ -57,40 +68,42 @@ export function Home() {
   }, [agents, sort, q]);
 
   return (
-    <Page className="space-y-5">
+    <Page className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-slate-100">My Agents</h1>
-          <p className="text-sm text-slate-500">
+          <h1 className="text-lg font-semibold text-slate-100">Agents</h1>
+          <p className="text-xs text-slate-500">
             Your saved agents — open one on the canvas, bench it, or create a new one.
           </p>
         </div>
-        <Link to="/editor" search={{ agent: undefined, version: undefined }}>
-          <Button variant="primary">＋ Create an Agent</Button>
+        <Link
+          to="/editor"
+          search={{ agent: undefined, version: undefined }}
+          className={buttonClass("primary", "shrink-0")}
+        >
+          <Plus size={14} /> New agent
         </Link>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-500">Loading…</p>}
-      {error && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-          Could not reach the control plane: {(error as Error).message}
-        </p>
-      )}
+      {isLoading && <Spinner />}
+      <ErrorBanner
+        error={error && `Could not reach the control plane: ${(error as Error).message}`}
+      />
 
       {agents && agents.length === 0 && (
-        <div className="rounded-xl border border-dashed border-slate-800 px-6 py-16 text-center">
-          <p className="text-sm text-slate-400">No saved agents yet.</p>
+        <Empty>
+          <p>No saved agents yet.</p>
           <p className="mt-1 text-xs text-slate-600">
             Create one on the canvas and save it to see it here.
           </p>
           <Link
             to="/editor"
             search={{ agent: undefined, version: undefined }}
-            className="mt-4 inline-block"
+            className={buttonClass("primary", "mt-4")}
           >
-            <Button variant="primary">＋ Create an Agent</Button>
+            <Plus size={14} /> New agent
           </Link>
-        </div>
+        </Empty>
       )}
 
       {agents && agents.length > 0 && (
@@ -105,25 +118,23 @@ export function Home() {
             trailing={
               <label className="flex items-center gap-1.5 text-xs text-slate-500">
                 Sort
-                <select
+                <Select
                   value={sort}
                   onChange={(e) => setSort(e.target.value as Sort)}
-                  className="rounded-md border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-200 outline-none focus:border-blue-500"
+                  className="!w-auto"
                 >
                   {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
                     <option key={s} value={s}>
                       {SORT_LABEL[s]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             }
           />
 
           {shown.length === 0 ? (
-            <p className="px-1 py-8 text-center text-sm text-slate-500">
-              No agents match the current filters.
-            </p>
+            <Empty>No agents match the current filters.</Empty>
           ) : (
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
               {shown.map((a) => (
@@ -208,7 +219,7 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
           type="button"
           onClick={reroll}
           title="Change thumbnail (placeholder)"
-          className="absolute top-2 right-2 z-10 rounded-md border border-white/20 bg-black/40 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/60 group-hover:opacity-100"
+          className="absolute top-2 right-2 z-10 rounded-md border border-white/20 bg-black/40 px-2 py-0.5 text-[11px] font-medium text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/60 focus-visible:opacity-100 group-hover:opacity-100"
         >
           Change
         </button>
@@ -222,7 +233,7 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
           onClick={onBench}
           className="!px-2 !py-1 text-xs"
         >
-          bench
+          Bench
         </Button>
       </div>
     </div>
@@ -232,15 +243,17 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
 // Loads the agent's detail (its version list) then opens the agent bench. Scoped to the open modal
 // so the detail fetch happens on demand, not for every card.
 function BenchModal({ agentId, onClose }: { agentId: string; onClose: () => void }) {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["agent", agentId],
     queryFn: () => api.getAgent(agentId),
   });
   const agent = data as AgentDetail | undefined;
   return (
     <Modal title={agent ? `Bench · ${agent.name}` : "Bench"} width="max-w-5xl" onClose={onClose}>
-      {isLoading || !agent ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+      {error ? (
+        <ErrorBanner error={error} />
+      ) : isLoading || !agent ? (
+        <Spinner />
       ) : agent.versions.length === 0 ? (
         <p className="text-sm text-slate-500">This agent has no versions yet.</p>
       ) : (

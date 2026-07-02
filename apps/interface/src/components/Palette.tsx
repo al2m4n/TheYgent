@@ -1,6 +1,6 @@
-// The node palette — derived ENTIRELY from the node-type registry (M15 §2.2 / Do-NOT: never
-// hardcode the type list). An M14-style type added in `packages/ir` shows up here for free after a
-// `generate`. Drag an item onto the canvas to drop a new node of that type.
+// The node palette — derived ENTIRELY from the node-type registry (never hardcode the type list).
+// A node type added in `packages/ir` shows up here for free after a `generate`. Drag an item onto
+// the canvas to drop a new node of that type, or click it to add one at a default position.
 //
 // Nodes are grouped by their determinism `kind` (the registry's own taxonomy — boundary/activity/
 // orchestration), with category filter chips + a text search so a long type list stays navigable.
@@ -10,6 +10,7 @@
 import { NODE_TYPE_LIST, type NodeTypeSpec } from "@theygent/ir-types";
 import { ChevronRight, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
+import { toneOf } from "../lib/categories";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { Badge } from "./ui";
 
@@ -19,8 +20,8 @@ const KIND_TONE: Record<string, string> = {
   orchestration: "amber",
 };
 
-// M22 D1: types the palette deliberately hides because they're a *kind* of another node rather than
-// a separate drag target. `mcp_tool` is the MCP kind of the one "Tool" node (chosen in the inspector).
+// Types the palette deliberately hides because they're a *kind* of another node rather than a
+// separate drag target. `mcp_tool` is the MCP kind of the one "Tool" node (chosen in the inspector).
 const HIDDEN_PALETTE_TYPES = new Set(["mcp_tool"]);
 
 // Friendlier category labels (the chip + group header text). A kind without an entry falls back to
@@ -36,7 +37,7 @@ function kindLabel(kind: string): string {
   return KIND_LABEL[kind] ?? kind;
 }
 
-export function Palette() {
+export function Palette({ onAdd }: { onAdd?: (type: string) => void } = {}) {
   const [query, setQuery] = useState("");
   const [activeKind, setActiveKind] = useState<string | null>(null);
   // Per-category collapse — categories are collapsible but EXPANDED by default (a kind is collapsed
@@ -62,8 +63,8 @@ export function Palette() {
 
   const q = query.trim().toLowerCase();
   const matches = (spec: NodeTypeSpec) =>
-    // M22 D1: `mcp_tool` is not its own palette entry — it's the MCP *kind* of the one "Tool" node
-    // (pick it in the inspector). A loaded graph's mcp_tool nodes still render; you just don't drop a
+    // `mcp_tool` is not its own palette entry — it's the MCP *kind* of the one "Tool" node (pick it
+    // in the inspector). A loaded graph's mcp_tool nodes still render; you just don't drop a
     // separate one. The type still exists in the registry (runtime/IR unchanged).
     !HIDDEN_PALETTE_TYPES.has(spec.type) &&
     (!activeKind || spec.kind === activeKind) &&
@@ -133,7 +134,26 @@ export function Palette() {
       {/* grouped, filtered list */}
       <div className="flex-1 overflow-y-auto p-2">
         {total === 0 ? (
-          <p className="px-1 py-6 text-center text-xs text-slate-600">No nodes match “{query}”.</p>
+          // Name every active filter (search AND category), and offer a one-click reset — clearing
+          // just the query may not be enough to bring items back.
+          <div className="px-1 py-6 text-center text-xs text-slate-600">
+            <p>
+              {q !== "" ? `No nodes match “${query.trim()}”` : "No nodes"}
+              {activeKind ? ` in ${kindLabel(activeKind)}` : ""}.
+            </p>
+            {(q !== "" || activeKind !== null) && (
+              <button
+                type="button"
+                className="mt-2 text-slate-400 hover:text-slate-200"
+                onClick={() => {
+                  setQuery("");
+                  setActiveKind(null);
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
         ) : (
           groups.map((g) => {
             const isCollapsed = collapsed.has(g.kind);
@@ -158,15 +178,23 @@ export function Palette() {
                 {!isCollapsed && (
                   <div className="space-y-1.5">
                     {g.items.map((spec) => (
-                      <div
+                      // A real button so keyboard users can add a node (Enter/Space); drag stays the
+                      // pointer fast-path for precise placement.
+                      <button
                         key={spec.type}
+                        type="button"
                         draggable
                         onDragStart={(e) => {
                           e.dataTransfer.setData("application/theygent-node-type", spec.type);
                           e.dataTransfer.effectAllowed = "move";
                         }}
-                        className="flex cursor-grab items-center justify-between rounded-md border border-slate-800 bg-[var(--c-surface-2)] px-2.5 py-2 hover:border-slate-600 active:cursor-grabbing"
-                        title={`Drag to add a ${spec.type} node (${spec.kind})`}
+                        onClick={() => onAdd?.(spec.type)}
+                        className="flex w-full cursor-grab items-center justify-between rounded-md border border-slate-800 bg-[var(--c-surface-2)] px-2.5 py-2 text-left hover:border-slate-600 active:cursor-grabbing"
+                        title={
+                          onAdd
+                            ? `Click or drag to add a ${spec.type} node (${spec.kind})`
+                            : `Drag to add a ${spec.type} node (${spec.kind})`
+                        }
                       >
                         <span className="flex items-center gap-1.5">
                           <NodeIcon
@@ -177,7 +205,7 @@ export function Palette() {
                           <span className="mono text-xs text-slate-200">{spec.type}</span>
                         </span>
                         <Badge tone={KIND_TONE[spec.kind] ?? "slate"}>{spec.kind}</Badge>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
@@ -201,22 +229,21 @@ function Chip({
   onClick: () => void;
   children: React.ReactNode;
 }) {
-  const dot: Record<string, string> = {
-    green: "bg-emerald-400",
-    blue: "bg-blue-400",
-    amber: "bg-amber-400",
-  };
+  // Colours come from the shared tone system (lib/categories) so a selected chip paints the same
+  // as the category's badge everywhere; the tone-less "All" chip falls back to slate.
+  const t = toneOf(tone);
   return (
     <button
       type="button"
+      aria-pressed={active}
       onClick={onClick}
       className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
         active
-          ? "border-blue-500 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-200"
+          ? t.activeChip
           : "border-slate-700 bg-[var(--c-surface-2)] text-slate-400 hover:border-slate-500 hover:text-slate-200"
       }`}
     >
-      {tone && <span className={`h-1.5 w-1.5 rounded-full ${dot[tone] ?? "bg-slate-400"}`} />}
+      {tone && <span className={`h-1.5 w-1.5 rounded-full ${t.dot}`} />}
       {children}
     </button>
   );

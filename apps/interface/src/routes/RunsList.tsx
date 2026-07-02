@@ -1,13 +1,23 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { CategoryBadge, FilterBar } from "../components/Filters";
-import { Empty, ErrorBanner, Page, Spinner, Table, Td, Th } from "../components/ui";
+import {
+  Empty,
+  ErrorBanner,
+  Page,
+  Spinner,
+  Table,
+  Td,
+  Th,
+  buttonClass,
+  linkClass,
+} from "../components/ui";
 import { countBy, statusTone, toggle } from "../lib/categories";
 import { relativeTime, shortId } from "../lib/format";
 import { useRuns } from "../queries";
 
 // The natural status reading order (lifecycle), so the chips don't reorder as counts change.
-const STATUS_ORDER = ["created", "streaming", "completed", "failed"];
+const STATUS_ORDER = ["created", "streaming", "waiting", "completed", "failed"];
 
 export function RunsList() {
   const { data: runs, isLoading, error } = useRuns(50);
@@ -48,10 +58,7 @@ export function RunsList() {
           <h1 className="text-lg font-semibold text-slate-100">Runs</h1>
           <p className="text-xs text-slate-500">Most recent 50 · auto-refreshing every 3s</p>
         </div>
-        <Link
-          to="/compose"
-          className="shrink-0 rounded-md border border-blue-500 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
-        >
+        <Link to="/compose" className={buttonClass("primary", "shrink-0")}>
           New run
         </Link>
       </div>
@@ -63,7 +70,7 @@ export function RunsList() {
       ) : !runs || runs.length === 0 ? (
         <Empty>
           No runs yet.{" "}
-          <Link to="/compose" className="text-blue-400 hover:text-blue-300">
+          <Link to="/compose" className={linkClass}>
             Compose one →
           </Link>
         </Empty>
@@ -105,7 +112,7 @@ export function RunsList() {
                       <Link
                         to="/runs/$runId"
                         params={{ runId: run.id }}
-                        className="mono text-blue-400 hover:text-blue-300"
+                        className={`mono ${linkClass}`}
                       >
                         {run.id}
                       </Link>

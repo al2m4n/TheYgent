@@ -7,10 +7,11 @@ import { Button, Card, ErrorBanner, Field, Input, Page, Select, Textarea } from 
 import { ApiError } from "../lib/api";
 import { validateIR } from "../lib/ir-validate";
 import { startLiveRun } from "../lib/live";
+import { useTheme } from "../lib/theme";
 import { useAgentMutations, useModels, useThreads } from "../queries";
 
-// A known-good trivial IR (input → llm → output) so graph mode starts runnable. Mirrors the
-// m5.md §4 envelope; the user edits `models.default.model` to a registered logical id.
+// A known-good trivial IR (input → llm → output) so graph mode starts runnable. Follows the
+// standard document envelope; the user edits `models.default.model` to a registered logical id.
 const DEFAULT_IR = `{
   "schemaVersion": "1.0",
   "id": "agt_01J9X8COCKPIT",
@@ -38,7 +39,7 @@ const DEFAULT_IR = `{
   ]
 }`;
 
-// CodeMirror linter (M8 §3.1): surface IR issues as diagnostics. The semantic issues have no
+// CodeMirror linter: surface IR issues as diagnostics. The semantic issues have no
 // source position, so we anchor them to the document start — the backend stays authoritative.
 function irLinter() {
   return linter((view) => {
@@ -57,6 +58,7 @@ type Mode = "prompt" | "graph";
 export function Compose() {
   const search = useSearch({ from: "/compose" });
   const navigate = useNavigate();
+  const { resolved } = useTheme();
   const { data: models } = useModels();
   const { data: threads } = useThreads();
 
@@ -75,7 +77,7 @@ export function Compose() {
   const irIssues = useMemo(() => validateIR(ir).issues, [ir]);
   const irBlocking = irIssues.some((i) => i.severity === "error");
 
-  // M11 "Save as agent": persist the IR currently in the editor as a saved, versioned agent. A new
+  // "Save as agent": persist the IR currently in the editor as a saved, versioned agent. A new
   // agent id → create; an existing id → add a version (the IR's `version` is the new coordinate).
   const { create, addVersion } = useAgentMutations();
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -118,7 +120,7 @@ export function Compose() {
     try {
       let runId: string;
       if (mode === "prompt") {
-        if (!model) throw new Error("pick a model");
+        if (!model) throw new Error("Pick a model first");
         runId = await startLiveRun("/runs", {
           input,
           model,
@@ -150,18 +152,17 @@ export function Compose() {
     <Page className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-lg font-semibold text-slate-100">Compose a run</h1>
-        <div className="flex rounded-md border border-slate-700 p-0.5">
+        <div className="flex items-center gap-2">
           {(["prompt", "graph"] as const).map((m) => (
-            <button
+            <Button
               key={m}
-              type="button"
+              variant={mode === m ? "primary" : "ghost"}
+              className="capitalize"
+              aria-pressed={mode === m}
               onClick={() => setMode(m)}
-              className={`rounded px-3 py-1 text-sm capitalize ${
-                mode === m ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:text-slate-200"
-              }`}
             >
               {m} mode
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -201,16 +202,19 @@ export function Compose() {
               />
             </Field>
             <div className="space-y-1">
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-400">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
                 IR document (JSON)
               </span>
               <div className="overflow-hidden rounded-md border border-slate-700">
                 <CodeMirror
                   value={ir}
                   height="340px"
-                  theme="dark"
+                  theme={resolved === "light" ? "light" : "dark"}
                   extensions={extensions}
-                  onChange={setIr}
+                  onChange={(v) => {
+                    setIr(v);
+                    setSaveMsg(null);
+                  }}
                 />
               </div>
               {irIssues.length > 0 ? (
@@ -218,14 +222,20 @@ export function Compose() {
                   {irIssues.map((issue) => (
                     <li
                       key={`${issue.severity}:${issue.message}`}
-                      className={issue.severity === "error" ? "text-rose-400" : "text-amber-400"}
+                      className={
+                        issue.severity === "error"
+                          ? "text-rose-700 dark:text-rose-300"
+                          : "text-amber-700 dark:text-amber-300"
+                      }
                     >
                       {issue.severity === "error" ? "✗" : "⚠"} {issue.message}
                     </li>
                   ))}
                 </ul>
               ) : (
-                <p className="pt-1 text-xs text-emerald-400">✓ IR looks structurally valid</p>
+                <p className="pt-1 text-xs text-emerald-700 dark:text-emerald-300">
+                  ✓ IR looks structurally valid
+                </p>
               )}
             </div>
           </>
@@ -248,21 +258,28 @@ export function Compose() {
         <div className="flex items-center gap-3">
           <Button
             variant="primary"
-            disabled={submitting || (mode === "graph" && irBlocking)}
+            disabled={
+              submitting || (mode === "prompt" && !model) || (mode === "graph" && irBlocking)
+            }
             onClick={submit}
           >
             {submitting ? "Starting…" : "Run & stream"}
           </Button>
+          {mode === "prompt" && !model && (
+            <span className="text-xs text-slate-500">select a model to run</span>
+          )}
           {mode === "graph" && (
             <Button variant="default" disabled={saving || irBlocking} onClick={saveAsAgent}>
               {saving ? "Saving…" : "Save as agent"}
             </Button>
           )}
           {mode === "graph" && irBlocking && (
-            <span className="text-xs text-rose-400">fix the IR errors to run</span>
+            <span className="text-xs text-rose-700 dark:text-rose-300">
+              fix the IR errors to run
+            </span>
           )}
           {mode === "graph" && saveMsg && (
-            <span className="text-xs text-emerald-400">{saveMsg}</span>
+            <span className="text-xs text-emerald-700 dark:text-emerald-300">{saveMsg}</span>
           )}
         </div>
       </Card>

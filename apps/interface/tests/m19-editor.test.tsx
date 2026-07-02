@@ -167,7 +167,7 @@ const emptyIr = {
   edges: [],
 } as IRDocument;
 
-describe("ConnectionsPanel: secret is write-only (§1.1)", () => {
+describe("ConnectionsPanel: secret is write-only", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (api.listConnections as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -188,7 +188,7 @@ describe("ConnectionsPanel: secret is write-only (§1.1)", () => {
     renderWithClient(
       <Inspector ir={emptyIr} selection={null} onChange={() => {}} onSelect={() => {}} />,
     );
-    fireEvent.click(screen.getByText("+ New connection"));
+    fireEvent.click(screen.getByText("New connection"));
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "CRM" } });
     fireEvent.change(screen.getByLabelText(/Secret/), { target: { value: "super-secret-xyz" } });
     fireEvent.click(screen.getByText("Create connection"));
@@ -200,13 +200,5 @@ describe("ConnectionsPanel: secret is write-only (§1.1)", () => {
     );
     // After a successful create the secret field is cleared — the value is never shown again.
     await waitFor(() => expect(screen.queryByDisplayValue("super-secret-xyz")).toBeNull());
-  });
-
-  it("shows the inert M16 'Browse hub' affordance (disabled until M16)", () => {
-    renderWithClient(
-      <Inspector ir={emptyIr} selection={null} onChange={() => {}} onSelect={() => {}} />,
-    );
-    const hub = screen.getByText("Browse hub (M16)");
-    expect(hub).toBeDisabled();
   });
 });

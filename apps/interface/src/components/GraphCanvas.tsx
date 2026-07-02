@@ -2,13 +2,14 @@
 // of truth for STRUCTURE + persistence; React Flow owns the transient interaction state (live drag,
 // measured node dimensions, in-pane selection) via useNodesState/useEdgesState. We seed RF from the
 // IR whenever the structure changes (add/connect/delete/relabel/load) and commit positions back to
-// the IR's `view` on drag stop — layout only, never hashed content (decision §1.4).
+// the IR's `view` on drag stop — layout only, never hashed content (the view block is stripped
+// before hashing, so a drag never bumps the version).
 //
 // Why not fully-controlled (nodes derived from the IR every render): React Flow persists measured
 // dimensions and drag state THROUGH its own change pipeline; re-deriving nodes each render drops
 // those, so edges/handles lose their anchor mid-drag and the graph flickers/disappears. Letting RF
 // own the interaction buffer (and only re-seeding on structure) is the supported pattern. RF's
-// node/edge types still never escape this component — the parent speaks only IR (the one rule, §0).
+// node/edge types still never escape this component — the parent speaks only IR (the one rule).
 
 import type { IRDocument } from "@theygent/ir-types";
 import {
@@ -125,6 +126,9 @@ function GraphCanvasInner({
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheygentRFNode>([]);
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheygentRFEdge>([]);
   const [menu, setMenu] = useState<Menu>(null);
+  // Pins the interaction legend open — the button click path for touch/keyboard users, who never
+  // get the hover reveal.
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Read-latest refs so event handlers stay stable but always see current state.
   const irRef = useRef(ir);
@@ -289,12 +293,39 @@ function GraphCanvasInner({
   }, []);
 
   // Right-click → a small context menu (delete / duplicate), positioned in CSS px in the wrapper.
+  // Coordinates are clamped so a click near the right/bottom edge doesn't push the menu outside
+  // the canvas.
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const openMenu = useCallback((e: React.MouseEvent, kind: "node" | "edge", id: string) => {
     e.preventDefault();
     const rect = wrapperRef.current?.getBoundingClientRect();
-    setMenu({ x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0), kind, id });
+    let x = e.clientX - (rect?.left ?? 0);
+    let y = e.clientY - (rect?.top ?? 0);
+    if (rect) {
+      x = Math.max(0, Math.min(x, rect.width - 150));
+      y = Math.max(0, Math.min(y, rect.height - 80));
+    }
+    setMenu({ x, y, kind, id });
   }, []);
+
+  // While the menu is open, Escape and any pointer press outside it dismiss it — pane-level
+  // handlers alone miss clicks that land on the toolbar/inspector.
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(null);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [menu]);
 
   const runMenu = (action: "delete" | "duplicate") => {
     if (!menu) return;
@@ -381,17 +412,30 @@ function GraphCanvasInner({
         )}
       </ReactFlow>
 
-      {/* interaction legend — collapsed behind a help icon, revealed on hover (hidden in minimal) */}
+      {/* interaction legend — collapsed behind a help icon, revealed on hover or focus, and
+          toggleable by click/Enter for touch and keyboard users (hidden in minimal) */}
       {!minimal && (
         <div className="group absolute left-3 top-3">
           <button
             type="button"
             aria-label="Canvas help"
+            aria-expanded={helpOpen}
+            onClick={() => setHelpOpen((v) => !v)}
+            onBlur={() => setHelpOpen(false)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setHelpOpen(false);
+            }}
             className="flex h-6 w-6 items-center justify-center rounded-full border border-slate-700 bg-[var(--c-surface)]/80 text-slate-400 transition-colors hover:border-slate-500 hover:text-slate-200"
           >
             <CircleHelp size={14} aria-hidden />
           </button>
-          <div className="pointer-events-none invisible absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[var(--c-surface)]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
+          <div
+            className={`pointer-events-none absolute left-0 top-8 w-max rounded-md border border-slate-800 bg-[var(--c-surface)]/95 px-2.5 py-1.5 text-[10px] leading-relaxed text-slate-500 shadow-lg transition-opacity ${
+              helpOpen
+                ? "visible opacity-100"
+                : "invisible opacity-0 group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
+            }`}
+          >
             <div>
               <span className="text-slate-300">Drag</span> a node from the palette to add
             </div>
@@ -419,12 +463,15 @@ function GraphCanvasInner({
 
       {menu && (
         <div
+          ref={menuRef}
+          role="menu"
           className="absolute z-10 min-w-[140px] overflow-hidden rounded-md border border-slate-700 bg-[var(--c-elev)] py-1 text-sm shadow-xl"
           style={{ left: menu.x, top: menu.y }}
         >
           {menu.kind === "node" && (
             <button
               type="button"
+              role="menuitem"
               className="block w-full px-3 py-1.5 text-left text-slate-200 hover:bg-[var(--c-hover)]"
               onClick={() => runMenu("duplicate")}
             >
@@ -433,6 +480,7 @@ function GraphCanvasInner({
           )}
           <button
             type="button"
+            role="menuitem"
             className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950"
             onClick={() => runMenu("delete")}
           >

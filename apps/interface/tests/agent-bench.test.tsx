@@ -56,9 +56,8 @@ describe("AgentBench version pin", () => {
     const pin = screen.getByRole("combobox") as HTMLSelectElement;
     expect(pin.value).toBe("0.1.2"); // latest, not the older llama-3.2 version
 
-    fireEvent.change(screen.getByPlaceholderText("run input…"), { target: { value: "hi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run" })); // open the Run dropdown
-    fireEvent.click(screen.getByRole("menuitem", { name: "Run" })); // pick a normal run
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
       expect(api.runAgent).toHaveBeenCalledWith("agent.docker", { input: "hi", version: "0.1.2" }),
     );
@@ -70,9 +69,8 @@ describe("AgentBench version pin", () => {
     fireEvent.change(pin, { target: { value: "0.1.1" } });
     expect(pin.value).toBe("0.1.1");
 
-    fireEvent.change(screen.getByPlaceholderText("run input…"), { target: { value: "hi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run" })); // open the Run dropdown
-    fireEvent.click(screen.getByRole("menuitem", { name: "Run" })); // pick a normal run
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
       expect(api.runAgent).toHaveBeenLastCalledWith("agent.docker", {
         input: "hi",
@@ -81,13 +79,13 @@ describe("AgentBench version pin", () => {
     );
   });
 
-  it("the Run dropdown offers Run + Durable-Run, and Durable-Run uses the durable endpoint", async () => {
+  it("the Run options menu offers Run + Run durably, and Run durably uses the durable endpoint", async () => {
     withQuery(<AgentBench agent={agent} />);
-    fireEvent.change(screen.getByPlaceholderText("run input…"), { target: { value: "5" } });
-    // A normal agent's primary button opens a menu with both paths.
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "5" } });
+    // The split button's caret opens a menu with both paths.
+    fireEvent.click(screen.getByRole("button", { name: "Run options" }));
     expect(screen.getByRole("menuitem", { name: "Run" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Durable-Run" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Run durably" }));
     await waitFor(() =>
       expect(api.runAgentDurable).toHaveBeenCalledWith("agent.docker", {
         input: "5",

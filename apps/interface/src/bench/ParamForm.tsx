@@ -1,7 +1,7 @@
-// The schema-driven, capability-narrowed param form (M18 §2.2). Renders a ParamSpec[] generically —
-// there is NO per-param JSX and NO `if modality === …` tree (the §1.2 data-driven discipline). The
-// specs handed in are already narrowed by `paramsForModality`, so a param the model can't support is
-// simply absent. A bounded numeric param (min+max) renders as a slider + number input bound together.
+// The schema-driven, capability-narrowed param form. Renders a ParamSpec[] generically — there is
+// NO per-param JSX and NO `if modality === …` tree (data-driven by design). The specs handed in are
+// already narrowed by `paramsForModality`, so a param the model can't support is simply absent. A
+// bounded numeric param (min+max) renders as a slider + number input bound together.
 
 import { Field, Input, Select } from "../components/ui";
 import type { ParamSpec } from "./params";
@@ -35,6 +35,9 @@ function SliderNumber({
         className="h-1.5 flex-1 cursor-pointer accent-blue-500"
         aria-label={spec.label}
       />
+      {/* The wrapping Field <label> associates with the range input (the first labelable child),
+          so the paired number box needs its own accessible name; sharing the label string is fine —
+          assistive tech disambiguates the two by role. */}
       <Input
         type="number"
         min={spec.min}
@@ -44,6 +47,7 @@ function SliderNumber({
         onChange={(e) => onChange(e.target.value)}
         data-param={spec.key}
         className="w-20"
+        aria-label={spec.label}
       />
     </div>
   );

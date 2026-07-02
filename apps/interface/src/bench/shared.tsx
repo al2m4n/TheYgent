@@ -1,11 +1,13 @@
-// Shared bits across the modality panels (M18 §2.1/§2.4/§2.7): the metrics readout, the param-value
-// hook, "save result" (record metrics to the bench store), and "save as preset" (a literal param
-// snippet — §1.7). Kept here so each panel stays a thin modality-specific shell.
+// Shared bits across the modality panels: the metrics readout, the param-value hook, "save result"
+// (record metrics to the bench store), and "save as preset" (a literal param snippet). Kept here so
+// each panel stays a thin modality-specific shell.
 
+import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Badge, Button, Input } from "../components/ui";
 import { api } from "../lib/api";
 import type { BenchRunInput, BenchRunRecord, Capabilities } from "../lib/api";
+import { notify } from "../lib/notify";
 import type { BenchMetrics } from "./metrics";
 import { type ParamSpec, coerceParam } from "./params";
 
@@ -26,6 +28,7 @@ const FMT: Record<string, (n: number) => string> = {
   totalMs: (n) => `${Math.round(n)} ms`,
   ttfbMs: (n) => `${Math.round(n)} ms`,
   tokensPerSec: (n) => `${n.toFixed(1)} tok/s`,
+  charsPerSec: (n) => `${n.toFixed(1)} chars/s`,
   promptTokens: (n) => String(n),
   completionTokens: (n) => String(n),
   cost: (n) => `$${n.toFixed(5)}`,
@@ -36,6 +39,7 @@ const LABEL: Record<string, string> = {
   totalMs: "Total",
   ttfbMs: "TTFB",
   tokensPerSec: "Throughput",
+  charsPerSec: "Throughput",
   promptTokens: "Prompt tok",
   completionTokens: "Completion tok",
   cost: "Cost",
@@ -59,7 +63,7 @@ export function MetricsView({ metrics }: { metrics: BenchMetrics }) {
   );
 }
 
-/** Record a captured result to the bench store (metrics + digests; capture opt-in — §1.6). */
+/** Record a captured result to the bench store (metrics + digests; capture is opt-in). */
 export function SaveResultButton({
   build,
   onSaved,
@@ -68,21 +72,22 @@ export function SaveResultButton({
   onSaved?: (rec: BenchRunRecord) => void;
 }) {
   const [saved, setSaved] = useState<BenchRunRecord | null>(null);
+  const save = useMutation({
+    mutationFn: () => api.recordBenchRun(build()),
+    onSuccess: (rec) => {
+      setSaved(rec);
+      onSaved?.(rec);
+    },
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+  });
   return (
-    <Button
-      variant="ghost"
-      onClick={async () => {
-        const rec = await api.recordBenchRun(build());
-        setSaved(rec);
-        onSaved?.(rec);
-      }}
-    >
-      {saved ? "Saved ✓" : "Save result"}
+    <Button variant="ghost" disabled={save.isPending} onClick={() => save.mutate()}>
+      {save.isPending ? "Saving…" : saved ? "Saved ✓" : "Save result"}
     </Button>
   );
 }
 
-/** Save the current params as a named, modality-scoped LITERAL preset (§1.7). */
+/** Save the current params as a named, modality-scoped LITERAL preset. */
 export function SavePresetButton({
   modality,
   logicalId,
@@ -97,10 +102,17 @@ export function SavePresetButton({
   void caps;
   const [name, setName] = useState("");
   const [saved, setSaved] = useState(false);
+  const create = useMutation({
+    mutationFn: () =>
+      api.createPreset({ name: name.trim(), modality, logical_id: logicalId, params }),
+    onSuccess: () => setSaved(true),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+  });
   return (
     <div className="flex items-center gap-2">
       <Input
-        placeholder="preset name"
+        placeholder="Preset name…"
+        aria-label="Preset name"
         value={name}
         onChange={(e) => {
           setName(e.target.value);
@@ -110,13 +122,10 @@ export function SavePresetButton({
       />
       <Button
         variant="ghost"
-        disabled={!name.trim()}
-        onClick={async () => {
-          await api.createPreset({ name: name.trim(), modality, logical_id: logicalId, params });
-          setSaved(true);
-        }}
+        disabled={!name.trim() || create.isPending}
+        onClick={() => create.mutate()}
       >
-        {saved ? "Preset saved ✓" : "Save as preset"}
+        {create.isPending ? "Saving…" : saved ? "Preset saved ✓" : "Save as preset"}
       </Button>
     </div>
   );

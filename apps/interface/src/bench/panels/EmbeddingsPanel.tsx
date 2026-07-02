@@ -1,8 +1,8 @@
-// Embeddings panel (M18 §2.2) — embed one or many inputs, show vector dims, cosine similarity
-// between two inputs. No contract change (§1.1 — /v1/embeddings already exists). Data plane direct.
+// Embeddings panel — embed one or many inputs, show vector dims, cosine similarity between two
+// inputs. No contract change (/v1/embeddings already exists). Data plane direct.
 
 import { useState } from "react";
-import { Button, Field, Input } from "../../components/ui";
+import { Button, ErrorBanner, Field, Input } from "../../components/ui";
 import type { BenchRunInput } from "../../lib/api";
 import { ParamForm } from "../ParamForm";
 import { embed } from "../dataplane";
@@ -70,10 +70,10 @@ export function EmbeddingsPanel({ logicalId, caps, binding, modelRef, onRecorded
   return (
     <div className="space-y-3">
       <Field label="Input A">
-        <Input value={a} onChange={(e) => setA(e.target.value)} placeholder="first text" />
+        <Input value={a} onChange={(e) => setA(e.target.value)} placeholder="First text…" />
       </Field>
       <Field label="Input B (optional — for cosine similarity)">
-        <Input value={b} onChange={(e) => setB(e.target.value)} placeholder="second text" />
+        <Input value={b} onChange={(e) => setB(e.target.value)} placeholder="Second text…" />
       </Field>
       <ParamForm specs={specs} values={form.values} onChange={form.set} />
       <div className="flex items-center gap-2">
@@ -82,7 +82,7 @@ export function EmbeddingsPanel({ logicalId, caps, binding, modelRef, onRecorded
         </Button>
         {metrics && <SaveResultButton build={buildRecord} onSaved={onRecorded} />}
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <ErrorBanner error={error} />
       {dims !== null && <p className="text-sm text-slate-300">Vector dims: {dims}</p>}
       {similarity !== null && (
         <p className="text-sm text-slate-300">Cosine similarity: {similarity.toFixed(4)}</p>

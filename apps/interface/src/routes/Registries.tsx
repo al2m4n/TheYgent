@@ -1,14 +1,15 @@
-// Registries (M16) — the model registry page of the interface.
+// Registries — the model registry page of the interface.
 //
-// The page opens on your INSTALLED models (the registry) with an "+ Add model" flow. Adding from a
+// The page opens on your INSTALLED models (the registry) with an "Add model" flow. Adding from a
 // hub is an *add-on*, not the headline: you paste a Hugging Face id/URL (or register a hosted/local
 // model by hand) right in the Add panel, or open the separate **Browse** screen (a dedicated
 // "add a model from a hub" surface, framed source-agnostic so other hubs slot in later).
 //
 // All data comes from the inference plane's /admin/* surface (the user-controlled plane). Discovery +
-// install run THERE — theygent never sees the download (the sovereignty promise, M16 §1.2).
+// install run THERE — theygent never sees the download (the sovereignty promise).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronUp, Download, Lock, Plus, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
 import { CategoryBadge, FilterBar } from "../components/Filters";
@@ -16,21 +17,24 @@ import {
   Badge,
   Button,
   Card,
+  ConfirmDialog,
   Empty,
   ErrorBanner,
   Field,
   Input,
   Modal,
+  NoteBanner,
   Page,
   Select,
   Spinner,
   Table,
   Td,
   Th,
+  linkClass,
 } from "../components/ui";
 import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api } from "../lib/api";
 import { countBy, engineTone, toggle } from "../lib/categories";
-import { formatBytes } from "../lib/format";
+import { formatBytes, relativeTime } from "../lib/format";
 import { notify, trackDownload } from "../lib/notify";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -38,14 +42,17 @@ import { notify, trackDownload } from "../lib/notify";
 const ENGINE_LABEL: Record<string, string> = { mlx: "MLX", llamacpp: "llama.cpp", vllm: "vLLM" };
 const engineLabel = (e: string) => ENGINE_LABEL[e] ?? e;
 
-function formatRelativeTime(iso: string | null | undefined): string | null {
+// Hub timestamps can be years old, so this wraps the shared relativeTime (identical output for
+// anything under a month — one formatter app-wide) and only adds coarse month/year buckets on top.
+// Returns null when the hub omits the date so the caller can drop the "updated …" segment entirely.
+function coarseRelativeTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const then = Date.parse(iso);
   if (Number.isNaN(then)) return null;
   const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days < 1) return "today";
-  if (days < 30) return `${days}d ago`;
-  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  if (days < 30) return relativeTime(iso);
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
   return `${Math.floor(days / 365)}y ago`;
 }
 
@@ -123,7 +130,13 @@ export function Registries() {
           <p className="text-xs text-slate-500">Models registered in your inference plane.</p>
         </div>
         <Button variant="primary" onClick={() => setAdding((a) => !a)}>
-          ＋ Add model
+          {adding ? (
+            "Close"
+          ) : (
+            <>
+              <Plus size={14} /> Add model
+            </>
+          )}
         </Button>
       </div>
 
@@ -163,7 +176,12 @@ function AddModelPanel({
     <Card className="mb-4 space-y-3 p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-200">Add a model</h2>
-        <button type="button" onClick={onClose} className="text-slate-500 hover:text-slate-300">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="text-slate-500 hover:text-slate-300"
+        >
           ✕
         </button>
       </div>
@@ -203,11 +221,13 @@ function AddModelPanel({
                 />
               </Field>
             </div>
-            <Button onClick={() => paste.trim() && setResolved(parseHfRef(paste))}>Add</Button>
+            <Button disabled={!paste.trim()} onClick={() => setResolved(parseHfRef(paste))}>
+              Add
+            </Button>
           </div>
           <div className="text-xs text-slate-500">
             or{" "}
-            <button type="button" onClick={onBrowse} className="text-blue-400 hover:underline">
+            <button type="button" onClick={onBrowse} className={`${linkClass} hover:underline`}>
               Browse Hugging Face →
             </button>{" "}
             to search the hub in a pop-up.
@@ -224,6 +244,7 @@ function AddModelPanel({
       ) : (
         <ManualRegisterForm
           error={register.error}
+          pending={register.isPending}
           onSubmit={(logicalId, body) => register.mutate({ logicalId, body })}
         />
       )}
@@ -252,7 +273,9 @@ function InstalledPanel() {
   const warm = useMutation({ mutationFn: api.warmModel, onSuccess: invalidate });
   const evict = useMutation({ mutationFn: api.evictModel, onSuccess: invalidate });
   const remove = useMutation({ mutationFn: api.deleteModel, onSuccess: invalidate });
-  // M18: the per-model bench opens in a modal (no separate page) — test/benchmark right here.
+  // Deleting unregisters the logical id agents reference — irreversible, so it asks first.
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  // The per-model bench opens in a modal (no separate page) — test/benchmark right here.
   const [benchModel, setBenchModel] = useState<ModelView | null>(null);
 
   // Filters: by engine (the model's binding — the category) and by resident/cold state, plus a
@@ -322,11 +345,17 @@ function InstalledPanel() {
           {engines.maxResident}
         </p>
       )}
-      <ErrorBanner error={error ?? warm.error ?? evict.error ?? remove.error} />
+      <ErrorBanner
+        error={
+          error
+            ? `Could not reach the inference plane: ${(error as Error).message}`
+            : (warm.error ?? evict.error ?? remove.error)
+        }
+      />
       {isLoading ? (
         <Spinner />
-      ) : list.length === 0 ? (
-        <Empty>No models registered yet. Use “＋ Add model” above.</Empty>
+      ) : error ? null : list.length === 0 ? (
+        <Empty>No models registered yet. Use “Add model” above.</Empty>
       ) : (
         <>
           <FilterBar
@@ -396,12 +425,30 @@ function InstalledPanel() {
                       <Td>
                         <div className="flex flex-wrap gap-1">
                           <Button variant="primary" onClick={() => setBenchModel(m)}>
-                            bench
+                            Bench
                           </Button>
-                          <Button onClick={() => warm.mutate(m.logicalId)}>warm</Button>
-                          <Button onClick={() => evict.mutate(m.logicalId)}>evict</Button>
-                          <Button variant="danger" onClick={() => remove.mutate(m.logicalId)}>
-                            delete
+                          <Button
+                            disabled={warm.isPending}
+                            onClick={() => warm.mutate(m.logicalId)}
+                          >
+                            {warm.isPending && warm.variables === m.logicalId ? "Warming…" : "Warm"}
+                          </Button>
+                          <Button
+                            disabled={evict.isPending}
+                            onClick={() => evict.mutate(m.logicalId)}
+                          >
+                            {evict.isPending && evict.variables === m.logicalId
+                              ? "Evicting…"
+                              : "Evict"}
+                          </Button>
+                          <Button
+                            variant="danger"
+                            disabled={remove.isPending}
+                            onClick={() => setConfirmDelete(m.logicalId)}
+                          >
+                            {remove.isPending && remove.variables === m.logicalId
+                              ? "Deleting…"
+                              : "Delete"}
                           </Button>
                         </div>
                       </Td>
@@ -422,6 +469,22 @@ function InstalledPanel() {
           <ModelBench model={benchModel} />
         </Modal>
       )}
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${confirmDelete}?`}
+          message={
+            <>
+              Removes the registration — agents referencing{" "}
+              <span className="mono">{confirmDelete}</span> will fail. This cannot be undone.
+            </>
+          }
+          onConfirm={() => {
+            remove.mutate(confirmDelete);
+            setConfirmDelete(null);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -436,7 +499,7 @@ function isResident(m: ModelView): boolean {
 // is detected from the model's chat template.
 function CapabilitiesCell({ logicalId }: { logicalId: string }) {
   const [show, setShow] = useState(false);
-  const { data, isFetching, error } = useQuery({
+  const { data, isFetching, error, refetch } = useQuery({
     queryKey: ["model-caps", logicalId],
     queryFn: () => api.getModelCapabilities(logicalId),
     enabled: show,
@@ -445,29 +508,34 @@ function CapabilitiesCell({ logicalId }: { logicalId: string }) {
 
   if (!show) {
     return (
-      <Button className="text-xs" onClick={() => setShow(true)}>
-        probe
+      <Button
+        title="Probe capabilities — loads the model into the engine"
+        onClick={() => setShow(true)}
+      >
+        Probe
       </Button>
     );
   }
-  if (isFetching) return <span className="text-xs text-slate-500">probing…</span>;
-  if (error) return <span className="text-xs text-rose-400">{(error as Error).message}</span>;
+  if (isFetching) return <span className="text-xs text-slate-500">Probing…</span>;
+  if (error) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-rose-700 dark:text-rose-300">{(error as Error).message}</span>
+        <Button variant="ghost" onClick={() => refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
   if (!data) return <span className="text-xs text-slate-500">—</span>;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {data.reasoning && <Badge tone="blue">reasoning</Badge>}
-      {data.toolCalling && <Badge tone="green">tools</Badge>}
-      {data.structuredOutput && <Badge tone="green">structured</Badge>}
-      {data.vision && <Badge tone="green">vision</Badge>}
-      {/* Context windows are powers of two (32768 = 32k), so divide by 1024, not 1000. */}
-      {data.maxContext ? <Badge>{`${Math.round(data.maxContext / 1024)}k ctx`}</Badge> : null}
-      {data.approximate && <Badge tone="amber">approx</Badge>}
-      {!data.reasoning &&
-        !data.toolCalling &&
-        !data.structuredOutput &&
-        !data.vision &&
-        !data.maxContext && <span className="text-xs text-slate-500">none reported</span>}
+      {hasAnyCaps(data) ? (
+        <CapabilityBadges caps={data} />
+      ) : (
+        <span className="text-xs text-slate-500">none reported</span>
+      )}
     </div>
   );
 }
@@ -475,9 +543,11 @@ function CapabilitiesCell({ logicalId }: { logicalId: string }) {
 function ManualRegisterForm({
   onSubmit,
   error,
+  pending = false,
 }: {
   onSubmit: (logicalId: string, body: unknown) => void;
   error?: unknown;
+  pending?: boolean;
 }) {
   const [logicalId, setLogicalId] = useState("");
   const [binding, setBinding] = useState("openai-compatible");
@@ -585,8 +655,12 @@ function ManualRegisterForm({
         </p>
       )}
       <ErrorBanner error={error} />
-      <Button variant="primary" onClick={submit}>
-        Register
+      <Button
+        variant="primary"
+        disabled={!logicalId.trim() || !model.trim() || pending}
+        onClick={submit}
+      >
+        {pending ? "Registering…" : "Register"}
       </Button>
     </div>
   );
@@ -599,34 +673,21 @@ function ManualRegisterForm({
 export function BrowseModal({ onClose }: { onClose: () => void }) {
   // Progress shows in the global NotificationCenter, so the modal stays open while you install more.
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
-      <Card className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden p-0">
-        <div className="flex items-start justify-between gap-3 border-b border-slate-800 px-5 py-3">
-          <div>
-            <h2 className="text-base font-semibold text-slate-100">Add a model from a hub</h2>
-            <p className="text-xs text-slate-500">
-              Browse and install directly into your inference plane.
-            </p>
-            <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-              <span>Source:</span>
-              <Badge tone="blue">Hugging Face</Badge>
-              <span className="text-slate-600">· more hubs later</span>
-            </div>
+    <Modal title="Add a model from a hub" width="max-w-3xl" onClose={onClose}>
+      <div className="space-y-4">
+        <div>
+          <p className="text-xs text-slate-500">
+            Browse and install directly into your inference plane.
+          </p>
+          <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+            <span>Source:</span>
+            <Badge tone="blue">Hugging Face</Badge>
+            <span className="text-slate-600">· more hubs later</span>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-slate-500 hover:text-slate-300"
-            title="Close"
-          >
-            ✕
-          </button>
         </div>
-        <div className="space-y-4 overflow-y-auto p-5">
-          <BrowsePanel />
-        </div>
-      </Card>
-    </div>
+        <BrowsePanel />
+      </div>
+    </Modal>
   );
 }
 
@@ -734,18 +795,15 @@ function BrowsePanel() {
           {ready.map((e) => {
             const on = engineSel.length === 0 || engineSel.includes(e);
             return (
-              <button
+              <CategoryBadge
                 key={e}
-                type="button"
+                tone="blue"
+                active={on}
                 onClick={() => toggleEngine(e)}
-                className={`rounded border px-2 py-0.5 ${
-                  on
-                    ? "border-blue-500/40 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                    : "border-slate-700 text-slate-500 hover:text-slate-300"
-                }`}
+                title={`Filter by ${engineLabel(e)}`}
               >
                 {engineLabel(e)}
-              </button>
+              </CategoryBadge>
             );
           })}
         </div>
@@ -756,19 +814,15 @@ function BrowsePanel() {
         {CAP_FILTERS.map(({ key, label }) => {
           const on = capsFilter.includes(key);
           return (
-            <button
+            <CategoryBadge
               key={key}
-              type="button"
+              tone="blue"
+              active={on}
               onClick={() => toggleCap(key)}
               title={`Show only ${label.toLowerCase()} models (from metadata hints)`}
-              className={`rounded border px-2 py-0.5 ${
-                on
-                  ? "border-blue-500/40 bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                  : "border-slate-700 text-slate-500 hover:text-slate-300"
-              }`}
             >
               {label}
-            </button>
+            </CategoryBadge>
           );
         })}
         {capsFilter.length > 0 && (
@@ -776,7 +830,9 @@ function BrowsePanel() {
         )}
       </div>
 
-      <ErrorBanner error={error} />
+      <ErrorBanner
+        error={error && `Could not reach the inference plane: ${(error as Error).message}`}
+      />
 
       {noEngine ? (
         <Empty>
@@ -834,29 +890,45 @@ function SkeletonList() {
 
 // ── shared catalog pieces (used by Browse cards + the Add-panel paste flow) ────
 
-// Browse-time capability hints — the SAME badges the probe (CapabilitiesCell) shows, but derived
-// from Hugging Face metadata WITHOUT a download (chat template + architectures + GGUF header). The
-// install-time probe stays authoritative; `showApprox` marks these as hints it will confirm.
+// The one capability-badge set: browse-time hints (Hugging Face metadata, no download — chat
+// template + architectures + GGUF header) AND the installed-model probe (CapabilitiesCell) both
+// render through here, so the two surfaces can never drift. The install-time probe stays
+// authoritative; `showApprox` marks browse-time values as hints it will confirm, while probe
+// results carry their own `approximate` flag.
+type CapsHints = Pick<CatalogEntry, "reasoning" | "toolCalling" | "vision" | "maxContext"> & {
+  structuredOutput?: boolean;
+  approximate?: boolean;
+};
+
+function hasAnyCaps(caps: CapsHints): boolean {
+  return Boolean(
+    caps.reasoning || caps.toolCalling || caps.structuredOutput || caps.vision || caps.maxContext,
+  );
+}
+
 function CapabilityBadges({
   caps,
   showApprox = false,
 }: {
-  caps: Pick<CatalogEntry, "reasoning" | "toolCalling" | "vision" | "maxContext">;
+  caps: CapsHints;
   showApprox?: boolean;
 }) {
-  if (!caps.reasoning && !caps.toolCalling && !caps.vision && !caps.maxContext) return null;
+  if (!hasAnyCaps(caps)) return null;
   return (
     <>
       {caps.reasoning && <Badge tone="blue">reasoning</Badge>}
       {caps.toolCalling && <Badge tone="green">tools</Badge>}
+      {caps.structuredOutput && <Badge tone="green">structured</Badge>}
       {caps.vision && <Badge tone="green">vision</Badge>}
       {/* Context windows are powers of two (32768 = 32k), so divide by 1024, not 1000. */}
       {caps.maxContext ? <Badge>{`${Math.round(caps.maxContext / 1024)}k ctx`}</Badge> : null}
-      {showApprox && (
+      {showApprox ? (
         <span title="static hint from model metadata — the probe confirms it on install">
           <Badge tone="amber">approx</Badge>
         </span>
-      )}
+      ) : caps.approximate ? (
+        <Badge tone="amber">approx</Badge>
+      ) : null}
     </>
   );
 }
@@ -870,6 +942,7 @@ function ModelCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const updated = coarseRelativeTime(entry.updatedAt);
   return (
     <Card className="overflow-hidden">
       <button
@@ -885,11 +958,13 @@ function ModelCard({
           <div className="mono truncate text-[11px] text-slate-500">{entry.ref}</div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
             {entry.params && <span className="text-slate-300">{entry.params}</span>}
-            {entry.gated && <span title="needs a Hugging Face token">🔒 gated</span>}
-            {entry.license && <span>{entry.license}</span>}
-            {formatRelativeTime(entry.updatedAt) && (
-              <span>updated {formatRelativeTime(entry.updatedAt)}</span>
+            {entry.gated && (
+              <span title="needs a Hugging Face token" className="inline-flex items-center gap-0.5">
+                <Lock size={11} className="shrink-0" /> gated
+              </span>
             )}
+            {entry.license && <span>{entry.license}</span>}
+            {updated && <span>updated {updated}</span>}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
             <CapabilityBadges caps={entry} />
@@ -900,12 +975,18 @@ function ModelCard({
             <Badge key={e}>{engineLabel(e)}</Badge>
           ))}
           {typeof entry.badges.downloads === "number" && (
-            <span title="downloads">⬇ {compact(entry.badges.downloads)}</span>
+            <span title="downloads" className="inline-flex items-center gap-0.5">
+              <Download size={12} className="shrink-0" /> {compact(entry.badges.downloads)}
+            </span>
           )}
           {typeof entry.badges.likes === "number" && (
-            <span title="stars / likes">★ {compact(entry.badges.likes)}</span>
+            <span title="stars / likes" className="inline-flex items-center gap-0.5">
+              <Star size={12} className="shrink-0" /> {compact(entry.badges.likes)}
+            </span>
           )}
-          <span className="text-slate-600">{expanded ? "▲" : "▼"}</span>
+          <span className="text-slate-600">
+            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </span>
         </div>
       </button>
       {expanded && <ModelDetail entry={entry} />}
@@ -936,7 +1017,7 @@ function ModelDetail({
     <div className="space-y-3 border-t border-slate-800 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         {entry.installed ? (
-          <span className="text-[11px] text-emerald-400">
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
             ✓ Installed as <span className="mono">{entry.installedAs}</span>
           </span>
         ) : (
@@ -946,13 +1027,13 @@ function ModelDetail({
           href={`https://huggingface.co/${ref_}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-[11px] text-blue-400 hover:underline"
+          className={`text-[11px] hover:underline ${linkClass}`}
         >
           View on Hugging Face ↗
         </a>
       </div>
       {blurb && <p className="text-xs leading-relaxed text-slate-400">{blurb}</p>}
-      {data && (data.reasoning || data.toolCalling || data.vision || data.maxContext) && (
+      {data && hasAnyCaps(data) && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="text-[10px] uppercase tracking-wide text-slate-500">Capabilities</span>
           <CapabilityBadges caps={data} showApprox />
@@ -1007,11 +1088,7 @@ function VariantRow({ variant, onInstall }: { variant: CatalogVariant; onInstall
         <span title={variant.fitReason ?? undefined}>
           <Badge tone={FIT_TONE[variant.fit]}>{FIT_LABEL[variant.fit]}</Badge>
         </span>
-        <Button
-          variant={variant.fit === "too-large" ? "default" : "primary"}
-          onClick={onInstall}
-          className="text-xs"
-        >
+        <Button variant={variant.fit === "too-large" ? "default" : "primary"} onClick={onInstall}>
           Install
         </Button>
       </div>
@@ -1059,24 +1136,24 @@ function InstallDialog({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <Card className="w-full max-w-md space-y-4 p-5">
-        <div>
-          <h2 className="text-sm font-semibold text-slate-100">Install model</h2>
-          <p className="mono mt-1 text-[11px] text-slate-500">
-            {repo} · {variant.label} · {formatBytes(variant.sizeBytes)} ·{" "}
-            {engineLabel(variant.engine)}
-          </p>
-        </div>
+    <Modal title="Install model" width="max-w-md" onClose={onClose}>
+      <div className="space-y-4">
+        <p className="mono text-[11px] text-slate-500">
+          {repo} · {variant.label} · {formatBytes(variant.sizeBytes)} ·{" "}
+          {engineLabel(variant.engine)}
+        </p>
         {variant.fit === "too-large" && (
-          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <NoteBanner>
             This variant likely exceeds your machine's memory. It may fail to load or run slowly.
-          </div>
+          </NoteBanner>
         )}
         <Field label="Logical id (how agents reference it)">
           <Input
             value={logicalId}
             onChange={(e) => setLogicalId(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && logicalId.trim() && !install.isPending) install.mutate();
+            }}
             placeholder="my-local-model"
           />
         </Field>
@@ -1093,8 +1170,8 @@ function InstallDialog({
             {install.isPending ? "Starting…" : "Download & install"}
           </Button>
         </div>
-      </Card>
-    </div>
+      </div>
+    </Modal>
   );
 }
 

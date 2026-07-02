@@ -1,8 +1,8 @@
-// Text-to-speech panel (M18 §2.2) — text → audio playback + download; metric = TTFB (first audio
-// byte), total latency, chars/sec. Data plane direct (json → bytes), §10.
+// Text-to-speech panel — text → audio playback + download; metric = TTFB (first audio byte),
+// total latency, chars/sec. Data plane direct (json → bytes).
 
 import { useState } from "react";
-import { Button, Field, Input } from "../../components/ui";
+import { Button, ErrorBanner, Field, Input } from "../../components/ui";
 import type { BenchRunInput } from "../../lib/api";
 import { ParamForm } from "../ParamForm";
 import { speak } from "../dataplane";
@@ -62,7 +62,7 @@ export function TtsPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pan
         </Button>
         {metrics && <SaveResultButton build={buildRecord} onSaved={onRecorded} />}
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <ErrorBanner error={error} />
       {audioUrl && (
         // biome-ignore lint/a11y/useMediaCaption: synthesized speech preview, no caption source
         <audio controls src={audioUrl} className="w-full" />

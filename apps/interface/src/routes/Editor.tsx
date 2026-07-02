@@ -1,11 +1,12 @@
 // The editor: render a saved agent's IR on a React Flow canvas, edit basic structure + node
-// config, and save it back as an agent (M15 §2). Three columns — palette · canvas · inspector —
-// over one IR held as the single source of truth. Loading and saving go through M11; the IR
+// config, and save it back as an agent. Three columns — palette · canvas · inspector — over one
+// IR held as the single source of truth. Loading and saving go through the agent registry; the IR
 // (with its `view`) is what crosses the wire, and the server owns the contentHash.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useBlocker, useNavigate } from "@tanstack/react-router";
 import type { IRDocument } from "@theygent/ir-types";
+import { Check, ChevronLeft, ChevronRight, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { type Selection, relayout, withDerivedTools } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
@@ -13,7 +14,7 @@ import { IRCodeEditor } from "../components/IRCodeEditor";
 import { Inspector } from "../components/Inspector";
 import { Palette } from "../components/Palette";
 import { ResizeHandle } from "../components/ResizeHandle";
-import { Badge, Button, Input } from "../components/ui";
+import { Badge, Button, ErrorBanner, Input, Modal, Spinner } from "../components/ui";
 import { blankGraph, fromStoredVersion } from "../lib/agent";
 import { ApiError, api } from "../lib/api";
 import { sameHashedContent } from "../lib/canonical";
@@ -70,7 +71,28 @@ export function Editor() {
   const { agent: agentId, version } = routeApi.useSearch();
   const navigate = useNavigate();
   const loadingExisting = Boolean(agentId && version);
+  // A URL naming an agent but no version (shared / hand-edited) still means "open that agent" —
+  // resolve its latest version from the registry and complete the URL rather than silently
+  // discarding the agent param and opening a blank graph.
+  const resolvingLatest = Boolean(agentId && !version);
   const qc = useQueryClient();
+
+  const { data: agentDetail, error: latestError } = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api.getAgent(agentId as string),
+    enabled: resolvingLatest,
+  });
+  useEffect(() => {
+    if (!resolvingLatest || !agentDetail) return;
+    const latest = agentDetail.versions[0]?.version; // versions come newest first
+    if (latest) {
+      navigate({
+        to: "/editor",
+        search: { agent: agentId, version: latest },
+        replace: true,
+      });
+    }
+  }, [resolvingLatest, agentDetail, agentId, navigate]);
 
   // The loaded registry version (when opening an existing agent).
   const {
@@ -111,7 +133,7 @@ export function Editor() {
   const [reseedKey, setReseedKey] = useState(0);
   const [showIssues, setShowIssues] = useState(false);
   // Side-panel widths (px) — drag the splitters to resize, double-click to reset. Pure UI layout
-  // state (kept in memory, not the IR or localStorage — persistence is the registry, §Do-NOT).
+  // state (kept in memory, not the IR or localStorage — the registry is the only persistence).
   const [paletteWidth, setPaletteWidth] = useState(280);
   const [inspectorWidth, setInspectorWidth] = useState(450);
   // Either side panel can be collapsed to a thin rail to give the canvas more room. UI-only state.
@@ -132,6 +154,7 @@ export function Editor() {
 
   // Seed the IR: a loaded version, or a fresh blank graph for "new".
   useEffect(() => {
+    if (resolvingLatest) return; // the URL is still being completed with the latest version — don't seed a blank graph
     if (loadingExisting) {
       if (!stored) return; // query still loading — keep the spinner, don't seed yet
       const key = `${stored.agent_id}@${stored.version}`;
@@ -153,10 +176,11 @@ export function Editor() {
       setSelection(null);
       existsRef.current = false;
     }
-  }, [stored, loadingExisting]);
+  }, [stored, loadingExisting, resolvingLatest]);
 
   // "Modified" = the would-be-hashed content diverges from the last saved snapshot (a pure layout
-  // change is NOT dirty — decision §1.4). This drives the Revert button and the leave-guard.
+  // change is NOT dirty — layout lives in the unhashed `view` block). This drives the Revert
+  // button and the leave-guard.
   const dirty = useMemo(
     () => (ir && savedSnapshot ? !sameHashedContent(ir, savedSnapshot) : false),
     [ir, savedSnapshot],
@@ -228,7 +252,7 @@ export function Editor() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // M22: every structural/config edit re-derives `ir.tools` (the global tool registry) from the
+  // Every structural/config edit re-derives `ir.tools` (the global tool registry) from the
   // wired tool nodes, so it stays in sync as you build — like `ir.models` fills in when you bind a
   // model. Load/revert/relayout use the raw setter (no derive needed; load is already in sync).
   // Declared BEFORE the early returns below so the hook order is identical on the loading and the
@@ -238,15 +262,26 @@ export function Editor() {
     [],
   );
 
-  if (loadError) {
+  if (loadError || latestError) {
     return (
       <Centered>
-        <p className="text-sm text-red-300">Could not load agent: {(loadError as Error).message}</p>
+        <ErrorBanner error={loadError ?? latestError} />
       </Centered>
     );
   }
-  if (!ir || (loadingExisting && isLoading)) {
-    return <Centered>Loading…</Centered>;
+  if (resolvingLatest && agentDetail && agentDetail.versions.length === 0) {
+    return (
+      <Centered>
+        <ErrorBanner error={`Agent "${agentId}" has no saved versions to open.`} />
+      </Centered>
+    );
+  }
+  if (!ir || (loadingExisting && isLoading) || resolvingLatest) {
+    return (
+      <Centered>
+        <Spinner label="Loading agent…" />
+      </Centered>
+    );
   }
 
   const patchEnvelope = (patch: Partial<IRDocument>) =>
@@ -268,7 +303,7 @@ export function Editor() {
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["agent", ir.id] });
       qc.invalidateQueries({ queryKey: ["agentVersion", ir.id] });
-      // Re-point the URL at the now-saved version so a reload re-opens it (M15 acceptance). Suppress
+      // Re-point the URL at the now-saved version so a reload re-opens it. Suppress
       // the leave-guard for this programmatic nav (dirty hasn't recomputed to false yet this tick).
       savingNavRef.current = true;
       navigate({ to: "/editor", search: { agent: ir.id, version: ir.version } });
@@ -309,53 +344,70 @@ export function Editor() {
       {/* toolbar */}
       <div className="flex items-center gap-3 border-b border-slate-800 bg-[var(--c-surface)] px-3 py-2">
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-slate-500">id</label>
-          <Input
-            className="!w-44 mono !py-1 text-xs"
-            value={ir.id}
-            disabled={existsRef.current}
-            onChange={(e) => patchEnvelope({ id: e.target.value })}
-          />
-          <label className="text-[11px] text-slate-500">name</label>
-          <Input
-            className="!w-44 !py-1 text-xs"
-            value={ir.name}
-            onChange={(e) => patchEnvelope({ name: e.target.value })}
-          />
-          <label className="text-[11px] text-slate-500">version</label>
-          <Input
-            className="!w-24 mono !py-1 text-xs"
-            value={ir.version}
-            onChange={(e) => patchEnvelope({ version: e.target.value })}
-          />
+          <label className="flex items-center gap-2 text-[11px] text-slate-500">
+            id
+            <Input
+              className="!w-44 mono !py-1 text-xs"
+              value={ir.id}
+              disabled={existsRef.current}
+              onChange={(e) => patchEnvelope({ id: e.target.value })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[11px] text-slate-500">
+            name
+            <Input
+              className="!w-44 !py-1 text-xs"
+              value={ir.name}
+              onChange={(e) => patchEnvelope({ name: e.target.value })}
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[11px] text-slate-500">
+            version
+            <Input
+              className="!w-24 mono !py-1 text-xs"
+              value={ir.version}
+              onChange={(e) => patchEnvelope({ version: e.target.value })}
+            />
+          </label>
         </div>
 
         <div className="ml-auto flex items-center gap-3">
           {/* Visual ⇄ Code: two views over the one IR */}
           <div className="flex items-center rounded-md border border-slate-700 p-0.5">
-            {(["visual", "code"] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={`rounded px-2 py-0.5 text-xs font-medium capitalize transition-colors ${
-                  mode === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
-                }`}
-                title={m === "visual" ? "Edit on the canvas" : "Edit the raw IR as JSON"}
-              >
-                {m}
-              </button>
-            ))}
+            {(["visual", "code"] as const).map((m) => {
+              // Switching away from an unparseable code edit would silently destroy the typed
+              // text (the code view only commits valid JSON upward) — block it until it parses.
+              const blockedByInvalidJson = m === "visual" && mode === "code" && !codeValid;
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  disabled={blockedByInvalidJson}
+                  aria-pressed={mode === m}
+                  className={`rounded px-2 py-0.5 text-xs font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    mode === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+                  }`}
+                  title={
+                    blockedByInvalidJson
+                      ? "Fix the invalid JSON before switching back to Visual"
+                      : m === "visual"
+                        ? "Edit on the canvas"
+                        : "Edit the raw IR as JSON"
+                  }
+                >
+                  {m}
+                </button>
+              );
+            })}
           </div>
-          {savedHash ? (
+          {savedHash && (
             <span
               className="mono max-w-[260px] truncate text-[11px] text-slate-500"
               title={savedHash}
             >
               {savedHash}
             </span>
-          ) : (
-            <span className="text-[11px] text-slate-600">unsaved</span>
           )}
           {/* validation indicator — toggles the issues panel */}
           <button
@@ -365,15 +417,17 @@ export function Editor() {
             className="rounded px-1.5 py-0.5 text-[11px] font-medium hover:bg-[var(--c-hover)]"
           >
             {errorCount > 0 ? (
-              <span className="text-red-300">
-                ⚠ {errorCount} issue{errorCount === 1 ? "" : "s"}
+              <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-300">
+                <TriangleAlert size={12} /> {errorCount} issue{errorCount === 1 ? "" : "s"}
               </span>
             ) : issues.length > 0 ? (
-              <span className="text-amber-300">
-                ⚠ {issues.length} warning{issues.length === 1 ? "" : "s"}
+              <span className="inline-flex items-center gap-1 text-amber-700 dark:text-amber-300">
+                <TriangleAlert size={12} /> {issues.length} warning{issues.length === 1 ? "" : "s"}
               </span>
             ) : (
-              <span className="text-emerald-400">✓ valid</span>
+              <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-400">
+                <Check size={12} /> valid
+              </span>
             )}
           </button>
           <Button
@@ -383,7 +437,13 @@ export function Editor() {
           >
             Tidy
           </Button>
-          {dirty ? <Badge tone="amber">modified</Badge> : <Badge tone="green">saved</Badge>}
+          {savedHash === null && !dirty ? (
+            <Badge tone="slate">not saved</Badge>
+          ) : dirty ? (
+            <Badge tone="amber">modified</Badge>
+          ) : (
+            <Badge tone="green">saved</Badge>
+          )}
           <Button onClick={onRevert} disabled={!dirty} title="Discard changes since the last save">
             Revert
           </Button>
@@ -416,14 +476,15 @@ export function Editor() {
               type="button"
               onClick={() => setShowIssues(false)}
               title="Close"
+              aria-label="Close validation panel"
               className="text-slate-500 hover:text-slate-300"
             >
-              ✕
+              <X size={14} />
             </button>
           </div>
           <div className="max-h-[calc(60vh-34px)] overflow-y-auto p-2">
             {issues.length === 0 ? (
-              <p className="px-1 py-1 text-xs text-emerald-400">
+              <p className="px-1 py-1 text-xs text-emerald-700 dark:text-emerald-400">
                 No issues — the graph is structurally valid.
               </p>
             ) : (
@@ -447,9 +508,17 @@ export function Editor() {
                         }}
                       >
                         <span
-                          className={issue.severity === "error" ? "text-red-400" : "text-amber-400"}
+                          className={`mt-0.5 shrink-0 ${
+                            issue.severity === "error"
+                              ? "text-red-700 dark:text-red-400"
+                              : "text-amber-700 dark:text-amber-400"
+                          }`}
                         >
-                          {issue.severity === "error" ? "✗" : "⚠"}
+                          {issue.severity === "error" ? (
+                            <X size={12} />
+                          ) : (
+                            <TriangleAlert size={12} />
+                          )}
                         </span>
                         <span className="text-slate-300">
                           {(issue.nodeId || issue.edgeId) && (
@@ -559,20 +628,19 @@ export function Editor() {
       {/* unsaved-changes guard: shown when an in-app navigation is blocked (the native browser
           prompt covers tab close / reload via enableBeforeUnload). */}
       {blocker.status === "blocked" && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50">
-          <div className="w-[380px] rounded-lg border border-slate-700 bg-[var(--c-elev)] p-5 shadow-2xl">
-            <h2 className="text-sm font-semibold text-slate-100">Leave with unsaved changes?</h2>
-            <p className="mt-1.5 text-xs text-slate-400">
+        <Modal title="Leave with unsaved changes?" width="max-w-sm" onClose={() => blocker.reset()}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-300">
               This agent has changes that haven’t been saved. If you leave now they’ll be lost.
             </p>
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="flex justify-end gap-2">
               <Button onClick={() => blocker.reset()}>Stay</Button>
               <Button variant="danger" onClick={() => blocker.proceed()}>
                 Leave without saving
               </Button>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </div>
   );
@@ -585,16 +653,18 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 // Chevron tucked into a panel's top corner that collapses it to a rail. The arrow points outward
-// (toward the edge it folds into): ‹ on the left panel, › on the right.
+// (toward the edge it folds into): left on the left panel, right on the right.
 function CollapseButton({ side, onClick }: { side: "left" | "right"; onClick: () => void }) {
+  const label = side === "left" ? "Collapse palette" : "Collapse inspector";
   return (
     <button
       type="button"
       onClick={onClick}
-      title={side === "left" ? "Collapse palette" : "Collapse inspector"}
+      title={label}
+      aria-label={label}
       className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-slate-200"
     >
-      {side === "left" ? "‹" : "›"}
+      {side === "left" ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
     </button>
   );
 }
@@ -622,9 +692,10 @@ function CollapsedRail({
         type="button"
         onClick={onExpand}
         title={title}
+        aria-label={title}
         className="mt-2 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-[var(--c-hover)] hover:text-slate-100"
       >
-        {side === "left" ? "›" : "‹"}
+        {side === "left" ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
       </button>
       <span className="mt-3 select-none text-[10px] uppercase tracking-wide text-slate-600 [writing-mode:vertical-rl]">
         {label}

@@ -1,20 +1,33 @@
 // The MCP page — define and manage MCP servers (the user's tools), and test them. MCP servers are
-// stdio subprocesses in the USER's trust domain (M7 §3.2 / §10): the `env` you give here is passed
-// into the spawned process and never logged with values, never resolved in theygent cloud. Below the
-// registry sits the tool tester (M18 §2.6): run a single tool through a throwaway one-node graph and
-// see its detections drawn through the shared overlay (the same one a grounding VLM uses).
+// stdio subprocesses in the user's trust domain: the `env` you give here is passed into the spawned
+// process and never logged with values, never resolved in theygent cloud. Below the registry sits
+// the tool tester: run a single tool through a throwaway one-node graph and see its detections drawn
+// through the shared overlay (the same one a grounding VLM uses).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ToolTester } from "../bench/ToolTester";
 import { CategoryBadge, FilterBar } from "../components/Filters";
-import { Button, Card, Empty, ErrorBanner, Field, Input, Page, Spinner } from "../components/ui";
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  Empty,
+  ErrorBanner,
+  Field,
+  Input,
+  Page,
+  SectionHeading,
+  Spinner,
+  Textarea,
+} from "../components/ui";
 import { type McpServerConfig, type McpServerSummary, api } from "../lib/api";
 import { countBy, toggle, transportTone } from "../lib/categories";
 
 export function Mcp() {
   return (
-    <Page className="space-y-8">
+    <Page className="space-y-4">
       <div>
         <h1 className="text-lg font-semibold text-slate-100">MCP servers</h1>
         <p className="text-xs text-slate-500">
@@ -35,6 +48,9 @@ function ServerList() {
   const close = useMutation({ mutationFn: api.closeMcpServer, onSuccess: invalidate });
   const remove = useMutation({ mutationFn: api.deleteMcpServer, onSuccess: invalidate });
   const [adding, setAdding] = useState(false);
+  // Deleting a server is irreversible (its command/args/env config is never redisplayed), so it
+  // goes through the shared confirmation dialog instead of firing on the row button.
+  const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
 
   // Filters: by transport (the server's category) and connected/idle state, plus a name search.
   const [transportSel, setTransportSel] = useState<string[]>([]);
@@ -86,9 +102,15 @@ function ServerList() {
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Registered</h2>
+        <SectionHeading>Registered</SectionHeading>
         <Button variant="primary" onClick={() => setAdding((a) => !a)}>
-          {adding ? "Close" : "＋ Define server"}
+          {adding ? (
+            "Close"
+          ) : (
+            <>
+              <Plus size={14} /> Define server
+            </>
+          )}
         </Button>
       </div>
 
@@ -98,6 +120,7 @@ function ServerList() {
             setAdding(false);
             invalidate();
           }}
+          onCancel={() => setAdding(false)}
         />
       )}
 
@@ -137,12 +160,31 @@ function ServerList() {
                   onToggleStatus={toggleStatus}
                   onWarm={() => warm.mutate(s.name)}
                   onClose={() => close.mutate(s.name)}
-                  onRemove={() => remove.mutate(s.name)}
+                  onRemove={() => setConfirmRemove(s.name)}
+                  warming={warm.isPending && warm.variables === s.name}
+                  closing={close.isPending && close.variables === s.name}
+                  removing={remove.isPending && remove.variables === s.name}
                 />
               ))}
             </div>
           )}
         </>
+      )}
+      {confirmRemove !== null && (
+        <ConfirmDialog
+          title="Delete MCP server"
+          message={
+            <>
+              Delete <span className="font-medium text-slate-100">{confirmRemove}</span>? Its
+              command, args, and env config cannot be recovered.
+            </>
+          }
+          onConfirm={() => {
+            remove.mutate(confirmRemove);
+            setConfirmRemove(null);
+          }}
+          onCancel={() => setConfirmRemove(null)}
+        />
       )}
     </section>
   );
@@ -157,6 +199,9 @@ function ServerRow({
   onWarm,
   onClose,
   onRemove,
+  warming,
+  closing,
+  removing,
 }: {
   server: McpServerSummary;
   transportSel: string[];
@@ -166,6 +211,9 @@ function ServerRow({
   onWarm: () => void;
   onClose: () => void;
   onRemove: () => void;
+  warming: boolean;
+  closing: boolean;
+  removing: boolean;
 }) {
   const [showTools, setShowTools] = useState(false);
   const tools = useQuery({
@@ -175,6 +223,8 @@ function ServerRow({
     retry: false,
   });
   const st = server.connected ? "connected" : "idle";
+  // While any action on this row is in flight, disable all three so warm/close/delete can't race.
+  const busy = warming || closing || removing;
   return (
     <Card className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
@@ -196,13 +246,21 @@ function ServerRow({
           {st}
         </CategoryBadge>
         <div className="ml-auto flex items-center gap-1">
-          <Button onClick={() => setShowTools((v) => !v)}>
-            {showTools ? "hide tools" : "tools"}
+          <Button onClick={() => setShowTools((v) => !v)} aria-pressed={showTools}>
+            {showTools ? "Hide tools" : "Tools"}
           </Button>
-          <Button onClick={onWarm}>warm</Button>
-          <Button onClick={onClose}>close</Button>
-          <Button variant="danger" onClick={onRemove}>
-            delete
+          <Button onClick={onWarm} disabled={busy} title="Start the server process and connect">
+            {warming ? "Warming…" : "Warm"}
+          </Button>
+          <Button
+            onClick={onClose}
+            disabled={busy}
+            title="Stop the server process (config is kept)"
+          >
+            {closing ? "Closing…" : "Close"}
+          </Button>
+          <Button variant="danger" onClick={onRemove} disabled={busy}>
+            {removing ? "Deleting…" : "Delete"}
           </Button>
         </div>
       </div>
@@ -216,7 +274,7 @@ function ServerRow({
           <ul className="space-y-1">
             {tools.data?.map((t) => (
               <li key={t.name} className="text-xs">
-                <span className="font-mono text-slate-200">{t.name}</span>
+                <span className="mono text-slate-200">{t.name}</span>
                 {t.description && <span className="text-slate-500"> — {t.description}</span>}
               </li>
             ))}
@@ -242,7 +300,7 @@ function parseEnv(raw: string): Record<string, string> | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-function RegisterForm({ onDone }: { onDone: () => void }) {
+function RegisterForm({ onDone, onCancel }: { onDone: () => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
@@ -272,12 +330,12 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
         />
       </Field>
       <Field label="Env (KEY=value per line, stays local)">
-        <textarea
+        <Textarea
           value={env}
           onChange={(e) => setEnv(e.target.value)}
           rows={2}
           placeholder={"API_KEY=…\nMODEL_PATH=…"}
-          className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
+          className="mono"
         />
       </Field>
       <Field label="Working dir (optional)">
@@ -285,6 +343,9 @@ function RegisterForm({ onDone }: { onDone: () => void }) {
       </Field>
       <ErrorBanner error={save.error} />
       <div className="flex items-center gap-2">
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
         <Button
           variant="primary"
           disabled={!name.trim() || !command.trim() || save.isPending}

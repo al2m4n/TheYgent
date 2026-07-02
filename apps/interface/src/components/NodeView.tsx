@@ -1,6 +1,6 @@
 // The custom React Flow node renderer. It draws ONE handle per declared port (in-ports left,
 // out-ports right), keyed by the IR port id so edges connect by `sourceHandle`/`targetHandle` =
-// port id (§8.3). Colour is keyed by the determinism `kind`, looked up from the registry via the
+// port id. Colour is keyed by the determinism `kind`, looked up from the registry via the
 // node `type` — `kind` is NEVER stored on the RF node `data` (the one rule); it's derived here for
 // display only. This component lives behind the adapter boundary (it is the canvas's view of a
 // node), so its knowledge of React Flow is allowed.
@@ -10,10 +10,24 @@ import { Handle, type NodeProps, Position } from "@xyflow/react";
 import type { TheygentRFNode } from "../adapter";
 import { NodeIcon, resolveIcon } from "../lib/icons";
 
+// Label colours are semantic (not on the inverted slate ramp), so each pairs a light + dark shade —
+// otherwise the type label vanishes on the white node card in light mode.
 const KIND_STYLE: Record<string, { ring: string; dot: string; label: string }> = {
-  boundary: { ring: "border-emerald-600/70", dot: "bg-emerald-400", label: "text-emerald-300" },
-  activity: { ring: "border-blue-600/70", dot: "bg-blue-400", label: "text-blue-300" },
-  orchestration: { ring: "border-amber-600/70", dot: "bg-amber-400", label: "text-amber-300" },
+  boundary: {
+    ring: "border-emerald-600/70",
+    dot: "bg-emerald-400",
+    label: "text-emerald-700 dark:text-emerald-300",
+  },
+  activity: {
+    ring: "border-blue-600/70",
+    dot: "bg-blue-400",
+    label: "text-blue-700 dark:text-blue-300",
+  },
+  orchestration: {
+    ring: "border-amber-600/70",
+    dot: "bg-amber-400",
+    label: "text-amber-700 dark:text-amber-300",
+  },
 };
 
 function handlePos(index: number, count: number): string {
@@ -23,14 +37,14 @@ function handlePos(index: number, count: number): string {
 export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
   const kind = kindForType(data.nodeType) ?? "activity";
   const style = KIND_STYLE[kind] ?? KIND_STYLE.activity;
-  // M19 §2.10: data handles sit on the node SIDES (round), control handles on TOP/BOTTOM
-  // (square/chevron), so the two channels read at a glance and a connection drag lands on the right
-  // kind. The role is per-port (defaults to `data`, so a pre-M19 graph is unchanged).
+  // Data handles sit on the node SIDES (round), control handles on TOP/BOTTOM (square), so the two
+  // channels read at a glance and a connection drag lands on the right kind. The role is per-port
+  // (defaults to `data`, so a graph saved before roles existed is unchanged).
   const ins = data.ports.in.filter((p) => (p.role ?? "data") === "data");
   const outs = data.ports.out.filter((p) => (p.role ?? "data") === "data");
   const ctrlIns = data.ports.in.filter((p) => p.role === "control");
   const ctrlOuts = data.ports.out.filter((p) => p.role === "control");
-  // M22: `tool`-role handles — a third style (violet, on top/bottom), distinct from data (round,
+  // `tool`-role handles — a third style (violet, on top/bottom), distinct from data (round,
   // sides) and control (amber square). The llm's `tools` IN-port (bottom) RECEIVES; a tool/mcp_tool
   // node's `use` OUT-port (top) OFFERS the tool. Wire `use` → `tools` to make the model able to call
   // it (one edge declares the capability; the request→run→response is the runtime loop).
@@ -80,7 +94,7 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
           title={`out · ${p.id}`}
         />
       ))}
-      {/* M19 §2.10: control handles — squared, amber, on top (in) / bottom (out). */}
+      {/* Control handles — squared, amber, on top (in) / bottom (out). */}
       {ctrlIns.map((p, i) => (
         <Handle
           key={`cin-${p.id}`}
@@ -101,7 +115,7 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
           title={`control out · ${p.id}`}
         />
       ))}
-      {/* M22: the llm's `tools` IN-port (violet, bottom) — a tool node's `use` handle wires here so
+      {/* The llm's `tools` IN-port (violet, bottom) — a tool node's `use` handle wires here so
           the model may CALL it. Distinct from data (sides) and control (amber). */}
       {toolIns.map((p, i) => (
         <Handle
@@ -119,7 +133,7 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
           title={`tools · ${p.id} — wire a tool node's "use" handle here (the model may call it)`}
         />
       ))}
-      {/* M22: a tool/mcp_tool node's `use` OUT-port (violet, top) — drag it into an llm's `tools`
+      {/* A tool/mcp_tool node's `use` OUT-port (violet, top) — drag it into an llm's `tools`
           handle to make the tool callable by the model. */}
       {toolOuts.map((p, i) => (
         <Handle

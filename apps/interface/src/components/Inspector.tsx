@@ -1,4 +1,4 @@
-// The node/edge inspector (M15 §2.3): edit the selected node's `config` (schema-driven from the
+// The node/edge inspector: edit the selected node's `config` (schema-driven from the
 // per-type JSON Schema) or the selected edge's `channel`/`condition`, with explicit Delete /
 // Duplicate controls. With nothing selected, the graph-level panel shows `models` (read-only) and
 // editable `tools` / `connections` — adding a tool here makes it selectable on every llm node.
@@ -12,6 +12,7 @@ import {
   ChevronUp,
   Diamond,
   Lock,
+  Plus,
   Search,
   X,
 } from "lucide-react";
@@ -36,7 +37,7 @@ import {
 import { api } from "../lib/api";
 import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
-import { Badge, Button, Field, Input, Select } from "./ui";
+import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 
 // The full-icon search grid is lazy: its ~1,700-icon set (iconsFull) loads only when a user actually
 // opens the icon picker, so the main editor bundle stays lean.
@@ -138,15 +139,15 @@ function NodePanel({
         <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
 
         {DURABLE_ONLY.has(node.type) && (
-          <div className="rounded-md border border-amber-700/50 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90">
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200/90">
             <span className="font-semibold">Durable-only.</span> This runs on the durable runtime —
-            deploy the agent and invoke it via a trigger (schedule/webhook). It can’t run from the
-            interactive Run/Compose path.
+            save the agent, then use “Run durably” (requires the server’s durable mode) or deploy it
+            behind a schedule/webhook trigger. The plain interactive Run path can’t execute it.
           </div>
         )}
 
         {node.type === "tool" || node.type === "mcp_tool" ? (
-          // M22 D1: tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
+          // tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
           // kind chooses the binding shape and (for mcp) the underlying node type.
           <ToolNodePanel ir={ir} node={node} onChange={onChange} />
         ) : node.type === "guardrail" ? (
@@ -157,7 +158,7 @@ function NodePanel({
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
           Object.entries(properties).map(([key, schema]) => {
-            // M21 tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
+            // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
             // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
             if (node.type === "llm" && key === "tools") {
               return (
@@ -259,14 +260,17 @@ function NodePanel({
   );
 }
 
-// ── trigger panel (M19 §1.5 — triggers are invocation bindings on the input, never nodes) ─────────
+// ── trigger panel (triggers are invocation bindings on the input node, never graph nodes) ─────────
 
-/** The agent's M12 triggers, surfaced on the `input` node (§1.5). Triggers are NOT graph nodes —
- * "run every hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here
- * (list what fires this saved agent); creating one is the deploy step (M12 `POST /triggers`). The
- * inert "Browse hub" (M16) affordance lives on the connections panel, not here. */
+/** The agent's triggers, surfaced on the `input` node. Triggers are NOT graph nodes — "run every
+ * hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here (list what
+ * fires this saved agent); creating one is the deploy step (`POST /triggers`). */
 function TriggerPanel({ agentId }: { agentId: string }) {
-  const { data: triggers, isLoading } = useQuery({
+  const {
+    data: triggers,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["triggers"],
     queryFn: api.listTriggers,
     retry: false,
@@ -276,11 +280,15 @@ function TriggerPanel({ agentId }: { agentId: string }) {
   return (
     <Field label="Triggers (how this agent is invoked)">
       {isLoading ? (
-        <p className="text-[11px] text-slate-600">loading…</p>
+        <p className="text-[11px] text-slate-600">Loading…</p>
+      ) : isError ? (
+        <p className="text-[11px] text-slate-600">
+          Couldn’t load triggers — control plane unreachable.
+        </p>
       ) : mine.length === 0 ? (
         <p className="text-[11px] text-slate-600">
-          No triggers. Save the agent, then add a schedule/webhook/http trigger (M12) to run it
-          unattended — triggers are invocation bindings, not graph nodes (§1.5).
+          No triggers. Save the agent, then add a schedule, webhook, or HTTP trigger to run it
+          unattended — triggers are how a saved agent is invoked, not graph nodes.
         </p>
       ) : (
         <div className="space-y-1">
@@ -290,7 +298,9 @@ function TriggerPanel({ agentId }: { agentId: string }) {
               className="mono flex items-center justify-between rounded border border-slate-800 px-2 py-1 text-[11px]"
             >
               <span className="text-slate-300">{t.kind}</span>
-              <span className={t.enabled ? "text-emerald-400" : "text-slate-600"}>
+              <span
+                className={t.enabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600"}
+              >
                 {t.enabled ? "enabled" : "disabled"}
               </span>
             </div>
@@ -301,7 +311,7 @@ function TriggerPanel({ agentId }: { agentId: string }) {
   );
 }
 
-// ── icon picker (a `view`-only display change — never hashed, §1.4) ────────────
+// ── icon picker (a `view`-only display change — never hashed) ──────────────────
 
 /** Pick a Lucide icon for a node, or reset to its type default. The override (a Lucide icon name)
  * lives in the `view` block, so it round-trips through save/load but never affects logic or version
@@ -326,7 +336,7 @@ function IconPicker({
   const [query, setQuery] = useState("");
 
   return (
-    <Field label="Icon">
+    <FieldGroup label="Icon">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -353,6 +363,7 @@ function IconPicker({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search all icons…"
+              aria-label="Search icons"
               className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
             />
           </div>
@@ -374,7 +385,7 @@ function IconPicker({
           </button>
         </div>
       )}
-    </Field>
+    </FieldGroup>
   );
 }
 
@@ -421,9 +432,9 @@ function EdgePanel({
           <span className="text-slate-600">.{edge.targetHandle}</span>
         </div>
 
-        <Field label="Channel">
+        <FieldGroup label="Channel">
           {channel === "tool" ? (
-            // M22: a `tool` (capability) edge's channel is DERIVED from the handles it joins (a tool
+            // A `tool` (capability) edge's channel is DERIVED from the handles it joins (a tool
             // node → an llm `tools` port). It must not be flipped to data/control here — that would
             // silently break the capability. Show it read-only.
             <>
@@ -453,7 +464,7 @@ function EdgePanel({
               </p>
             </>
           )}
-        </Field>
+        </FieldGroup>
 
         <Field label="Condition (router-driven, optional)">
           <Input
@@ -493,26 +504,29 @@ function ConfigField({
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
-  const label = required ? `${name} *` : name;
+  // Humanize camelCase schema keys before the Field's uppercase styling flattens the word
+  // boundaries ("maxToolIterations" → "max tool iterations", not "MAXTOOLITERATIONS").
+  const pretty = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  const label = required ? `${pretty} *` : pretty;
 
   // A Literal field (modality, policy, source, …) is a JSON-Schema `enum` — render a dropdown so the
-  // editor offers the exact valid values (M19 §2.10 modality affordance + all enum config fields).
+  // editor offers the exact valid values.
   const enumValues = Array.isArray(schema?.enum) ? (schema.enum as unknown[]) : null;
   if (enumValues) {
     return (
       <Field label={label}>
-        <select
-          className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+        <Select
+          className="!text-xs"
           value={value === null || value === undefined ? "" : String(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
         >
-          {value === undefined && <option value="">—</option>}
+          {(value === undefined || value === null) && <option value="">—</option>}
           {enumValues.map((v) => (
             <option key={String(v)} value={String(v)}>
               {String(v)}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
     );
   }
@@ -593,13 +607,13 @@ function JsonField({
           }
         }}
       />
-      {error && <span className="text-[11px] text-red-400">{error}</span>}
+      {error && <span className="text-[11px] text-red-600 dark:text-red-400">{error}</span>}
     </>
   );
   return label ? <Field label={label}>{editor}</Field> : <div className="space-y-1">{editor}</div>;
 }
 
-// ── the llm Tools panel (M22 — the tools wired into this llm, the model may call them) ─────
+// ── the llm Tools panel (the tools wired into this llm, the model may call them) ─────
 
 /** A tool the model can call: the source node of a `tool` (capability) edge into this llm. The kind
  * is derived from the source node like the runtime's _capability_binding (mcp_tool → mcp; a tool with
@@ -622,10 +636,10 @@ function llmCapabilityTools(
   return out;
 }
 
-/** Show the tools this llm may autonomously call (M22): the tool/mcp_tool nodes wired into its
+/** Show the tools this llm may autonomously call: the tool/mcp_tool nodes wired into its
  * `tools` port (read-only — wire/unwire on the canvas), plus the tool_choice + iteration cap. Any
- * legacy `config.tools` keys (pre-M22 ir.tools refs) are listed too. The loop runs whenever the llm
- * has ANY tool (wired or legacy). */
+ * legacy `config.tools` keys (ir.tools refs predating capability wiring) are listed too. The loop
+ * runs whenever the llm has ANY tool (wired or legacy). */
 function LlmToolsPanel({
   ir,
   nodeId,
@@ -689,7 +703,7 @@ function LlmToolsPanel({
       {hasTools && (
         <div className="mt-1 space-y-2 rounded-md border border-slate-800 p-2">
           <label className="block space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               tool choice
             </span>
             <Select value={choice} onChange={(e) => set({ toolChoice: e.target.value })}>
@@ -699,7 +713,7 @@ function LlmToolsPanel({
             </Select>
           </label>
           <label className="block space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               max tool iterations
             </span>
             <Input
@@ -802,6 +816,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
             <button
               key={m}
               type="button"
+              aria-pressed={view === m}
               onClick={() => setView(m)}
               className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
                 view === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
@@ -842,7 +857,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
             </div>
           )}
           <Button className="!py-1 text-xs" onClick={addRow}>
-            ＋ Add message
+            <Plus size={14} aria-hidden /> Add message
           </Button>
           <p className="text-[10px] text-slate-600">
             Use <span className="mono">$in</span> for this node's input.
@@ -897,17 +912,18 @@ function MessageRow({
   return (
     <div className="space-y-1.5 rounded-md border border-slate-800 bg-[var(--c-surface)] p-2">
       <div className="flex items-center gap-1.5">
-        <select
+        <Select
           value={role}
+          aria-label="Message role"
           onChange={(e) => onRole(e.target.value)}
-          className="rounded border border-slate-700 bg-[var(--c-surface-2)] px-1.5 py-0.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+          className="!w-auto rounded !bg-[var(--c-surface-2)] !px-1.5 !py-0.5 !text-xs"
         >
           {roles.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
-        </select>
+        </Select>
         <div className="ml-auto flex items-center gap-0.5">
           <button
             type="button"
@@ -915,6 +931,7 @@ function MessageRow({
             onClick={() => onMove(-1)}
             disabled={index === 0}
             title="Move up"
+            aria-label="Move message up"
           >
             <ChevronUp size={14} aria-hidden />
           </button>
@@ -924,10 +941,17 @@ function MessageRow({
             onClick={() => onMove(1)}
             disabled={index === total - 1}
             title="Move down"
+            aria-label="Move message down"
           >
             <ChevronDown size={14} aria-hidden />
           </button>
-          <button type="button" className={iconBtn} onClick={onDelete} title="Remove message">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={onDelete}
+            title="Remove message"
+            aria-label="Remove message"
+          >
             <X size={14} aria-hidden />
           </button>
         </div>
@@ -945,9 +969,9 @@ function MessageRow({
           <button
             type="button"
             onClick={insertIn}
-            className="text-[11px] text-blue-400 hover:underline"
+            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
           >
-            ＋ Insert input ($in)
+            <Plus size={12} aria-hidden /> Insert input ($in)
           </button>
         </>
       ) : (
@@ -982,6 +1006,9 @@ function ListPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Arrow-key highlight over the filtered options (-1 = nothing highlighted yet).
+  const [active, setActive] = useState(-1);
+  const listboxId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -1011,6 +1038,7 @@ function ListPicker({
     onChange(v);
     setOpen(false);
     setQuery("");
+    setActive(-1);
   };
 
   return (
@@ -1023,11 +1051,16 @@ function ListPicker({
       <div ref={boxRef} className="relative">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          onClick={() => {
+            setActive(-1);
+            setOpen((o) => !o);
+          }}
           className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
         >
           <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
-            {value || placeholder || (loading ? "loading…" : "select…")}
+            {value || placeholder || (loading ? "Loading…" : "Select…")}
           </span>
           <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
         </button>
@@ -1037,29 +1070,64 @@ function ListPicker({
               <input
                 ref={searchRef}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActive(-1);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActive((a) => Math.min(a + 1, filtered.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActive((a) => Math.max(a - 1, 0));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (active >= 0 && active < filtered.length) select(filtered[active]);
+                    else if (q && !exact) select(query.trim());
+                  }
+                }}
                 placeholder="Search…"
+                aria-label={label}
+                aria-activedescendant={active >= 0 ? `${listboxId}-${active}` : undefined}
                 className="w-full rounded border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
               />
             </div>
-            <ul className="max-h-52 overflow-y-auto py-1">
+            {/* biome-ignore lint/a11y/useFocusableInteractive: focus stays on the search box — aria-activedescendant drives the highlight */}
+            <ul
+              id={listboxId}
+              // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: the list IS the popover's listbox
+              // biome-ignore lint/a11y/useSemanticElements: a native <select> can't host the search box + custom-value row
+              role="listbox"
+              aria-label={label}
+              className="max-h-52 overflow-y-auto py-1"
+            >
               {loading && options.length === 0 ? (
-                <li className="px-2.5 py-1.5 text-xs text-slate-500">loading…</li>
+                <li className="px-2.5 py-1.5 text-xs text-slate-500">Loading…</li>
               ) : filtered.length === 0 && !q ? (
                 <li className="px-2.5 py-1.5 text-xs text-slate-500">No options.</li>
               ) : (
-                filtered.map((o) => (
+                filtered.map((o, i) => (
                   <li key={o}>
                     <button
                       type="button"
+                      id={`${listboxId}-${i}`}
+                      // biome-ignore lint/a11y/useSemanticElements: a combobox option row, not a native <option>
+                      role="option"
+                      aria-selected={o === value}
+                      tabIndex={-1}
                       onClick={() => select(o)}
                       className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--c-hover)] ${
-                        o === value ? "text-blue-300" : "text-slate-200"
-                      }`}
+                        i === active ? "bg-[var(--c-hover)]" : ""
+                      } ${o === value ? "text-blue-700 dark:text-blue-300" : "text-slate-200"}`}
                     >
                       <span className="mono truncate">{o}</span>
                       {o === value && (
-                        <Check size={14} className="ml-auto shrink-0 text-blue-400" aria-hidden />
+                        <Check
+                          size={14}
+                          className="ml-auto shrink-0 text-blue-600 dark:text-blue-400"
+                          aria-hidden
+                        />
                       )}
                     </button>
                   </li>
@@ -1087,7 +1155,7 @@ function ListPicker({
 }
 
 /** The llm `model` field: pick a declared graph binding OR an inference-plane logical model. Picking
- * an inference model that isn't declared yet auto-creates the graph binding (§8.4) and selects it,
+ * an inference model that isn't declared yet auto-creates the graph binding and selects it,
  * so you go from "registered upstream model" → "usable in this node" in one step. */
 function ModelPicker({
   ir,
@@ -1239,7 +1307,7 @@ function BodyVersionPicker({
   );
 }
 
-// ── the unified Tool node panel (M22 D1 — one node, the kind is a picker) ──────────────────────────
+// ── the unified Tool node panel (one node, the kind is a picker) ──────────────────────────────────
 
 const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
   { kind: "builtin", label: "Builtin", hint: "A tool theygent ships (echo, http_fetch, …)." },
@@ -1251,7 +1319,7 @@ const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
   { kind: "mcp", label: "MCP", hint: "A tool exposed by a connected MCP server." },
 ];
 
-/** The one editor for tool + mcp_tool nodes (M22 D1). A kind picker (Builtin / REST / MCP) chooses
+/** The one editor for tool + mcp_tool nodes. A kind picker (Builtin / REST / MCP) chooses
  * the binding shape; switching kind reseeds the node via `setToolKind` (which, for MCP, swaps the
  * underlying node type). The binding LIVES on the node config; `ir.tools` is the derived registry.
  * Advanced REST fields (headers/body/responseMap/…) stay in the Raw config editor below. */
@@ -1272,16 +1340,17 @@ function ToolNodePanel({
 
   return (
     <>
-      <Field label="Kind">
+      <FieldGroup label="Kind">
         <div className="grid grid-cols-3 gap-1">
           {TOOL_KINDS.map((k) => (
             <button
               key={k.kind}
               type="button"
+              aria-pressed={kind === k.kind}
               onClick={() => onChange(setToolKind(ir, node.id, k.kind))}
               className={`rounded-md border px-2 py-1.5 text-xs ${
                 kind === k.kind
-                  ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-200"
                   : "border-slate-700 text-slate-300 hover:border-slate-500"
               }`}
             >
@@ -1292,7 +1361,7 @@ function ToolNodePanel({
         <span className="text-[10px] text-slate-600">
           {TOOL_KINDS.find((k) => k.kind === kind)?.hint}
         </span>
-      </Field>
+      </FieldGroup>
 
       {kind === "builtin" && (
         <Field label="builtin *">
@@ -1368,15 +1437,16 @@ function ToolNodePanel({
       </Field>
 
       <p className="text-[10px] text-slate-600">
-        Wire this node's violet <span className="text-violet-300">use</span> handle (top) into an
-        llm's <span className="text-violet-300">tools</span> port to let the model call it. Advanced
-        REST fields (headers, body, response map…) are in the Raw config below.
+        Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
+        handle (top) into an llm's{" "}
+        <span className="text-violet-600 dark:text-violet-300">tools</span> port to let the model
+        call it. Advanced REST fields (headers, body, response map…) are in the Raw config below.
       </p>
     </>
   );
 }
 
-/** A dropdown of `http_auth` connections (M19 §1.1) for a REST tool — the IR stores the connection
+/** A dropdown of `http_auth` connections for a REST tool — the IR stores the connection
  * **id**, never the secret (resolved server-side at step time). "none" leaves it auth-less. */
 function ConnectionSelect({
   value,
@@ -1403,7 +1473,7 @@ function ConnectionSelect({
         ))}
       </Select>
       {value ? (
-        <span className="text-[10px] text-emerald-500">
+        <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
           ✓ auth via {value} — resolved server-side; no secret in the IR
         </span>
       ) : isError ? (
@@ -1511,16 +1581,17 @@ function GuardrailPanel({
 
   return (
     <>
-      <Field label="Check">
+      <FieldGroup label="Check">
         <div className="grid grid-cols-2 gap-1">
           {CHECK_TYPES.map((t) => (
             <button
               key={t}
               type="button"
+              aria-pressed={checkType === t}
               onClick={() => pickType(t)}
               className={`rounded-md border px-2 py-1.5 text-xs capitalize ${
                 checkType === t
-                  ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-200"
                   : "border-slate-700 text-slate-300 hover:border-slate-500"
               }`}
             >
@@ -1532,10 +1603,12 @@ function GuardrailPanel({
           Rule = an inline check, no model call. Model = an LLM judge decides (a real inference
           call).
         </span>
-      </Field>
+      </FieldGroup>
 
       {checkType === undefined && (
-        <p className="text-xs text-amber-300/80">Pick a check type to configure this guardrail.</p>
+        <p className="text-xs text-amber-700 dark:text-amber-300/80">
+          Pick a check type to configure this guardrail.
+        </p>
       )}
 
       {checkType === "rule" && (
@@ -1840,7 +1913,7 @@ function RawConfigEditor({
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
       className="rounded-md border border-slate-800"
     >
-      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] uppercase tracking-wide text-slate-500">
+      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
         Raw config (escape hatch)
       </summary>
       <div className="p-2">
@@ -1872,7 +1945,7 @@ function GraphPanel({ ir }: { ir: IRDocument }) {
       </p>
       <Section title="Model bindings">
         {models.length === 0 ? (
-          <Empty>No models declared.</Empty>
+          <EmptyHint>No models declared.</EmptyHint>
         ) : (
           models.map(([key, m]) => (
             <div key={key} className="rounded border border-slate-800 px-2 py-1.5">
@@ -1899,7 +1972,7 @@ function summarizeTool(t: ToolBinding): string {
   return t.connection ? `connection ${t.connection}` : "http";
 }
 
-/** The graph's tool registry (M22): `ir.tools` is DERIVED from the tool nodes on the canvas — like
+/** The graph's tool registry: `ir.tools` is DERIVED from the tool nodes on the canvas — like
  * `ir.models` fills in as you bind models — so this lists, read-only, every tool currently in the
  * agent with its kind. To add or remove a tool, drop/delete a tool node and wire it to an llm. */
 function ToolsRegistry({ ir }: { ir: IRDocument }) {
@@ -1907,7 +1980,7 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
   return (
     <Section title="Tools">
       {tools.length === 0 ? (
-        <Empty>No tools yet — drop a tool node and wire it to an llm.</Empty>
+        <EmptyHint>No tools yet — drop a tool node and wire it to an llm.</EmptyHint>
       ) : (
         tools.map(([key, t]) => (
           <div
@@ -1926,12 +1999,11 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
   );
 }
 
-// ── connections panel (M19 §2.10 — the graph-level tool/MCP auth surface) ──────────────────────────
+// ── connections panel (the graph-level tool/MCP auth surface) ──────────────────────────────────────
 
-/** List + create server-side `connection`s (the tool/MCP auth seam, §1.1). The ``secret`` is
+/** List + create server-side `connection`s (the tool/MCP auth seam). The ``secret`` is
  * WRITE-ONLY — typed here, sent to the encrypted store, and NEVER rendered back (a record carries
- * only ``hasSecret``). The inert "Browse hub" affordance is the M16 plug-point (registers the SAME
- * connection later — §2.4); it does nothing until M16. */
+ * only ``hasSecret``). */
 function ConnectionsPanel() {
   const qc = useQueryClient();
   const { data: connections, isError } = useQuery({
@@ -1971,9 +2043,9 @@ function ConnectionsPanel() {
   return (
     <Section title="Connections (tool / MCP auth)">
       {isError ? (
-        <Empty>Control plane unreachable.</Empty>
+        <EmptyHint>Control plane unreachable.</EmptyHint>
       ) : (connections ?? []).length === 0 ? (
-        <Empty>No connections. Create one to give an http tool / MCP its auth.</Empty>
+        <EmptyHint>No connections. Create one to give an http tool / MCP its auth.</EmptyHint>
       ) : (
         (connections ?? []).map((c) => (
           <div key={c.id} className="rounded border border-slate-800 px-2 py-1.5">
@@ -1984,7 +2056,7 @@ function ConnectionsPanel() {
             <div className="mono mt-0.5 flex items-center gap-2 text-[10px] text-slate-600">
               <span>{c.id}</span>
               {c.hasSecret && (
-                <span className="flex items-center gap-1 text-emerald-600">
+                <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                   <Lock size={10} aria-hidden /> secret set
                 </span>
               )}
@@ -1995,16 +2067,14 @@ function ConnectionsPanel() {
 
       <div className="mt-1.5 flex gap-2">
         <Button className="!py-1 text-xs" onClick={() => setOpen((o) => !o)}>
-          {open ? "Cancel" : "+ New connection"}
+          {open ? (
+            "Cancel"
+          ) : (
+            <>
+              <Plus size={14} aria-hidden /> New connection
+            </>
+          )}
         </Button>
-        <button
-          type="button"
-          disabled
-          title="Coming with M16 — browse the MCP/model hub and install with one click"
-          className="cursor-not-allowed rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-600"
-        >
-          Browse hub (M16)
-        </button>
       </div>
 
       {open && (
@@ -2013,19 +2083,19 @@ function ConnectionsPanel() {
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="Kind">
-            <select
-              className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
+            <Select
+              className="!text-xs"
               value={kind}
               onChange={(e) => setKind(e.target.value as "http_auth" | "mcp_server")}
             >
               <option value="http_auth">http_auth</option>
               <option value="mcp_server">mcp_server</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Config (non-secret JSON)">
-            <textarea
+            <Textarea
               spellCheck={false}
-              className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
+              className="mono h-20 !text-xs"
               value={configText}
               onChange={(e) => setConfigText(e.target.value)}
             />
@@ -2038,7 +2108,7 @@ function ConnectionsPanel() {
               onChange={(e) => setSecret(e.target.value)}
             />
           </Field>
-          {err && <p className="text-[11px] text-red-400">{err}</p>}
+          {err && <ErrorBanner error={err} />}
           <Button
             variant="primary"
             className="!py-1 text-xs"
@@ -2064,6 +2134,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
+// A compact sidebar empty-state hint — deliberately NOT the shared dashed-box Empty from ./ui
+// (that treatment is sized for full list pages) and named apart from it so the two can't be
+// import-swapped by accident.
+function EmptyHint({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-slate-600">{children}</p>;
+}
+
+// The Field-label caption for content that is NOT a single labelable control (button groups, the
+// icon picker). A real <label> here would make clicking the caption activate the first button and
+// override the buttons' accessible names, so this renders a plain <span> caption instead.
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
 }

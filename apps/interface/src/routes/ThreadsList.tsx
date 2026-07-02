@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { FilterBar } from "../components/Filters";
-import { Empty, ErrorBanner, Page, Spinner, Table, Td, Th } from "../components/ui";
+import { Empty, ErrorBanner, Page, Spinner, Table, Td, Th, linkClass } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useThreads } from "../queries";
 
@@ -25,7 +25,10 @@ export function ThreadsList() {
         <Spinner />
       ) : !threads || threads.length === 0 ? (
         <Empty>
-          No conversational threads yet. Run something with a thread id from the composer.
+          No conversational threads yet. Run something with a thread id from the{" "}
+          <Link to="/compose" className={linkClass}>
+            composer →
+          </Link>
         </Empty>
       ) : (
         <>
@@ -56,7 +59,7 @@ export function ThreadsList() {
                       <Link
                         to="/threads/$threadId"
                         params={{ threadId: t.id }}
-                        className="mono text-blue-400 hover:text-blue-300"
+                        className={`mono ${linkClass}`}
                       >
                         {t.id}
                       </Link>

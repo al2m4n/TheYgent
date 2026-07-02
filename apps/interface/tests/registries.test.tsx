@@ -300,8 +300,9 @@ describe("Browse — the hub browser", () => {
     await screen.findByText("Install model");
     fireEvent.click(screen.getByRole("button", { name: /Download & install/ }));
 
-    // The tray shows a live download with a cancel control; clicking it cancels.
-    fireEvent.click(await screen.findByRole("button", { name: "cancel" }));
+    // The tray shows a live download with a cancel control; clicking it cancels. (The install
+    // dialog has its own "Cancel" — target the download control by its accessible name.)
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel download" }));
     await waitFor(() => expect(screen.getByText("Cancelled.")).toBeInTheDocument());
     expect(cancelled).toBe(true);
   });
@@ -345,7 +346,7 @@ describe("Registries page — installed + add", () => {
     // The installed model shows without any tab switch (Installed IS the page now).
     await screen.findByText("qwen-reasoner");
     // Capabilities are not auto-fetched (probing warms the engine) — there's a probe button.
-    fireEvent.click(screen.getByRole("button", { name: "probe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Probe" }));
     await screen.findByText("reasoning");
     expect(screen.getByText("tools")).toBeInTheDocument();
     expect(screen.getByText("32k ctx")).toBeInTheDocument();

@@ -104,7 +104,7 @@ export function Root() {
             className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-100"
             aria-label="theygent — home"
           >
-            <span className="shrink-0 text-base text-blue-400">◆</span>
+            <span className="shrink-0 text-base text-blue-600 dark:text-blue-400">◆</span>
             {!effectiveCollapsed && <span className="truncate">theygent</span>}
           </Link>
           {!effectiveCollapsed && (
@@ -172,7 +172,7 @@ export function Root() {
 // reveals it). Lives outside any scroll/overflow container so it can extend past the rail's edge.
 function CollapsedTip({ label }: { label: string }) {
   return (
-    <span className="pointer-events-none absolute top-1/2 left-full z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 opacity-0 shadow-lg transition-opacity delay-300 group-hover/item:opacity-100">
+    <span className="pointer-events-none absolute top-1/2 left-full z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 opacity-0 shadow-lg transition-opacity delay-300 group-hover/item:opacity-100 group-focus-visible/item:opacity-100 group-focus-visible/item:delay-0">
       {label}
     </span>
   );
@@ -298,7 +298,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
                   title={`${label} theme`}
                   className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
                     active
-                      ? "border-blue-500 bg-blue-500/15 text-blue-300"
+                      ? "border-blue-500 bg-blue-500/15 text-blue-700 dark:text-blue-300"
                       : "border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
                   }`}
                 >

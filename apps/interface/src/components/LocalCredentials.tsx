@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { Button, ErrorBanner, Field, Input } from "./ui";
 
@@ -19,6 +19,18 @@ export function LocalCredentials() {
   });
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
+
+  // Deleting a secret is irreversible (the store is write-only — the value can't be re-read), so
+  // removal is a two-step inline confirm: first click arms, second click deletes. The armed state
+  // auto-resets after a few seconds so a stray click never lingers.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    },
+    [],
+  );
 
   const add = useMutation({
     mutationFn: () => api.putCredential(name.trim(), value),
@@ -60,11 +72,20 @@ export function LocalCredentials() {
                 <span className="text-[10px] text-slate-500">•••••• set</span>
                 <button
                   type="button"
-                  onClick={() => remove.mutate(c.name)}
+                  onClick={() => {
+                    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+                    if (confirming === c.name) {
+                      setConfirming(null);
+                      remove.mutate(c.name);
+                    } else {
+                      setConfirming(c.name);
+                      confirmTimer.current = setTimeout(() => setConfirming(null), 3000);
+                    }
+                  }}
                   disabled={remove.isPending}
-                  className="text-[11px] text-rose-400 hover:underline disabled:opacity-50"
+                  className="text-[11px] text-rose-600 hover:underline disabled:opacity-50 dark:text-rose-400"
                 >
-                  remove
+                  {confirming === c.name ? "Confirm remove?" : "Remove"}
                 </button>
               </div>
             </li>
