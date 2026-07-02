@@ -153,7 +153,7 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
         }
       }
     }
-    // subgraph/loop/map pin EXACTLY ONE of version / contentHash (m14.md §1.2).
+    // subgraph/loop/map pin EXACTLY ONE of version / contentHash.
     if (PINNED_BODY_TYPES.has(n.type)) {
       const hasVersion = Boolean(config.version);
       const hasHash = Boolean(config.contentHash);
@@ -161,6 +161,18 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
         issues.push({
           severity: "error",
           message: `a ${n.type} body must pin EXACTLY ONE of 'version' or 'contentHash'`,
+          nodeId: n.id,
+        });
+      }
+    }
+    // A loop is bounded — maxIterations must be a whole number >= 1. The default (0) is invalid, so
+    // flag it here instead of letting the run fail; an unbounded loop is not allowed.
+    if (n.type === "loop") {
+      const mi = config.maxIterations;
+      if (typeof mi !== "number" || !Number.isInteger(mi) || mi < 1) {
+        issues.push({
+          severity: "error",
+          message: "loop maxIterations must be a whole number ≥ 1",
           nodeId: n.id,
         });
       }

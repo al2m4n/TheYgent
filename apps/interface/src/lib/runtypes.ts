@@ -9,7 +9,9 @@
 // the canvas live in lib/api.ts; this file adds only the run/thread/trace shapes the cockpit views
 // brought with them.
 
-export type RunStatus = "created" | "streaming" | "completed" | "failed";
+// `waiting` is a durable run paused at a human node (awaiting resume); the reconcile sweep leaves
+// it alone. A run is live while created/streaming and terminal at completed/failed.
+export type RunStatus = "created" | "streaming" | "waiting" | "completed" | "failed";
 
 export interface Run {
   id: string;
@@ -22,9 +24,14 @@ export interface Run {
   created_at: string;
   updated_at: string;
   error: string | null;
-  // M9 §2.2: the run's final output, persisted regardless of threading (so a one-shot run's
-  // answer survives the stream/tab). Null until a terminal output is reached.
+  // The run's final output, persisted regardless of threading (so a one-shot run's answer survives
+  // the stream/tab). Null until a terminal output is reached.
   output: string | null;
+  // Durable-run breadcrumbs the backend returns: the node a `waiting` run is paused at, the terminal
+  // timestamp, and the trigger that fired it (null for a UI-initiated run).
+  awaiting_node?: string | null;
+  completed_at?: string | null;
+  trigger_id?: string | null;
 }
 
 export interface ThreadSummary {

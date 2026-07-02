@@ -498,8 +498,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // M18 agent bench: invoke a saved, PINNED agent via the existing M11 run path (no new run path,
-  // §1.5). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
+  // Agent bench: invoke a saved, PINNED agent via the M11 run path (the interactive, non-durable
+  // path). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
   runAgent: (
     id: string,
     body: { input?: unknown; version?: string; content_hash?: string; stream?: boolean },
@@ -508,6 +508,19 @@ export const api = {
       CONTROL_PLANE_URL,
       `/agents/${encodeURIComponent(id)}/runs`,
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
+    ),
+
+  // Run a saved agent on the DURABLE runtime — the path for durable-only agents (loop/map/subgraph/
+  // human) the interactive run rejects. Returns a run id to poll via GET /runs/{id}; a non-durable
+  // server answers 400 `durable_required`. Snake_case `run_id` matches the /runs surface it polls.
+  runAgentDurable: (
+    id: string,
+    body: { input?: unknown; version?: string; content_hash?: string },
+  ) =>
+    request<{ run_id: string }>(
+      CONTROL_PLANE_URL,
+      `/agents/${encodeURIComponent(id)}/durable-runs`,
+      { method: "POST", body: JSON.stringify(body) },
     ),
 
   // M18 §2.6 tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the

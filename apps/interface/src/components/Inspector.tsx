@@ -34,6 +34,7 @@ import {
   updateNodeLabel,
 } from "../adapter";
 import { api } from "../lib/api";
+import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { Badge, Button, Field, Input, Select } from "./ui";
 
@@ -136,6 +137,14 @@ function NodePanel({
 
         <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
 
+        {DURABLE_ONLY.has(node.type) && (
+          <div className="rounded-md border border-amber-700/50 bg-amber-950/30 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90">
+            <span className="font-semibold">Durable-only.</span> This runs on the durable runtime —
+            deploy the agent and invoke it via a trigger (schedule/webhook). It can’t run from the
+            interactive Run/Compose path.
+          </div>
+        )}
+
         {node.type === "tool" || node.type === "mcp_tool" ? (
           // M22 D1: tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
           // kind chooses the binding shape and (for mcp) the underlying node type.
@@ -191,9 +200,39 @@ function NodePanel({
                 <AgentPicker
                   key={`${node.id}:${key}`}
                   value={config.agent as string | undefined}
-                  onChange={(v) => setConfigKey("agent", v)}
+                  // Picking a different body clears the pin — versions/hashes are body-specific.
+                  onChange={(v) =>
+                    onChange(
+                      updateNodeConfig(ir, node.id, {
+                        ...config,
+                        agent: v,
+                        version: null,
+                        contentHash: null,
+                      }),
+                    )
+                  }
                 />
               );
+            }
+            // Pin the body by VERSION via a picker over the chosen agent's versions (sets `version`,
+            // clears `contentHash`). Content-hash pinning stays available via the Raw config.
+            if (PINNED_BODY_TYPES.has(node.type) && key === "version") {
+              return (
+                <BodyVersionPicker
+                  key={`${node.id}:${key}`}
+                  agentId={config.agent as string | undefined}
+                  value={config.version as string | undefined}
+                  onPick={(v) =>
+                    onChange(
+                      updateNodeConfig(ir, node.id, { ...config, version: v, contentHash: null }),
+                    )
+                  }
+                />
+              );
+            }
+            // `contentHash` is the advanced alternate pin — hidden from the form, editable in Raw config.
+            if (PINNED_BODY_TYPES.has(node.type) && key === "contentHash") {
+              return null;
             }
             return (
               <ConfigField
@@ -1157,8 +1196,45 @@ function AgentPicker({
       value={value}
       loading={isLoading}
       options={(agents ?? []).map((a) => a.id)}
-      hint="the saved agent this node composes (pin a version/contentHash too)"
+      hint="the saved agent this node composes — then pin a version below"
       onChange={onChange}
+    />
+  );
+}
+
+/** Pin the body by version: lists the chosen agent's versions (newest first) and writes the picked
+ * one into `config.version`. Disabled until a body agent is chosen; degrades to free text if the
+ * registry is unreachable so an offline author can still type a version. */
+function BodyVersionPicker({
+  agentId,
+  value,
+  onPick,
+}: {
+  agentId: string | undefined;
+  value: string | undefined;
+  onPick: (v: string) => void;
+}) {
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api.getAgent(agentId as string),
+    enabled: Boolean(agentId),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const versions = (detail?.versions ?? []).map((v) => v.version);
+  return (
+    <ListPicker
+      label="body version *"
+      value={value}
+      loading={Boolean(agentId) && isLoading}
+      options={versions}
+      placeholder={agentId ? "pick a version…" : "pick a body agent first"}
+      hint={
+        agentId
+          ? "the immutable version of the body this node runs"
+          : "select the body agent above, then pin a version"
+      }
+      onChange={onPick}
     />
   );
 }

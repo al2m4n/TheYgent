@@ -12,6 +12,10 @@ the control-plane fails readiness if it is unset/unreachable. Apply migrations f
 before exposing an agent for non-interactive invocation. The M12 schedule dispatcher starts with
 the app (in-process — m12.md §3); webhook ``/hooks/{id}`` firing is authed per-webhook by the
 signing secret in the trigger's config, not this token.
+
+``THEYGENT_DURABLE=1`` opts the unattended fire path (triggers) AND the durable-run endpoint onto
+the embedded DBOS runtime, so durable-only agents (loop/map/subgraph/human) can actually run.
+Default OFF — the interactive ``/runs`` path is byte-for-byte the same in both modes.
 """
 
 from __future__ import annotations
@@ -23,11 +27,18 @@ import uvicorn
 from theygent_control_plane.app import create_app
 
 
+def _env_flag(name: str) -> bool:
+    """A boolean env var: ``1``/``true``/``yes``/``on`` (case-insensitive) is True; anything else
+    (including unset) is False."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     app = create_app(
         inference_base_url=os.environ.get(
             "THEYGENT_INFERENCE_PLANE_URL", "http://127.0.0.1:8081/v1"
         ),
+        durable=_env_flag("THEYGENT_DURABLE"),
     )
     uvicorn.run(
         app,

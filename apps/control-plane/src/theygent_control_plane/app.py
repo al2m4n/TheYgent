@@ -1720,6 +1720,47 @@ def create_app(
             ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
         )
 
+    @app.post("/agents/{agent_id}/durable-runs", dependencies=[Depends(require_auth)])
+    async def run_agent_durable(agent_id: str, req: AgentRunRequest) -> Any:
+        # Run a SAVED agent on the durable runtime and hand back a run id to poll — the way a user
+        # executes a durable-only agent (loop/map/subgraph/human) from the UI, since those types
+        # can't run on the interactive path. This is ADDITIVE: it touches no interactive handler; it
+        # is a second durable-run initiator beside the trigger `fire()` seam, and reuses only the
+        # read-only IR resolver + the durable runtime's enqueue. Requires durable mode (else a clean
+        # 400, exactly like resume). Fire-and-poll: enqueue, return the run id, and the caller polls
+        # GET /runs/{id}.
+        runtime = getattr(app.state, "durable_runtime", None)
+        if runtime is None:
+            return _error(
+                "durable runs require the control-plane in durable mode",
+                status=400,
+                code="durable_required",
+            )
+        ir, err = await _resolve_agent_ir(
+            agent_id, version=req.version, content_hash_pin=req.content_hash
+        )
+        if err is not None:
+            return err
+        assert ir is not None
+        agent_ref = {
+            "agent_id": ir.id,
+            "version": req.version,
+            "content_hash": req.content_hash,
+            "enqueued_ns": now_ns(),  # the workflow emits the enqueue→pickup wait span
+        }
+        handle = await runtime.enqueue_run(agent_ref, req.input, thread_id=req.thread_id)
+        run_id = handle.workflow_id
+        logger.info("agent.durable_run", extra={"agent_id": agent_id, "run_id": run_id})
+        # The run row is written by the workflow's first step on worker pickup (async), so wait
+        # (bounded) for it to exist — else the caller's immediate GET /runs/{id} would 404 and its
+        # poll would give up before the run even started.
+        for _ in range(40):  # ~2s
+            async with tx() as session:
+                if await store.get_run(session, run_id) is not None:
+                    break
+            await asyncio.sleep(0.05)
+        return JSONResponse({"run_id": run_id}, status_code=202)
+
     # ── theygent-native API: /triggers + invoke + hooks (M12 — the deploy primitive) ──
     # The gap between "an agent exists" (M11) and "an agent runs without a human in the cockpit"
     # (m12.md §0). Triggers fire SAVED, PINNED agents (§1.1) through the one ``fire`` seam over the
