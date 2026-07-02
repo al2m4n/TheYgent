@@ -149,6 +149,73 @@ async def test_durable_run_records_worker_attribution_and_queue_wait(pg_url: str
     assert gen_attrs["gen_ai.usage.output_tokens"] == 2
 
 
+def _model_guardrail_ir(agent_id: str) -> dict:
+    """input -> guardrail(model judge) -> output: the pass branch carries the input through."""
+    ir = _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_g",
+                "guardrail",
+                "activity",
+                config={
+                    "check": {
+                        "type": "model",
+                        "model": {
+                            "model": "default",
+                            "prompt": "in scope? yes/no",
+                            "passOn": "yes",
+                        },
+                    },
+                    "onBlock": {"message": "blocked"},
+                },
+                ins=["in"],
+                outs=["pass", "block"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_g"), _edge("e2", "n_g", "pass", "n_out")],
+        models={"default": {"binding": "mlx", "model": "judge-fast", "params": {}}},
+    )
+    ir["id"] = agent_id
+    return ir
+
+
+async def test_durable_guardrail_usage_lands_on_generate_span(pg_url: str) -> None:
+    # The judge call's journaled usage lands on the guardrail's model.generate phase span on the
+    # DURABLE path too — the quota gate meters guardrail calls regardless of which runtime ran
+    # the agent. Exactly ONE span carries it (no mirror onto the node span — the gate sums).
+    await reset_dbos_schema(pg_url)
+    ir = _model_guardrail_ir("agt_obs_guard")
+    with FakeInference(response="yes, in scope") as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, sm)
+        rt.launch()
+        try:
+            ref = {"agent_id": aid, "version": ver, "content_hash": None}
+            handle = await rt.enqueue_run(ref, "please book a table")
+            result = await handle.get_result()
+            assert result["status"] == "completed"
+            assert result["output"] == "please book a table"  # passed → carried through
+            async with sm() as s:
+                spans = await TraceStore().list_spans(s, result["runId"])
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+    gen = next(s for s in spans if s.phase == "model.generate")
+    attrs = gen.attributes or {}
+    assert attrs["gen_ai.usage.total_tokens"] == 3
+    assert attrs["gen_ai.usage.input_tokens"] == 1
+    assert attrs["gen_ai.usage.output_tokens"] == 2
+    node = next(s for s in spans if s.name == "n_g" and s.phase is None)
+    assert "gen_ai.usage.total_tokens" not in (node.attributes or {})  # no double-count mirror
+
+
 async def test_resume_does_not_duplicate_spans_and_preserves_worker(pg_url: str) -> None:
     # The §4 resume-idempotency claim, on the real durable path: n_a COMPLETES + journals; the
     # worker CRASHES mid-n_b; the run is recovered and finishes n_b. The recovered workflow

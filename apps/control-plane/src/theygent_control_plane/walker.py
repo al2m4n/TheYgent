@@ -1595,15 +1595,16 @@ async def execute_guardrail_model(
     prompt: str,
     input_value: Any,
     extra_headers: Mapping[str, str],
-) -> str:
-    """Run a model guardrail's classifier call (m19.md §2.6) — the runtime-agnostic body both
-    runtimes wrap. Builds one user message (the judge prompt + the input) and assembles the answer
-    via ``execute_llm``; the caller compares it to ``pass_on``. One cheap call before the costly."""
+) -> LlmActivityResult:
+    """Run a model guardrail's classifier call — the runtime-agnostic body both runtimes wrap.
+    Builds one user message (the judge prompt + the input) and runs one model turn via
+    ``execute_llm``. Returns the FULL turn result: the caller compares ``.output`` to ``pass_on``
+    and lands ``.usage`` on the call's generate span — the judge call spends real tokens, so the
+    quota gate must see them like any other model call."""
     messages = [{"role": "user", "content": f"{prompt}\n\nInput:\n{_stringify(input_value)}"}]
-    result = await execute_llm(
+    return await execute_llm(
         gateway, model_id=model_id, params=params, messages=messages, extra_headers=extra_headers
     )
-    return result.output
 
 
 def guardrail_model_passed(answer: str, pass_on: str) -> bool:
@@ -1828,7 +1829,7 @@ async def walk(
                 elif node.type == "mcp_tool":
                     await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "guardrail":  # model guardrail (rule⇒orchestration branch below)
-                    await _walk_guardrail_model(node, ir, ctx, values, skipped, live_handles)
+                    await _walk_guardrail_model(node, ir, ctx, values, skipped, live_handles, scope)
                 elif node.type in ("ratelimit", "quota"):
                     await _walk_gate(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "transcribe":
@@ -2467,8 +2468,9 @@ async def _walk_guardrail_model(
     values: dict[tuple[str, str], Any],
     skipped: set[str],
     live_handles: dict[str, set[str]],
+    scope: SpanScope | None = None,
 ) -> None:
-    """Run a MODEL guardrail (m19.md §2.6, activity): a cheap classifier call decides pass/block.
+    """Run a MODEL guardrail (activity): a cheap classifier call decides pass/block.
     The model sub-config is guaranteed present (validated in packages/ir); the model id resolves
     like an ``llm`` (engine-name rejected). Then the same pass/block binding as the rule path."""
     config = GuardrailConfig.model_validate(node.config)
@@ -2477,17 +2479,26 @@ async def _walk_guardrail_model(
     model_id, params = resolve_model_key(ir, mcfg.model)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
     input_value = _single_in_value(ports, node)
-    answer = await execute_guardrail_model(
-        ctx.gateway,
-        model_id=model_id,
-        params=params,
-        prompt=mcfg.prompt,
-        input_value=input_value,
-        extra_headers=ctx.extra_headers,
-    )
+    # The classifier call runs inside a `model.generate` phase span, like an llm node's turn.
+    # Its token usage lands on THAT span only (never mirrored onto the node span) — the quota
+    # gate SUMS the attribute across a run's spans, so a mirror would double-count.
+    gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
+    async with gen_cm as gen_scope:
+        result = await execute_guardrail_model(
+            ctx.gateway,
+            model_id=model_id,
+            params=params,
+            prompt=mcfg.prompt,
+            input_value=input_value,
+            extra_headers=ctx.extra_headers,
+        )
+        if gen_scope is not None:
+            gen_scope.set_attributes(
+                {"gen_ai.request.model": model_id, **usage_attributes(result.usage)}
+            )
     _bind_guardrail(
         node,
-        guardrail_model_passed(answer, mcfg.pass_on),
+        guardrail_model_passed(result.output, mcfg.pass_on),
         input_value,
         config.on_block,
         values,

@@ -480,11 +480,13 @@ async def _guardrail_model_step(
     params: dict[str, Any],
     prompt: str,
     input_value: Any,
-) -> str:
-    """A MODEL guardrail's classifier call as a durable step (M19 §2.6) — the cheap judge call
-    before the expensive node. Returns the classifier answer (journaled); the caller decides
-    pass/block."""
-    return await execute_guardrail_model(
+) -> dict[str, Any]:
+    """A MODEL guardrail's classifier call as a durable step — the cheap judge call before the
+    expensive node. Journals ``{"answer", "usage"}``: the caller decides pass/block from the
+    answer and lands the usage on the call's generate span (the judge call spends real tokens,
+    so the quota gate must see them). Entries journaled before usage was carried replay as a
+    bare answer string — the caller reads both shapes, so an old run resumes fine."""
+    out = await execute_guardrail_model(
         _res().gateway,
         model_id=model_id,
         params=params,
@@ -492,6 +494,7 @@ async def _guardrail_model_step(
         input_value=input_value,
         extra_headers={"x-theygent-run-id": run_id},
     )
+    return {"answer": out.output, "usage": out.usage}
 
 
 @DBOS.step(**_RETRY)
@@ -1029,9 +1032,26 @@ async def _durable_walk(
                     # A branch-local name: rebinding `input_value` here would corrupt the RUN
                     # input the `input` boundary reads when a guardrail sorts before it.
                     gr_input = _single_in_value(ports, node)
-                    answer = await _guardrail_model_step(
-                        run_id, node.id, model_id, params, mcfg.prompt, gr_input
+                    # The classifier call runs inside a `model.generate` phase span, like an llm
+                    # turn. Its usage lands on THAT span only (never mirrored onto the node span)
+                    # — the quota gate SUMS across a run's spans; a mirror would double-count.
+                    gen_cm = (
+                        scope.child_phase("model.generate") if scope is not None else _null_acm()
                     )
+                    async with gen_cm as gen_scope:
+                        step_out = await _guardrail_model_step(
+                            run_id, node.id, model_id, params, mcfg.prompt, gr_input
+                        )
+                        # A journal entry written before usage was carried replays as the bare
+                        # answer string.
+                        if isinstance(step_out, str):
+                            answer, gr_usage = step_out, None
+                        else:
+                            answer, gr_usage = step_out.get("answer", ""), step_out.get("usage")
+                        if gen_scope is not None:
+                            gen_scope.set_attributes(
+                                {"gen_ai.request.model": model_id, **usage_attributes(gr_usage)}
+                            )
                     _bind_guardrail(
                         node,
                         guardrail_model_passed(answer, mcfg.pass_on),
