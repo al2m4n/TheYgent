@@ -1,45 +1,39 @@
-// Client-side IR authoring hints (M8 §3.1). These are *hints* that give the composer a
-// red-squiggle as you type — the control-plane's `parse_document` + `validate_graph` stay
-// authoritative (a real run returns 400 invalid_ir with the precise message). We keep this a
-// pure, synchronous function so it is trivially unit-testable (§5) and reusable by the
-// CodeMirror linter.
+// Client-side IR authoring hints. These are *hints* that give the composer a red-squiggle as you
+// type — the control-plane's `parse_document` + `validate_graph` stay authoritative (a real run
+// returns 400 invalid_ir with the precise message). We keep this a pure, synchronous function so
+// it is trivially unit-testable and reusable by the CodeMirror linter.
 //
-// The top-level required envelope keys are read from the bundled IRDocument JSON Schema
-// (generated from packages/ir — the single source of truth), so this list can't silently
-// drift from the backend. The type→kind table mirrors packages/ir's NODE_TYPE_KIND.
+// The top-level required envelope keys are read from the GENERATED IRDocument JSON Schema
+// (@theygent/ir-types — the single source of truth, covered by the CI drift guard), so this list
+// can't silently drift from the backend. Node kinds likewise come from the generated registry
+// (via expectedKind, which also handles the guardrail's per-instance kind).
 
-import irSchema from "./ir.schema.json";
+import { NODE_TYPES } from "@theygent/ir-types";
+import irSchema from "@theygent/ir-types/schema";
+import { DURABLE_ONLY } from "./durable";
+import { expectedKind } from "./kind";
 
 export interface IRIssue {
   message: string;
   severity: "error" | "warning";
 }
 
-// Mirror of packages/ir NODE_TYPE_KIND (theygent-graph-schema.md §8.3). A type/kind mismatch
-// is a validation error in the IR package; surfacing it early is the highest-value hint.
-const NODE_TYPE_KIND: Record<string, string> = {
-  input: "boundary",
-  output: "boundary",
-  human: "boundary",
-  subgraph: "boundary",
+// Node types the IR schema DECLARES but no runtime executes yet — legal to author, refused at run
+// (the control plane answers 400 node_type_unavailable). Their kinds are pinned by the backend's
+// NODE_TYPE_KIND; they are absent from the generated registry (which covers executable types).
+const DECLARED_ONLY_KIND: Record<string, string> = {
   agent: "activity",
-  llm: "activity",
-  tool: "activity",
-  mcp_tool: "activity",
   rag: "activity",
   retriever: "activity",
   memory: "activity",
   code: "activity",
-  router: "orchestration",
   condition: "orchestration",
-  loop: "orchestration",
   iterator: "orchestration",
-  map: "orchestration",
 };
 
 const ENVELOPE_REQUIRED: string[] = Array.isArray((irSchema as { required?: unknown }).required)
   ? ((irSchema as { required: string[] }).required as string[])
-  : ["id", "version", "nodes", "edges"];
+  : ["schemaVersion", "id", "name", "version"];
 
 /** Parse + structurally validate an IR document string. `null` doc means a JSON parse error. */
 export function validateIR(text: string): { doc: unknown; issues: IRIssue[] } {
@@ -92,16 +86,48 @@ export function validateIR(text: string): { doc: unknown; issues: IRIssue[] } {
         const label = id ?? `#${i}`;
         if (!type) issues.push({ message: `node "${label}" is missing "type"`, severity: "error" });
         if (!kind) issues.push({ message: `node "${label}" is missing "kind"`, severity: "error" });
-        if (type && kind && type in NODE_TYPE_KIND && NODE_TYPE_KIND[type] !== kind) {
-          issues.push({
-            message: `node "${label}": type "${type}" must have kind "${NODE_TYPE_KIND[type]}", not "${kind}"`,
-            severity: "error",
-          });
-        }
-        if (type && !(type in NODE_TYPE_KIND)) {
-          issues.push({ message: `node "${label}": unknown type "${type}"`, severity: "warning" });
+        if (type) {
+          // Executable types come from the generated registry (expectedKind also derives the
+          // guardrail's per-instance kind); schema-declared-but-unexecutable types have a pinned
+          // kind and a "refused at run" warning; anything else is unknown.
+          const expected = expectedKind({ type, config: node.config }) ?? DECLARED_ONLY_KIND[type];
+          if (kind && expected && expected !== kind) {
+            issues.push({
+              message: `node "${label}": type "${type}" must have kind "${expected}", not "${kind}"`,
+              severity: "error",
+            });
+          }
+          if (!(type in NODE_TYPES) && type in DECLARED_ONLY_KIND) {
+            issues.push({
+              message: `node "${label}": type "${type}" is declared but not executable yet — the control plane refuses to run it`,
+              severity: "warning",
+            });
+          } else if (!(type in NODE_TYPES)) {
+            issues.push({
+              message: `node "${label}": unknown type "${type}"`,
+              severity: "warning",
+            });
+          }
         }
       }
+    }
+  }
+
+  // Durable-only node types can't run on the interactive /graphs/runs path this composer feeds —
+  // say so up front (save the graph as an agent and use "Run durably" instead of hitting a 400).
+  if (Array.isArray(nodes)) {
+    const durable = [
+      ...new Set(
+        nodes
+          .map((n) => (typeof n === "object" && n !== null ? (n as { type?: unknown }).type : null))
+          .filter((t): t is string => typeof t === "string" && DURABLE_ONLY.has(t)),
+      ),
+    ];
+    if (durable.length > 0) {
+      issues.push({
+        message: `durable-only node type(s) ${durable.join(", ")}: this graph can't run interactively — save it as an agent and use "Run durably" (needs THEYGENT_DURABLE=1)`,
+        severity: "warning",
+      });
     }
   }
 

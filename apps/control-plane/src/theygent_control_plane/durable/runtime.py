@@ -209,6 +209,12 @@ class DurableRuntime:
             async with self._sessionmaker() as session:
                 run = await self._store.get_run(session, run_id)
             node_id = run.awaiting_node if run is not None else None
+        if node_id is None:
+            # Every human node recvs on its own `human:<node_id>` topic; a send with no node
+            # would buffer forever on the bare prefix nothing listens to. Loud beats inert.
+            raise ValueError(
+                f"run {run_id!r} records no awaiting node — the resume cannot be delivered"
+            )
         try:
             await DBOS.send_async(run_id, {"input": input_value}, human_topic(node_id))
         except DBOSNonExistentWorkflowError as exc:

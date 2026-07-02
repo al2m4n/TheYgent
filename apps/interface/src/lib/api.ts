@@ -523,6 +523,16 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
 
+  // Deliver the awaited input to a durable run paused at a human node (status "waiting"). The
+  // workflow resumes from its checkpoint; poll GET /runs/{id} for the outcome. 409 when the run
+  // isn't waiting; 422 when the node's declared input schema requires keys the payload lacks.
+  resumeRun: (runId: string, input: unknown) =>
+    request<{ runId: string; status: string; awaitingNode?: string | null }>(
+      CONTROL_PLANE_URL,
+      `/runs/${encodeURIComponent(runId)}/resume`,
+      { method: "POST", body: JSON.stringify({ input }) },
+    ),
+
   // M18 §2.6 tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the
   // EXISTING /graphs/runs path — which already accepts inline IR (M5 §1). This adds NO new backend
   // and NO new execution path: it is the agent/run path pointed at a single tool (§2.6), NOT an

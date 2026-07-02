@@ -5,6 +5,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { useMemo, useState } from "react";
 import { Button, Card, ErrorBanner, Field, Input, Page, Select, Textarea } from "../components/ui";
 import { ApiError } from "../lib/api";
+import { DURABLE_ONLY } from "../lib/durable";
 import { validateIR } from "../lib/ir-validate";
 import { startLiveRun } from "../lib/live";
 import { useTheme } from "../lib/theme";
@@ -132,8 +133,21 @@ export function Compose() {
           thread_id: threadId || null,
         });
       } else {
+        const doc = JSON.parse(ir) as { nodes?: { type?: string }[] };
+        // /graphs/runs is the interactive path — a durable-only node (human/subgraph/loop/map)
+        // can only 400 there. Say what to do instead of relaying the server error.
+        const durable = [
+          ...new Set(
+            (doc.nodes ?? []).map((n) => n?.type ?? "").filter((t) => DURABLE_ONLY.has(t)),
+          ),
+        ];
+        if (durable.length > 0) {
+          throw new Error(
+            `this graph contains durable-only node type(s) ${durable.join(", ")} — save it as an agent (Save as agent) and run it from the Agents page with "Run durably" (the control plane needs THEYGENT_DURABLE=1)`,
+          );
+        }
         runId = await startLiveRun("/graphs/runs", {
-          ir: JSON.parse(ir),
+          ir: doc,
           input: graphInput,
           stream: true,
           thread_id: threadId || null,

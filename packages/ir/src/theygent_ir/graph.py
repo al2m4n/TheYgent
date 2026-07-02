@@ -896,6 +896,15 @@ def validate_graph(ir: IRDocument) -> None:
                         f"node {node.id!r}: a {node.type!r} body must pin EXACTLY ONE of `version` "
                         f"or `contentHash` (m14.md §1.2 — composition is immutable, never 'latest')"
                     )
+                # The depth budget must admit at least the body itself: `maxDepth: 0` (or
+                # negative) would pass every static check and only fail when the durable lowering
+                # hits the depth guard at run time.
+                max_depth = getattr(cfg, "max_depth", None)
+                if max_depth is not None and max_depth < 1:
+                    raise GraphValidationError(
+                        f"node {node.id!r}: `maxDepth` must be >= 1 (got {max_depth}) — a "
+                        "non-positive depth budget can never run its body"
+                    )
             # M14 §1.3: a loop is bounded — max_iterations is required (Pydantic) AND must be ≥ 1
             # (no unbounded/zero-iteration loop). This is the termination + determinism guarantee.
             if isinstance(cfg, LoopConfig) and cfg.max_iterations < 1:

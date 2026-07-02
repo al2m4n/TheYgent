@@ -1681,14 +1681,20 @@ def _error_handles(node: Node) -> set[str]:
     return {p.id for p in node.ports.out if p.type == "error"}
 
 
+# The reserved key a failed node's error is recorded under when it declares NO error-typed
+# out-port. Never a declared handle, so no edge can read it — it exists solely so the honest
+# empty-output reason can name the CAUSE instead of letting the error message vanish.
+_DROPPED_ERROR_KEY = "__dropped_error__"
+
+
 def _bind_outcome(
     node: Node,
     outcome: ActivityOutcome,
     values: dict[tuple[str, str], Any],
     live_handles: dict[str, set[str]],
 ) -> None:
-    """Bind a ``tool``/``mcp_tool`` :class:`ActivityOutcome` to the node's handles (m6.md §4): the
-    success value to the non-error handles on ``ok``, the error message to the ``err`` handle(s)
+    """Bind a ``tool``/``mcp_tool`` :class:`ActivityOutcome` to the node's handles: the success
+    value to the non-error handles on ``ok``, the error message to the ``err`` handle(s)
     otherwise — activating exactly the taken handle set so the un-taken branch's edges are dead.
     Shared by the interactive walker and (conceptually) the durable compiler's value threading."""
 
@@ -1696,6 +1702,10 @@ def _bind_outcome(
     live_handles[node.id] = handles
     for handle in handles:
         values[(node.id, handle)] = outcome.value
+    if not outcome.ok and not handles:
+        # The node failed but declares no error-typed out-port: the error has nowhere to bind.
+        # Record it under the reserved key so finalize_empty_reason can surface the cause.
+        values[(node.id, _DROPPED_ERROR_KEY)] = outcome.value
 
 
 def _edge_live(edge: Edge, skipped: set[str], live_handles: dict[str, set[str]]) -> bool:
@@ -1848,8 +1858,16 @@ async def walk(
                     _walk_transform(node, ir, values, skipped, live_handles)
                 elif node.type == "guardrail":  # rule guardrail (model⇒activity branch above)
                     _walk_guardrail_rule(node, ir, values, skipped, live_handles)
+                elif node.type in ("loop", "map"):
+                    # Durable-only lowerings (bounded repetition / durable fan-out) — rejected up
+                    # front by the run endpoints; this raise is the direct-caller backstop.
+                    raise NotImplementedError(
+                        f"orchestration node {node.id!r} (type {node.type!r}) is durable-only — "
+                        "run it on the durable runtime (a durable run or trigger), not the "
+                        "interactive path"
+                    )
                 else:
-                    # loop / map — durable-only (M14, raise here in the interactive walker).
+                    # condition / iterator — declared in the IR schema but not executable yet.
                     raise NotImplementedError(
                         f"orchestration node {node.id!r} (type {node.type!r}) "
                         "is not implemented yet"
@@ -1868,7 +1886,27 @@ async def walk(
             truncated_empty_nodes=result.truncated_empty_nodes,
             skipped=skipped,
             live_handles=live_handles,
+            values=values,
         )
+
+
+def _node_error_cause(
+    ir: IRDocument, node_id: str, values: dict[tuple[str, str], Any] | None
+) -> str | None:
+    """The error message a failed node bound (to its ``err`` handle, or to the reserved
+    dropped-error key when it declares none) — so the honest empty-output reason can carry the
+    CAUSE, not just the node id. ``None`` when unavailable (older call sites pass no values)."""
+    if values is None:
+        return None
+    node = next((n for n in ir.nodes if n.id == node_id), None)
+    if node is None:
+        return None
+    for handle in (_DROPPED_ERROR_KEY, *sorted(_error_handles(node))):
+        if (node_id, handle) in values:
+            value = values[(node_id, handle)]
+            text = value if isinstance(value, str) else json.dumps(value, default=str)
+            return text if len(text) <= 300 else text[:300] + "…"
+    return None
 
 
 def finalize_empty_reason(
@@ -1879,15 +1917,18 @@ def finalize_empty_reason(
     truncated_empty_nodes: list[str],
     skipped: set[str],
     live_handles: dict[str, set[str]],
+    values: dict[tuple[str, str], Any] | None = None,
 ) -> str | None:
-    """The m9.md §2.4 honest-empty-output reason, single-sourced so the interactive walk AND the
-    durable compiler (M13) compute it identically. If the walk finished with NO output node having
-    run and some node short-circuited to its ``err`` handle, the run reached no output *because* of
-    that handled-but-unconsumed error (its ``ok`` path to the output was skipped) — name it so the
-    control-plane doesn't report a green ``completed`` masquerading as success. If the output node
-    ran but is blank because an ``llm`` spent its whole budget (a reasoning model thinking, or
-    ``maxTokens`` too low), name that instead of a green blank. Returns ``None`` when the output is
-    legitimately present. Does NOT change the M6 error-as-structured-output contract."""
+    """The honest-empty-output reason, single-sourced so the interactive walk AND the durable
+    compiler compute it identically. If the walk finished with NO output node having run and some
+    node short-circuited to its ``err`` handle, the run reached no output *because* of that
+    handled-but-unconsumed error (its ``ok`` path to the output was skipped) — name it (and the
+    error message, when ``values`` is provided) so the control-plane doesn't report a green
+    ``completed`` masquerading as success. A graph that declares no output node, or whose taken
+    branch reaches none, gets an honest note too — never a silent blank. If the output node ran
+    but is blank because an ``llm`` spent its whole budget (a reasoning model thinking, or
+    ``maxTokens`` too low), name that instead of a green blank. Returns ``None`` when the output
+    is legitimately present. Does NOT change the error-as-structured-output contract."""
 
     if not output_produced:
 
@@ -1905,8 +1946,15 @@ def finalize_empty_reason(
 
         errored = [node.id for node in ir.nodes if _errored(node)]
         if errored:
-            return f"output empty: upstream error on node {errored[0]!r}"
-        return None
+            reason = f"output empty: upstream error on node {errored[0]!r}"
+            cause = _node_error_cause(ir, errored[0], values)
+            return f"{reason}: {cause}" if cause else reason
+        if not any(n.type == "output" for n in ir.nodes):
+            return "output empty: the graph declares no output node"
+        return (
+            "output empty: no output node executed this run "
+            "(the taken branch reaches no output node)"
+        )
     if _is_blank(output) and truncated_empty_nodes:
         return (
             f"output empty: node {truncated_empty_nodes[0]!r} hit the token limit "
@@ -1997,18 +2045,30 @@ def _walk_boundary(
         for handle in live_handles[node.id]:
             values[(node.id, handle)] = input_value
     elif node.type == "output":
-        # The output node's in-port value IS the run's canonical output (m6.md §4) — read from a
-        # live edge, so a routed run returns whichever branch actually produced it.
+        # The output node's in-port value IS the run's canonical output — read from a live edge,
+        # so a routed run returns whichever branch actually produced it.
         live_handles[node.id] = set()
         ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
         value = _single_in_value(ports, node)
         if result is not None:
+            if result.output_produced:
+                # Two output nodes both executed: the run's canonical output would silently be
+                # whichever topo order visits last. Ambiguity is a loud failure, never a silent
+                # pick — same rule as _single_in_value.
+                raise TemplateError(
+                    f"node {node.id!r}: a second output node executed — the run output would be "
+                    "ambiguous. Route exclusive branches (router/guardrail) so at most one "
+                    "output node is live per run."
+                )
             result.output = value
-            result.output_produced = True  # an output node ran (m9.md §2.4)
+            result.output_produced = True  # an output node ran
     else:
-        # human / subgraph — deferred (§7).
+        # human / subgraph lower onto the durable runtime (a durable wait / a child workflow) —
+        # this interactive walker cannot run them. The run endpoints reject these up front
+        # (durable_required); this raise is the backstop for direct walk() callers.
         raise NotImplementedError(
-            f"boundary node {node.id!r} (type {node.type!r}) is not implemented yet"
+            f"boundary node {node.id!r} (type {node.type!r}) is durable-only — run it on the "
+            "durable runtime (a durable run or trigger), not the interactive path"
         )
 
 
@@ -2215,21 +2275,28 @@ async def _walk_tool(
 
     config = ToolConfig.model_validate(node.config)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    # M19 §2.3: route http-vs-builtin. An ``http`` binding in ``ir.tools`` → a real outbound call
-    # with connection-injected auth (server-side, at step time); otherwise the M6 builtin registry
-    # path. An unresolvable ``$in`` ref is a structured err either way (m6.md §4): bind ``err``.
+    # Route the step by what ``config.tool`` resolves to: an ``http`` binding in ``ir.tools`` → a
+    # real outbound call with connection-injected auth (server-side, at step time); a ``builtin``
+    # binding → its registered ``ref``; a directly-registered builtin name → itself. An unresolvable
+    # ``$in`` ref is a structured err either way: bind ``err``.
     binding = is_http_tool(ir, config.tool)
     if binding is not None:
         outcome = await run_http_tool(
             binding, config, ports, node_id=node.id, run_id=ctx.run_id, resolver=ctx.tool_auth
         )
     else:
+        # A ``builtin`` binding names its callable via ``ref`` (the ir.tools key is a logical name);
+        # a bare ``config.tool`` is itself a registered builtin. An ``mcp`` binding is the wrong
+        # shape for a step-mode tool node (that is the ``mcp_tool`` node's job) — the up-front check
+        # rejects it, so it never reaches here.
+        ir_binding = ir.tools.get(config.tool)
+        builtin_name = ir_binding.ref if isinstance(ir_binding, BuiltinTool) else config.tool
         try:
             args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
         except Exception as exc:
             outcome = ActivityOutcome(ok=False, value=str(exc))
         else:
-            outcome = await execute_tool(ctx.tools, config.tool, args)
+            outcome = await execute_tool(ctx.tools, builtin_name, args)
     _bind_outcome(node, outcome, values, live_handles)
     if not outcome.ok:
         logger.info(

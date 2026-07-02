@@ -1,5 +1,6 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { ResumePanel } from "../components/ResumePanel";
 import { Waterfall } from "../components/Waterfall";
 import {
   Card,
@@ -27,6 +28,8 @@ function Detail({ label, value }: { label: string; value: ReactNode }) {
 export function RunDetail() {
   const { runId } = useParams({ from: "/runs/$runId" });
   const live = useLiveRun(runId);
+  // `live: true` also covers a durable run paused at a human node ("waiting"): the row polls at a
+  // relaxed cadence so a resume — from here or anywhere else — shows up without a manual reload.
   const { data: run, isLoading, error, refetch } = useRun(runId, { live: !live?.done });
   const threadId = run?.thread_id ?? null;
   const { data: thread } = useThread(threadId ?? "");
@@ -121,6 +124,14 @@ export function RunDetail() {
         <Detail label="Updated" value={relativeTime(run.updated_at)} />
         {run.content_hash && <Detail label="Content hash" value={run.content_hash} />}
       </Card>
+
+      {status === "waiting" && (
+        <ResumePanel
+          runId={run.id}
+          awaitingNode={run.awaiting_node ?? null}
+          onResumed={() => refetch()}
+        />
+      )}
 
       {run.error &&
         (isNote ? (

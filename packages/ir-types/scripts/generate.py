@@ -53,7 +53,9 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "mcp_tool": {"in": ["in"], "out": ["out", "err", "use"]},
     "router": {"in": ["in"], "out": ["out"]},
     "human": {"in": ["in"], "out": ["out"]},
-    "subgraph": {"in": ["in"], "out": ["out"]},
+    # A failed subgraph child binds its error to the node's error-typed out-port (the tool ok/err
+    # contract) — without a default ``err`` port that failure path is unwirable on the canvas.
+    "subgraph": {"in": ["in"], "out": ["out", "err"]},
     "loop": {"in": ["in"], "out": ["out"]},
     "map": {"in": ["in"], "out": ["out"]},
     # M19 §2 — the node palette. transcribe/speak carry an ``err`` out-port (the tool ok/err

@@ -612,6 +612,27 @@ async def _complete_run_step(
         await res.store.set_status(session, run_id, status, output=output, error=error)  # type: ignore[arg-type]
 
 
+async def _fail_run(run_id: str, run_trace: Any, reason: str) -> dict[str, Any]:
+    """Terminalize a failed run so the row can never be left non-terminal. The journaled step is
+    the normal path (idempotent on replay); if the step call itself raises — e.g. a recovered
+    workflow whose failure point now precedes its journaled operations, so the step intercept
+    collides with a differently-named recorded operation — fall back to a DIRECT store write.
+    An unjournaled duplicate write is harmless (set_status is idempotent); a permanently
+    non-terminal durable run (excluded from the reconcile sweep, un-resumable) is not."""
+    try:
+        await _complete_run_step(run_id, "failed", None, reason)
+    except Exception:
+        logger.warning("durable.terminalize_fallback", extra={"run_id": run_id, "error": reason})
+        try:
+            res = _res()
+            async with res.sessionmaker() as session, session.begin():
+                await res.store.set_status(session, run_id, "failed", error=reason)
+        except Exception:  # pragma: no cover - even the direct write failed; nothing left to try
+            logger.exception("durable.terminalize_failed", extra={"run_id": run_id})
+    await _finish_run_trace(run_trace, "err", reason)
+    return {"runId": run_id, "status": "failed", "error": reason}
+
+
 @DBOS.step(**_RETRY)
 async def _mark_waiting_step(run_id: str, node_id: str) -> None:
     """Pause the Run at a ``human`` node (M14 §1.1): status → ``waiting`` + record the node, so the
@@ -785,6 +806,14 @@ async def _durable_walk(
                 elif node.type == "output":
                     live_handles[node.id] = set()
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    if output_produced:
+                        # Two output nodes both executed: the run output would silently be
+                        # whichever topo order visits last. Loud, like the interactive walker.
+                        raise TemplateError(
+                            f"node {node.id!r}: a second output node executed — the run output "
+                            "would be ambiguous. Route exclusive branches (router/guardrail) so "
+                            "at most one output node is live per run."
+                        )
                     output = _single_in_value(ports, node)
                     output_produced = True
                 elif node.type == "human":
@@ -991,7 +1020,22 @@ async def _durable_walk(
                                 call.timeout,
                             )
                             outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                    elif isinstance(ir.tools.get(config.tool), McpTool):
+                        # An mcp binding is the wrong shape for a step-mode tool node (the mcp_tool
+                        # node runs MCP as a step). The interactive path rejects this up front; the
+                        # durable-runs path skips those checks, so bind a clear err here for parity
+                        # of message quality (never a cryptic tool-not-found key).
+                        outcome = ActivityOutcome(
+                            ok=False,
+                            value=f"tool {config.tool!r} is an MCP binding — use an mcp_tool node",
+                        )
                     else:
+                        # A ``builtin`` binding names its callable via ``ref``; a bare name is a
+                        # directly-registered builtin (parity with the interactive walker).
+                        ir_binding = ir.tools.get(config.tool)
+                        builtin_name = (
+                            ir_binding.ref if isinstance(ir_binding, BuiltinTool) else config.tool
+                        )
                         try:
                             args = {
                                 k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()
@@ -999,7 +1043,7 @@ async def _durable_walk(
                         except Exception as exc:  # an unresolvable arg ref is a structured err (§4)
                             outcome = ActivityOutcome(ok=False, value=str(exc))
                         else:
-                            step_out = await _tool_step(run_id, node.id, config.tool, args)
+                            step_out = await _tool_step(run_id, node.id, builtin_name, args)
                             outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     _bind_outcome(node, outcome, values, live_handles)
                 elif node.type == "mcp_tool":
@@ -1143,12 +1187,13 @@ async def _durable_walk(
                     # _walk_guardrail_rule.
                     config = GuardrailConfig.model_validate(node.config)
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                    input_value = _single_in_value(ports, node)
+                    # A branch-local name: rebinding `input_value` here would corrupt the RUN
+                    # input the `input` boundary reads when a guardrail sorts before it (an
+                    # optional, unfed in-port gives the guardrail zero indegree).
+                    gr_input = _single_in_value(ports, node)
                     assert config.check.rule is not None  # validate_graph guarantees this
-                    passed = evaluate_guardrail_rule(config.check.rule, input_value)
-                    _bind_guardrail(
-                        node, passed, input_value, config.on_block, values, live_handles
-                    )
+                    passed = evaluate_guardrail_rule(config.check.rule, gr_input)
+                    _bind_guardrail(node, passed, gr_input, config.on_block, values, live_handles)
                 elif node.type == "loop":
                     # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned
                     # body
@@ -1267,6 +1312,7 @@ async def _durable_walk(
         truncated_empty_nodes=truncated_empty_nodes,
         skipped=skipped,
         live_handles=live_handles,
+        values=values,
     )
     return output, output_produced, empty_reason
 
@@ -1362,23 +1408,15 @@ async def theygent_run(
             ir, input_value, run_id, depth, run_trace, ir_dict
         )
     except (RouterError, TemplateError, TransformError, EngineNameNotAllowed) as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
-    # M14: a bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
-    # failure, exactly like the M5 router/template errors above (m14.md §1: "fails honestly").
+        return await _fail_run(run_id, run_trace, str(exc))
+    # A bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
+    # failure, exactly like the router/template errors above.
     except (SubgraphDepthError, LoopError, MapError, HumanTimeout) as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
     except NotImplementedError as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
     except Exception as exc:  # inference died mid-walk / unreachable plane: fail cleanly (§1.4)
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
 
     out_str = _coerce_output(output)
     await _complete_run_step(run_id, "completed", out_str, empty_reason)

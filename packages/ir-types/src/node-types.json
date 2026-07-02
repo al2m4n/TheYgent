@@ -1105,6 +1105,10 @@
           {
             "id": "out",
             "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "error"
           }
         ]
       },

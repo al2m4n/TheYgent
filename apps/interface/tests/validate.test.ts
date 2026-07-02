@@ -135,3 +135,69 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     ).toBe(true);
   });
 });
+
+describe("validateGraph — durable-only + boundary-node hints", () => {
+  function withHuman() {
+    const ir = sampleGraph();
+    ir.nodes?.push({
+      id: "n_gate",
+      type: "human",
+      kind: "boundary",
+      label: null,
+      config: { prompt: "ok?" },
+      ports: {
+        in: [{ id: "in", type: "any", required: false }],
+        out: [{ id: "out", type: "any", required: true }],
+      },
+    });
+    return ir;
+  }
+
+  it("warns at graph level when a durable-only node type is present", () => {
+    const issues = validateGraph(withHuman());
+    expect(issues.some((i) => i.severity === "warning" && /durable-only/.test(i.message))).toBe(
+      true,
+    );
+  });
+
+  it("warns when a human gate falls back to an unset default on timeout", () => {
+    const ir = withHuman();
+    const gate = ir.nodes?.find((n) => n.id === "n_gate");
+    if (gate) gate.config = { prompt: "ok?", onTimeout: "default", default: null };
+    const issues = validateGraph(ir);
+    expect(issues.some((i) => i.nodeId === "n_gate" && /no default value/.test(i.message))).toBe(
+      true,
+    );
+  });
+
+  it("rejects a non-positive maxDepth on a pinned-body node (mirrors the backend)", () => {
+    const ir = sampleGraph();
+    ir.nodes?.push({
+      id: "n_sg",
+      type: "subgraph",
+      kind: "boundary",
+      label: null,
+      config: { agent: "agent.child", version: "0.1.0", contentHash: null, maxDepth: 0 },
+      ports: {
+        in: [{ id: "in", type: "any", required: false }],
+        out: [{ id: "out", type: "any", required: true }],
+      },
+    });
+    const issues = validateGraph(ir);
+    expect(issues.some((i) => i.nodeId === "n_sg" && /maxDepth/.test(i.message))).toBe(true);
+  });
+
+  it("warns when more than one output node exists (two live outputs fail at run time)", () => {
+    const ir = sampleGraph();
+    ir.nodes?.push({
+      id: "n_out2",
+      type: "output",
+      kind: "boundary",
+      label: null,
+      config: {},
+      ports: { in: [{ id: "in", type: "any", required: false }], out: [] },
+    });
+    const issues = validateGraph(ir);
+    expect(issues.some((i) => /output nodes/.test(i.message))).toBe(true);
+  });
+});

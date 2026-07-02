@@ -40,6 +40,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
+    EXECUTABLE_TYPES,
     GraphValidationError,
     GuardrailConfig,
     IRDocument,
@@ -337,6 +338,23 @@ def _error(message: str, *, status: int, code: str, run_id: str | None = None) -
     if run_id is not None:
         body["runId"] = run_id
     return JSONResponse(status_code=status, content=body)
+
+
+def _reject_unexecutable_nodes(ir: IRDocument) -> JSONResponse | None:
+    """A 400 for node types the IR schema declares but no runtime executes yet (code/rag/
+    retriever/memory/agent/condition/iterator). They pass ``validate_graph`` (they are legal IR),
+    so without this gate a Run is created and then dies as a misleading 502 ``inference_error``
+    ("not implemented yet"). Checked before a Run on every run initiator."""
+    unexecutable = sorted({n.id for n in ir.nodes if n.type not in EXECUTABLE_TYPES})
+    if not unexecutable:
+        return None
+    types_ = sorted({n.type for n in ir.nodes if n.type not in EXECUTABLE_TYPES})
+    return _error(
+        f"node(s) {unexecutable} use type(s) {types_} that are declared in the IR schema but "
+        "not executable yet — no runtime implements them",
+        status=400,
+        code="node_type_unavailable",
+    )
 
 
 def _map_inference_error(exc: APIStatusError) -> tuple[int, str, str]:
@@ -961,11 +979,13 @@ def create_app(
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
 
-    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_token)])
+    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_auth)])
     async def resume_run(run_id: str, req: ResumeRunRequest) -> Any:
-        # M14 §1.1: the durable human-in-the-loop entry. Deliver the awaited input to a `waiting`
-        # run → DBOS.send to the checkpointed workflow, which resumes from the recv point (even
-        # across a worker restart). Token-authed like /invoke — an unattended control surface.
+        # The durable human-in-the-loop entry. Deliver the awaited input to a `waiting` run →
+        # DBOS.send to the checkpointed workflow, which resumes from the recv point (even across
+        # a worker restart). Authed like the other interactive run surfaces (the person answering
+        # a human gate is the cockpit user; starting the durable run uses the same auth) — the
+        # unattended surfaces (/invoke, /hooks) keep their token/signature gates.
         # Durable mode only; non-durable runs can't durably wait, so resume is a 400 there (honest).
         runtime = getattr(app.state, "durable_runtime", None)
         if runtime is None:
@@ -987,6 +1007,16 @@ def create_app(
                 f"run {run_id!r} is {run.status!r}, not waiting — nothing to resume",
                 status=409,
                 code="run_not_waiting",
+            )
+        if not run.awaiting_node:
+            # A waiting run always records its awaiting node (mark_waiting writes both). Without
+            # it the resume cannot be targeted at the node's delivery topic — a send to nowhere
+            # would 202 and never be consumed. Refuse loudly instead.
+            return _error(
+                f"run {run_id!r} is waiting but records no awaiting node — the resume cannot be "
+                "delivered",
+                status=409,
+                code="awaiting_node_missing",
             )
         # Validate the awaited input against the human node's declared schema (m14.md §1.1).
         # Advisory in M14: resolve the run's pinned IR, find the waiting node, and — if it declares
@@ -1305,6 +1335,18 @@ def create_app(
                     status=400,
                     code="tool_not_found",
                 )
+            # A `tool` node runs a builtin or an http binding as a step; an mcp binding is the
+            # wrong shape here (the `mcp_tool` node runs MCP as a step). Reject it up front with a
+            # clear pointer, rather than let the step bind a cryptic err at runtime.
+            binding = ir.tools.get(tool_name)
+            if getattr(binding, "kind", None) == "mcp":
+                return _error(
+                    f"node {node.id!r}: tool {tool_name!r} is an MCP binding — run it from an "
+                    "`mcp_tool` node (or wire it as a capability into an llm's tools port), not a "
+                    "plain `tool` node",
+                    status=400,
+                    code="tool_binding_mismatch",
+                )
 
         # M21 §6 Q2: a builtin tool a model can CALL must self-describe. ``validate_graph`` already
         # requires every llm ``tools`` key to be declared in ``ir.tools``; here we additionally
@@ -1348,10 +1390,17 @@ def create_app(
                     code="mcp_tool_not_found",
                 )
 
+        # Node types the IR schema declares but NO runtime executes yet (e.g. code/rag/condition)
+        # pass validate_graph — reject them up front with a clear 400 (before a Run), not the
+        # walker's raw NotImplementedError mis-mapped to a 502 inference_error.
+        unavailable_err = _reject_unexecutable_nodes(ir)
+        if unavailable_err is not None:
+            return unavailable_err
+
         # Durable-only node types (human/subgraph/loop/map) cannot run on this interactive walker —
         # reject up front with a clear, actionable error (before a Run), not the walker's raw
-        # NotImplementedError mis-mapped to a 502 "not implemented yet" (M14: these run on the
-        # durable runtime via a trigger/worker, not the interactive run path).
+        # NotImplementedError mis-mapped to a 502 "not implemented yet" (these run on the
+        # durable runtime via a durable run or trigger, not the interactive run path).
         durable_only = sorted({n.id for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
         if durable_only:
             kinds = sorted({n.type for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
@@ -1500,8 +1549,9 @@ def create_app(
                     await store.set_status(
                         s, run.id, "completed", output=output, error=result.empty_reason
                     )
-                    # No turn for an empty output (§2.4) — never store a blank assistant turn.
-                    if run.thread_id and result.empty_reason is None:
+                    # No turn for an empty output — never store a blank assistant turn (the
+                    # output != "" guard holds even when no empty_reason was derived).
+                    if run.thread_id and result.empty_reason is None and output != "":
                         await store.append_turn(
                             s,
                             thread_id=run.thread_id,
@@ -1587,10 +1637,11 @@ def create_app(
 
         output = _coerce_output(result.output)
         async with tx() as s:
-            # M9 §2.2: persist the output; §2.4: an honest reason when an upstream error left the
-            # output empty (no turn appended for an empty output).
+            # Persist the output, with an honest reason when an upstream error left it empty.
+            # No turn for an empty output — never store a blank assistant turn (the output != ""
+            # guard holds even when no empty_reason was derived).
             await store.set_status(s, run.id, "completed", output=output, error=result.empty_reason)
-            if run.thread_id and result.empty_reason is None:
+            if run.thread_id and result.empty_reason is None and output != "":
                 await store.append_turn(
                     s,
                     thread_id=run.thread_id,
@@ -1887,10 +1938,16 @@ def create_app(
         if err is not None:
             return err
         assert ir is not None
+        unavailable_err = _reject_unexecutable_nodes(ir)
+        if unavailable_err is not None:
+            return unavailable_err
         agent_ref = {
             "agent_id": ir.id,
             "version": req.version,
-            "content_hash": req.content_hash,
+            # Pin what was just validated: an unpinned request would otherwise re-resolve
+            # `latest` at worker pickup, so a version published between enqueue and pickup
+            # would run a different IR than the one validated here.
+            "content_hash": req.content_hash or (None if req.version else ir.content_hash),
             "enqueued_ns": now_ns(),  # the workflow emits the enqueue→pickup wait span
         }
         handle = await runtime.enqueue_run(agent_ref, req.input, thread_id=req.thread_id)
@@ -1973,6 +2030,13 @@ def create_app(
         )
         if err is not None:
             return err
+        assert _ir is not None
+        # Same deploy-time honesty for runnability: an agent with schema-declared-but-unexecutable
+        # node types can never fire on ANY runtime — refuse the deploy here rather than have every
+        # fire fail (in non-durable mode an up-front-rejected fire leaves no Run row to inspect).
+        unavailable_err = _reject_unexecutable_nodes(_ir)
+        if unavailable_err is not None:
+            return unavailable_err
         async with tx() as session:
             trigger = await triggers.create(
                 session,

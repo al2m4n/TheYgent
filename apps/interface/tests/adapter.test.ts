@@ -396,6 +396,34 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(setToolKind(ir, "n_echo", "builtin")).toBe(ir);
   });
 
+  it("an mcp_tool node reached by a CONNECTION derives a connection-backed binding", () => {
+    // The editor's MCP panel can bind an mcp_server connection (HTTP MCP), not just a registered
+    // server — the derived ir.tools binding must carry `connection`, matching the backend.
+    const wired = (() => {
+      const r = connect(capabilityBase(), {
+        source: "n_echo",
+        sourceHandle: "use",
+        target: "n_llm",
+        targetHandle: "tools",
+      });
+      const mcp = setToolKind(withDerivedTools(r.ir!), "n_echo", "mcp");
+      // the panel sets a connection and clears server (exactly-one)
+      const nodes = mcp.nodes?.map((n) =>
+        n.id === "n_echo"
+          ? {
+              ...n,
+              config: { ...n.config, tool: "echo", connection: "con_http_mcp", server: null },
+            }
+          : n,
+      );
+      return withDerivedTools({ ...mcp, nodes });
+    })();
+    const binding = wired.tools?.n_echo as { kind?: string; connection?: string; server?: string };
+    expect(binding.kind).toBe("mcp");
+    expect(binding.connection).toBe("con_http_mcp");
+    expect(binding.server).toBeUndefined(); // null server not emitted (exactly-one holds)
+  });
+
   it("deleteNodes removes the node, its incident edges, and its view entry", () => {
     const ir = sampleGraph();
     const next = deleteNodes(ir, ["n_llm"]);

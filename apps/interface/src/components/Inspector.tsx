@@ -485,6 +485,13 @@ function EdgePanel({
 function primitiveType(schema: any): "string" | "number" | "boolean" | "complex" {
   let t = schema?.type;
   if (Array.isArray(t)) t = t.find((x: string) => x !== "null");
+  // Pydantic emits an Optional primitive as `anyOf: [{type: X}, {type: "null"}]` — unwrap it so a
+  // nullable string/number (e.g. a human node's prompt/timeout) gets a real input, not a raw JSON
+  // textarea. Only a single non-null primitive variant unwraps; real unions stay complex.
+  if (t === undefined && Array.isArray(schema?.anyOf)) {
+    const variants = (schema.anyOf as any[]).filter((v) => v?.type !== "null");
+    if (variants.length === 1) return primitiveType(variants[0]);
+  }
   if (t === "string") return "string";
   if (t === "integer" || t === "number") return "number";
   if (t === "boolean") return "boolean";
@@ -1414,9 +1421,23 @@ function ToolNodePanel({
 
       {kind === "mcp" && (
         <>
+          {/* An mcp_tool reaches its server by EXACTLY ONE of a registered server (stdio, from the
+              MCP page) or an mcp_server connection (stdio/http, with server-side auth). Picking one
+              clears the other so the "exactly one" rule can't be violated from the UI. */}
           <McpServerPicker
             value={config.server as string | undefined}
-            onChange={(v) => setKey("server", v)}
+            onChange={(v) =>
+              onChange(updateNodeConfig(ir, node.id, { ...config, server: v, connection: null }))
+            }
+          />
+          <ConnectionSelect
+            connectionKind="mcp_server"
+            label="or a connection (mcp server)"
+            emptyLabel="— use the registered server above —"
+            value={config.connection as string | undefined}
+            onChange={(v) =>
+              onChange(updateNodeConfig(ir, node.id, { ...config, connection: v, server: null }))
+            }
           />
           <Field label="tool *">
             <Input
@@ -1451,9 +1472,15 @@ function ToolNodePanel({
 function ConnectionSelect({
   value,
   onChange,
+  connectionKind = "http_auth",
+  label = "connection (http auth)",
+  emptyLabel = "— none (no server-side auth) —",
 }: {
   value: string | undefined;
   onChange: (v: string) => void;
+  connectionKind?: "http_auth" | "mcp_server";
+  label?: string;
+  emptyLabel?: string;
 }) {
   const { data: connections, isError } = useQuery({
     queryKey: ["connections"],
@@ -1461,12 +1488,12 @@ function ConnectionSelect({
     retry: false,
     staleTime: 30_000,
   });
-  const httpConns = (connections ?? []).filter((c) => c.kind === "http_auth");
+  const conns = (connections ?? []).filter((c) => c.kind === connectionKind);
   return (
-    <Field label="connection (http auth)">
+    <Field label={label}>
       <Select value={value ?? ""} onChange={(e) => onChange(e.target.value)}>
-        <option value="">— none (no server-side auth) —</option>
-        {httpConns.map((c) => (
+        <option value="">{emptyLabel}</option>
+        {conns.map((c) => (
           <option key={c.id} value={c.id}>
             {c.name}
           </option>
@@ -1474,7 +1501,7 @@ function ConnectionSelect({
       </Select>
       {value ? (
         <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
-          ✓ auth via {value} — resolved server-side; no secret in the IR
+          ✓ via {value} — resolved server-side; no secret in the IR
         </span>
       ) : isError ? (
         <span className="text-[10px] text-slate-600">connections unreachable</span>
