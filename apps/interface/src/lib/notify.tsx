@@ -14,6 +14,7 @@ import { Toaster, toast } from "sonner";
 import { Badge, ProgressBar } from "../components/ui";
 import { type DownloadJob, api } from "./api";
 import { formatBytes, formatDuration } from "./format";
+import { useTheme } from "./theme";
 
 // Thin re-export so call sites read `notify.success(...)` / `notify.error(...)`. Anything sonner's
 // `toast` exposes (loading, promise, dismiss, …) is available here too.
@@ -39,8 +40,8 @@ export function trackDownload(job: Pick<DownloadJob, "id"> & Partial<DownloadJob
   );
 }
 
-// One live download row — polls the plane until the job settles, then offers to dismiss. This is the
-// M16 DownloadRow, lifted out of the page so it lives in the global toaster.
+// One live download row — polls the plane until the job settles, then offers to dismiss. Lifted out
+// of the Registries page so it lives in the global toaster and survives navigation.
 function DownloadToast({
   jobId,
   initial,
@@ -111,25 +112,34 @@ function DownloadToast({
           <span className="mono truncate text-slate-200">{data.logicalId}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Badge tone={errored || cancelled ? "red" : done ? "green" : "blue"}>{data.status}</Badge>
+          {/* Cancelled is user-initiated, not a failure — it gets the neutral slate, not alarm red. */}
+          <Badge tone={errored ? "red" : cancelled ? "slate" : done ? "green" : "blue"}>
+            {data.status}
+          </Badge>
           {active ? (
             <button
               type="button"
               onClick={() => cancel.mutate()}
               disabled={cancel.isPending}
-              className="text-slate-500 hover:text-rose-300"
+              aria-label="Cancel download"
+              className="text-slate-500 hover:text-rose-600 dark:hover:text-rose-300"
             >
-              cancel
+              Cancel
             </button>
           ) : (
-            <button type="button" onClick={dismiss} className="text-slate-500 hover:text-slate-300">
+            <button
+              type="button"
+              onClick={dismiss}
+              aria-label="Dismiss"
+              className="rounded px-1.5 text-slate-500 hover:text-slate-300"
+            >
               ✕
             </button>
           )}
         </div>
       </div>
       {errored ? (
-        <p className="text-[11px] text-rose-400">{data.error}</p>
+        <p className="text-[11px] text-rose-600 dark:text-rose-400">{data.error}</p>
       ) : cancelled ? (
         <p className="text-[11px] text-slate-500">Cancelled.</p>
       ) : (
@@ -146,9 +156,10 @@ function DownloadToast({
   );
 }
 
-// The mountable center. Renders sonner's Toaster (bottom-right, app dark palette) and, once on
+// The mountable center. Renders sonner's Toaster (bottom-right, follows the app theme) and, once on
 // mount, re-attaches a progress card to any install still running in the plane.
 export function NotificationCenter() {
+  const { resolved } = useTheme();
   useEffect(() => {
     let active = true;
     api
@@ -166,6 +177,13 @@ export function NotificationCenter() {
   }, []);
 
   return (
-    <Toaster position="bottom-right" theme="dark" expand richColors closeButton visibleToasts={6} />
+    <Toaster
+      position="bottom-right"
+      theme={resolved}
+      expand
+      richColors
+      closeButton
+      visibleToasts={6}
+    />
   );
 }

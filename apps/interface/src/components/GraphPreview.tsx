@@ -6,7 +6,6 @@
 
 import type { IRDocument } from "@theygent/ir-types";
 import { autoLayout } from "../adapter/layout";
-import { useTheme } from "../lib/theme";
 
 // Node fill-by-kind, matching components/NodeView's KIND_STYLE dots (boundary/activity/orchestration).
 const KIND_COLOR: Record<string, string> = {
@@ -16,24 +15,31 @@ const KIND_COLOR: Record<string, string> = {
 };
 const DEFAULT_COLOR = "#60a5fa";
 
-// Surface colours per theme (mirrors the canvas): a dark pane in dark mode, a light pane in light.
-const PALETTE = {
-  dark: { bg: "#0b0e14", node: "#161b26", edge: "#475569" },
-  light: { bg: "#eef1f6", node: "#ffffff", edge: "#cbd5e1" },
-};
+// Surface colours ride the app's theme tokens (mirrors the canvas), so a theme change can never
+// drift this preview from the real canvas it stands in for. Edges use the themed slate ramp.
+const BG = "var(--c-bg)";
+const NODE_FILL = "var(--c-elev)";
+const EDGE_STROKE = "var(--color-slate-600)";
 
 // Approximate the canvas node footprint so the bounding box + edge anchors line up with the layout.
 const NW = 150;
 const NH = 48;
 
 export function GraphPreview({ ir, className = "" }: { ir: IRDocument; className?: string }) {
-  const { resolved } = useTheme();
-  const c = resolved === "light" ? PALETTE.light : PALETTE.dark;
   const nodes = ir.nodes ?? [];
   const edges = ir.edges ?? [];
 
   if (nodes.length === 0) {
-    return <div className={className} style={{ backgroundColor: c.bg }} />;
+    // A visible hint, not a blank pane — an intentionally empty graph should not read as a preview
+    // that failed to load.
+    return (
+      <div
+        className={`flex items-center justify-center ${className}`}
+        style={{ backgroundColor: BG }}
+      >
+        <span className="text-xs text-slate-500">Empty graph</span>
+      </div>
+    );
   }
 
   // Positions: the saved layout if every node has one, else a deterministic auto-layout.
@@ -56,7 +62,7 @@ export function GraphPreview({ ir, className = "" }: { ir: IRDocument; className
   const vbH = Math.max(...ys) + NH + pad - minY;
 
   return (
-    <div className={className} style={{ backgroundColor: c.bg }}>
+    <div className={className} style={{ backgroundColor: BG }}>
       <svg
         viewBox={`${minX} ${minY} ${vbW} ${vbH}`}
         width="100%"
@@ -77,7 +83,7 @@ export function GraphPreview({ ir, className = "" }: { ir: IRDocument; className
               y1={a.y + NH / 2}
               x2={b.x}
               y2={b.y + NH / 2}
-              stroke={c.edge}
+              style={{ stroke: EDGE_STROKE }}
               strokeWidth={3}
             />
           );
@@ -92,7 +98,7 @@ export function GraphPreview({ ir, className = "" }: { ir: IRDocument; className
                 width={NW}
                 height={NH}
                 rx={12}
-                fill={c.node}
+                style={{ fill: NODE_FILL }}
                 stroke={color}
                 strokeWidth={3}
               />

@@ -79,8 +79,9 @@ _PORT_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
 
 
 def _in_port(node_type: str, pid: str) -> dict[str, Any]:
-    """A default in-port for a freshly-dropped node. ``data``+required by default; ``_PORT_OVERRIDES``
-    carries the few that differ (e.g. the llm ``tools`` port — role ``tool``, optional)."""
+    """A default in-port for a freshly-dropped node. ``data``+required by default;
+    ``_PORT_OVERRIDES`` carries the few that differ (e.g. the llm ``tools`` port — role
+    ``tool``, optional)."""
     port: dict[str, Any] = {"id": pid, "type": "any", "required": True}
     port.update(_PORT_OVERRIDES.get((node_type, pid), {}))
     return port

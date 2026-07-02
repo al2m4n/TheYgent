@@ -91,11 +91,13 @@ export const ENGINE_TONE: Record<string, Tone> = {
 };
 export const engineTone = (binding: string): Tone => ENGINE_TONE[binding] ?? "slate";
 
-// Run status (created | streaming | completed | failed) — kept in sync with format.ts's StatusBadge.
+// Run status (created | streaming | waiting | completed | failed) — kept in sync with format.ts's
+// StatusBadge so a status reads the same colour in the list row, the filter chip, and the detail pill.
 export const STATUS_TONE: Record<string, Tone> = {
   completed: "green",
   failed: "red",
   streaming: "amber",
+  waiting: "violet",
   created: "slate",
 };
 export const statusTone = (status: string): Tone => STATUS_TONE[status] ?? "slate";

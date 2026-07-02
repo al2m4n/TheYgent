@@ -10,6 +10,12 @@ import os
 
 from theygent_control_plane.app import create_app
 
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 app = create_app(
-    inference_base_url=os.environ.get("THEYGENT_INFERENCE_URL", "http://127.0.0.1:8081/v1"),
+    inference_base_url=os.environ.get("THEYGENT_INFERENCE_PLANE_URL", "http://127.0.0.1:8081/v1"),
+    durable=_env_flag("THEYGENT_DURABLE"),
 )

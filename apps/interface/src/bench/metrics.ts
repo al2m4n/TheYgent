@@ -1,7 +1,7 @@
-// Benchmark math (M18 §2.4) — captured AT THE BENCH from the stream + the gateway's usage numbers
-// (there is NO inference-side metric API — §1/§5). Everything here is PURE so it is proven against a
-// deterministic synthetic timed stream (the §4 "benchmark math" guard): the live panels feed it
-// samples stamped with `performance.now() - start`, the tests feed it a fixture.
+// Benchmark math — captured AT THE BENCH from the stream + the gateway's usage numbers (there is
+// NO inference-side metric API). Everything here is PURE so it is proven against a deterministic
+// synthetic timed stream: the live panels feed it samples stamped with
+// `performance.now() - start`, the tests feed it a fixture.
 
 export interface Usage {
   prompt_tokens?: number;
@@ -37,6 +37,8 @@ export interface BenchMetrics {
   rtf?: number;
   /** TTS time-to-first-byte (ms). */
   ttfbMs?: number;
+  /** TTS synthesis throughput — input characters ÷ total time. */
+  charsPerSec?: number;
 }
 
 function lastUsage(samples: ChatSample[]): Usage | undefined {
@@ -47,7 +49,7 @@ function lastUsage(samples: ChatSample[]): Usage | undefined {
 }
 
 /**
- * Compute chat/vision metrics from a timed stream of samples (M18 §2.4). `samples[i].atMs` is the
+ * Compute chat/vision metrics from a timed stream of samples. `samples[i].atMs` is the
  * offset from the request send. TTFT is the first content-bearing chunk; throughput is measured over
  * the generation window (after TTFT) when we have it, else over the whole call. Completion tokens come
  * from `usage` when the gateway reports it, else fall back to a chunk count (clearly approximate).
@@ -78,19 +80,19 @@ export function computeChatMetrics(samples: ChatSample[]): BenchMetrics {
   };
 }
 
-/** STT metric (M18 §2.2): real-time factor = audio length ÷ processing time. */
+/** STT metric: real-time factor = audio length ÷ processing time. */
 export function computeSttMetrics(audioSeconds: number, processingMs: number): BenchMetrics {
   const rtf = processingMs > 0 ? audioSeconds / (processingMs / 1000) : undefined;
   return { totalMs: processingMs, rtf };
 }
 
-/** TTS metric (M18 §2.2): TTFB (first audio byte) + total + chars/sec. */
+/** TTS metric: TTFB (first audio byte) + total + chars/sec. */
 export function computeTtsMetrics(chars: number, ttfbMs: number, totalMs: number): BenchMetrics {
-  const tokensPerSec = totalMs > 0 ? chars / (totalMs / 1000) : undefined; // chars/sec, reusing the field
-  return { totalMs, ttfbMs, tokensPerSec };
+  const charsPerSec = totalMs > 0 ? chars / (totalMs / 1000) : undefined;
+  return { totalMs, ttfbMs, charsPerSec };
 }
 
-/** Numeric metric deltas b−a over the keys both sides report (the compare view, M18 §2.4). */
+/** Numeric metric deltas b−a over the keys both sides report (the compare view). */
 export function metricDeltas(a: BenchMetrics, b: BenchMetrics): Record<string, number> {
   const out: Record<string, number> = {};
   for (const key of Object.keys(a) as (keyof BenchMetrics)[]) {

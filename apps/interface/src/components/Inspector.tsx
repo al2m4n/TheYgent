@@ -1,4 +1,4 @@
-// The node/edge inspector (M15 §2.3): edit the selected node's `config` (schema-driven from the
+// The node/edge inspector: edit the selected node's `config` (schema-driven from the
 // per-type JSON Schema) or the selected edge's `channel`/`condition`, with explicit Delete /
 // Duplicate controls. With nothing selected, the graph-level panel shows `models` (read-only) and
 // editable `tools` / `connections` — adding a tool here makes it selectable on every llm node.
@@ -12,11 +12,13 @@ import {
   ChevronUp,
   Diamond,
   Lock,
+  Plus,
   Search,
   X,
 } from "lucide-react";
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import {
+  type GuardrailCheck,
   type Selection,
   type ToolBinding,
   type ToolKind,
@@ -24,6 +26,7 @@ import {
   deleteEdges,
   deleteNodes,
   duplicateNode,
+  setGuardrailCheck,
   setNodeIcon,
   setToolKind,
   toolKindOf,
@@ -32,8 +35,9 @@ import {
   updateNodeLabel,
 } from "../adapter";
 import { api } from "../lib/api";
+import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
-import { Badge, Button, Field, Input, Select } from "./ui";
+import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 
 // The full-icon search grid is lazy: its ~1,700-icon set (iconsFull) loads only when a user actually
 // opens the icon picker, so the main editor bundle stays lean.
@@ -134,15 +138,27 @@ function NodePanel({
 
         <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
 
+        {DURABLE_ONLY.has(node.type) && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200/90">
+            <span className="font-semibold">Durable-only.</span> This runs on the durable runtime —
+            save the agent, then use “Run durably” (requires the server’s durable mode) or deploy it
+            behind a schedule/webhook trigger. The plain interactive Run path can’t execute it.
+          </div>
+        )}
+
         {node.type === "tool" || node.type === "mcp_tool" ? (
-          // M22 D1: tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
+          // tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
           // kind chooses the binding shape and (for mcp) the underlying node type.
           <ToolNodePanel ir={ir} node={node} onChange={onChange} />
+        ) : node.type === "guardrail" ? (
+          // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
+          // node's kind, so it's edited through a dedicated panel rather than raw JSON.
+          <GuardrailPanel ir={ir} node={node} onChange={onChange} />
         ) : Object.keys(properties).length === 0 ? (
           <p className="text-xs text-slate-600">This node type has no editable config.</p>
         ) : (
           Object.entries(properties).map(([key, schema]) => {
-            // M21 tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
+            // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
             // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
             if (node.type === "llm" && key === "tools") {
               return (
@@ -185,9 +201,39 @@ function NodePanel({
                 <AgentPicker
                   key={`${node.id}:${key}`}
                   value={config.agent as string | undefined}
-                  onChange={(v) => setConfigKey("agent", v)}
+                  // Picking a different body clears the pin — versions/hashes are body-specific.
+                  onChange={(v) =>
+                    onChange(
+                      updateNodeConfig(ir, node.id, {
+                        ...config,
+                        agent: v,
+                        version: null,
+                        contentHash: null,
+                      }),
+                    )
+                  }
                 />
               );
+            }
+            // Pin the body by VERSION via a picker over the chosen agent's versions (sets `version`,
+            // clears `contentHash`). Content-hash pinning stays available via the Raw config.
+            if (PINNED_BODY_TYPES.has(node.type) && key === "version") {
+              return (
+                <BodyVersionPicker
+                  key={`${node.id}:${key}`}
+                  agentId={config.agent as string | undefined}
+                  value={config.version as string | undefined}
+                  onPick={(v) =>
+                    onChange(
+                      updateNodeConfig(ir, node.id, { ...config, version: v, contentHash: null }),
+                    )
+                  }
+                />
+              );
+            }
+            // `contentHash` is the advanced alternate pin — hidden from the form, editable in Raw config.
+            if (PINNED_BODY_TYPES.has(node.type) && key === "contentHash") {
+              return null;
             }
             return (
               <ConfigField
@@ -214,14 +260,17 @@ function NodePanel({
   );
 }
 
-// ── trigger panel (M19 §1.5 — triggers are invocation bindings on the input, never nodes) ─────────
+// ── trigger panel (triggers are invocation bindings on the input node, never graph nodes) ─────────
 
-/** The agent's M12 triggers, surfaced on the `input` node (§1.5). Triggers are NOT graph nodes —
- * "run every hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here
- * (list what fires this saved agent); creating one is the deploy step (M12 `POST /triggers`). The
- * inert "Browse hub" (M16) affordance lives on the connections panel, not here. */
+/** The agent's triggers, surfaced on the `input` node. Triggers are NOT graph nodes — "run every
+ * hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here (list what
+ * fires this saved agent); creating one is the deploy step (`POST /triggers`). */
 function TriggerPanel({ agentId }: { agentId: string }) {
-  const { data: triggers, isLoading } = useQuery({
+  const {
+    data: triggers,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["triggers"],
     queryFn: api.listTriggers,
     retry: false,
@@ -231,11 +280,15 @@ function TriggerPanel({ agentId }: { agentId: string }) {
   return (
     <Field label="Triggers (how this agent is invoked)">
       {isLoading ? (
-        <p className="text-[11px] text-slate-600">loading…</p>
+        <p className="text-[11px] text-slate-600">Loading…</p>
+      ) : isError ? (
+        <p className="text-[11px] text-slate-600">
+          Couldn’t load triggers — control plane unreachable.
+        </p>
       ) : mine.length === 0 ? (
         <p className="text-[11px] text-slate-600">
-          No triggers. Save the agent, then add a schedule/webhook/http trigger (M12) to run it
-          unattended — triggers are invocation bindings, not graph nodes (§1.5).
+          No triggers. Save the agent, then add a schedule, webhook, or HTTP trigger to run it
+          unattended — triggers are how a saved agent is invoked, not graph nodes.
         </p>
       ) : (
         <div className="space-y-1">
@@ -245,7 +298,9 @@ function TriggerPanel({ agentId }: { agentId: string }) {
               className="mono flex items-center justify-between rounded border border-slate-800 px-2 py-1 text-[11px]"
             >
               <span className="text-slate-300">{t.kind}</span>
-              <span className={t.enabled ? "text-emerald-400" : "text-slate-600"}>
+              <span
+                className={t.enabled ? "text-emerald-600 dark:text-emerald-400" : "text-slate-600"}
+              >
                 {t.enabled ? "enabled" : "disabled"}
               </span>
             </div>
@@ -256,7 +311,7 @@ function TriggerPanel({ agentId }: { agentId: string }) {
   );
 }
 
-// ── icon picker (a `view`-only display change — never hashed, §1.4) ────────────
+// ── icon picker (a `view`-only display change — never hashed) ──────────────────
 
 /** Pick a Lucide icon for a node, or reset to its type default. The override (a Lucide icon name)
  * lives in the `view` block, so it round-trips through save/load but never affects logic or version
@@ -281,7 +336,7 @@ function IconPicker({
   const [query, setQuery] = useState("");
 
   return (
-    <Field label="Icon">
+    <FieldGroup label="Icon">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -308,6 +363,7 @@ function IconPicker({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search all icons…"
+              aria-label="Search icons"
               className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
             />
           </div>
@@ -329,7 +385,7 @@ function IconPicker({
           </button>
         </div>
       )}
-    </Field>
+    </FieldGroup>
   );
 }
 
@@ -376,9 +432,9 @@ function EdgePanel({
           <span className="text-slate-600">.{edge.targetHandle}</span>
         </div>
 
-        <Field label="Channel">
+        <FieldGroup label="Channel">
           {channel === "tool" ? (
-            // M22: a `tool` (capability) edge's channel is DERIVED from the handles it joins (a tool
+            // A `tool` (capability) edge's channel is DERIVED from the handles it joins (a tool
             // node → an llm `tools` port). It must not be flipped to data/control here — that would
             // silently break the capability. Show it read-only.
             <>
@@ -408,7 +464,7 @@ function EdgePanel({
               </p>
             </>
           )}
-        </Field>
+        </FieldGroup>
 
         <Field label="Condition (router-driven, optional)">
           <Input
@@ -448,26 +504,29 @@ function ConfigField({
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
-  const label = required ? `${name} *` : name;
+  // Humanize camelCase schema keys before the Field's uppercase styling flattens the word
+  // boundaries ("maxToolIterations" → "max tool iterations", not "MAXTOOLITERATIONS").
+  const pretty = name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  const label = required ? `${pretty} *` : pretty;
 
   // A Literal field (modality, policy, source, …) is a JSON-Schema `enum` — render a dropdown so the
-  // editor offers the exact valid values (M19 §2.10 modality affordance + all enum config fields).
+  // editor offers the exact valid values.
   const enumValues = Array.isArray(schema?.enum) ? (schema.enum as unknown[]) : null;
   if (enumValues) {
     return (
       <Field label={label}>
-        <select
-          className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+        <Select
+          className="!text-xs"
           value={value === null || value === undefined ? "" : String(value)}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
         >
-          {value === undefined && <option value="">—</option>}
+          {(value === undefined || value === null) && <option value="">—</option>}
           {enumValues.map((v) => (
             <option key={String(v)} value={String(v)}>
               {String(v)}
             </option>
           ))}
-        </select>
+        </Select>
       </Field>
     );
   }
@@ -548,13 +607,13 @@ function JsonField({
           }
         }}
       />
-      {error && <span className="text-[11px] text-red-400">{error}</span>}
+      {error && <span className="text-[11px] text-red-600 dark:text-red-400">{error}</span>}
     </>
   );
   return label ? <Field label={label}>{editor}</Field> : <div className="space-y-1">{editor}</div>;
 }
 
-// ── the llm Tools panel (M22 — the tools wired into this llm, the model may call them) ─────
+// ── the llm Tools panel (the tools wired into this llm, the model may call them) ─────
 
 /** A tool the model can call: the source node of a `tool` (capability) edge into this llm. The kind
  * is derived from the source node like the runtime's _capability_binding (mcp_tool → mcp; a tool with
@@ -577,10 +636,10 @@ function llmCapabilityTools(
   return out;
 }
 
-/** Show the tools this llm may autonomously call (M22): the tool/mcp_tool nodes wired into its
+/** Show the tools this llm may autonomously call: the tool/mcp_tool nodes wired into its
  * `tools` port (read-only — wire/unwire on the canvas), plus the tool_choice + iteration cap. Any
- * legacy `config.tools` keys (pre-M22 ir.tools refs) are listed too. The loop runs whenever the llm
- * has ANY tool (wired or legacy). */
+ * legacy `config.tools` keys (ir.tools refs predating capability wiring) are listed too. The loop
+ * runs whenever the llm has ANY tool (wired or legacy). */
 function LlmToolsPanel({
   ir,
   nodeId,
@@ -644,7 +703,7 @@ function LlmToolsPanel({
       {hasTools && (
         <div className="mt-1 space-y-2 rounded-md border border-slate-800 p-2">
           <label className="block space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               tool choice
             </span>
             <Select value={choice} onChange={(e) => set({ toolChoice: e.target.value })}>
@@ -654,7 +713,7 @@ function LlmToolsPanel({
             </Select>
           </label>
           <label className="block space-y-1">
-            <span className="block text-[10px] uppercase tracking-wide text-slate-500">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               max tool iterations
             </span>
             <Input
@@ -757,6 +816,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
             <button
               key={m}
               type="button"
+              aria-pressed={view === m}
               onClick={() => setView(m)}
               className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
                 view === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
@@ -797,7 +857,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
             </div>
           )}
           <Button className="!py-1 text-xs" onClick={addRow}>
-            ＋ Add message
+            <Plus size={14} aria-hidden /> Add message
           </Button>
           <p className="text-[10px] text-slate-600">
             Use <span className="mono">$in</span> for this node's input.
@@ -852,17 +912,18 @@ function MessageRow({
   return (
     <div className="space-y-1.5 rounded-md border border-slate-800 bg-[var(--c-surface)] p-2">
       <div className="flex items-center gap-1.5">
-        <select
+        <Select
           value={role}
+          aria-label="Message role"
           onChange={(e) => onRole(e.target.value)}
-          className="rounded border border-slate-700 bg-[var(--c-surface-2)] px-1.5 py-0.5 text-xs text-slate-200 outline-none focus:border-blue-500"
+          className="!w-auto rounded !bg-[var(--c-surface-2)] !px-1.5 !py-0.5 !text-xs"
         >
           {roles.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
-        </select>
+        </Select>
         <div className="ml-auto flex items-center gap-0.5">
           <button
             type="button"
@@ -870,6 +931,7 @@ function MessageRow({
             onClick={() => onMove(-1)}
             disabled={index === 0}
             title="Move up"
+            aria-label="Move message up"
           >
             <ChevronUp size={14} aria-hidden />
           </button>
@@ -879,10 +941,17 @@ function MessageRow({
             onClick={() => onMove(1)}
             disabled={index === total - 1}
             title="Move down"
+            aria-label="Move message down"
           >
             <ChevronDown size={14} aria-hidden />
           </button>
-          <button type="button" className={iconBtn} onClick={onDelete} title="Remove message">
+          <button
+            type="button"
+            className={iconBtn}
+            onClick={onDelete}
+            title="Remove message"
+            aria-label="Remove message"
+          >
             <X size={14} aria-hidden />
           </button>
         </div>
@@ -900,9 +969,9 @@ function MessageRow({
           <button
             type="button"
             onClick={insertIn}
-            className="text-[11px] text-blue-400 hover:underline"
+            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
           >
-            ＋ Insert input ($in)
+            <Plus size={12} aria-hidden /> Insert input ($in)
           </button>
         </>
       ) : (
@@ -937,6 +1006,9 @@ function ListPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // Arrow-key highlight over the filtered options (-1 = nothing highlighted yet).
+  const [active, setActive] = useState(-1);
+  const listboxId = useId();
   const boxRef = useRef<HTMLDivElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
@@ -966,6 +1038,7 @@ function ListPicker({
     onChange(v);
     setOpen(false);
     setQuery("");
+    setActive(-1);
   };
 
   return (
@@ -978,11 +1051,16 @@ function ListPicker({
       <div ref={boxRef} className="relative">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          onClick={() => {
+            setActive(-1);
+            setOpen((o) => !o);
+          }}
           className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
         >
           <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
-            {value || placeholder || (loading ? "loading…" : "select…")}
+            {value || placeholder || (loading ? "Loading…" : "Select…")}
           </span>
           <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
         </button>
@@ -992,29 +1070,64 @@ function ListPicker({
               <input
                 ref={searchRef}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setActive(-1);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActive((a) => Math.min(a + 1, filtered.length - 1));
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActive((a) => Math.max(a - 1, 0));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (active >= 0 && active < filtered.length) select(filtered[active]);
+                    else if (q && !exact) select(query.trim());
+                  }
+                }}
                 placeholder="Search…"
+                aria-label={label}
+                aria-activedescendant={active >= 0 ? `${listboxId}-${active}` : undefined}
                 className="w-full rounded border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
               />
             </div>
-            <ul className="max-h-52 overflow-y-auto py-1">
+            {/* biome-ignore lint/a11y/useFocusableInteractive: focus stays on the search box — aria-activedescendant drives the highlight */}
+            <ul
+              id={listboxId}
+              // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: the list IS the popover's listbox
+              // biome-ignore lint/a11y/useSemanticElements: a native <select> can't host the search box + custom-value row
+              role="listbox"
+              aria-label={label}
+              className="max-h-52 overflow-y-auto py-1"
+            >
               {loading && options.length === 0 ? (
-                <li className="px-2.5 py-1.5 text-xs text-slate-500">loading…</li>
+                <li className="px-2.5 py-1.5 text-xs text-slate-500">Loading…</li>
               ) : filtered.length === 0 && !q ? (
                 <li className="px-2.5 py-1.5 text-xs text-slate-500">No options.</li>
               ) : (
-                filtered.map((o) => (
+                filtered.map((o, i) => (
                   <li key={o}>
                     <button
                       type="button"
+                      id={`${listboxId}-${i}`}
+                      // biome-ignore lint/a11y/useSemanticElements: a combobox option row, not a native <option>
+                      role="option"
+                      aria-selected={o === value}
+                      tabIndex={-1}
                       onClick={() => select(o)}
                       className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-sm hover:bg-[var(--c-hover)] ${
-                        o === value ? "text-blue-300" : "text-slate-200"
-                      }`}
+                        i === active ? "bg-[var(--c-hover)]" : ""
+                      } ${o === value ? "text-blue-700 dark:text-blue-300" : "text-slate-200"}`}
                     >
                       <span className="mono truncate">{o}</span>
                       {o === value && (
-                        <Check size={14} className="ml-auto shrink-0 text-blue-400" aria-hidden />
+                        <Check
+                          size={14}
+                          className="ml-auto shrink-0 text-blue-600 dark:text-blue-400"
+                          aria-hidden
+                        />
                       )}
                     </button>
                   </li>
@@ -1042,7 +1155,7 @@ function ListPicker({
 }
 
 /** The llm `model` field: pick a declared graph binding OR an inference-plane logical model. Picking
- * an inference model that isn't declared yet auto-creates the graph binding (§8.4) and selects it,
+ * an inference model that isn't declared yet auto-creates the graph binding and selects it,
  * so you go from "registered upstream model" → "usable in this node" in one step. */
 function ModelPicker({
   ir,
@@ -1151,13 +1264,50 @@ function AgentPicker({
       value={value}
       loading={isLoading}
       options={(agents ?? []).map((a) => a.id)}
-      hint="the saved agent this node composes (pin a version/contentHash too)"
+      hint="the saved agent this node composes — then pin a version below"
       onChange={onChange}
     />
   );
 }
 
-// ── the unified Tool node panel (M22 D1 — one node, the kind is a picker) ──────────────────────────
+/** Pin the body by version: lists the chosen agent's versions (newest first) and writes the picked
+ * one into `config.version`. Disabled until a body agent is chosen; degrades to free text if the
+ * registry is unreachable so an offline author can still type a version. */
+function BodyVersionPicker({
+  agentId,
+  value,
+  onPick,
+}: {
+  agentId: string | undefined;
+  value: string | undefined;
+  onPick: (v: string) => void;
+}) {
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api.getAgent(agentId as string),
+    enabled: Boolean(agentId),
+    retry: false,
+    staleTime: 30_000,
+  });
+  const versions = (detail?.versions ?? []).map((v) => v.version);
+  return (
+    <ListPicker
+      label="body version *"
+      value={value}
+      loading={Boolean(agentId) && isLoading}
+      options={versions}
+      placeholder={agentId ? "pick a version…" : "pick a body agent first"}
+      hint={
+        agentId
+          ? "the immutable version of the body this node runs"
+          : "select the body agent above, then pin a version"
+      }
+      onChange={onPick}
+    />
+  );
+}
+
+// ── the unified Tool node panel (one node, the kind is a picker) ──────────────────────────────────
 
 const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
   { kind: "builtin", label: "Builtin", hint: "A tool theygent ships (echo, http_fetch, …)." },
@@ -1169,7 +1319,7 @@ const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
   { kind: "mcp", label: "MCP", hint: "A tool exposed by a connected MCP server." },
 ];
 
-/** The one editor for tool + mcp_tool nodes (M22 D1). A kind picker (Builtin / REST / MCP) chooses
+/** The one editor for tool + mcp_tool nodes. A kind picker (Builtin / REST / MCP) chooses
  * the binding shape; switching kind reseeds the node via `setToolKind` (which, for MCP, swaps the
  * underlying node type). The binding LIVES on the node config; `ir.tools` is the derived registry.
  * Advanced REST fields (headers/body/responseMap/…) stay in the Raw config editor below. */
@@ -1190,16 +1340,17 @@ function ToolNodePanel({
 
   return (
     <>
-      <Field label="Kind">
+      <FieldGroup label="Kind">
         <div className="grid grid-cols-3 gap-1">
           {TOOL_KINDS.map((k) => (
             <button
               key={k.kind}
               type="button"
+              aria-pressed={kind === k.kind}
               onClick={() => onChange(setToolKind(ir, node.id, k.kind))}
               className={`rounded-md border px-2 py-1.5 text-xs ${
                 kind === k.kind
-                  ? "border-blue-500 bg-blue-500/10 text-blue-200"
+                  ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-200"
                   : "border-slate-700 text-slate-300 hover:border-slate-500"
               }`}
             >
@@ -1210,7 +1361,7 @@ function ToolNodePanel({
         <span className="text-[10px] text-slate-600">
           {TOOL_KINDS.find((k) => k.kind === kind)?.hint}
         </span>
-      </Field>
+      </FieldGroup>
 
       {kind === "builtin" && (
         <Field label="builtin *">
@@ -1286,15 +1437,16 @@ function ToolNodePanel({
       </Field>
 
       <p className="text-[10px] text-slate-600">
-        Wire this node's violet <span className="text-violet-300">use</span> handle (top) into an
-        llm's <span className="text-violet-300">tools</span> port to let the model call it. Advanced
-        REST fields (headers, body, response map…) are in the Raw config below.
+        Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
+        handle (top) into an llm's{" "}
+        <span className="text-violet-600 dark:text-violet-300">tools</span> port to let the model
+        call it. Advanced REST fields (headers, body, response map…) are in the Raw config below.
       </p>
     </>
   );
 }
 
-/** A dropdown of `http_auth` connections (M19 §1.1) for a REST tool — the IR stores the connection
+/** A dropdown of `http_auth` connections for a REST tool — the IR stores the connection
  * **id**, never the secret (resolved server-side at step time). "none" leaves it auth-less. */
 function ConnectionSelect({
   value,
@@ -1321,13 +1473,429 @@ function ConnectionSelect({
         ))}
       </Select>
       {value ? (
-        <span className="text-[10px] text-emerald-500">
+        <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
           ✓ auth via {value} — resolved server-side; no secret in the IR
         </span>
       ) : isError ? (
         <span className="text-[10px] text-slate-600">connections unreachable</span>
       ) : null}
     </Field>
+  );
+}
+
+// ── the guardrail panel (rule vs model check — the node's kind follows the choice) ─────────────────
+
+// The check-type + rule-kind option lists are DERIVED from the generated schema, never hardcoded, so
+// a rule kind added in the IR shows up here after a `generate`.
+const GUARDRAIL_DEFS = (
+  NODE_TYPES.guardrail?.configSchema as { $defs?: Record<string, any> } | undefined
+)?.$defs;
+const CHECK_TYPES: string[] = GUARDRAIL_DEFS?.GuardrailCheck?.properties?.type?.enum ?? [
+  "rule",
+  "model",
+];
+const RULE_KINDS: string[] = GUARDRAIL_DEFS?.GuardrailRule?.properties?.kind?.enum ?? [
+  "regex",
+  "length",
+  "json_schema",
+  "allow",
+  "deny",
+  "pii",
+];
+
+// What each rule PASSES on (a guardrail blocks by taking its `block` port; `pass` carries the input
+// through). Shown as a hint under the rule picker.
+const RULE_HINTS: Record<string, string> = {
+  regex: "matches (or, in deny mode, does NOT match) a regular expression",
+  length: "the text length is within min/max",
+  allow: "the value is one of an allowed list",
+  deny: "the value is NOT in a blocked list",
+  json_schema: "the value is an object carrying all the required keys",
+  pii: "no PII pattern matches (blocks emails / SSNs / card-like numbers)",
+};
+
+function numOr(v: unknown): string {
+  return typeof v === "number" ? String(v) : "";
+}
+
+/** The one editor for a `guardrail` node. A check-type picker (rule / model) chooses the backend and
+ * — through `setGuardrailCheck` — STAMPS the node's kind (rule ⇒ orchestration, model ⇒ activity),
+ * so the author never touches kind directly. Rule kinds get structured spec fields; a model check
+ * gets a judge-model picker + prompt + pass-on. Unusual spec keys stay reachable via Raw config. */
+function GuardrailPanel({
+  ir,
+  node,
+  onChange,
+}: {
+  ir: IRDocument;
+  node: IRNode;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const config = (node.config ?? {}) as Record<string, unknown>;
+  const check = (config.check ?? null) as GuardrailCheck | null;
+  const onBlock = (config.onBlock ?? {}) as Record<string, unknown>;
+  const checkType = check?.type;
+
+  // Preserve the last-entered rule/model sub-config across a type toggle within the session, so
+  // flipping rule↔model and back doesn't wipe what you typed. Only the ACTIVE sub-config is written
+  // into the IR (the backend reads only the one matching `check.type`).
+  const stash = useRef<{
+    rule: NonNullable<GuardrailCheck["rule"]>;
+    model: NonNullable<GuardrailCheck["model"]>;
+  }>({ rule: { kind: "pii", spec: {} }, model: { model: "", prompt: "", passOn: "yes" } });
+  if (check?.type === "rule" && check.rule) stash.current.rule = check.rule;
+  if (check?.type === "model" && check.model) stash.current.model = check.model;
+
+  const write = (next: GuardrailCheck) => onChange(setGuardrailCheck(ir, node.id, next, onBlock));
+
+  const pickType = (t: string) => {
+    if (t === checkType) return;
+    write(
+      t === "model"
+        ? { type: "model", model: stash.current.model }
+        : { type: "rule", rule: stash.current.rule },
+    );
+  };
+
+  const rule = check?.type === "rule" ? (check.rule ?? { kind: "pii", spec: {} }) : null;
+  const spec = (rule?.spec ?? {}) as Record<string, unknown>;
+  const setRule = (patch: Partial<NonNullable<GuardrailCheck["rule"]>>) =>
+    write({ type: "rule", rule: { kind: rule?.kind ?? "pii", spec, ...patch } });
+  const setSpec = (patch: Record<string, unknown>) => {
+    const merged: Record<string, unknown> = { ...spec, ...patch };
+    for (const k of Object.keys(merged)) if (merged[k] === undefined) delete merged[k];
+    write({ type: "rule", rule: { kind: rule?.kind ?? "pii", spec: merged } });
+  };
+
+  const model = check?.type === "model" ? (check.model ?? stash.current.model) : null;
+  const setModel = (patch: Partial<NonNullable<GuardrailCheck["model"]>>) =>
+    write({
+      type: "model",
+      model: {
+        model: model?.model ?? "",
+        prompt: model?.prompt ?? "",
+        passOn: model?.passOn ?? "yes",
+        ...patch,
+      },
+    });
+
+  return (
+    <>
+      <FieldGroup label="Check">
+        <div className="grid grid-cols-2 gap-1">
+          {CHECK_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              aria-pressed={checkType === t}
+              onClick={() => pickType(t)}
+              className={`rounded-md border px-2 py-1.5 text-xs capitalize ${
+                checkType === t
+                  ? "border-blue-500 bg-blue-500/10 text-blue-700 dark:text-blue-200"
+                  : "border-slate-700 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <span className="text-[10px] text-slate-600">
+          Rule = an inline check, no model call. Model = an LLM judge decides (a real inference
+          call).
+        </span>
+      </FieldGroup>
+
+      {checkType === undefined && (
+        <p className="text-xs text-amber-700 dark:text-amber-300/80">
+          Pick a check type to configure this guardrail.
+        </p>
+      )}
+
+      {checkType === "rule" && (
+        <>
+          <Field label="Rule">
+            <Select value={rule?.kind ?? "pii"} onChange={(e) => setRule({ kind: e.target.value })}>
+              {RULE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </Select>
+            <span className="text-[10px] text-slate-600">
+              passes when {RULE_HINTS[rule?.kind ?? "pii"] ?? "the check holds"}
+            </span>
+          </Field>
+          <RuleSpecFields kind={rule?.kind ?? "pii"} spec={spec} setSpec={setSpec} />
+        </>
+      )}
+
+      {checkType === "model" && (
+        <>
+          <GuardrailModelField
+            ir={ir}
+            nodeId={node.id}
+            value={model?.model}
+            model={model}
+            onBlock={onBlock}
+            onChange={onChange}
+          />
+          <Field label="prompt *">
+            <textarea
+              spellCheck={false}
+              value={model?.prompt ?? ""}
+              placeholder="e.g. Is this request about booking a table? Answer yes or no."
+              onChange={(e) => setModel({ prompt: e.target.value })}
+              className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+            />
+            <span className="text-[10px] text-slate-600">
+              The judge question — keep it a terse yes/no. The check passes when the answer starts
+              with “pass on”.
+            </span>
+          </Field>
+          <Field label="pass on">
+            <Input
+              value={model?.passOn ?? "yes"}
+              placeholder="yes"
+              onChange={(e) => setModel({ passOn: e.target.value })}
+            />
+          </Field>
+        </>
+      )}
+
+      <JsonField
+        label="onBlock (payload returned when the check blocks)"
+        value={config.onBlock}
+        onChange={(v) =>
+          onChange(
+            updateNodeConfig(ir, node.id, {
+              ...config,
+              onBlock: v && typeof v === "object" && !Array.isArray(v) ? v : {},
+            }),
+          )
+        }
+      />
+
+      <p className="text-[10px] text-slate-600">
+        The <span className="text-slate-300">pass</span> port carries the input through;{" "}
+        <span className="text-slate-300">block</span> carries the onBlock payload. Unusual spec keys
+        are editable in the Raw config below.
+      </p>
+    </>
+  );
+}
+
+/** The structured spec fields for a rule check, keyed by the rule kind — the exact knobs the runtime
+ * reads (pattern+mode, min/max, an allow/deny list, required keys, optional PII patterns). */
+function RuleSpecFields({
+  kind,
+  spec,
+  setSpec,
+}: {
+  kind: string;
+  spec: Record<string, unknown>;
+  setSpec: (patch: Record<string, unknown>) => void;
+}) {
+  if (kind === "regex") {
+    return (
+      <>
+        <Field label="pattern *">
+          <Input
+            value={(spec.pattern as string) ?? ""}
+            placeholder="e.g. (?i)ignore previous"
+            onChange={(e) => setSpec({ pattern: e.target.value })}
+          />
+        </Field>
+        <Field label="mode">
+          <Select
+            value={(spec.mode as string) ?? "allow"}
+            onChange={(e) => setSpec({ mode: e.target.value })}
+          >
+            <option value="allow">allow — pass when it matches</option>
+            <option value="deny">deny — pass when it does NOT match</option>
+          </Select>
+        </Field>
+      </>
+    );
+  }
+  if (kind === "length") {
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="min">
+          <Input
+            type="number"
+            value={numOr(spec.min)}
+            onChange={(e) =>
+              setSpec({ min: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+        <Field label="max">
+          <Input
+            type="number"
+            value={numOr(spec.max)}
+            onChange={(e) =>
+              setSpec({ max: e.target.value === "" ? undefined : Number(e.target.value) })
+            }
+          />
+        </Field>
+      </div>
+    );
+  }
+  if (kind === "allow" || kind === "deny") {
+    return (
+      <StringListField
+        label={kind === "allow" ? "allowed values *" : "blocked values *"}
+        value={spec.values}
+        placeholder="one value per line"
+        onChange={(v) => setSpec({ values: v })}
+      />
+    );
+  }
+  if (kind === "json_schema") {
+    return (
+      <StringListField
+        label="required keys"
+        value={spec.required}
+        placeholder="one key per line"
+        onChange={(v) => setSpec({ required: v })}
+      />
+    );
+  }
+  if (kind === "pii") {
+    return (
+      <StringListField
+        label="patterns (optional)"
+        value={spec.patterns}
+        placeholder="leave empty for built-in email / SSN / card patterns"
+        onChange={(v) => setSpec({ patterns: v })}
+      />
+    );
+  }
+  return null;
+}
+
+/** A newline-separated list edited as a string[]. Keeps a local raw buffer (so blank lines / spaces
+ * type naturally) and re-syncs only when the value changes from elsewhere, mirroring the message
+ * editor's buffer discipline. */
+function StringListField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: unknown;
+  placeholder?: string;
+  onChange: (v: string[]) => void;
+}) {
+  const initial = Array.isArray(value) ? (value as string[]).join("\n") : "";
+  const [text, setText] = useState(initial);
+  const lastEmitted = useRef(initial);
+  useEffect(() => {
+    const incoming = Array.isArray(value) ? (value as string[]).join("\n") : "";
+    if (incoming !== lastEmitted.current) {
+      lastEmitted.current = incoming;
+      setText(incoming);
+    }
+  }, [value]);
+  const emit = (raw: string) => {
+    setText(raw);
+    const arr = raw
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    lastEmitted.current = arr.join("\n");
+    onChange(arr);
+  };
+  return (
+    <Field label={label}>
+      <textarea
+        spellCheck={false}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => emit(e.target.value)}
+        className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+      />
+      <span className="text-[10px] text-slate-600">one per line</span>
+    </Field>
+  );
+}
+
+/** The model guardrail's judge-model picker. Reuses the same live registry the llm node's model
+ * picker uses (declared graph bindings ∪ reachable inference-plane models) and auto-declares a
+ * binding when you pick an inference model not on the document yet — writing the choice into
+ * `check.model.model`. Offline, it still lists declared bindings and hints to declare manually. */
+function GuardrailModelField({
+  ir,
+  nodeId,
+  value,
+  model,
+  onBlock,
+  onChange,
+}: {
+  ir: IRDocument;
+  nodeId: string;
+  value: string | undefined;
+  model: NonNullable<GuardrailCheck["model"]> | null;
+  onBlock: Record<string, unknown>;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const declared = Object.keys(ir.models ?? {});
+  const { data: models, isError } = useQuery({
+    queryKey: ["inferenceModels"],
+    queryFn: api.listModels,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const inferenceIds = (models ?? []).map((m) => m.logicalId);
+  const options = [...new Set([...declared, ...inferenceIds])];
+
+  const pick = (v: string) => {
+    let next = setGuardrailCheck(
+      ir,
+      nodeId,
+      {
+        type: "model",
+        model: { model: v, prompt: model?.prompt ?? "", passOn: model?.passOn ?? "yes" },
+      },
+      onBlock,
+    );
+    // Auto-declare a graph binding when picking an inference model not already on the document.
+    if (v && !(v in (ir.models ?? {}))) {
+      const im = models?.find((m) => m.logicalId === v);
+      if (im) {
+        next = {
+          ...next,
+          models: {
+            ...(next.models ?? {}),
+            [v]: { binding: im.binding.binding as never, model: v },
+          },
+        };
+      }
+    }
+    onChange(next);
+  };
+
+  const declaredHere = value ? value in (ir.models ?? {}) : false;
+  const hint = !value
+    ? undefined
+    : declaredHere
+      ? "✓ declared graph binding"
+      : inferenceIds.includes(value)
+        ? "will declare a binding from the inference plane"
+        : isError
+          ? "inference plane unreachable — declare this binding manually"
+          : "not a declared binding (declare it or pick another)";
+
+  return (
+    <ListPicker
+      label="judge model *"
+      value={value}
+      options={options}
+      hint={hint}
+      placeholder="pick a binding or inference model…"
+      onChange={pick}
+    />
   );
 }
 
@@ -1345,7 +1913,7 @@ function RawConfigEditor({
       onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
       className="rounded-md border border-slate-800"
     >
-      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] uppercase tracking-wide text-slate-500">
+      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
         Raw config (escape hatch)
       </summary>
       <div className="p-2">
@@ -1377,7 +1945,7 @@ function GraphPanel({ ir }: { ir: IRDocument }) {
       </p>
       <Section title="Model bindings">
         {models.length === 0 ? (
-          <Empty>No models declared.</Empty>
+          <EmptyHint>No models declared.</EmptyHint>
         ) : (
           models.map(([key, m]) => (
             <div key={key} className="rounded border border-slate-800 px-2 py-1.5">
@@ -1404,7 +1972,7 @@ function summarizeTool(t: ToolBinding): string {
   return t.connection ? `connection ${t.connection}` : "http";
 }
 
-/** The graph's tool registry (M22): `ir.tools` is DERIVED from the tool nodes on the canvas — like
+/** The graph's tool registry: `ir.tools` is DERIVED from the tool nodes on the canvas — like
  * `ir.models` fills in as you bind models — so this lists, read-only, every tool currently in the
  * agent with its kind. To add or remove a tool, drop/delete a tool node and wire it to an llm. */
 function ToolsRegistry({ ir }: { ir: IRDocument }) {
@@ -1412,7 +1980,7 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
   return (
     <Section title="Tools">
       {tools.length === 0 ? (
-        <Empty>No tools yet — drop a tool node and wire it to an llm.</Empty>
+        <EmptyHint>No tools yet — drop a tool node and wire it to an llm.</EmptyHint>
       ) : (
         tools.map(([key, t]) => (
           <div
@@ -1431,12 +1999,11 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
   );
 }
 
-// ── connections panel (M19 §2.10 — the graph-level tool/MCP auth surface) ──────────────────────────
+// ── connections panel (the graph-level tool/MCP auth surface) ──────────────────────────────────────
 
-/** List + create server-side `connection`s (the tool/MCP auth seam, §1.1). The ``secret`` is
+/** List + create server-side `connection`s (the tool/MCP auth seam). The ``secret`` is
  * WRITE-ONLY — typed here, sent to the encrypted store, and NEVER rendered back (a record carries
- * only ``hasSecret``). The inert "Browse hub" affordance is the M16 plug-point (registers the SAME
- * connection later — §2.4); it does nothing until M16. */
+ * only ``hasSecret``). */
 function ConnectionsPanel() {
   const qc = useQueryClient();
   const { data: connections, isError } = useQuery({
@@ -1476,9 +2043,9 @@ function ConnectionsPanel() {
   return (
     <Section title="Connections (tool / MCP auth)">
       {isError ? (
-        <Empty>Control plane unreachable.</Empty>
+        <EmptyHint>Control plane unreachable.</EmptyHint>
       ) : (connections ?? []).length === 0 ? (
-        <Empty>No connections. Create one to give an http tool / MCP its auth.</Empty>
+        <EmptyHint>No connections. Create one to give an http tool / MCP its auth.</EmptyHint>
       ) : (
         (connections ?? []).map((c) => (
           <div key={c.id} className="rounded border border-slate-800 px-2 py-1.5">
@@ -1489,7 +2056,7 @@ function ConnectionsPanel() {
             <div className="mono mt-0.5 flex items-center gap-2 text-[10px] text-slate-600">
               <span>{c.id}</span>
               {c.hasSecret && (
-                <span className="flex items-center gap-1 text-emerald-600">
+                <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
                   <Lock size={10} aria-hidden /> secret set
                 </span>
               )}
@@ -1500,16 +2067,14 @@ function ConnectionsPanel() {
 
       <div className="mt-1.5 flex gap-2">
         <Button className="!py-1 text-xs" onClick={() => setOpen((o) => !o)}>
-          {open ? "Cancel" : "+ New connection"}
+          {open ? (
+            "Cancel"
+          ) : (
+            <>
+              <Plus size={14} aria-hidden /> New connection
+            </>
+          )}
         </Button>
-        <button
-          type="button"
-          disabled
-          title="Coming with M16 — browse the MCP/model hub and install with one click"
-          className="cursor-not-allowed rounded-md border border-slate-800 px-2 py-1 text-xs text-slate-600"
-        >
-          Browse hub (M16)
-        </button>
       </div>
 
       {open && (
@@ -1518,19 +2083,19 @@ function ConnectionsPanel() {
             <Input value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label="Kind">
-            <select
-              className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
+            <Select
+              className="!text-xs"
               value={kind}
               onChange={(e) => setKind(e.target.value as "http_auth" | "mcp_server")}
             >
               <option value="http_auth">http_auth</option>
               <option value="mcp_server">mcp_server</option>
-            </select>
+            </Select>
           </Field>
           <Field label="Config (non-secret JSON)">
-            <textarea
+            <Textarea
               spellCheck={false}
-              className="mono h-20 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100"
+              className="mono h-20 !text-xs"
               value={configText}
               onChange={(e) => setConfigText(e.target.value)}
             />
@@ -1543,7 +2108,7 @@ function ConnectionsPanel() {
               onChange={(e) => setSecret(e.target.value)}
             />
           </Field>
-          {err && <p className="text-[11px] text-red-400">{err}</p>}
+          {err && <ErrorBanner error={err} />}
           <Button
             variant="primary"
             className="!py-1 text-xs"
@@ -1569,6 +2134,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
+// A compact sidebar empty-state hint — deliberately NOT the shared dashed-box Empty from ./ui
+// (that treatment is sized for full list pages) and named apart from it so the two can't be
+// import-swapped by accident.
+function EmptyHint({ children }: { children: React.ReactNode }) {
   return <p className="text-xs text-slate-600">{children}</p>;
+}
+
+// The Field-label caption for content that is NOT a single labelable control (button groups, the
+// icon picker). A real <label> here would make clicking the caption activate the first button and
+// override the buttons' accessible names, so this renders a plain <span> caption instead.
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        {label}
+      </span>
+      {children}
+    </div>
+  );
 }

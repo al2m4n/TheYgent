@@ -209,6 +209,13 @@ export interface Capabilities {
   approximate?: boolean;
 }
 
+// A user-side named secret (for reachable bindings' `secret://NAME` credentialRefs). The value is
+// WRITE-ONLY — the wire only ever returns the name + `hasValue`, never the secret itself.
+export interface Credential {
+  name: string;
+  hasValue: boolean;
+}
+
 // ── M16 catalog (discovery + install) wire shapes — NOT IR, just /admin/* shapes ─
 // These mirror the inference plane's normalized CatalogProvider types. They are catalog metadata,
 // never the agent IR (the IR stays a typed @theygent/ir-types IRDocument), so M15's "no hand-written
@@ -241,6 +248,14 @@ export interface CatalogEntry {
   license?: string | null; // "apache-2.0"
   gated?: boolean; // needs an HF token
   updatedAt?: string | null; // ISO timestamp
+  // Browse-time capability hints — derived from HF metadata WITHOUT a download (chat template,
+  // architectures, GGUF header). Best-effort STATIC hints; the authoritative source stays the
+  // post-install probe (getModelCapabilities). Field names mirror `Capabilities` so both badge
+  // the same way. Present on model entries; a non-HF provider leaves them at their defaults.
+  reasoning?: boolean;
+  toolCalling?: boolean;
+  vision?: boolean;
+  maxContext?: number | null;
   installed?: boolean; // already in the local registry
   installedAs?: string | null; // the logical id it's installed under
   variants: CatalogVariant[];
@@ -483,8 +498,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // M18 agent bench: invoke a saved, PINNED agent via the existing M11 run path (no new run path,
-  // §1.5). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
+  // Agent bench: invoke a saved, PINNED agent via the M11 run path (the interactive, non-durable
+  // path). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
   runAgent: (
     id: string,
     body: { input?: unknown; version?: string; content_hash?: string; stream?: boolean },
@@ -493,6 +508,19 @@ export const api = {
       CONTROL_PLANE_URL,
       `/agents/${encodeURIComponent(id)}/runs`,
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
+    ),
+
+  // Run a saved agent on the DURABLE runtime — the path for durable-only agents (loop/map/subgraph/
+  // human) the interactive run rejects. Returns a run id to poll via GET /runs/{id}; a non-durable
+  // server answers 400 `durable_required`. Snake_case `run_id` matches the /runs surface it polls.
+  runAgentDurable: (
+    id: string,
+    body: { input?: unknown; version?: string; content_hash?: string },
+  ) =>
+    request<{ run_id: string }>(
+      CONTROL_PLANE_URL,
+      `/agents/${encodeURIComponent(id)}/durable-runs`,
+      { method: "POST", body: JSON.stringify(body) },
     ),
 
   // M18 §2.6 tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the
@@ -611,6 +639,25 @@ export const api = {
       INFERENCE_URL,
       `/admin/models/${encodeURIComponent(logicalId)}/capabilities`,
     ),
+
+  // ── inference plane: local credentials (user-side named secrets) ───────────
+  // Manage `secret://NAME` refs for reachable bindings. Values are write-only (never returned);
+  // the list is names + hasValue only. All on the user-controlled inference plane, called directly.
+  listCredentials: () =>
+    request<{ credentials: Credential[] }>(INFERENCE_URL, "/admin/credentials").then(
+      (r) => r.credentials,
+    ),
+
+  putCredential: (name: string, value: string) =>
+    request<Credential>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ value }),
+    }),
+
+  deleteCredential: (name: string) =>
+    request<void>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
 
   putModel: (logicalId: string, body: unknown) =>
     request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {

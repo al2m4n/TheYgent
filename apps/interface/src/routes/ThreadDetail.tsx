@@ -1,15 +1,30 @@
 import { Link, useParams } from "@tanstack/react-router";
-import { Card, ErrorBanner, Page, Spinner } from "../components/ui";
-import { relativeTime } from "../lib/format";
+import { Card, ErrorBanner, Page, Spinner, buttonClass } from "../components/ui";
+import { relativeTime, shortId } from "../lib/format";
 import { useThread } from "../queries";
 
 export function ThreadDetail() {
   const { threadId } = useParams({ from: "/threads/$threadId" });
   const { data: thread, isLoading, error } = useThread(threadId);
 
-  if (isLoading) return <Spinner />;
-  if (error) return <ErrorBanner error={error} />;
-  if (!thread) return <ErrorBanner error="thread not found" />;
+  if (isLoading)
+    return (
+      <Page>
+        <Spinner />
+      </Page>
+    );
+  if (error)
+    return (
+      <Page>
+        <ErrorBanner error={error} />
+      </Page>
+    );
+  if (!thread)
+    return (
+      <Page>
+        <ErrorBanner error="thread not found" />
+      </Page>
+    );
 
   return (
     <Page className="space-y-4">
@@ -24,7 +39,7 @@ export function ThreadDetail() {
         <Link
           to="/compose"
           search={{ threadId: thread.id }}
-          className="ml-auto shrink-0 rounded-md border border-blue-500 bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-500"
+          className={buttonClass("primary", "ml-auto shrink-0")}
         >
           New run in this thread
         </Link>
@@ -45,9 +60,10 @@ export function ThreadDetail() {
                   <Link
                     to="/runs/$runId"
                     params={{ runId: m.run_id }}
+                    title={m.run_id}
                     className="mono text-slate-500 hover:text-slate-300"
                   >
-                    run {m.run_id.slice(0, 8)}
+                    run {shortId(m.run_id)}
                   </Link>
                 </div>
                 <pre className="mono whitespace-pre-wrap break-words text-sm text-slate-100">

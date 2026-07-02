@@ -12,7 +12,7 @@ resolution-markers = [
 members = [
     "theygent-control-plane",
     "theygent-gateway-client",
-    "theygent-inference",
+    "theygent-inference-plane",
     "theygent-ir",
     "theygent-worker",
 ]
@@ -2200,9 +2200,9 @@ dev = [
 ]
 
 [[package]]
-name = "theygent-inference"
+name = "theygent-inference-plane"
 version = "0.1.0"
-source = { editable = "apps/inference" }
+source = { editable = "apps/inference-plane" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },

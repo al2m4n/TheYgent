@@ -25,9 +25,9 @@ import {
   NODE_TYPES,
   type Kind as NodeKind,
   type Port,
-  kindForType,
 } from "@theygent/ir-types";
 import type { Connection, Edge as RFEdge, Node as RFNode, XYPosition } from "@xyflow/react";
+import { expectedKind } from "../lib/kind";
 import { autoLayout } from "./layout";
 import type { TheygentEdgeData, TheygentNodeData, ViewBlock } from "./types";
 
@@ -131,16 +131,19 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
   const nodes: IRNode[] = rf.nodes.map((rn) => {
     const b = baseNodeById.get(rn.id);
     const type = rn.data.nodeType;
-    // `kind` is NEVER on the RF node (the one rule) — look it up from the registry, falling back
-    // to the IR being edited for any type outside the executable palette.
-    const kind: NodeKind = kindForType(type) ?? b?.kind ?? "activity";
+    // `config` is edited in the inspector (an IR mutation), not rendered on the node — so it carries
+    // over from the IR being edited, never reconstructed from RF data.
+    const config = b?.config ?? NODE_TYPES[type]?.defaultConfig ?? {};
+    // `kind` is NEVER on the RF node (the one rule) — re-derive it. For the guardrail this depends on
+    // its config (a model check ⇒ activity, a rule check ⇒ orchestration), so derive from the SAME
+    // config the node carries; every other type has a fixed kind. Fall back to the IR being edited
+    // for any type outside the executable palette.
+    const kind: NodeKind = expectedKind({ type, config }) ?? b?.kind ?? "activity";
     const node: IRNode = {
       id: rn.id,
       type,
       kind,
-      // `config` is edited in the inspector (an IR mutation), not rendered on the node — so it
-      // carries over from the IR being edited, never reconstructed from RF data.
-      config: b?.config ?? NODE_TYPES[type]?.defaultConfig ?? {},
+      config,
       ports: {
         in: rn.data.ports.in.map(portFrom),
         out: rn.data.ports.out.map(portFrom),
@@ -513,6 +516,38 @@ export function setToolKind(ir: IRDocument, nodeId: string, kind: ToolKind): IRD
     n.id === nodeId ? { ...n, type: targetType, kind: spec.kind as NodeKind, config: next } : n,
   );
   return withDerivedTools({ ...ir, nodes });
+}
+
+// ── the guardrail check (one node whose KIND follows its check — the sole per-instance kind) ───────
+
+/** A guardrail's check config, as the editor writes it. This mirrors the backend `GuardrailConfig`
+ * shape; it is a local view-model, not an imported IR type, because the IR document treats a node's
+ * `config` as opaque. A `rule` check is deterministic + inline; a `model` check is an LLM-judge call. */
+export interface GuardrailCheck {
+  type: "rule" | "model";
+  rule?: { kind: string; spec?: Record<string, unknown> } | null;
+  model?: { model: string; prompt: string; passOn?: string } | null;
+}
+
+/** Write a guardrail node's `check` + `onBlock` AND stamp its `kind` in the SAME edit — a rule check
+ * is inline (orchestration), a model check is a classifier call (activity). Stamping here is what
+ * keeps the node valid: the backend rejects a guardrail whose kind disagrees with its check, so
+ * writing the check without re-stamping the kind would produce an unsaveable graph. Editing the check
+ * legitimately changes the version hash (a rule vs a model guardrail are different agents) — the same
+ * discipline as `setToolKind`; the FE never computes the hash itself. */
+export function setGuardrailCheck(
+  ir: IRDocument,
+  nodeId: string,
+  check: GuardrailCheck,
+  onBlock: Record<string, unknown> = {},
+): IRDocument {
+  const kind: NodeKind = check.type === "model" ? "activity" : "orchestration";
+  return {
+    ...ir,
+    nodes: (ir.nodes ?? []).map((n) =>
+      n.id === nodeId ? { ...n, kind, config: { ...(n.config ?? {}), check, onBlock } } : n,
+    ),
+  };
 }
 
 /** Duplicate a node: a fresh id, the same type/config/ports, label suffixed " copy", offset on the

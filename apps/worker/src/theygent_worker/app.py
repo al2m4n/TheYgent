@@ -74,7 +74,9 @@ async def run_worker() -> None:
     enabled schedule-triggers (create missing, drop orphans) — the same reconcile the control-plane
     does, so whichever process boots first establishes the schedules."""
     database_url = _database_url()
-    inference_base_url = os.environ.get("THEYGENT_INFERENCE_BASE_URL", "http://127.0.0.1:8081/v1")
+    inference_base_url = os.environ.get(
+        "THEYGENT_INFERENCE_PLANE_BASE_URL", "http://127.0.0.1:8081/v1"
+    )
     runtime, mcp, gateway, engine = await build_runtime(
         database_url=database_url, inference_base_url=inference_base_url
     )

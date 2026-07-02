@@ -7,12 +7,13 @@ walker runs it, feeds the result back, and the model answers — proven on the r
 fake (per [[prove-real-path-before-abstracting]]).
 
 Engine support is the precondition, and it is engine-specific (m21.md §1): **llama.cpp is PROVEN**;
-mlx_lm.server is unproven/approximate (point THEYGENT_INFERENCE_BASE_URL at a llama.cpp plane and
-set THEYGENT_LOGICAL_MODEL to a tool-calling GGUF). Skipped by default (``-m 'not integration'``);
+mlx_lm.server is unproven/approximate (point THEYGENT_INFERENCE_PLANE_BASE_URL at a llama.cpp plane
+and set THEYGENT_LOGICAL_MODEL to a tool-calling GGUF). Skipped by default
+(``-m 'not integration'``);
 skips clean without prerequisites. Run::
 
     DATABASE_URL=postgresql+asyncpg://localhost/theygent \
-    THEYGENT_INFERENCE_BASE_URL=http://127.0.0.1:8081/v1 \
+    THEYGENT_INFERENCE_PLANE_BASE_URL=http://127.0.0.1:8081/v1 \
     THEYGENT_LOGICAL_MODEL=qwen2.5-7b-instruct \
         uv run --package theygent-control-plane pytest -m integration \
         apps/control-plane/tests/test_integration_m21.py
@@ -31,12 +32,13 @@ from fastapi.testclient import TestClient
 pytestmark = pytest.mark.integration
 
 _DATABASE_URL = os.environ.get("DATABASE_URL")
-_INFERENCE_BASE_URL = os.environ.get("THEYGENT_INFERENCE_BASE_URL")
+_INFERENCE_BASE_URL = os.environ.get("THEYGENT_INFERENCE_PLANE_BASE_URL")
 _MODEL = os.environ.get("THEYGENT_LOGICAL_MODEL", "triage-fast")
 
 _skip = pytest.mark.skipif(
     not _DATABASE_URL or not _INFERENCE_BASE_URL,
-    reason="needs DATABASE_URL (real PG) + THEYGENT_INFERENCE_BASE_URL (a live tool-calling plane)",
+    reason="needs DATABASE_URL (real PG) + THEYGENT_INFERENCE_PLANE_BASE_URL "
+    "(a live tool-calling plane)",
 )
 
 

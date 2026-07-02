@@ -1,14 +1,25 @@
-// The tool / MCP tester (M18 §2.6) — test a registered MCP tool standalone, the way you'd test a
-// model. But a tool is not a data-plane model, so it runs through the AGENT/RUN path, not the data
-// plane: we compose a THROWAWAY `input → mcp_tool → output` graph (`buildToolGraph`) and run it via
+// The tool / MCP tester — test a registered MCP tool standalone, the way you'd test a model. But a
+// tool is not a data-plane model, so it runs through the AGENT/RUN path, not the data plane: we
+// compose a THROWAWAY `input → mcp_tool → output` graph (`buildToolGraph`) and run it via
 // `api.runGraph` (the existing inline-IR `/graphs/runs`). This adds NO new backend and NO new
 // execution path — it is the agent bench pointed at a single tool. Classic-CV tools (YOLO/SAM/OCR)
-// run as external MCP servers (§1.3), so their structured detections render through the SAME shared
-// DetectionOverlay a grounding VLM uses (§2.2) — "see boxes on the feed" works for both.
+// run as external MCP servers, so their structured detections render through the SAME shared
+// DetectionOverlay a grounding VLM uses — "see boxes on the feed" works for both.
 
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Button, Card, Empty, ErrorBanner, Field, Input, Select, Spinner } from "../components/ui";
+import {
+  Button,
+  Card,
+  Empty,
+  ErrorBanner,
+  Field,
+  Input,
+  SectionHeading,
+  Select,
+  Spinner,
+  Textarea,
+} from "../components/ui";
 import { api } from "../lib/api";
 import { type Detection, DetectionOverlay, detectionsFromOutput } from "./DetectionOverlay";
 import { buildToolGraph } from "./toolgraph";
@@ -74,8 +85,8 @@ export function ToolTester() {
         return;
       }
       setRawOutput(r.output ?? "");
-      // Render the tool's structured output through the shared overlay (§2.6) — non-detection
-      // output simply parses to no boxes and shows as raw text below.
+      // Render the tool's structured output through the shared overlay — non-detection output
+      // simply parses to no boxes and shows as raw text below.
       setDetections(detectionsFromOutput(r.output));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -89,14 +100,14 @@ export function ToolTester() {
 
   return (
     <section className="space-y-3">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">Tool tester</h2>
+      <SectionHeading>Tool tester</SectionHeading>
       {servers.isLoading && <Spinner label="Loading MCP servers…" />}
       {servers.error && <ErrorBanner error={servers.error} />}
       {servers.data && servers.data.length === 0 && (
         <Empty>No registered MCP servers. Register one (e.g. a YOLO/SAM CV server) first.</Empty>
       )}
       {servers.data && servers.data.length > 0 && (
-        <Card className="space-y-3">
+        <Card className="space-y-3 p-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="MCP server">
               <Select value={server} onChange={(e) => setServer(e.target.value)}>
@@ -149,12 +160,12 @@ export function ToolTester() {
             </div>
           ) : (
             <Field label="JSON args (object of named tool args)">
-              <textarea
+              <Textarea
                 value={json}
                 onChange={(e) => setJson(e.target.value)}
                 placeholder='{ "text": "hello" }'
                 rows={4}
-                className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 font-mono text-sm text-slate-100 outline-none focus:border-blue-500"
+                className="mono"
               />
             </Field>
           )}
@@ -177,13 +188,13 @@ export function ToolTester() {
             )}
           </div>
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <ErrorBanner error={error} />}
 
           {imageSrc && detections && detections.length > 0 && (
             <DetectionOverlay src={imageSrc} detections={detections} normalized={normalized} />
           )}
           {rawOutput && (
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-xs text-slate-300">
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
               {rawOutput}
             </pre>
           )}

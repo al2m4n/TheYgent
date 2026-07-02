@@ -33,12 +33,17 @@ export function useRuns(limit = 50) {
   });
 }
 
-export function useRun(id: string, opts: { live?: boolean } = {}) {
+export function useRun(id: string, opts: { live?: boolean; enabled?: boolean } = {}) {
   return useQuery({
     queryKey: keys.run(id),
     queryFn: () => api.getRun(id),
+    enabled: opts.enabled ?? true,
+    // A live run (notably a durable run kicked off from the bench) should keep updating even if the
+    // user switches tabs mid-run — poll in the background too, not only while the tab is focused.
+    refetchIntervalInBackground: opts.live ?? false,
     // While the run is live we poll faster so a terminal status lands promptly even if the
-    // SSE stream was attached elsewhere; a terminal run stops polling.
+    // SSE stream was attached elsewhere; a terminal run stops polling. `waiting` is deliberately
+    // NOT live — a run paused at a human node has no resume UI yet, so we don't poll it forever.
     refetchInterval: (q) => {
       const s = q.state.data?.status;
       if (opts.live && (s === "created" || s === "streaming")) return 1500;

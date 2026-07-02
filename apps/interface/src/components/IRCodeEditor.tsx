@@ -220,9 +220,11 @@ export function IRCodeEditor({ ir, onChange, onValidityChange }: Props) {
           IR · JSON
         </span>
         {valid ? (
-          <span className="text-[11px] text-emerald-500">✓ applied</span>
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-500">✓ applied</span>
         ) : (
-          <span className="text-[11px] text-red-400">✗ invalid JSON — not applied</span>
+          <span className="text-[11px] text-red-700 dark:text-red-400">
+            ✗ invalid JSON — not applied
+          </span>
         )}
         <span className="hidden text-[11px] text-slate-600 lg:inline">
           · Tab indents · ⌘F find · type for suggestions

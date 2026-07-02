@@ -1,28 +1,17 @@
-// The run waterfall (M17 §6) — the M8 per-node-log stub becomes a real timing timeline: each span
-// a bar positioned by WHEN it ran and HOW long it took, the gaps between bars visible, worker
-// attribution per span, and click-a-node → the I/O it received + sent. A positioned-div Gantt in the
-// existing stack (React + Tailwind) — NO trace-viewer dependency (the UI reads theygent's own span
-// store via /trace, never an external backend). Live bars grow from the /trace/stream SSE; the
-// persisted /trace poll settles them.
+// The run waterfall — a real timing timeline for a run: each span a bar positioned by WHEN it ran
+// and HOW long it took, the gaps between bars visible, worker attribution per span, and
+// click-a-node → the I/O it received + sent. A positioned-div Gantt in the existing stack
+// (React + Tailwind) — NO trace-viewer dependency (the UI reads theygent's own span store via
+// /trace, never an external backend). Live bars grow from the /trace/stream SSE; the persisted
+// /trace poll settles them.
 
 import { useEffect, useMemo, useState } from "react";
 import { streamGet } from "../lib/api";
+import { NodeIcon, defaultIconFor } from "../lib/icons";
 import type { Span } from "../lib/runtypes";
 import { useNodeIo, useTrace } from "../queries";
-import { Badge, Card, Spinner } from "./ui";
-
-const NODE_ICON: Record<string, string> = {
-  input: "📥",
-  output: "📤",
-  llm: "🧠",
-  tool: "🔧",
-  mcp_tool: "🔌",
-  router: "🔀",
-  loop: "🔁",
-  map: "🗺️",
-  human: "🙋",
-  subgraph: "📦",
-};
+import { IoDrawer } from "./io-drawer";
+import { Badge, Card, Empty, SectionHeading, Spinner } from "./ui";
 
 function nowNs(): number {
   return Date.now() * 1e6;
@@ -134,7 +123,7 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
     [spans],
   );
 
-  // Gap bands (§6): within each parent, the empty wall-clock between one child ending and the next
+  // Gap bands: within each parent, the empty wall-clock between one child ending and the next
   // starting (queue wait, MCP/engine spawn, transition). Rendered as a hatched band leading into the
   // next bar so the timeline reads as ONE continuous flow instead of scattered bars. Keyed by the
   // span the gap precedes.
@@ -165,18 +154,17 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
   }, [spans, t0, total]);
 
   if (isLoading && spans.length === 0) return <Spinner label="Loading trace…" />;
-  if (spans.length === 0)
-    return <p className="text-sm text-slate-500">No trace recorded for this run.</p>;
+  if (spans.length === 0) return <Empty>No trace recorded for this run.</Empty>;
 
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-300">Run waterfall</h2>
+        <SectionHeading>Run waterfall</SectionHeading>
         {workers.length > 0 && (
           <div className="flex items-center gap-1 text-xs text-slate-500">
             <span>handled by</span>
             {workers.map((w) => (
-              <Badge key={w} tone={workers.length > 1 ? "green" : "neutral"}>
+              <Badge key={w} tone={workers.length > 1 ? "green" : "slate"}>
                 {w}
               </Badge>
             ))}
@@ -193,33 +181,40 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
           const isNode = !!s.node_id && !s.phase;
           const tps = tokensPerSec(s, dur);
           const gap = gapBefore.get(s.id);
-          return (
-            <button
-              type="button"
-              key={s.id}
-              onClick={() => isNode && setSelected(s.node_id)}
-              className={`grid w-full grid-cols-[minmax(11rem,18rem)_1fr] items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                isNode ? "hover:bg-slate-800/40" : "cursor-default"
-              } ${selected && s.node_id === selected ? "bg-slate-800/60" : ""}`}
-            >
+          const rowContent = (
+            <>
               <div
+                key="label"
                 className="flex items-center gap-1.5 truncate"
                 style={{ paddingLeft: depth * 12 }}
               >
-                <span>{s.phase ? "•" : (NODE_ICON[s.node_type ?? ""] ?? "▫")}</span>
-                <span className={`mono truncate ${s.phase ? "text-violet-300" : "text-slate-200"}`}>
+                {s.phase ? (
+                  <span>•</span>
+                ) : (
+                  <NodeIcon
+                    name={defaultIconFor(s.node_type ?? "")}
+                    size={13}
+                    className="shrink-0 text-slate-400"
+                  />
+                )}
+                <span
+                  className={`mono truncate ${
+                    s.phase ? "text-violet-700 dark:text-violet-300" : "text-slate-200"
+                  }`}
+                >
                   {s.name}
                 </span>
                 {s.executor_id && s.executor_id !== "inproc" && (
                   <span className="mono shrink-0 text-[10px] text-slate-500">@{s.executor_id}</span>
                 )}
               </div>
-              <div className="relative h-4">
+              <div key="track" className="relative h-4">
                 {/* The shared time-axis rail — every row sits on it, so the bars read as one
                     continuous timeline rather than scattered. */}
                 <div className="absolute inset-x-0 top-[7px] h-px bg-slate-800/70" />
                 {/* The gap leading into this bar (queue wait / engine or MCP spawn / transition),
-                    hatched, bridging the previous step's end to this one's start (§6). */}
+                    hatched, bridging the previous step's end to this one's start. The hatch rides
+                    the slate CSS variable so it inverts with the theme like the rail around it. */}
                 {gap && gap.width > 0.3 && (
                   <div
                     className="absolute top-1 h-2 rounded-sm border-y border-slate-600/30"
@@ -227,7 +222,7 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
                       left: `${gap.left}%`,
                       width: `${gap.width}%`,
                       backgroundImage:
-                        "repeating-linear-gradient(45deg, rgba(148,163,184,0.22) 0 3px, transparent 3px 7px)",
+                        "repeating-linear-gradient(45deg, color-mix(in srgb, var(--color-slate-400) 22%, transparent) 0 3px, transparent 3px 7px)",
                     }}
                     title={`gap · ${ms(gap.ns)} (queue wait / engine or MCP spawn / transition)`}
                   />
@@ -246,7 +241,27 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
                   {s.bytes_out != null ? ` · → ${bytes(s.bytes_out)}` : ""}
                 </span>
               </div>
+            </>
+          );
+          const rowClass =
+            "grid w-full grid-cols-[minmax(11rem,18rem)_1fr] items-center gap-2 px-3 py-1.5 text-left text-xs";
+          // Only node rows are clickable — phase/gap rows render as plain divs so they stay out of
+          // the tab order and never announce as actionable to assistive tech.
+          return isNode ? (
+            <button
+              type="button"
+              key={s.id}
+              onClick={() => setSelected(s.node_id)}
+              className={`${rowClass} hover:bg-slate-800/40 ${
+                selected && s.node_id === selected ? "bg-slate-800/60" : ""
+              }`}
+            >
+              {rowContent}
             </button>
+          ) : (
+            <div key={s.id} className={`${rowClass} cursor-default`}>
+              {rowContent}
+            </div>
           );
         })}
       </Card>
@@ -256,7 +271,12 @@ export function Waterfall({ runId, isLive }: { runId: string; isLive: boolean })
         instrumented phases. Click a node to see the input it received and the output it sent.
       </p>
       {selected && (
-        <IoDrawer runId={runId} nodeId={selected} onClose={() => setSelected(null)} spans={spans} />
+        <RunIoDrawer
+          runId={runId}
+          nodeId={selected}
+          onClose={() => setSelected(null)}
+          spans={spans}
+        />
       )}
     </section>
   );
@@ -271,7 +291,9 @@ function tokensPerSec(s: Span, durNs: number): string | null {
   return null;
 }
 
-function IoDrawer({
+// Owns this waterfall's lazy per-node I/O fetch and derives the drawer's node summary from the
+// span shape; the drawer itself (layout + capture-gating states) is shared with the bench waterfall.
+function RunIoDrawer({
   runId,
   nodeId,
   onClose,
@@ -282,76 +304,23 @@ function IoDrawer({
   onClose: () => void;
   spans: Span[];
 }) {
-  const { data: io, isLoading } = useNodeIo(runId, nodeId);
+  const { data, isLoading } = useNodeIo(runId, nodeId);
   const node = spans.find((s) => s.node_id === nodeId && !s.phase);
-  const model = node?.attributes?.["gen_ai.request.model"];
-  const ttft = node?.attributes?.ttft_ms;
-
   return (
-    <Card className="space-y-3 border-blue-500/30 p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <h3 className="mono text-sm font-semibold text-slate-100">{nodeId}</h3>
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-slate-400">
-            {node && <Badge tone={node.status === "err" ? "red" : "green"}>{node.status}</Badge>}
-            {typeof model === "string" && <span className="mono">{model}</span>}
-            {typeof ttft === "number" && <span>ttft {ttft}ms</span>}
-            {node?.executor_id && <span className="mono">worker {node.executor_id}</span>}
-          </div>
-        </div>
-        <button type="button" onClick={onClose} className="text-slate-500 hover:text-slate-300">
-          ✕
-        </button>
-      </div>
-
-      {isLoading && <Spinner label="Loading I/O…" />}
-      {io && (
-        <>
-          {io.reason && (
-            <div className="rounded-md border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs text-slate-400">
-              {io.reason} (capture: {io.capture_level})
-            </div>
-          )}
-          {io.truncated && (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
-              Payload truncated to the capture cap (the byte counts are the true sizes).
-            </div>
-          )}
-          <IoPane label="Input" data={io.inputs} sizeLabel={bytes(io.bytes_in)} />
-          <IoPane label="Output" data={io.outputs} sizeLabel={bytes(io.bytes_out)} />
-        </>
-      )}
-    </Card>
-  );
-}
-
-function IoPane({
-  label,
-  data,
-  sizeLabel,
-}: {
-  label: string;
-  data: Record<string, unknown> | null;
-  sizeLabel: string | null;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-        <span>{label}</span>
-        {sizeLabel && <span className="font-normal normal-case text-slate-600">{sizeLabel}</span>}
-      </div>
-      {data && Object.keys(data).length > 0 ? (
-        Object.entries(data).map(([port, value]) => (
-          <div key={port} className="space-y-0.5">
-            <div className="mono text-[10px] text-blue-400">{port}</div>
-            <pre className="mono max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-slate-950/60 px-2 py-1 text-xs text-slate-200">
-              {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
-            </pre>
-          </div>
-        ))
-      ) : (
-        <p className="text-xs text-slate-600">—</p>
-      )}
-    </div>
+    <IoDrawer
+      nodeId={nodeId}
+      onClose={onClose}
+      node={
+        node
+          ? {
+              status: node.status,
+              executor_id: node.executor_id,
+              model: node.attributes?.["gen_ai.request.model"],
+              ttft: node.attributes?.ttft_ms,
+            }
+          : null
+      }
+      io={{ data, isLoading }}
+    />
   );
 }

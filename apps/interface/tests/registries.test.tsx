@@ -190,6 +190,55 @@ describe("Browse — the hub browser", () => {
     await waitFor(() => expect(screen.getByText("Installed ✓")).toBeInTheDocument());
   });
 
+  it("shows browse-time capability badges and filters to reasoning models client-side", async () => {
+    const base = LIST.entries[0];
+    const listWithCaps = {
+      engines: ["mlx", "llamacpp"],
+      entries: [
+        {
+          ...base,
+          ref: "org/reasoner",
+          title: "Reasoner",
+          engines: ["mlx"],
+          reasoning: true,
+          toolCalling: true,
+          vision: false,
+          maxContext: 32768,
+        },
+        {
+          ...base,
+          ref: "org/plain-vlm",
+          title: "PlainVLM",
+          reasoning: false,
+          toolCalling: false,
+          vision: true,
+          maxContext: null,
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/catalog/models") return jsonResponse(listWithCaps);
+      if (path.startsWith("/admin/catalog/models/")) return jsonResponse(DETAIL);
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBrowse();
+
+    // Both cards list; capability hints render as badges WITHOUT any probe/install (lowercase badge
+    // text vs the Capitalized filter chips keeps them distinct).
+    await screen.findByText("Reasoner");
+    await screen.findByText("PlainVLM");
+    expect(screen.getByText("reasoning")).toBeInTheDocument(); // on the reasoner card
+    expect(screen.getByText("vision")).toBeInTheDocument(); // on the VLM card
+    expect(screen.getByText("32k ctx")).toBeInTheDocument();
+
+    // The "Reasoning" capability chip filters the loaded list to just the reasoning model.
+    fireEvent.click(screen.getByRole("button", { name: "Reasoning" }));
+    await waitFor(() => expect(screen.queryByText("PlainVLM")).not.toBeInTheDocument());
+    expect(screen.getByText("Reasoner")).toBeInTheDocument();
+  });
+
   it("engine chips: clicking one (from all-on) turns it off and narrows to the other", async () => {
     const urls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {
@@ -251,8 +300,9 @@ describe("Browse — the hub browser", () => {
     await screen.findByText("Install model");
     fireEvent.click(screen.getByRole("button", { name: /Download & install/ }));
 
-    // The tray shows a live download with a cancel control; clicking it cancels.
-    fireEvent.click(await screen.findByRole("button", { name: "cancel" }));
+    // The tray shows a live download with a cancel control; clicking it cancels. (The install
+    // dialog has its own "Cancel" — target the download control by its accessible name.)
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel download" }));
     await waitFor(() => expect(screen.getByText("Cancelled.")).toBeInTheDocument());
     expect(cancelled).toBe(true);
   });
@@ -296,7 +346,7 @@ describe("Registries page — installed + add", () => {
     // The installed model shows without any tab switch (Installed IS the page now).
     await screen.findByText("qwen-reasoner");
     // Capabilities are not auto-fetched (probing warms the engine) — there's a probe button.
-    fireEvent.click(screen.getByRole("button", { name: "probe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Probe" }));
     await screen.findByText("reasoning");
     expect(screen.getByText("tools")).toBeInTheDocument();
     expect(screen.getByText("32k ctx")).toBeInTheDocument();
@@ -323,6 +373,29 @@ describe("Registries page — installed + add", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     await screen.findByText("Q4_K_M"); // resolved → variants shown inline
     expect(screen.getByText("balanced")).toBeInTheDocument();
+  });
+
+  it("hosted/local form offers stored credentials as secret:// options (no hf/url source)", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/models") return jsonResponse({ models: [] });
+      if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+      if (path === "/admin/credentials")
+        return jsonResponse({ credentials: [{ name: "OPENAI_API_KEY", hasValue: true }] });
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderRegistries();
+
+    await screen.findByText(/No models registered yet/);
+    fireEvent.click(screen.getByRole("button", { name: /Add model/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Hosted / local" }));
+
+    // The credential picker lists the stored secret (openai-compatible is the default binding).
+    await screen.findByRole("option", { name: "OPENAI_API_KEY" });
+    // The old hf/url Source options are gone — manual managed registration is local-path only.
+    expect(screen.queryByRole("option", { name: "url" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "hf" })).not.toBeInTheDocument();
   });
 
   it("opens the hub browser in a pop-up modal (not a separate page)", async () => {

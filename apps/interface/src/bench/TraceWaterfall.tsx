@@ -1,15 +1,16 @@
 // Rich run waterfall (interface bench) — replaces the flat per-node bar list with the real span
-// TREE: run → node → phase (model.generate, tool.<name>), built from `parent_span_id`. It adds the
-// two things the cockpit's M17 waterfall lacks — collapse/expand a node's phases, and zoom the time
-// axis — plus a click-to-inspect I/O drawer (the per-step CONTEXT: input received, output sent,
-// capture state) ported from apps/web. Hovering a node row still flashes the matching canvas node
-// (the span.node_id == node.id join). Reads theygent's own /trace + /nodes/{id}/io — NO external
-// trace-viewer dependency; the bars are positioned divs on one shared, zoomable time axis.
+// TREE: run → node → phase (model.generate, tool.<name>), built from `parent_span_id`. It adds
+// collapse/expand of a node's phases and a zoomable time axis, plus a click-to-inspect I/O drawer
+// (the per-step CONTEXT: input received, output sent, capture state). Hovering a node row still
+// flashes the matching canvas node (the span.node_id == node.id join). Reads theygent's own
+// /trace + /nodes/{id}/io — NO external trace-viewer dependency; the bars are positioned divs on
+// one shared, zoomable time axis.
 
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useMemo, useState } from "react";
 import type { Selection } from "../adapter";
-import { Badge, Card, Spinner } from "../components/ui";
+import { IoDrawer } from "../components/io-drawer";
+import { Badge, Card, Empty, Spinner } from "../components/ui";
 import { type TraceSpan, api } from "../lib/api";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 
@@ -28,15 +29,8 @@ function ms(ns: number): string {
   return `${(m / 1000).toFixed(2)}s`;
 }
 
-function bytes(n: number | null | undefined): string | null {
-  if (n == null) return null;
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
 // Status → bar colour. An in-flight bar (no end yet) pulses amber; a phase band is violet; a closed
-// node bar takes its outcome tone (ok/err/skipped). Mirrors the cockpit's statusColor.
+// node bar takes its outcome tone (ok/err/skipped). Mirrors the run-detail waterfall's statusColor.
 function barColor(s: TraceSpan): string {
   if (s.end_ns == null) return "bg-amber-500/70 animate-pulse";
   if (s.phase) return "bg-violet-500/60";
@@ -118,9 +112,7 @@ export function TraceWaterfall({
   if (trace.isLoading) return <Spinner label="Loading trace…" />;
   if (trace.isError || spans.length === 0)
     return (
-      <p className="text-xs text-slate-500">
-        Trace unavailable (observability not enabled) — showing persisted output only.
-      </p>
+      <Empty>Trace unavailable (observability not enabled) — showing persisted output only.</Empty>
     );
 
   const workers = [...new Set(spans.map((s) => s.executor_id).filter(Boolean))] as string[];
@@ -152,7 +144,7 @@ export function TraceWaterfall({
               +
             </ZoomButton>
             <ZoomButton label="Reset zoom" onClick={() => setZoom(1)} disabled={zoom === 1}>
-              fit
+              Fit
             </ZoomButton>
           </div>
         </div>
@@ -202,21 +194,21 @@ export function TraceWaterfall({
                 >
                   <div
                     className={`sticky left-0 z-10 flex shrink-0 items-center gap-1 py-1.5 pr-2 ${
-                      isSel ? "bg-[#16202e]" : "bg-[var(--c-surface-2)]"
+                      isSel ? "bg-[var(--c-hover)]" : "bg-[var(--c-surface-2)]"
                     }`}
-                    style={{ width: LABEL_W, paddingLeft: 6 + depth * 14 }}
+                    style={{ width: LABEL_W, paddingLeft: 2 + depth * 14 }}
                   >
                     {hasChildren ? (
                       <button
                         type="button"
                         onClick={() => s.span_id && toggle(s.span_id)}
-                        className="w-3 shrink-0 text-[10px] text-slate-500 hover:text-slate-200"
+                        className="w-5 shrink-0 self-stretch text-[10px] text-slate-500 hover:text-slate-200"
                         aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${s.phase ?? s.name}`}
                       >
                         {isCollapsed ? "▸" : "▾"}
                       </button>
                     ) : (
-                      <span className="w-3 shrink-0" />
+                      <span className="w-5 shrink-0" />
                     )}
                     <span className="flex w-3.5 shrink-0 items-center justify-center text-xs leading-none text-slate-400">
                       {s.phase ? (
@@ -237,9 +229,9 @@ export function TraceWaterfall({
                       onMouseLeave={() => onHover?.(null)}
                       className={`mono truncate text-left text-xs ${
                         s.phase
-                          ? "text-violet-300"
+                          ? "text-violet-700 dark:text-violet-300"
                           : isNode
-                            ? "cursor-pointer text-slate-200 hover:text-white"
+                            ? "cursor-pointer text-slate-200 hover:text-slate-50"
                             : "cursor-default text-slate-400"
                       }`}
                       title={isNode ? "Click to inspect input / output" : s.name}
@@ -278,7 +270,12 @@ export function TraceWaterfall({
       </p>
 
       {selected && (
-        <IoDrawer runId={runId} nodeId={selected} spans={spans} onClose={() => setSelected(null)} />
+        <RunIoDrawer
+          runId={runId}
+          nodeId={selected}
+          spans={spans}
+          onClose={() => setSelected(null)}
+        />
       )}
     </div>
   );
@@ -301,17 +298,17 @@ function ZoomButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className="rounded border border-slate-700 px-1.5 text-[12px] text-slate-300 hover:bg-[var(--c-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="h-6 min-w-6 rounded border border-slate-700 px-1.5 text-[12px] text-slate-300 hover:bg-[var(--c-hover)] disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
   );
 }
 
-// The per-step context drawer: the gated input/output a node received + sent. Lazy — fetched only
-// when a node row is clicked. Ported from the cockpit's IoDrawer; honours the capture-policy gating
-// (a `reason` + level when payloads are withheld; a truncation note when over the byte cap).
-function IoDrawer({
+// Owns this waterfall's lazy per-node I/O fetch (only when a node row is clicked) and derives the
+// drawer's node summary from the span shape; the drawer itself (layout + capture-gating states) is
+// shared with the run-detail waterfall.
+function RunIoDrawer({
   runId,
   nodeId,
   spans,
@@ -329,82 +326,21 @@ function IoDrawer({
     retry: false,
   });
   const node = spans.find((s) => s.node_id === nodeId && !s.phase);
-  const model = node?.attributes?.["gen_ai.request.model"];
-  const ttft = node?.attributes?.ttft_ms;
-  const data = io.data;
-
   return (
-    <Card className="space-y-3 border-blue-500/30 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="mono text-sm font-semibold text-slate-100">{nodeId}</h3>
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-slate-400">
-            {node && <Badge tone={node.status === "err" ? "red" : "green"}>{node.status}</Badge>}
-            {typeof model === "string" && <span className="mono">{model}</span>}
-            {typeof ttft === "number" && <span>ttft {ttft}ms</span>}
-            {node?.executor_id && node.executor_id !== "inproc" && (
-              <span className="mono">worker {node.executor_id}</span>
-            )}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close I/O"
-          className="text-slate-500 hover:text-slate-300"
-        >
-          ✕
-        </button>
-      </div>
-
-      {io.isLoading && <Spinner label="Loading I/O…" />}
-      {data && (
-        <>
-          {data.reason && (
-            <div className="rounded-md border border-slate-700 bg-slate-800/40 px-3 py-2 text-xs text-slate-400">
-              {data.reason} (capture: {data.capture_level})
-            </div>
-          )}
-          {data.truncated && (
-            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-300">
-              Payload truncated to the capture cap (the byte counts are the true sizes).
-            </div>
-          )}
-          <IoPane label="Input" data={data.inputs} sizeLabel={bytes(data.bytes_in)} />
-          <IoPane label="Output" data={data.outputs} sizeLabel={bytes(data.bytes_out)} />
-        </>
-      )}
-    </Card>
-  );
-}
-
-function IoPane({
-  label,
-  data,
-  sizeLabel,
-}: {
-  label: string;
-  data: Record<string, unknown> | null;
-  sizeLabel: string | null;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-        <span>{label}</span>
-        {sizeLabel && <span className="font-normal normal-case text-slate-600">{sizeLabel}</span>}
-      </div>
-      {data && Object.keys(data).length > 0 ? (
-        Object.entries(data).map(([port, value]) => (
-          <div key={port} className="space-y-0.5">
-            <div className="mono text-[10px] text-blue-400">{port}</div>
-            <pre className="mono max-h-60 overflow-auto whitespace-pre-wrap break-words rounded-md border border-slate-800 bg-[var(--c-bg)] px-2 py-1 text-xs text-slate-200">
-              {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
-            </pre>
-          </div>
-        ))
-      ) : (
-        <p className="text-xs text-slate-600">—</p>
-      )}
-    </div>
+    <IoDrawer
+      nodeId={nodeId}
+      onClose={onClose}
+      node={
+        node
+          ? {
+              status: node.status,
+              executor_id: node.executor_id,
+              model: node.attributes?.["gen_ai.request.model"],
+              ttft: node.attributes?.ttft_ms,
+            }
+          : null
+      }
+      io={{ data: io.data, isLoading: io.isLoading }}
+    />
   );
 }

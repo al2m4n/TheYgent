@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
 
+# A new push to the same branch/PR supersedes the in-flight run — cancel it instead of
+# queueing behind it (the macOS integration job is slow and runner-scarce).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Run JS-based actions on Node 24 (the v4/v5 actions still ship a Node 20 runtime;
 # this is GitHub's documented opt-in, applied workflow-wide so we don't chase tags).
 env:
@@ -26,18 +32,20 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync
+      # --locked: fail loudly on a stale uv.lock instead of silently re-resolving to versions
+      # nobody committed (the JS side already gets this via `pnpm install --frozen-lockfile`).
+      - run: uv sync --locked
       - name: ruff lint
         run: uv run ruff check .
       - name: ruff format
         run: uv run ruff format --check .
       - name: ty type-check (non-blocking)
-        run: uv run ty check apps/inference apps/control-plane packages/ir packages/gateway-client
+        run: uv run ty check apps/inference-plane apps/control-plane apps/worker packages/ir packages/gateway-client
         continue-on-error: true
       - name: pytest ir (pure-unit — graph validation, content-hash, topo order)
         run: uv run --package theygent-ir pytest packages/ir/tests
       - name: pytest inference (fast suite — everything real except the weights)
-        run: uv run --package theygent-inference pytest apps/inference/tests -m "not integration"
+        run: uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m "not integration"
       - name: pytest control-plane (fast suite — real HTTP seam, fake model)
         run: uv run --package theygent-control-plane pytest apps/control-plane/tests -m "not integration"
 
@@ -53,10 +61,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync
+      - run: uv sync --locked
+      # pnpm version comes from the root package.json `packageManager` field (the single pin the
+      # lockfile was written with) — no second, drift-prone version here.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -68,6 +76,13 @@ jobs:
         run: |
           git diff --exit-code -- packages/ir-types/src \
             || (echo "::error::packages/ir changed but ir-types was not regenerated — run 'pnpm --filter @theygent/ir-types generate' and commit." && exit 1)
+          # `git diff` only sees tracked files — also fail if the generator emitted a NEW output
+          # file that nobody committed (an untracked output would otherwise false-pass forever).
+          untracked="$(git ls-files --others --exclude-standard -- packages/ir-types/src)"
+          if [ -n "$untracked" ]; then
+            echo "::error::the ir-types generator emitted new untracked files: $untracked — commit them."
+            exit 1
+          fi
       - name: ir-types type-check
         run: pnpm --filter @theygent/ir-types typecheck
       - name: interface — biome check
@@ -104,7 +119,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-      - run: uv sync
+      - run: uv sync --locked
       - name: install llama.cpp
         run: brew install llama.cpp
       - name: install mlx-lm (isolated tool, mlx_lm.server on PATH)
@@ -148,7 +163,7 @@ jobs:
             echo "GGUF absent — llama.cpp integration will skip"
           fi
           # THEYGENT_MLX_MODEL is set in job env; the MLX test gates on mlx_lm.server too.
-          uv run --package theygent-inference pytest apps/inference/tests -m integration
+          uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration
       - name: integration test (control-plane -> real inference -> real MLX, cross-process)
         run: |
           # Same MLX env (THEYGENT_MLX_MODEL + mlx_lm.server on PATH); skips clean if absent.
@@ -171,7 +186,7 @@ jobs:
   #       - uses: astral-sh/setup-uv@v5
   #       - run: uv sync
   #       - run: pip install vllm            # CUDA build
-  #       - run: uv run --package theygent-inference pytest apps/inference/tests -m integration
+  #       - run: uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration
   #
   # Do NOT satisfy this with vllm-metal on a Mac runner — that is MLX underneath and
   # proves nothing about the CUDA slot (a false green; see vllm_engine.py).

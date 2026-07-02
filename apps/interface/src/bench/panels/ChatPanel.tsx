@@ -1,10 +1,10 @@
-// Chat / Vision panel (M18 §2.2) — the headline tester. Streams via the data plane (DIRECT to the
-// inference base URL — §10), captures TTFT / tokens-sec / cost from the stream, and turns on image
-// attach when the model advertises `vision` (the VLM path: image content blocks into the SAME chat
-// endpoint — no separate endpoint, §1.3). Param form is schema-driven + capability-narrowed.
+// Chat / Vision panel — the headline tester. Streams via the data plane (DIRECT to the inference
+// base URL), captures TTFT / tokens-sec / cost from the stream, and turns on image attach when the
+// model advertises `vision` (the VLM path: image content blocks into the SAME chat endpoint — no
+// separate endpoint). Param form is schema-driven + capability-narrowed.
 
 import { useMemo, useState } from "react";
-import { Button, Field, Input } from "../../components/ui";
+import { Button, ErrorBanner, Field, Input, Textarea } from "../../components/ui";
 import type { BenchRunInput } from "../../lib/api";
 import { DetectionOverlay, detectionsFromOutput } from "../DetectionOverlay";
 import { ParamForm } from "../ParamForm";
@@ -34,7 +34,7 @@ export function ChatPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pa
     setMetrics(null);
     const messages: { role: string; content: Content }[] = [];
     if (system.trim()) messages.push({ role: "system", content: system });
-    // A vision attach (image URL) builds OpenAI image content blocks (§1.3); else plain text.
+    // A vision attach (image URL) builds OpenAI image content blocks; else plain text.
     const userContent: Content =
       caps?.vision && imageUrl.trim()
         ? [
@@ -63,9 +63,9 @@ export function ChatPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pa
     }
   }
 
-  // §2.2 grounding overlay (no contract change): when a VLM emits bounding boxes as structured output
+  // Grounding overlay (no contract change): when a VLM emits bounding boxes as structured output
   // (JSON detections), draw them on the attached image — through the SAME component the tool tester
-  // uses for classic-CV detections (§2.6). A plain-text answer parses to no boxes and renders nothing.
+  // uses for classic-CV detections. A plain-text answer parses to no boxes and renders nothing.
   const grounding = useMemo(
     () => (caps?.vision && imageUrl.trim() ? detectionsFromOutput(output) : []),
     [caps?.vision, imageUrl, output],
@@ -85,10 +85,16 @@ export function ChatPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pa
   return (
     <div className="space-y-3">
       <Field label="System (optional)">
-        <Input value={system} onChange={(e) => setSystem(e.target.value)} placeholder="You are…" />
+        <Textarea
+          rows={2}
+          value={system}
+          onChange={(e) => setSystem(e.target.value)}
+          placeholder="You are…"
+        />
       </Field>
       <Field label="Prompt">
-        <Input
+        <Textarea
+          rows={3}
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           placeholder="Ask something…"
@@ -110,7 +116,7 @@ export function ChatPanel({ logicalId, caps, binding, modelRef, onRecorded }: Pa
         </Button>
         {metrics && <SaveResultButton build={buildRecord} onSaved={onRecorded} />}
       </div>
-      {error && <p className="text-sm text-red-400">{error}</p>}
+      <ErrorBanner error={error} />
       {metrics && <MetricsView metrics={metrics} />}
       {grounding.length > 0 && imageUrl.trim() && (
         <DetectionOverlay src={imageUrl.trim()} detections={grounding} />

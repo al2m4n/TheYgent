@@ -1,4 +1,5 @@
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { Link, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { Empty, Page, linkClass } from "./components/ui";
 import { Compose } from "./routes/Compose";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
@@ -10,7 +11,22 @@ import { RunsList } from "./routes/RunsList";
 import { ThreadDetail } from "./routes/ThreadDetail";
 import { ThreadsList } from "./routes/ThreadsList";
 
-const rootRoute = createRootRoute({ component: Root });
+// An unknown URL lands on a styled page inside the shell (not the router's bare default text),
+// with a link back out.
+function NotFound() {
+  return (
+    <Page>
+      <Empty>
+        Page not found —{" "}
+        <Link to="/" className={linkClass}>
+          back to Agents
+        </Link>
+      </Empty>
+    </Page>
+  );
+}
+
+const rootRoute = createRootRoute({ component: Root, notFoundComponent: NotFound });
 
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Home });
 

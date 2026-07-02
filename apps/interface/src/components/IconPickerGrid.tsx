@@ -43,6 +43,8 @@ export default function IconPickerGrid({
               key={name}
               type="button"
               title={name}
+              aria-label={name}
+              aria-pressed={active}
               onClick={() => onPick(name)}
               className={`flex h-7 w-7 items-center justify-center rounded border transition-colors ${
                 active

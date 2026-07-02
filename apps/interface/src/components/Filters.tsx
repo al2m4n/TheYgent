@@ -8,6 +8,7 @@
 
 import type { ReactNode } from "react";
 import { type Tone, toneOf } from "../lib/categories";
+import { Input } from "./ui";
 
 export function CategoryBadge({
   tone = "slate",
@@ -38,8 +39,10 @@ export function CategoryBadge({
     </>
   );
   if (onClick) {
+    // A clickable chip is a filter toggle — expose the on/off state to assistive tech, not just
+    // through colour.
     return (
-      <button type="button" title={title} onClick={onClick} className={look}>
+      <button type="button" title={title} aria-pressed={active} onClick={onClick} className={look}>
         {inner}
       </button>
     );
@@ -90,12 +93,17 @@ export function FilterBar({
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-slate-800 bg-[var(--c-surface-2)] px-3 py-2">
       {onSearch && (
-        <input
-          value={search ?? ""}
-          onChange={(e) => onSearch(e.target.value)}
-          placeholder={searchPlaceholder}
-          className="w-44 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-blue-500"
-        />
+        // The shared Input primitive (sized by the wrapper) so the filter search matches every other
+        // text field's height/focus style and inherits future primitive changes.
+        <div className="w-44">
+          <Input
+            value={search ?? ""}
+            onChange={(e) => onSearch(e.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+            className="placeholder:text-slate-600"
+          />
+        </div>
       )}
 
       {facets

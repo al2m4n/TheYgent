@@ -7,9 +7,14 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/lib/api", () => ({
+  ApiError: class ApiError extends Error {
+    code?: string;
+  },
   api: {
     // empty runId → the trace/canvas block is skipped (keeps the test light).
     runAgent: vi.fn(async () => ({ runId: "", output: "done" })),
+    runAgentDurable: vi.fn(async () => ({ run_id: "run_dur_1" })),
+    getRun: vi.fn(async () => ({ id: "run_dur_1", status: "completed", output: "5", error: null })),
     getAgentVersion: vi.fn(async () => ({ ir: { id: "agent.docker", models: {} } })),
     listPresets: vi.fn(async () => []),
   },
@@ -51,8 +56,8 @@ describe("AgentBench version pin", () => {
     const pin = screen.getByRole("combobox") as HTMLSelectElement;
     expect(pin.value).toBe("0.1.2"); // latest, not the older llama-3.2 version
 
-    fireEvent.change(screen.getByPlaceholderText("run input…"), { target: { value: "hi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
       expect(api.runAgent).toHaveBeenCalledWith("agent.docker", { input: "hi", version: "0.1.2" }),
     );
@@ -64,13 +69,30 @@ describe("AgentBench version pin", () => {
     fireEvent.change(pin, { target: { value: "0.1.1" } });
     expect(pin.value).toBe("0.1.1");
 
-    fireEvent.change(screen.getByPlaceholderText("run input…"), { target: { value: "hi" } });
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
       expect(api.runAgent).toHaveBeenLastCalledWith("agent.docker", {
         input: "hi",
         version: "0.1.1",
       }),
     );
+  });
+
+  it("the Run options menu offers Run + Run durably, and Run durably uses the durable endpoint", async () => {
+    withQuery(<AgentBench agent={agent} />);
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "5" } });
+    // The split button's caret opens a menu with both paths.
+    fireEvent.click(screen.getByRole("button", { name: "Run options" }));
+    expect(screen.getByRole("menuitem", { name: "Run" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Run durably" }));
+    await waitFor(() =>
+      expect(api.runAgentDurable).toHaveBeenCalledWith("agent.docker", {
+        input: "5",
+        version: "0.1.2",
+      }),
+    );
+    // the normal Run path was NOT taken.
+    expect(api.runAgent).not.toHaveBeenCalled();
   });
 });

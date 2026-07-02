@@ -1,12 +1,15 @@
-// Model bench (M18 §2.1/§2.4) — the body of the per-model bench MODAL opened from a Registries row.
+// Model bench — the body of the per-model bench MODAL opened from a Registries row.
 // Capability-routed: probe `capabilities`, render the panel(s) the model's `modalities` declare
-// (data-driven, §1.2), capture metrics, and compare two recorded results side by side (the binding-
-// swap headline, §2.4). No model picker here — the model is the one whose row opened the modal.
+// (data-driven), capture metrics, and compare two recorded results side by side (the binding-swap
+// headline). No model picker here — the model is the one whose row opened the modal.
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Badge, Button, Empty, ErrorBanner, Select, Spinner } from "../components/ui";
 import { type BenchRunRecord, type ModelView, api } from "../lib/api";
+import { engineTone } from "../lib/categories";
+import { shortId } from "../lib/format";
+import { notify } from "../lib/notify";
 import { PANEL_REGISTRY, type PanelProps, panelsFor } from "./registry";
 
 export function ModelBench({ model }: { model: ModelView }) {
@@ -15,6 +18,7 @@ export function ModelBench({ model }: { model: ModelView }) {
     queryFn: () => api.getModelCapabilities(model.logicalId),
   });
   const [warming, setWarming] = useState(false);
+  const [warmed, setWarmed] = useState(false);
   const [recorded, setRecorded] = useState<BenchRunRecord[]>([]);
 
   const panels = panelsFor(caps.data?.modalities);
@@ -24,8 +28,8 @@ export function ModelBench({ model }: { model: ModelView }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-sm text-slate-200">{model.logicalId}</span>
-        <Badge>{binding}</Badge>
+        <span className="mono text-sm text-slate-200">{model.logicalId}</span>
+        <Badge tone={engineTone(binding)}>{binding}</Badge>
         {caps.data?.modalities?.map((m) => (
           <Badge key={m} tone="green">
             {m}
@@ -41,14 +45,19 @@ export function ModelBench({ model }: { model: ModelView }) {
           disabled={warming}
           onClick={async () => {
             setWarming(true);
+            setWarmed(false);
             try {
               await api.warmModel(model.logicalId);
+              setWarmed(true);
+            } catch (e) {
+              // Surface a failed warm — a silent revert to "Warm" reads exactly like success.
+              notify.error(e instanceof Error ? e.message : String(e));
             } finally {
               setWarming(false);
             }
           }}
         >
-          {warming ? "Warming…" : "Warm"}
+          {warming ? "Warming…" : warmed ? "Warmed ✓" : "Warm"}
         </Button>
       </div>
 
@@ -108,12 +117,12 @@ function CompareView({ recorded }: { recorded: BenchRunRecord[] }) {
     );
   }
   const opt = (r: BenchRunRecord) =>
-    `${r.label ?? r.modality} · ${r.binding ?? r.logical_id} · ${r.id.slice(-6)}`;
+    `${r.label ?? r.modality} · ${r.binding ?? r.logical_id} · ${shortId(r.id)}`;
   return (
     <div className="space-y-3 border-t border-slate-800 pt-3">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Compare</p>
       <div className="grid grid-cols-2 gap-3">
-        <Select value={a} onChange={(e) => setA(e.target.value)}>
+        <Select value={a} onChange={(e) => setA(e.target.value)} aria-label="Compare result A">
           <option value="">A…</option>
           {recorded.map((r) => (
             <option key={r.id} value={r.id}>
@@ -121,7 +130,7 @@ function CompareView({ recorded }: { recorded: BenchRunRecord[] }) {
             </option>
           ))}
         </Select>
-        <Select value={b} onChange={(e) => setB(e.target.value)}>
+        <Select value={b} onChange={(e) => setB(e.target.value)} aria-label="Compare result B">
           <option value="">B…</option>
           {recorded.map((r) => (
             <option key={r.id} value={r.id}>
@@ -130,12 +139,17 @@ function CompareView({ recorded }: { recorded: BenchRunRecord[] }) {
           ))}
         </Select>
       </div>
+      {a && b && a === b && (
+        <p className="text-xs text-slate-500">Pick two different results to compare.</p>
+      )}
+      {compare.isLoading && <Spinner label="Comparing…" />}
+      {compare.error && <ErrorBanner error={compare.error} />}
       {compare.data && (
         <div className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 text-sm">
           {Object.entries(compare.data.metric_deltas).map(([k, v]) => (
             <div key={k} className="contents">
               <span className="text-slate-400">{k} (B−A)</span>
-              <span className={v < 0 ? "text-emerald-400" : "text-amber-400"}>
+              <span className={deltaClass(k, v)}>
                 {v > 0 ? "+" : ""}
                 {Math.round(v * 1000) / 1000}
               </span>
@@ -147,4 +161,14 @@ function CompareView({ recorded }: { recorded: BenchRunRecord[] }) {
       )}
     </div>
   );
+}
+
+// Metrics where a bigger number is the improvement (throughput, real-time factor) — everything else
+// (latencies, cost, token counts) improves downward. Zero is neutral, never "worse".
+const HIGHER_IS_BETTER = new Set(["tokensPerSec", "charsPerSec", "rtf"]);
+
+function deltaClass(metric: string, delta: number): string {
+  if (delta === 0) return "text-slate-400";
+  const good = HIGHER_IS_BETTER.has(metric) ? delta > 0 : delta < 0;
+  return good ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300";
 }

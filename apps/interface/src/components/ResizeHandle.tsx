@@ -43,11 +43,14 @@ export function ResizeHandle({ width, onResize, side, min, max, defaultWidth, la
     document.body.style.userSelect = "";
   };
 
-  // Keyboard resize for accessibility — arrows nudge the boundary 16px at a time.
+  // Keyboard resize for accessibility — arrows nudge the boundary 16px at a time; Home/End jump to
+  // the min/max width (the full window-splitter keyboard pattern).
   const onKeyDown = (e: React.KeyboardEvent) => {
     const step = side === "left" ? 16 : -16;
     if (e.key === "ArrowLeft") onResize(clamp(width - step));
     else if (e.key === "ArrowRight") onResize(clamp(width + step));
+    else if (e.key === "Home") onResize(min);
+    else if (e.key === "End") onResize(max);
   };
 
   return (
@@ -58,6 +61,9 @@ export function ResizeHandle({ width, onResize, side, min, max, defaultWidth, la
       role="separator"
       aria-orientation="vertical"
       aria-label={`Resize ${label}`}
+      aria-valuenow={width}
+      aria-valuemin={min}
+      aria-valuemax={max}
       tabIndex={0}
       title="Drag to resize · double-click to reset"
       onPointerDown={onPointerDown}
