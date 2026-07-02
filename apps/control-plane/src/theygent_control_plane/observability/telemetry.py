@@ -190,7 +190,15 @@ class SpanScope:
             self.span.status = "err"
         else:
             self.span.status = "ok"
-        bytes_in, bytes_out, truncated, inputs_store, outputs_store = self._materialize_io()
+        try:
+            bytes_in, bytes_out, truncated, inputs_store, outputs_store = self._materialize_io()
+        except Exception as exc:  # capture must NEVER fail the run it observes — a value that
+            # defeats serialization (circular, absurdly deep) degrades to a size-less span.
+            logger.warning(
+                "span.io_materialize_failed", extra={"span": self.span.id, "error": str(exc)}
+            )
+            bytes_in, bytes_out, truncated = None, None, False
+            inputs_store, outputs_store = None, None
         if bytes_in is not None:
             self.span.attributes.setdefault("theygent.bytes_in", bytes_in)
         if bytes_out is not None:
@@ -241,6 +249,11 @@ class SpanScope:
         if self.span.node_id is None or self.span.phase is not None:
             return None, None, False, None, None
         if self._inputs is None and self._outputs is None:
+            return None, None, False, None, None
+        if self._capture_level == "off":
+            # 'off' is the sovereignty hard stop: not even I/O-DERIVED metadata (byte sizes)
+            # may land on the span row or ride the OTLP export — that is what distinguishes it
+            # from 'metadata' (sizes only).
             return None, None, False, None, None
         max_bytes = self._t.max_bytes
         in_store, bytes_in, trunc_in = _cap_port_map(self._inputs, max_bytes)

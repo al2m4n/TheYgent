@@ -39,8 +39,15 @@ class OtlpSpanSink:
     """Ships finished spans to the user's collector with sensitive scalars stripped (§1.3). The
     ``span`` row keeps every attribute locally; this redacted copy is what leaves the machine."""
 
-    def __init__(self, *, send: SendFn, redact_attrs: frozenset[str]) -> None:
+    def __init__(
+        self,
+        *,
+        send: SendFn,
+        redact_attrs: frozenset[str],
+        shutdown: Callable[[], None] | None = None,
+    ) -> None:
         self._send = send
+        self._shutdown = shutdown
         self.redact_attrs = redact_attrs
 
     def export(self, span: Span) -> None:
@@ -53,6 +60,17 @@ class OtlpSpanSink:
             self._send(span, redacted)
         except Exception as exc:  # pragma: no cover - transport is environment-specific
             logger.warning("otlp.export_failed", extra={"span": span.name, "error": str(exc)})
+
+    def shutdown(self) -> None:
+        """Flush + stop the underlying exporter. The real exporter batches on a background thread,
+        so without this the tail of a run's spans is silently lost at process exit. Best-effort;
+        a no-op for an injected test ``send``."""
+        if self._shutdown is None:
+            return
+        try:
+            self._shutdown()
+        except Exception as exc:  # pragma: no cover - transport is environment-specific
+            logger.warning("otlp.shutdown_failed", extra={"error": str(exc)})
 
 
 def build_otlp_sink(
@@ -73,17 +91,24 @@ def build_otlp_sink(
     real = _build_real_send(resolved)
     if real is None:
         return None
-    return OtlpSpanSink(send=real, redact_attrs=redact)
+    real_send, real_shutdown = real
+    return OtlpSpanSink(send=real_send, redact_attrs=redact, shutdown=real_shutdown)
 
 
-def _build_real_send(endpoint: str | None) -> SendFn | None:
-    """Lazily build a real OTLP/HTTP exporter-backed ``send``. Returns ``None`` (with a warning) if
-    the OpenTelemetry SDK isn't installed — so requesting export without the optional dep is honest,
-    not a crash. Kept here so the heavy import never happens on the always-local path."""
+def _build_real_send(
+    endpoint: str | None,
+) -> tuple[SendFn, Callable[[], None]] | None:
+    """Lazily build a real OTLP/HTTP exporter-backed ``(send, shutdown)`` pair. Returns ``None``
+    (with a warning) if the OpenTelemetry SDK isn't installed — so requesting export without the
+    optional dep is honest, not a crash. Kept here so the heavy import never happens on the
+    always-local path."""
     try:  # the heavy, OPTIONAL deps — imported only when export is actually requested
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import ReadableSpan
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.trace import SpanContext, SpanKind, TraceFlags
+        from opentelemetry.trace.status import Status, StatusCode
     except ImportError:
         logger.warning(
             "otlp.sdk_missing",
@@ -96,24 +121,65 @@ def _build_real_send(endpoint: str | None) -> SendFn | None:
         )
         return None
 
-    # A dedicated, NON-global provider (never trace.set_tracer_provider — process-global would
-    # collide with the many-apps-per-process fast suite, the same hazard DBOS has). One batch
-    # processor → the OTLP/HTTP exporter. The redacted attrs ride on the emitted OTel span.
-    provider = TracerProvider()
-    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
-    tracer = provider.get_tracer("theygent.control_plane")
+    # One batch processor → the OTLP/HTTP exporter. NO tracer/provider: a tracer would mint fresh
+    # random trace/span ids, so every span of a run would export as its own unlinked single-span
+    # trace. Spans are instead reconstructed as ReadableSpans carrying the SAME deterministic
+    # trace/span/parent ids the local store keeps — the exported trace nests exactly like the
+    # in-UI waterfall, stable across a crash-resumed run's worker hops.
+    processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
+    resource = Resource.create({"service.name": "theygent-control-plane"})
+    sampled = TraceFlags(TraceFlags.SAMPLED)
 
     def send(span: Span, redacted: dict[str, Any]) -> None:
-        otel_span = tracer.start_span(span.name, start_time=span.start_ns)
-        for key, value in redacted.items():
-            otel_span.set_attribute(
-                key, value if isinstance(value, (str, int, float, bool)) else str(value)
+        trace_id = int(span.trace_id, 16)
+        context = SpanContext(
+            trace_id=trace_id, span_id=int(span.span_id, 16), is_remote=False, trace_flags=sampled
+        )
+        parent = (
+            SpanContext(
+                trace_id=trace_id,
+                span_id=int(span.parent_span_id, 16),
+                is_remote=False,
+                trace_flags=sampled,
             )
-        otel_span.set_attribute("theygent.run_id", span.run_id)
+            if span.parent_span_id
+            else None
+        )
+        attributes: dict[str, Any] = {
+            key: value if isinstance(value, (str, int, float, bool)) else str(value)
+            for key, value in redacted.items()
+        }
+        attributes["theygent.run_id"] = span.run_id
         if span.node_id:
-            otel_span.set_attribute("theygent.node_id", span.node_id)
-        otel_span.end(end_time=span.end_ns if span.end_ns is not None else span.start_ns)
-        # ReadableSpan import kept for type-completeness of the export contract above.
-        _ = ReadableSpan
+            attributes["theygent.node_id"] = span.node_id
+        if span.status:  # the local status vocabulary (ok/err/skipped/running), verbatim
+            attributes["theygent.status"] = span.status
+        # Worker attribution rides to the collector too — a crash-resumed run's worker hop is
+        # exactly the thing a fleet operator's tracing backend should show.
+        if span.executor_id:
+            attributes["theygent.executor_id"] = span.executor_id
+        if span.worker_host:
+            attributes["theygent.worker_host"] = span.worker_host
+        if span.status == "err":  # a failed node must not look green in the collector
+            status = Status(StatusCode.ERROR, span.error or None)
+        elif span.status == "ok":
+            status = Status(StatusCode.OK)
+        else:
+            status = Status(StatusCode.UNSET)
+        processor.on_end(
+            ReadableSpan(
+                name=span.name,
+                context=context,
+                parent=parent,
+                resource=resource,
+                attributes=attributes,
+                events=[],
+                links=[],
+                kind=SpanKind.INTERNAL,
+                status=status,
+                start_time=span.start_ns,
+                end_time=span.end_ns if span.end_ns is not None else span.start_ns,
+            )
+        )
 
-    return send
+    return send, processor.shutdown

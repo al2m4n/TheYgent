@@ -18,7 +18,7 @@ import hashlib
 import json
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, and_, delete, func, insert, select, tuple_, update
+from sqlalchemy import CursorResult, and_, delete, func, insert, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -141,6 +141,7 @@ class RunStore:
                 content_hash=content_hash,
                 trigger_id=trigger_id,
                 error=None,
+                runtime="inproc",
                 created_at=run.created_at,
                 updated_at=run.updated_at,
             )
@@ -180,6 +181,9 @@ class RunStore:
                 content_hash=content_hash,
                 trigger_id=trigger_id,
                 error=None,
+                # A durable run recovers and resumes across a crash — the startup reconcile
+                # sweep must not terminalize it (its fate belongs to the workflow engine).
+                runtime="durable",
                 created_at=ts,
                 updated_at=ts,
             )
@@ -392,9 +396,18 @@ class RunStore:
         # AND explicitly (m14.md §1.1 / §4 the Do-NOT): a run paused at a ``human`` node is durably
         # checkpointed on DBOS.recv and may wait for days across restarts — reconciling it to
         # ``failed`` would defeat the durable wait. ``waiting`` is intentionally NOT in this set.
+        #
+        # Durable runs are excluded the same way: their workflow engine recovers and resumes them
+        # after a crash (that is the point of durability), and in the split API/worker topology a
+        # restart of THIS process says nothing about a run a healthy sibling is executing. Sweeping
+        # one would report a false terminal ``failed`` that the resumed workflow later silently
+        # overwrites. Only the in-process interpreter's runs (``inproc`` / legacy NULL) are zombies.
         result = await session.execute(
             update(RunRow)
-            .where(RunRow.status.in_(("created", "streaming")))
+            .where(
+                RunRow.status.in_(("created", "streaming")),
+                or_(RunRow.runtime.is_(None), RunRow.runtime != "durable"),
+            )
             .values(
                 status="failed",
                 error="interrupted: control-plane restarted while run was in-flight",
@@ -445,6 +458,11 @@ class RunStore:
         await session.execute(
             select(ThreadRow.id).where(ThreadRow.id == thread_id).with_for_update()
         )
+        # The thread's updated_at means "last write"; without this it stays frozen at creation
+        # even as turns land (the row is already locked above, so the touch is race-free).
+        await session.execute(
+            update(ThreadRow).where(ThreadRow.id == thread_id).values(updated_at=now())
+        )
         next_pos = (
             await session.execute(
                 select(func.coalesce(func.max(MessageRow.position), -1) + 1).where(
@@ -479,13 +497,17 @@ class RunStore:
 
 
 def _to_mcp_config(row: McpServerRow) -> McpServerConfig:
-    """Map a persistence row to the manager's domain config (§1.3). ``transport`` defaults to the
-    only M7 value (``stdio``) — the column round-trips it but the model pins the Literal."""
+    """Map a persistence row to the manager's domain config (§1.3) — both transports round-trip
+    (an http registration rehydrates with its url/headers, never as a broken stdio one)."""
+    transport = "http" if row.transport == "http" else "stdio"
     return McpServerConfig(
+        transport=transport,
         command=row.command,
         args=list(row.args or []),
         env=dict(row.env) if row.env else None,
         cwd=row.cwd,
+        url=row.url,
+        headers=dict(row.headers) if row.headers else None,
     )
 
 
@@ -510,6 +532,8 @@ class McpStore:
             "args": config.args,
             "env": config.env,
             "cwd": config.cwd,
+            "url": config.url,
+            "headers": config.headers,
             "created_at": ts,
             "updated_at": ts,
         }
@@ -524,6 +548,8 @@ class McpStore:
                     "args": config.args,
                     "env": config.env,
                     "cwd": config.cwd,
+                    "url": config.url,
+                    "headers": config.headers,
                     "updated_at": ts,
                 },
             )

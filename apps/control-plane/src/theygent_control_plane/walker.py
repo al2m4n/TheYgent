@@ -1015,7 +1015,12 @@ async def execute_http_tool(
     if body is not None:
         kwargs["json"] = body  # JSON request (REST or GraphQL {query, variables})
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        # Redirects are NOT followed: the request carries connection-injected auth (bearer /
+        # api-key / basic headers), and auto-following a redirect would replay those headers at
+        # whatever host the response names — only `Authorization` is stripped cross-host by the
+        # client, an `X-API-Key` would leak. A 3xx comes back as a normal {status, …} value,
+        # consistent with "a non-2xx status is a normal return value".
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             resp = await client.request(method.upper(), final_url, **kwargs)
     except Exception as exc:  # transport failure → err (m6.md §4), never a hang
         return ActivityOutcome(ok=False, value=f"http tool request failed: {exc}")
@@ -1129,7 +1134,10 @@ async def run_http_tool(
         call = build_http_call(binding, config, ports, node_id=node_id, run_id=run_id)
     except Exception as exc:  # unresolvable $in in url/headers/body → structured err (m6.md §4)
         return ActivityOutcome(ok=False, value=f"http tool {config.tool!r}: {exc}")
-    conn = await resolver(call.connection_id) if resolver is not None else None
+    try:
+        conn = await resolver(call.connection_id) if resolver is not None else None
+    except Exception as exc:  # e.g. an undecryptable secret — an honest err, never a run failure
+        return ActivityOutcome(ok=False, value=f"http tool {config.tool!r}: {exc}")
     return await execute_http_tool(
         conn,
         method=call.method,
@@ -1171,7 +1179,12 @@ def _fn_schema(
 
 
 async def _schema_for_binding(
-    name: str, binding: Any, *, registry: ToolRegistry, mcp: McpManager
+    name: str,
+    binding: Any,
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> dict[str, Any] | None:
     """One OpenAI function schema from a tool BINDING object — the shared core of the M21 ir.tools
     path and the M22 capability-node path. ``name`` is the function name the model echoes back: an
@@ -1186,11 +1199,27 @@ async def _schema_for_binding(
             for d in await mcp.list_tools(binding.server):
                 if d.name == binding.tool:
                     return _fn_schema(name, d.description, d.input_schema)
+    if isinstance(binding, McpTool) and binding.connection and tool_auth is not None:
+        # A CONNECTION-backed server describes its tools too — without this lookup the binding
+        # was silently absent from the model's schemas, making the tool uncallable via ir.tools
+        # while the dispatch path fully supported it.
+        with contextlib.suppress(Exception):  # unresolvable/unreachable → no schema (best-effort)
+            conn = await tool_auth(binding.connection)
+            if conn is not None:
+                cfg = mcp_config_from_connection(conn)
+                for d in await mcp.list_connection_tools(binding.connection, cfg):
+                    if d.name == binding.tool:
+                        return _fn_schema(name, d.description, d.input_schema)
     return None
 
 
 async def build_tool_schemas(
-    ir: IRDocument, tool_keys: list[str], *, registry: ToolRegistry, mcp: McpManager
+    ir: IRDocument,
+    tool_keys: list[str],
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> list[dict[str, Any]]:
     """Build the OpenAI ``tools`` array from an llm node's ``tools`` keys (the M21 ir.tools path).
     The function NAME is the ir.tools key (so a tool_call maps back to its binding); a key with no
@@ -1204,7 +1233,9 @@ async def build_tool_schemas(
             if meta is not None:
                 schemas.append(_fn_schema(key, meta[0], meta[1]))
             continue
-        schema = await _schema_for_binding(key, binding, registry=registry, mcp=mcp)
+        schema = await _schema_for_binding(
+            key, binding, registry=registry, mcp=mcp, tool_auth=tool_auth
+        )
         if schema is not None:
             schemas.append(schema)
     return schemas
@@ -1258,12 +1289,16 @@ def _capability_binding(ir: IRDocument, name: str) -> Any | None:
 
 
 async def build_capability_schemas(
-    nodes: list[Node], *, registry: ToolRegistry, mcp: McpManager
+    nodes: list[Node],
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> list[dict[str, Any]]:
     """OpenAI tool schemas for M22 capability nodes — the function NAME is the NODE id (collision-
     safe: two llms may wire different nodes that share a builtin/server). Description + parameters
     come from each node's inline config: builtin from the registry, http from ``description`` +
-    ``parameterSchema``, mcp from the server's ``list_tools`` (a connection-based or unreachable mcp
+    ``parameterSchema``, mcp from the server's ``list_tools`` (an unreachable/unresolvable mcp
     falls back to its authored ``description`` with no parameter schema — m22.md D3)."""
     schemas: list[dict[str, Any]] = []
     for node in nodes:
@@ -1278,6 +1313,17 @@ async def build_capability_schemas(
                                 node.id, cfg.description or d.description, d.input_schema
                             )
                             break
+            elif cfg.connection and tool_auth is not None:
+                with contextlib.suppress(Exception):  # unreachable → the authored fallback below
+                    conn = await tool_auth(cfg.connection)
+                    if conn is not None:
+                        mcfg = mcp_config_from_connection(conn)
+                        for d in await mcp.list_connection_tools(cfg.connection, mcfg):
+                            if d.name == cfg.tool:
+                                schema = _fn_schema(
+                                    node.id, cfg.description or d.description, d.input_schema
+                                )
+                                break
             schemas.append(schema or _fn_schema(node.id, cfg.description, None))
         else:  # a tool node — builtin or http
             tcfg = ToolConfig.model_validate(node.config)
@@ -1346,7 +1392,10 @@ async def execute_tool_call(
     if isinstance(binding, McpTool):
         if binding.server:
             return await execute_mcp_tool(mcp, binding.server, binding.tool, call.arguments)
-        conn = await tool_auth(binding.connection or "") if tool_auth is not None else None
+        try:
+            conn = await tool_auth(binding.connection or "") if tool_auth is not None else None
+        except Exception as exc:  # e.g. an undecryptable secret — honest err, never a run failure
+            return ActivityOutcome(ok=False, value=f"mcp connection {binding.connection!r}: {exc}")
         if conn is None:
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {binding.connection!r} not found or disabled"
@@ -1774,13 +1823,20 @@ def finalize_empty_reason(
     legitimately present. Does NOT change the M6 error-as-structured-output contract."""
 
     if not output_produced:
-        errored = [
-            node.id
-            for node in ir.nodes
-            if node.id not in skipped
-            and live_handles.get(node.id)
-            and live_handles[node.id] <= _error_handles(node)
-        ]
+
+        def _errored(node: Node) -> bool:
+            live = live_handles.get(node.id)
+            if live is None or node.id in skipped:
+                return False  # never executed — not the cause
+            if live:
+                return live <= _error_handles(node)  # only its error handle(s) activated
+            # An EMPTY live set on an executed activity (or a composed subgraph) means its
+            # failure had nowhere to bind (no error-typed out-port declared) — the error would
+            # otherwise vanish and the run would read as a green success with an empty output.
+            # The output boundary is the one node that legitimately activates nothing.
+            return node.kind == "activity" or node.type == "subgraph"
+
+        errored = [node.id for node in ir.nodes if _errored(node)]
         if errored:
             return f"output empty: upstream error on node {errored[0]!r}"
         return None
@@ -1923,9 +1979,13 @@ async def _walk_llm(
     cap_nodes = _capability_tool_nodes(ir, node.id)
     schemas: list[dict[str, Any]] = []
     if config.tools:
-        schemas += await build_tool_schemas(ir, config.tools, registry=ctx.tools, mcp=ctx.mcp)
+        schemas += await build_tool_schemas(
+            ir, config.tools, registry=ctx.tools, mcp=ctx.mcp, tool_auth=ctx.tool_auth
+        )
     if cap_nodes:
-        schemas += await build_capability_schemas(cap_nodes, registry=ctx.tools, mcp=ctx.mcp)
+        schemas += await build_capability_schemas(
+            cap_nodes, registry=ctx.tools, mcp=ctx.mcp, tool_auth=ctx.tool_auth
+        )
     has_tools = bool(schemas)
     tool_schemas: list[dict[str, Any]] | None = schemas if has_tools else None
     tool_choice: Any = _to_openai_tool_choice(config.tool_choice) if has_tools else None
@@ -1952,7 +2012,10 @@ async def _walk_llm(
                     )
                 )
 
-            async def _turn(q: asyncio.Queue[Delta | None] = deltas) -> LlmActivityResult:
+            async def _turn(
+                q: asyncio.Queue[Delta | None] = deltas,
+                tc: Any = tool_choice,  # bound at definition — the loop rebinds tool_choice
+            ) -> LlmActivityResult:
                 # A pre-stream 503/404 or a mid-stream death raises here and re-raises at
                 # `await task` → failed run, as the inline loop did.
                 try:
@@ -1964,7 +2027,7 @@ async def _walk_llm(
                         extra_headers=ctx.extra_headers,
                         on_delta=_on_delta,
                         tools=tool_schemas,
-                        tool_choice=tool_choice,
+                        tool_choice=tc,
                     )
                 finally:
                     q.put_nowait(None)  # sentinel: producer done (success OR error)
@@ -2002,15 +2065,20 @@ async def _walk_llm(
             # next turn sees them (the OpenAI loop shape). A tool error is fed back, not fatal
             # (M6/M7).
             messages.append(assistant_tool_calls_message(list(turn.tool_calls)))
-            for call in turn.tool_calls:
+            for ci, call in enumerate(turn.tool_calls):
                 yield Delta(
                     node_id=node.id, content=call.name, kind="tool_call"
                 )  # visible progress
                 # M17: each tool call is a child span under the llm node span, so the waterfall
-                # shows
-                # the autonomous loop's tool steps inside the model node (m21.md Phase 6 / §6).
+                # shows the autonomous loop's tool steps inside the model node. The phase id
+                # carries iteration + call index — the span PK is deterministic per
+                # (run, node, phase), so repeat calls to ONE tool need a discriminator or every
+                # row after the first is dropped by the idempotent insert. The display name
+                # stays `tool.<name>`.
                 tool_cm = (
-                    scope.child_phase(f"tool.{call.name}") if scope is not None else _null_acm()
+                    scope.child_phase(f"tool.{call.name}#{iteration}.{ci}", f"tool.{call.name}")
+                    if scope is not None
+                    else _null_acm()
                 )
                 async with tool_cm as tool_scope:
                     outcome = await execute_tool_call(
@@ -2026,6 +2094,11 @@ async def _walk_llm(
                     if tool_scope is not None:
                         tool_scope.set_attributes({"tool.name": call.name, "tool.ok": outcome.ok})
                 messages.append(tool_result_message(call, outcome))
+            # A FORCED tool_choice ("required" / a named function) applies to the FIRST turn
+            # only — re-sending it would force a tool call on every turn, so the model could
+            # never produce a final answer and a write tool would re-execute until the cap.
+            if tool_choice is not None and tool_choice != "auto":
+                tool_choice = "auto"
             iteration += 1
 
         # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model).
@@ -2175,7 +2248,10 @@ async def _mcp_tool_outcome(
     if config.connection:
         if ctx.tool_auth is None:
             return ActivityOutcome(ok=False, value="mcp_tool: no connection resolver configured")
-        conn = await ctx.tool_auth(config.connection)
+        try:
+            conn = await ctx.tool_auth(config.connection)
+        except Exception as exc:  # e.g. an undecryptable secret — honest err, never a run failure
+            return ActivityOutcome(ok=False, value=f"mcp connection {config.connection!r}: {exc}")
         if conn is None:
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {config.connection!r} not found or disabled"

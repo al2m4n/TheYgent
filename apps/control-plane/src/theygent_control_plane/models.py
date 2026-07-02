@@ -72,6 +72,10 @@ class RunRow(Base):
     # NULL except while status == 'waiting'. Additive, like M5's graph_id / M12's trigger_id — the
     # bookkeeping POST /runs/{id}/resume reads to find the node (schema + delivery), not an FK.
     awaiting_node: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Which runtime owns this run's lifecycle: 'durable' rows recover/resume via the workflow
+    # engine after a crash, so the startup reconcile sweep must leave them alone; NULL (legacy)
+    # and 'inproc' rows are the interpreter's and are swept honestly when a restart orphans them.
+    runtime: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
     # M12 §9 evidence gate (m13.md §1.2): a real terminal-completion instant, so duration is
@@ -165,11 +169,13 @@ class McpServerRow(Base):
     __tablename__ = "mcp_server"
 
     name: Mapped[str] = mapped_column(String, primary_key=True)
-    transport: Mapped[str] = mapped_column(String)  # "stdio" (M7's only transport)
-    command: Mapped[str] = mapped_column(String)
+    transport: Mapped[str] = mapped_column(String)  # "stdio" | "http"
+    command: Mapped[str | None] = mapped_column(String, nullable=True)  # stdio only
     args: Mapped[list] = mapped_column(JSONB)
     env: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     cwd: Mapped[str | None] = mapped_column(String, nullable=True)
+    url: Mapped[str | None] = mapped_column(String, nullable=True)  # http only
+    headers: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # http only
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 

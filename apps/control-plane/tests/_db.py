@@ -29,17 +29,26 @@ async def truncate(url: str) -> None:
         await conn.close()
 
 
-async def seed_run(url: str, run_id: str, status: str, *, model: str = "triage-fast") -> None:
+async def seed_run(
+    url: str,
+    run_id: str,
+    status: str,
+    *,
+    model: str = "triage-fast",
+    runtime: str | None = None,
+) -> None:
     """Insert a run row directly in a given lifecycle state (M9 §2.1 reconciliation tests need a
-    run stuck at ``streaming`` as if a crash left it there — the app would never create one)."""
+    run stuck at ``streaming`` as if a crash left it there — the app would never create one).
+    ``runtime`` seeds the lifecycle-owner marker (``'durable'`` = the sweep must leave it alone)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
         await conn.execute(
-            "INSERT INTO run (id, status, model, created_at, updated_at) "
-            "VALUES ($1, $2, $3, now(), now())",
+            "INSERT INTO run (id, status, model, runtime, created_at, updated_at) "
+            "VALUES ($1, $2, $3, $4, now(), now())",
             run_id,
             status,
             model,
+            runtime,
         )
     finally:
         await conn.close()
