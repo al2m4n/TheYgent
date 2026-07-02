@@ -8,7 +8,7 @@ import type { XYPosition } from "@xyflow/react";
 
 const COL_GAP = 260;
 const ROW_GAP = 110;
-const ORIGIN: XYPosition = { x: 60, y: 60 };
+export const ORIGIN: XYPosition = { x: 60, y: 60 };
 
 /** Deterministic positions for every node id, keyed by id. Stable for a given graph (so two
  * loads of the same view-less IR land identically — the round-trip test relies on it). */

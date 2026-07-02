@@ -44,6 +44,7 @@ def build_config(
     database_url: str,
     *,
     fast_polling: bool = False,
+    executor_id: str | None = None,
 ) -> DBOSConfig:
     """Assemble the :class:`DBOSConfig` (D6). ``fast_polling`` lowers DBOS's notification/scheduler
     poll intervals so the fast suite isn't wall-clock-bound (a schedule due "now" fires within a
@@ -58,6 +59,13 @@ def build_config(
         # (one more port to bundle on the desktop sidecar — keep it off).
         "run_admin_server": False,
     }
+    # Launch-time recovery claims every PENDING workflow whose executor_id matches this process's
+    # own id. Both process roles register the identical workflow set, so if the API and the worker
+    # shared the default id ("local"), a routine restart of either would "recover" — i.e. steal and
+    # re-execute — workflows the OTHER, healthy process is mid-step on. A distinct, stable id per
+    # role confines recovery to the process's own crashed workflows.
+    if executor_id:
+        config["executor_id"] = executor_id
     if fast_polling:
         config["notification_listener_polling_interval_sec"] = 0.1
         config["scheduler_polling_interval_sec"] = 1.0

@@ -106,6 +106,11 @@ def _build_app(
             )
 
         model = body.get("model", "fake")
+        # Streamed token usage mirrors the real engines: the final chunk (choices: [] + usage)
+        # is emitted ONLY when the request asked via stream_options.include_usage — so a test
+        # asserting usage landed proves the control-plane actually requested it.
+        include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
+        captured["stream_options"] = body.get("stream_options")
         # M21 tool-calling: the scripted loop emits a tool_call on the FIRST turn, then — once a
         # ``{role: tool}`` result is in the transcript — the final answer. Stateless (driven by the
         # request) so the control-plane's loop terminates naturally.
@@ -121,6 +126,7 @@ def _build_app(
                     mode="tool_call" if mode in ("tool_call", "tool_loop") else mode,
                     content=content,
                     tool_spec=(tool_name, tool_args, wants_answer),
+                    include_usage=include_usage,
                 ),
                 media_type="text/event-stream",
             )
@@ -153,7 +159,7 @@ def _build_app(
                 "created": 0,
                 "model": model,
                 "choices": [{"index": 0, "message": msg, "finish_reason": finish}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+                "usage": USAGE,
             }
         )
 
@@ -176,7 +182,39 @@ def _chunk(model: str, delta: dict, finish: str | None = None) -> str:
     )
 
 
-async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_spec=None):
+# One model turn's deterministic usage — matches the non-stream response body so both paths meter
+# identically (a tool loop's N turns accumulate N of these on the llm node span).
+USAGE = {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
+
+
+def _usage_chunk(model: str) -> str:
+    # The real-engine terminal usage chunk shape: empty choices + a top-level usage object,
+    # emitted after the finish_reason chunk, before [DONE].
+    return (
+        "data: "
+        + json.dumps(
+            {
+                "id": "chatcmpl-fake",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [],
+                "usage": USAGE,
+            }
+        )
+        + "\n\n"
+    )
+
+
+async def _stream(
+    model: str, *, mode: str, content: str = FULL_MESSAGE, tool_spec=None, include_usage=False
+):
+    def _tail():
+        # Every completed turn reports usage when asked (real engines meter tool-call turns too).
+        if include_usage:
+            yield _usage_chunk(model)
+        yield "data: [DONE]\n\n"
+
     # M21 tool-calling: stream a tool_call (fragmented arguments — proves the accumulator) on the
     # first turn, then the final answer once the tool result is in the transcript.
     if mode == "tool_call":
@@ -184,7 +222,8 @@ async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_sp
         if has_result:
             yield _chunk(model, {"role": "assistant", "content": content})
             yield _chunk(model, {}, finish="stop")
-            yield "data: [DONE]\n\n"
+            for piece in _tail():
+                yield piece
             return
         yield _chunk(
             model,
@@ -205,7 +244,8 @@ async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_sp
         yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[:mid]}}]})
         yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[mid:]}}]})
         yield _chunk(model, {}, finish="tool_calls")
-        yield "data: [DONE]\n\n"
+        for piece in _tail():
+            yield piece
         return
 
     # A reasoning model emits `reasoning_content` deltas BEFORE its `content` answer.
@@ -215,11 +255,13 @@ async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_sp
         if mode == "empty_length":
             # Budget exhausted during reasoning: no content, finish_reason=length (the no-answer).
             yield _chunk(model, {}, finish="length")
-            yield "data: [DONE]\n\n"
+            for piece in _tail():
+                yield piece
             return
         yield _chunk(model, {"content": content})
         yield _chunk(model, {}, finish="stop")
-        yield "data: [DONE]\n\n"
+        for piece in _tail():
+            yield piece
         return
 
     # Default content streams in two chunks (proves reassembly); a custom response streams whole.
@@ -234,7 +276,8 @@ async def _stream(model: str, *, mode: str, content: str = FULL_MESSAGE, tool_sp
             # raise so the connection drops, exactly the §4 mid-stream-failure case.
             raise RuntimeError("inference dropped mid-stream")
     yield _chunk(model, {}, finish="stop")
-    yield "data: [DONE]\n\n"
+    for piece in _tail():
+        yield piece
 
 
 class FakeInference:
@@ -251,6 +294,7 @@ class FakeInference:
             "run_id_header": None,
             "model": None,
             "messages": None,
+            "stream_options": None,
             "audio_hit": False,
             "audio_model": None,
             "audio_bytes_in": 0,

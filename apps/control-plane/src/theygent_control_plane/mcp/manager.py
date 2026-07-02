@@ -72,15 +72,20 @@ class McpManager:
 
     async def register(self, name: str, config: McpServerConfig) -> None:
         """Register/replace a server. Does NOT connect (lazy — m7.md §3.2). If a connection for
-        this name already exists, it's dropped so the next call reconnects with the new config."""
-        await self._drop(name)
-        self._configs[name] = config
-        self._locks.setdefault(name, asyncio.Lock())
+        this name already exists, it's dropped so the next call reconnects with the new config.
+        Serialized on the per-name lock so a replace never interleaves with an in-flight lazy
+        connect (which would otherwise cache a client built from the OLD config)."""
+        async with self._locks.setdefault(name, asyncio.Lock()):
+            await self._drop(name)
+            self._configs[name] = config
 
     async def remove(self, name: str) -> None:
-        await self._drop(name)
-        self._configs.pop(name, None)
-        self._locks.pop(name, None)
+        # The lock object itself is deliberately kept: popping it while a straggler coroutine
+        # still holds a reference would leave two locks alive for one name. One idle Lock per
+        # removed name is negligible, and a re-register reuses it.
+        async with self._locks.setdefault(name, asyncio.Lock()):
+            await self._drop(name)
+            self._configs.pop(name, None)
 
     def __contains__(self, name: object) -> bool:
         return name in self._configs
@@ -125,8 +130,15 @@ class McpManager:
             logger.info("mcp.connected", extra={"server": name})
             return client
 
-    async def _drop(self, name: str) -> None:
-        client = self._clients.pop(name, None)
+    async def _drop(self, name: str, *, only: McpClient | None = None) -> None:
+        """Evict + close the cached connection. ``only`` scopes the drop to ONE known-bad client:
+        two callers failing on the same dead connection both try to drop it, and without the
+        identity guard the second drop would close the healthy REPLACEMENT the first caller's
+        retry just connected."""
+        client = self._clients.get(name)
+        if only is not None and client is not only:
+            return
+        self._clients.pop(name, None)
         self._tools.pop(name, None)
         if client is not None:
             try:
@@ -166,8 +178,21 @@ class McpManager:
                     "mcp.transport_failure",
                     extra={"server": name, "tool": tool, "attempt": attempt},
                 )
-                await self._drop(name)  # force a fresh connection on the retry
+                # Drop only the client WE failed on — a concurrent caller's retry may already
+                # have cached a healthy replacement this must not close.
+                await self._drop(name, only=client)
         raise last if last is not None else McpConnectionError("MCP call failed")
+
+    async def list_connection_tools(
+        self, name: str, config: McpServerConfig
+    ) -> list[McpToolDescriptor]:
+        """The tool list of a CONNECTION-BACKED server (keyed by connection id), registering the
+        server-side-built config only when it changed — same reuse contract as
+        :meth:`call_connection_tool`. Used to build model tool schemas for connection-backed
+        bindings."""
+        if self._configs.get(name) != config:
+            await self.register(name, config)
+        return await self.list_tools(name)
 
     async def call_connection_tool(
         self, name: str, config: McpServerConfig, tool: str, args: dict[str, Any]

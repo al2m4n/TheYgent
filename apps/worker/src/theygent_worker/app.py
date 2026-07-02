@@ -64,6 +64,10 @@ async def build_runtime(
         triggers=TriggerStore(),
         sessionmaker=sessionmaker,
         fast_polling=fast_polling,
+        # A distinct, stable executor identity per process role: launch-time recovery then claims
+        # only workflows THIS role's crashed process left pending, never ones the (healthy) API
+        # process is mid-step on.
+        executor_id="worker",
     )
     return runtime, mcp, gateway, engine
 
@@ -74,8 +78,12 @@ async def run_worker() -> None:
     enabled schedule-triggers (create missing, drop orphans) — the same reconcile the control-plane
     does, so whichever process boots first establishes the schedules."""
     database_url = _database_url()
-    inference_base_url = os.environ.get(
-        "THEYGENT_INFERENCE_PLANE_BASE_URL", "http://127.0.0.1:8081/v1"
+    # The SAME env var the control-plane reads — one name configures the whole deployment. The
+    # older worker-only *_BASE_URL name stays as a fallback so an existing setup keeps working.
+    inference_base_url = (
+        os.environ.get("THEYGENT_INFERENCE_PLANE_URL")
+        or os.environ.get("THEYGENT_INFERENCE_PLANE_BASE_URL")
+        or "http://127.0.0.1:8081/v1"
     )
     runtime, mcp, gateway, engine = await build_runtime(
         database_url=database_url, inference_base_url=inference_base_url

@@ -21,6 +21,8 @@ against the shared Postgres (m13-dbos.md §5). The Queue + workflow registration
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -53,6 +55,13 @@ logger = logging.getLogger("theygent.control_plane.durable")
 RUN_QUEUE = Queue("theygent")
 
 _SCHEDULE_PREFIX = "trigger-"
+
+
+class WorkflowGoneError(RuntimeError):
+    """A resume was sent to a workflow id the durable engine has no record of — the run row says
+    ``waiting`` but the wait can never be satisfied (durable state repointed/reset, or the workflow
+    cancelled/dead-lettered). The API maps this to a clean 410 and terminalizes the run instead of
+    leaving it stuck ``waiting`` forever. Defined here so the API layer never imports ``dbos``."""
 
 
 def _schedule_name(trigger_id: str) -> str:
@@ -88,18 +97,25 @@ class DurableRuntime:
         tool_auth: Any = None,
         gates: Any = None,
         artifacts: Any = None,
+        executor_id: str | None = None,
     ) -> None:
         self._database_url = database_url
         self._fast_polling = fast_polling
+        self._executor_id = executor_id
+        self._store = store
+        self._sessionmaker = sessionmaker
         self.bus = bus or DeltaBus()
         # M17: the observability wrapper. In the desktop sidecar the control-plane passes its own
         # Telemetry (so durable + interactive spans share one live bus); the standalone worker
-        # builds
-        # one with its OWN bus. If absent, the durable walk simply emits no spans.
+        # builds one with its OWN bus — including the opt-in OTLP sink, so an exporter endpoint
+        # configured on the worker exports durable-run spans exactly as the API process would.
+        # If absent, the durable walk simply emits no spans.
+        self._owns_telemetry = telemetry is None
         if telemetry is None:
             from theygent_control_plane.observability import Telemetry
+            from theygent_control_plane.observability.otlp import build_otlp_sink
 
-            telemetry = Telemetry(sessionmaker=sessionmaker)
+            telemetry = Telemetry(sessionmaker=sessionmaker, otlp_sink=build_otlp_sink())
         self.telemetry = telemetry
         # Install the process-local resources the steps read (compiler-global, D2/D6).
         compiler.set_resources(
@@ -132,7 +148,13 @@ class DurableRuntime:
         if self._launched:
             return
         self.migrate()
-        DBOS(config=build_config(self._database_url, fast_polling=self._fast_polling))
+        DBOS(
+            config=build_config(
+                self._database_url,
+                fast_polling=self._fast_polling,
+                executor_id=self._executor_id,
+            )
+        )
         DBOS.launch()
         self._launched = True
         logger.info("durable.launched")
@@ -142,6 +164,10 @@ class DurableRuntime:
             DBOS.destroy()
             self._launched = False
             logger.info("durable.shutdown")
+        # Flush the OTLP exporter only when this runtime BUILT the telemetry (the standalone
+        # worker); a shared, app-owned telemetry is flushed by the app's own teardown.
+        if self._owns_telemetry and getattr(self.telemetry, "otlp", None) is not None:
+            self.telemetry.otlp.shutdown()
 
     # ── the re-pointed fire() seam (M13 §4) ──────────────────────────────────────
 
@@ -160,16 +186,39 @@ class DurableRuntime:
             theygent_run, agent_ref, input_value, thread_id, trigger_id
         )
 
-    async def resume(self, run_id: str, input_value: Any) -> None:
+    async def resume(self, run_id: str, input_value: Any, *, node_id: str | None = None) -> None:
         """Deliver the awaited input to a ``waiting`` ``human`` run (M14 §1.1) — the durable side of
         ``POST /runs/{id}/resume``. Maps to ``DBOS.send`` to the workflow whose id IS the run id, on
-        the ``human`` topic the node recvs on; the checkpointed workflow resumes from the recv,
-        even across a worker restart. DBOS buffers the send per topic, so delivering before the node
-        reaches recv (a race) is fine. Wrapped in ``{"input": …}`` so the node can tell a delivered
-        value from a timeout (``recv`` → ``None``)."""
-        from theygent_control_plane.durable.compiler import HUMAN_TOPIC
+        the topic the node recvs on; the checkpointed workflow resumes from the recv, even across a
+        worker restart. DBOS buffers the send per topic, so delivering before the node reaches recv
+        (a race) is fine. Wrapped in ``{"input": …}`` so the node can tell a delivered value from a
+        timeout (``recv`` → ``None``).
 
-        await DBOS.send_async(run_id, {"input": input_value}, HUMAN_TOPIC)
+        The topic is per-node (``human:<node_id>``) so a duplicate resume — a double-clicked
+        Approve, a client retry — buffers a stray message on the ALREADY-CONSUMED node's topic,
+        where it is inert, instead of silently satisfying the run's NEXT human gate with a stale
+        payload. ``node_id`` defaults to the run row's recorded ``awaiting_node``.
+
+        Raises :class:`WorkflowGoneError` when the durable engine has no record of the workflow —
+        a wait that can never be satisfied must surface as a clean, typed failure, not a 500."""
+        from dbos._error import DBOSNonExistentWorkflowError
+
+        from theygent_control_plane.durable.compiler import human_topic
+
+        if node_id is None:
+            async with self._sessionmaker() as session:
+                run = await self._store.get_run(session, run_id)
+            node_id = run.awaiting_node if run is not None else None
+        if node_id is None:
+            # Every human node recvs on its own `human:<node_id>` topic; a send with no node
+            # would buffer forever on the bare prefix nothing listens to. Loud beats inert.
+            raise ValueError(
+                f"run {run_id!r} records no awaiting node — the resume cannot be delivered"
+            )
+        try:
+            await DBOS.send_async(run_id, {"input": input_value}, human_topic(node_id))
+        except DBOSNonExistentWorkflowError as exc:
+            raise WorkflowGoneError(str(exc)) from exc
 
     async def fire(self, trigger: Trigger, input_value: Any) -> dict[str, Any]:
         """The durable replacement for M12's ``fire`` closure (m13-dbos.md §4): enqueue the pinned
@@ -190,36 +239,57 @@ class DurableRuntime:
     # ── DBOS dynamic schedules (M13 §4) ──────────────────────────────────────────
 
     async def upsert_schedule(self, trigger: Trigger) -> None:
-        """Ensure an ENABLED ``schedule`` trigger has a live DBOS schedule (create on first sight,
-        resume if paused). theygent's ``trigger`` row stays the source of truth; this just mirrors
-        it into a DBOS dynamic schedule named ``trigger-<id>`` firing ``theygent_scheduled_fire``
-        with the trigger id as ``context``."""
+        """Ensure an ENABLED ``schedule`` trigger has a live DBOS schedule that matches the trigger
+        row (create on first sight, resume if paused, recreate on a cron edit). theygent's
+        ``trigger`` row stays the source of truth; this just mirrors it into a DBOS dynamic schedule
+        named ``trigger-<id>`` firing ``theygent_scheduled_fire`` with the trigger id as
+        ``context``."""
         name = _schedule_name(trigger.id)
         cron = (trigger.config or {}).get("cron")
         if not isinstance(cron, str):  # not a schedule trigger / no cron — nothing to mirror
             return
         existing = await DBOS.get_schedule_async(name)
+        if existing is not None and existing.get("schedule") != cron:
+            # The trigger's cron was edited while no durable runtime was live to sync it (e.g. in
+            # dispatcher mode) — the stale DBOS schedule would fire on the OLD cadence forever.
+            # Recreate so boot reconciliation repairs drift, not just existence.
+            await DBOS.delete_schedule_async(name)
+            existing = None
         if existing is None:
-            await DBOS.create_schedule_async(
-                schedule_name=name,
-                workflow_fn=theygent_scheduled_fire,
-                schedule=cron,
-                context=trigger.id,
-            )
+            try:
+                await DBOS.create_schedule_async(
+                    schedule_name=name,
+                    workflow_fn=theygent_scheduled_fire,
+                    schedule=cron,
+                    context=trigger.id,
+                )
+            except Exception as exc:
+                # Not an upsert underneath: a sibling process reconciling the same boot window can
+                # win the insert. Losing that race is success (the schedule exists) — resume it
+                # below rather than crashing this process's startup.
+                if "already exists" not in str(exc):
+                    raise
+                logger.info("durable.schedule_create_lost_race", extra={"trigger_id": trigger.id})
+                await asyncio.to_thread(DBOS.resume_schedule, name)
+                return
             logger.info("durable.schedule_created", extra={"trigger_id": trigger.id, "cron": cron})
         else:
-            DBOS.resume_schedule(name)
+            # A synchronous Postgres write — keep it off the event loop.
+            await asyncio.to_thread(DBOS.resume_schedule, name)
 
     async def pause_schedule(self, trigger_id: str) -> None:
         """Pause the DBOS schedule for a disabled trigger (it stops firing but is not forgotten —
         re-enabling resumes it). Safe if no schedule exists."""
         if await DBOS.get_schedule_async(_schedule_name(trigger_id)) is not None:
-            DBOS.pause_schedule(_schedule_name(trigger_id))
+            with contextlib.suppress(Exception):  # deleted by a sibling between check and pause
+                await asyncio.to_thread(DBOS.pause_schedule, _schedule_name(trigger_id))
 
     async def delete_schedule(self, trigger_id: str) -> None:
-        """Drop the DBOS schedule for a deleted trigger. Safe if none exists."""
+        """Drop the DBOS schedule for a deleted trigger. Safe if none exists (including one a
+        sibling process deleted between the check and the delete)."""
         if await DBOS.get_schedule_async(_schedule_name(trigger_id)) is not None:
-            await DBOS.delete_schedule_async(_schedule_name(trigger_id))
+            with contextlib.suppress(Exception):
+                await DBOS.delete_schedule_async(_schedule_name(trigger_id))
             logger.info("durable.schedule_deleted", extra={"trigger_id": trigger_id})
 
     async def reconcile_schedules(self, enabled_schedule_triggers: list[Trigger]) -> None:
@@ -234,5 +304,6 @@ class DurableRuntime:
             name = sched["schedule_name"]
             trigger_id = name[len(_SCHEDULE_PREFIX) :]
             if trigger_id not in desired:
-                await DBOS.delete_schedule_async(name)
+                with contextlib.suppress(Exception):  # a sibling's reconcile may win the delete
+                    await DBOS.delete_schedule_async(name)
                 logger.info("durable.schedule_orphan_dropped", extra={"trigger_id": trigger_id})

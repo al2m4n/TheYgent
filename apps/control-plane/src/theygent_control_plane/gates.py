@@ -56,9 +56,10 @@ class GateBackend:
 
     async def usage_tokens(self, agent_id: str | None, window_seconds: int) -> int:
         """Sum ``gen_ai.usage.total_tokens`` across the agent's spans in the window (M19 §1.6 —
-        read, not re-meter). Joins span→run on ``run_id``, filters ``run.graph_id``. When
-        no token usage is recorded (the common case until the gateway populates it), returns 0 — an
-        honest 'no usage yet → allow'. Per-USER attribution is the deferred identity work (§1.6)."""
+        read, not re-meter). Joins span→run on ``run_id``, filters ``run.graph_id``. The llm
+        capture writes the attribute on each ``model.generate`` span from the usage the server
+        reports; when none is recorded (an upstream that reports no usage), returns 0 — an honest
+        'no usage measured → allow'. Per-USER attribution is the deferred identity work (§1.6)."""
         window_seconds = max(1, int(window_seconds))
         since = now().timestamp() - window_seconds
         token_expr = func.coalesce(SpanRow.attributes["gen_ai.usage.total_tokens"].as_float(), 0.0)

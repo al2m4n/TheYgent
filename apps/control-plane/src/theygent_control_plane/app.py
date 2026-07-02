@@ -36,10 +36,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
+    EXECUTABLE_TYPES,
     GraphValidationError,
+    GuardrailConfig,
     IRDocument,
     content_hash,
     parse_document,
@@ -96,7 +99,10 @@ from theygent_control_plane.walker import (
     audio_model_nodes,
     llm_models,
     mcp_tool_nodes,
+    read_usage,
+    resolve_model_key,
     tool_nodes,
+    usage_attributes,
     walk,
 )
 
@@ -334,6 +340,23 @@ def _error(message: str, *, status: int, code: str, run_id: str | None = None) -
     return JSONResponse(status_code=status, content=body)
 
 
+def _reject_unexecutable_nodes(ir: IRDocument) -> JSONResponse | None:
+    """A 400 for node types the IR schema declares but no runtime executes yet (code/rag/
+    retriever/memory/agent/condition/iterator). They pass ``validate_graph`` (they are legal IR),
+    so without this gate a Run is created and then dies as a misleading 502 ``inference_error``
+    ("not implemented yet"). Checked before a Run on every run initiator."""
+    unexecutable = sorted({n.id for n in ir.nodes if n.type not in EXECUTABLE_TYPES})
+    if not unexecutable:
+        return None
+    types_ = sorted({n.type for n in ir.nodes if n.type not in EXECUTABLE_TYPES})
+    return _error(
+        f"node(s) {unexecutable} use type(s) {types_} that are declared in the IR schema but "
+        "not executable yet — no runtime implements them",
+        status=400,
+        code="node_type_unavailable",
+    )
+
+
 def _map_inference_error(exc: APIStatusError) -> tuple[int, str, str]:
     """Map an inference-plane error to a clean control-plane (status, code, message).
 
@@ -386,7 +409,9 @@ def _verify_signature(secret: str, raw: bytes, provided: str | None) -> bool:
         return False
     expected = hmac.new(secret.encode("utf-8"), raw, hashlib.sha256).hexdigest()
     candidate = provided.split("=", 1)[1] if provided.startswith("sha256=") else provided
-    return hmac.compare_digest(candidate.strip(), expected)
+    # Compare as BYTES: str compare_digest raises TypeError on non-ASCII, and this header is
+    # attacker-controlled — a crafted byte must yield a clean False → 401, never a 500.
+    return hmac.compare_digest(candidate.strip().encode("utf-8"), expected.encode("ascii"))
 
 
 def _default_cors_origins() -> list[str]:
@@ -531,6 +556,10 @@ def create_app(
                 tool_auth=tool_resolver,  # M19 §1.1: durable steps resolve connection auth too
                 gates=gate_backend,  # M19 §2.8: durable gate steps use the same backend
                 artifacts=artifact_store,  # M19 §2.2: durable audio steps use the same store
+                # A distinct executor identity per process role: launch-time recovery then claims
+                # only workflows a crashed API process left pending — never ones a healthy
+                # standalone worker is mid-step on (and vice versa).
+                executor_id="control-plane",
             )
             runtime.launch()
             app.state.durable_runtime = runtime
@@ -543,6 +572,35 @@ def create_app(
             # Postgres every tick, so a fresh instance picks up every persisted definition with no
             # in-memory restore. The background loop is gated (start_dispatcher) so the fast suite
             # drives `tick` deterministically; the dispatcher object exists either way.
+            #
+            # Double-fire guard: if the shared Postgres carries live durable trigger schedules
+            # (a standalone worker mirrors every enabled schedule trigger into one), running this
+            # in-process dispatcher TOO means every schedule fires twice per cron window — once
+            # here, once via the worker. Nothing can safely arbitrate that split automatically,
+            # so detect it and warn loudly at boot.
+            if start_dispatcher:
+                durable_schedules = 0
+                with contextlib.suppress(Exception):  # no dbos schema = nothing to check
+                    async with app.state.sessionmaker() as session:
+                        durable_schedules = (
+                            await session.execute(
+                                sa_text(
+                                    "SELECT count(*) FROM dbos.workflow_schedules "
+                                    "WHERE schedule_name LIKE 'trigger-%'"
+                                )
+                            )
+                        ).scalar_one()
+                if durable_schedules:
+                    logger.warning(
+                        "dispatcher.durable_schedules_present",
+                        extra={
+                            "count": int(durable_schedules),
+                            "hint": "durable trigger schedules exist in Postgres while the "
+                            "in-process dispatcher is starting — if a worker process is "
+                            "running, every schedule trigger will DOUBLE-FIRE. Run the API "
+                            "with durable mode on (or stop the worker).",
+                        },
+                    )
             dispatcher = ScheduleDispatcher(
                 sessionmaker=app.state.sessionmaker,
                 store=triggers,
@@ -562,6 +620,10 @@ def create_app(
                 await app.state.durable_gateway.aclose()
             await mcp.close_all()  # tear down every live MCP connection (m7.md §3.2)
             await gw.aclose()
+            if otlp_sink is not None:
+                # Flush the batched exporter off the loop — without this the tail of a run's
+                # exported spans dies with the process.
+                await asyncio.to_thread(otlp_sink.shutdown)
             await engine.dispose()
 
     app = FastAPI(title="theygent control-plane", lifespan=lifespan)
@@ -604,7 +666,13 @@ def create_app(
         # (`Depends(require_token)`) and the firing path stay shaped as they are. Build only the
         # token now (no speculative principal that nothing consumes — that would erode the seam).
         presented = _bearer_token(authorization)
-        if not token or presented is None or not hmac.compare_digest(presented, token):
+        # Compare as BYTES: str compare_digest raises TypeError on non-ASCII input, and this
+        # header is attacker-controlled — a crafted byte must yield a clean 401, never a 500.
+        if (
+            not token
+            or presented is None
+            or not hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8"))
+        ):
             raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
 
     async def get_session() -> AsyncIterator[AsyncSession]:
@@ -707,7 +775,11 @@ def create_app(
         # stream (mirrors inference `_serve_managed`).
         try:
             upstream = await gw.open_stream(
-                model=run.model, messages=messages, params=params, extra_headers=_headers(run)
+                model=run.model,
+                messages=messages,
+                params=params,
+                extra_headers=_headers(run),
+                include_usage=True,  # final chunk carries token usage → the llm span
             )
         except APIStatusError as exc:
             status, code, message = _map_inference_error(exc)
@@ -736,10 +808,14 @@ def create_app(
                 output = ""
                 finish_reason: str | None = None
                 first_token_ns: int | None = None
+                usage: dict[str, int] | None = None
                 # M17: the generation is the run's single ``llm`` node span (under the run-root) —
                 # the gap before it is the open_stream/engine latency; the bar is the generation.
                 async with run_trace.node_span(_PROMPT_NODE) as scope:
                     async for chunk in upstream:
+                        # Usage rides the stream's final chunk, whose choices list is empty (or
+                        # all-null through a proxy) — read it BEFORE the choices guard.
+                        usage = read_usage(chunk) or usage
                         if not chunk.choices:
                             continue
                         choice = chunk.choices[0]
@@ -766,6 +842,7 @@ def create_app(
                         attrs["gen_ai.response.finish_reason"] = finish_reason
                     if first_token_ns is not None:
                         attrs["ttft_ms"] = round((first_token_ns - scope.span.start_ns) / 1e6, 1)
+                    attrs.update(usage_attributes(usage))
                     scope.set_attributes(attrs)
                 # Success: mark completed AND append the turn pair in ONE transaction (§4). M9 §2.2
                 # persists the output; an empty answer (model hit its token cap before producing
@@ -799,16 +876,26 @@ def create_app(
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
                 yield "data: [DONE]\n\n"
             finally:
-                # The client disconnected/aborted mid-stream: the generator is cancelled and neither
-                # branch above ran, so terminalize the run instead of leaving a `streaming` zombie
-                # until the next restart's reconcile sweep. Shielded so the DB write completes
-                # despite the cancellation; status-guarded so it can't clobber a real outcome.
+                # The client disconnected/aborted mid-stream: the generator is cancelled and
+                # neither branch above ran, so terminalize the run instead of leaving a
+                # `streaming` zombie until the next restart's reconcile sweep. BOTH cleanups ride
+                # in ONE detached, shielded task: the cancel scope re-delivers CancelledError at
+                # every await here (a BaseException `suppress(Exception)` can't catch), so a
+                # second sequential await would be skipped — losing the buffered trace flush and
+                # leaking the run's telemetry buffer. The detached task completes regardless;
+                # status-guarded so it can't clobber a real outcome.
                 if not terminal:
-                    with contextlib.suppress(Exception):
-                        await asyncio.shield(_terminalize_interrupted(run.id))
-                        await run_trace.finish(
-                            status="err", error="interrupted: client disconnected mid-stream"
-                        )
+
+                    async def _cleanup() -> None:
+                        await _terminalize_interrupted(run.id)
+                        with contextlib.suppress(Exception):
+                            await run_trace.finish(
+                                status="err", error="interrupted: client disconnected mid-stream"
+                            )
+
+                    cleanup = asyncio.create_task(_cleanup())
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(cleanup)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -835,6 +922,8 @@ def create_app(
                     {
                         "gen_ai.request.model": run.model,
                         "gen_ai.response.finish_reason": finish_reason,
+                        # A non-stream completion carries usage on the response body itself.
+                        **usage_attributes(read_usage(completion)),
                     }
                 )
         except APIStatusError as exc:
@@ -890,11 +979,13 @@ def create_app(
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
 
-    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_token)])
+    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_auth)])
     async def resume_run(run_id: str, req: ResumeRunRequest) -> Any:
-        # M14 §1.1: the durable human-in-the-loop entry. Deliver the awaited input to a `waiting`
-        # run → DBOS.send to the checkpointed workflow, which resumes from the recv point (even
-        # across a worker restart). Token-authed like /invoke — an unattended control surface.
+        # The durable human-in-the-loop entry. Deliver the awaited input to a `waiting` run →
+        # DBOS.send to the checkpointed workflow, which resumes from the recv point (even across
+        # a worker restart). Authed like the other interactive run surfaces (the person answering
+        # a human gate is the cockpit user; starting the durable run uses the same auth) — the
+        # unattended surfaces (/invoke, /hooks) keep their token/signature gates.
         # Durable mode only; non-durable runs can't durably wait, so resume is a 400 there (honest).
         runtime = getattr(app.state, "durable_runtime", None)
         if runtime is None:
@@ -903,6 +994,10 @@ def create_app(
                 status=400,
                 code="durable_required",
             )
+        # Imported here, not at module top: the durable package (and its engine SDK) loads only
+        # when durable mode is actually live — which it is, since `runtime` exists.
+        from theygent_control_plane.durable.runtime import WorkflowGoneError
+
         async with tx() as session:
             run = await store.get_run(session, run_id)
         if run is None:
@@ -913,6 +1008,16 @@ def create_app(
                 status=409,
                 code="run_not_waiting",
             )
+        if not run.awaiting_node:
+            # A waiting run always records its awaiting node (mark_waiting writes both). Without
+            # it the resume cannot be targeted at the node's delivery topic — a send to nowhere
+            # would 202 and never be consumed. Refuse loudly instead.
+            return _error(
+                f"run {run_id!r} is waiting but records no awaiting node — the resume cannot be "
+                "delivered",
+                status=409,
+                code="awaiting_node_missing",
+            )
         # Validate the awaited input against the human node's declared schema (m14.md §1.1).
         # Advisory in M14: resolve the run's pinned IR, find the waiting node, and — if it declares
         # an input_schema with required keys — require the input to carry them. A loud 422 beats a
@@ -920,7 +1025,25 @@ def create_app(
         invalid = await _validate_resume_input(run, req.input)
         if invalid is not None:
             return invalid
-        await runtime.resume(run_id, req.input)
+        # Deliver on the awaiting node's own topic: a duplicate resume (double-clicked Approve, a
+        # client retry racing the workflow's status flip) buffers an inert message on the already-
+        # consumed node's topic instead of silently satisfying the run's NEXT human gate.
+        try:
+            await runtime.resume(run_id, req.input, node_id=run.awaiting_node)
+        except WorkflowGoneError:
+            # The row says waiting but the workflow is gone (durable state repointed/reset, or the
+            # workflow was cancelled/dead-lettered): the wait can never be satisfied. Terminalize
+            # honestly so the run isn't stuck 'waiting' forever with no API path out.
+            async with tx() as s:
+                await store.set_status(
+                    s, run_id, "failed", error="waiting workflow no longer exists — cannot resume"
+                )
+            return _error(
+                f"run {run_id!r} was waiting but its durable workflow no longer exists; "
+                "the run has been marked failed",
+                status=410,
+                code="workflow_gone",
+            )
         logger.info("run.resumed", extra={"run_id": run_id, "node_id": run.awaiting_node})
         return JSONResponse(
             {"runId": run_id, "status": "resuming", "awaitingNode": run.awaiting_node},
@@ -992,18 +1115,47 @@ def create_app(
             return _error("not permitted to read this run's trace", status=403, code="forbidden")
         telemetry = app.state.telemetry
         bus = telemetry.bus
-        queue = bus.subscribe(run_id)
 
         async def gen() -> AsyncIterator[str]:
+            # Subscribe INSIDE the generator (so an unstarted response never strands a queue),
+            # then re-read the status: the bus's close sentinel only reaches queues subscribed at
+            # that moment, so deciding from a pre-subscribe snapshot would hang forever when the
+            # run terminalized in the gap. Subscribe-then-check closes the race: a terminal fresh
+            # read → done now; a non-terminal one → the close is still ahead of the subscription.
+            queue = bus.subscribe(run_id)
             try:
-                # If the run already terminalized, there will be no future events — close at once so
-                # the client falls back to the static /trace snapshot (no hang). A small race window
-                # is harmless: late events were captured by the snapshot.
-                if run.status in ("completed", "failed"):
-                    yield _sse("done", {"runId": run_id, "status": run.status})
+                async with tx() as s:
+                    fresh = await store.get_run(s, run_id)
+                if fresh is None or fresh.status in ("completed", "failed"):
+                    yield _sse(
+                        "done", {"runId": run_id, "status": fresh.status if fresh else "unknown"}
+                    )
                     return
                 while True:
-                    event = await queue.get()
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    except TimeoutError:
+                        # Heartbeat: keeps proxies from idling the stream out, and re-checks the
+                        # store so a close that somehow never reached this subscriber (e.g. the
+                        # run finished on another process — the bus is process-local) still ends
+                        # the stream instead of hanging the client forever.
+                        async with tx() as s:
+                            current = await store.get_run(s, run_id)
+                        if current is None or current.status not in (
+                            "created",
+                            "streaming",
+                            "waiting",  # paused at a human gate — spans resume after the input
+                        ):
+                            yield _sse(
+                                "done",
+                                {
+                                    "runId": run_id,
+                                    "status": current.status if current else "unknown",
+                                },
+                            )
+                            return
+                        yield ": keepalive\n\n"
+                        continue
                     if event is None:  # the run finished (bus.close sentinel)
                         yield _sse("done", {"runId": run_id})
                         return
@@ -1160,6 +1312,13 @@ def create_app(
             # M19 §1.3: transcribe/speak are logical-id-only too — reject an engine-name binding
             # up front, exactly like an llm (the audio negative test the §4 contract extends).
             audio_model_nodes(ir)
+            # A model guardrail resolves a binding at step time too — reject an engine-name
+            # binding here like every other model node, not as a mid-run failure.
+            for node in ir.nodes:
+                if node.type == "guardrail":
+                    gcfg = GuardrailConfig.model_validate(node.config)
+                    if gcfg.check.model is not None:
+                        resolve_model_key(ir, gcfg.check.model.model)
         except EngineNameNotAllowed as exc:
             return _error(str(exc), status=400, code="engine_name_not_allowed")
 
@@ -1175,6 +1334,18 @@ def create_app(
                     f"node {node.id!r}: unknown tool {tool_name!r}",
                     status=400,
                     code="tool_not_found",
+                )
+            # A `tool` node runs a builtin or an http binding as a step; an mcp binding is the
+            # wrong shape here (the `mcp_tool` node runs MCP as a step). Reject it up front with a
+            # clear pointer, rather than let the step bind a cryptic err at runtime.
+            binding = ir.tools.get(tool_name)
+            if getattr(binding, "kind", None) == "mcp":
+                return _error(
+                    f"node {node.id!r}: tool {tool_name!r} is an MCP binding — run it from an "
+                    "`mcp_tool` node (or wire it as a capability into an llm's tools port), not a "
+                    "plain `tool` node",
+                    status=400,
+                    code="tool_binding_mismatch",
                 )
 
         # M21 §6 Q2: a builtin tool a model can CALL must self-describe. ``validate_graph`` already
@@ -1219,10 +1390,17 @@ def create_app(
                     code="mcp_tool_not_found",
                 )
 
+        # Node types the IR schema declares but NO runtime executes yet (e.g. code/rag/condition)
+        # pass validate_graph — reject them up front with a clear 400 (before a Run), not the
+        # walker's raw NotImplementedError mis-mapped to a 502 inference_error.
+        unavailable_err = _reject_unexecutable_nodes(ir)
+        if unavailable_err is not None:
+            return unavailable_err
+
         # Durable-only node types (human/subgraph/loop/map) cannot run on this interactive walker —
         # reject up front with a clear, actionable error (before a Run), not the walker's raw
-        # NotImplementedError mis-mapped to a 502 "not implemented yet" (M14: these run on the
-        # durable runtime via a trigger/worker, not the interactive run path).
+        # NotImplementedError mis-mapped to a 502 "not implemented yet" (these run on the
+        # durable runtime via a durable run or trigger, not the interactive run path).
         durable_only = sorted({n.id for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
         if durable_only:
             kinds = sorted({n.type for n in ir.nodes if n.type in _DURABLE_ONLY_TYPES})
@@ -1343,6 +1521,14 @@ def create_app(
                 await store.set_status(s, run.id, "failed", error=str(exc))
             await _finish_trace(ctx, "err", str(exc))
             return _error(str(exc), status=422, code="transform_error", run_id=run.id)
+        except Exception as exc:  # anything else pre-stream (mirrors _complete_graph's catch-all):
+            # without this, an unexpected error here — a not-yet-implemented node type executing
+            # before the first llm delta, a telemetry/DB hiccup — escaped as a raw 500 and left
+            # the Run row a permanent 'created' zombie with its buffered trace leaked.
+            async with tx() as s:
+                await store.set_status(s, run.id, "failed", error=str(exc))
+            await _finish_trace(ctx, "err", str(exc))
+            return _error(str(exc), status=502, code="inference_error", run_id=run.id)
 
         async def gen() -> AsyncIterator[str]:
             terminal = False
@@ -1363,8 +1549,9 @@ def create_app(
                     await store.set_status(
                         s, run.id, "completed", output=output, error=result.empty_reason
                     )
-                    # No turn for an empty output (§2.4) — never store a blank assistant turn.
-                    if run.thread_id and result.empty_reason is None:
+                    # No turn for an empty output — never store a blank assistant turn (the
+                    # output != "" guard holds even when no empty_reason was derived).
+                    if run.thread_id and result.empty_reason is None and output != "":
                         await store.append_turn(
                             s,
                             thread_id=run.thread_id,
@@ -1386,15 +1573,23 @@ def create_app(
                 yield _sse("run", {"runId": run.id, "status": "failed", "error": str(exc)})
                 yield "data: [DONE]\n\n"
             finally:
-                # Client disconnected mid-stream: terminalize so the run isn't a `streaming` zombie
-                # (mirrors /runs; shielded + status-guarded). The walker is in-process, so a cancel
-                # also stops the underlying inference call when the generator is closed.
+                # Client disconnected mid-stream: terminalize so the run isn't a `streaming`
+                # zombie (mirrors /runs — one detached, shielded task for BOTH cleanups, because
+                # the cancel scope re-raises at every await here and would skip a second
+                # sequential await, losing the trace flush and leaking the telemetry buffer).
+                # The walker is in-process, so a cancel also stops the underlying inference call
+                # when the generator is closed.
                 if not terminal:
-                    with contextlib.suppress(Exception):
-                        await asyncio.shield(_terminalize_interrupted(run.id))
+
+                    async def _cleanup() -> None:
+                        await _terminalize_interrupted(run.id)
                         await _finish_trace(
                             ctx, "err", "interrupted: client disconnected mid-stream"
                         )
+
+                    cleanup = asyncio.create_task(_cleanup())
+                    with contextlib.suppress(BaseException):
+                        await asyncio.shield(cleanup)
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
@@ -1442,10 +1637,11 @@ def create_app(
 
         output = _coerce_output(result.output)
         async with tx() as s:
-            # M9 §2.2: persist the output; §2.4: an honest reason when an upstream error left the
-            # output empty (no turn appended for an empty output).
+            # Persist the output, with an honest reason when an upstream error left it empty.
+            # No turn for an empty output — never store a blank assistant turn (the output != ""
+            # guard holds even when no empty_reason was derived).
             await store.set_status(s, run.id, "completed", output=output, error=result.empty_reason)
-            if run.thread_id and result.empty_reason is None:
+            if run.thread_id and result.empty_reason is None and output != "":
                 await store.append_turn(
                     s,
                     thread_id=run.thread_id,
@@ -1742,10 +1938,16 @@ def create_app(
         if err is not None:
             return err
         assert ir is not None
+        unavailable_err = _reject_unexecutable_nodes(ir)
+        if unavailable_err is not None:
+            return unavailable_err
         agent_ref = {
             "agent_id": ir.id,
             "version": req.version,
-            "content_hash": req.content_hash,
+            # Pin what was just validated: an unpinned request would otherwise re-resolve
+            # `latest` at worker pickup, so a version published between enqueue and pickup
+            # would run a different IR than the one validated here.
+            "content_hash": req.content_hash or (None if req.version else ir.content_hash),
             "enqueued_ns": now_ns(),  # the workflow emits the enqueue→pickup wait span
         }
         handle = await runtime.enqueue_run(agent_ref, req.input, thread_id=req.thread_id)
@@ -1828,6 +2030,13 @@ def create_app(
         )
         if err is not None:
             return err
+        assert _ir is not None
+        # Same deploy-time honesty for runnability: an agent with schema-declared-but-unexecutable
+        # node types can never fire on ANY runtime — refuse the deploy here rather than have every
+        # fire fail (in non-durable mode an up-front-rejected fire leaves no Run row to inspect).
+        unavailable_err = _reject_unexecutable_nodes(_ir)
+        if unavailable_err is not None:
+            return unavailable_err
         async with tx() as session:
             trigger = await triggers.create(
                 session,
@@ -2103,7 +2312,10 @@ def create_app(
 
     @app.put("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
     async def put_mcp_server(name: str, request: Request) -> Any:
-        raw = await request.json()
+        try:
+            raw = await request.json()
+        except Exception:  # malformed JSON body is the caller's error, not a server fault
+            return _error("request body is not valid JSON", status=400, code="invalid_json")
         try:
             cfg = McpServerConfig.model_validate(raw)
         except ValidationError as exc:
@@ -2127,26 +2339,31 @@ def create_app(
 
     @app.post("/bench/suites", dependencies=[Depends(require_auth)])
     async def create_suite(req: CreateSuiteRequest) -> Any:
-        suite = BenchSuite(
-            name=req.name,
-            target_kind=req.target_kind,
-            modality=req.modality,
-            logical_id=req.logical_id,
-            binding=req.binding,
-            agent_id=req.agent_id,
-            version=req.version,
-            content_hash=req.content_hash,
-            cases=[
-                BenchCase(
-                    input=c.input,
-                    expected=c.expected,
-                    assertion=cast("Any", c.assertion),
-                    assertion_config=c.assertion_config,
-                    seq=i,
-                )
-                for i, c in enumerate(req.cases)
-            ],
-        )
+        try:
+            suite = BenchSuite(
+                name=req.name,
+                target_kind=req.target_kind,
+                modality=req.modality,
+                logical_id=req.logical_id,
+                binding=req.binding,
+                agent_id=req.agent_id,
+                version=req.version,
+                content_hash=req.content_hash,
+                cases=[
+                    BenchCase(
+                        input=c.input,
+                        expected=c.expected,
+                        assertion=cast("Any", c.assertion),
+                        assertion_config=c.assertion_config,
+                        seq=i,
+                    )
+                    for i, c in enumerate(req.cases)
+                ],
+            )
+        except ValidationError as exc:
+            # The request model keeps `assertion` a free string, so an unknown kind surfaces at
+            # domain construction — the caller's error (422), never a 500.
+            return _error(f"invalid bench suite: {exc}", status=422, code="invalid_bench_suite")
         async with tx() as session:
             await bench.create_suite(session, suite)
         return JSONResponse(_suite_dump(suite), status_code=201)

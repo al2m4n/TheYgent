@@ -28,7 +28,7 @@ import {
 } from "@theygent/ir-types";
 import type { Connection, Edge as RFEdge, Node as RFNode, XYPosition } from "@xyflow/react";
 import { expectedKind } from "../lib/kind";
-import { autoLayout } from "./layout";
+import { ORIGIN, autoLayout } from "./layout";
 import type { TheygentEdgeData, TheygentNodeData, ViewBlock } from "./types";
 
 export type TheygentRFNode = RFNode<TheygentNodeData, "theygent">;
@@ -259,6 +259,18 @@ function builderDefaultConfig(
     for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete config[k];
   }
   return config;
+}
+
+/** A sensible position for a node added by CLICKING a palette item, where there is no drop point:
+ * a small cascade off the last node's rendered position, so repeated clicks fan out instead of
+ * stacking. Positions resolve exactly as the canvas renders them (explicit `view` positions over
+ * the auto-layout), and from the IR alone — the caller never needs the canvas viewport. */
+export function defaultAddPosition(ir: IRDocument): XYPosition {
+  const nodes = ir.nodes ?? [];
+  if (nodes.length === 0) return { ...ORIGIN };
+  const positions = resolvePositions(nodes, ir.edges ?? [], (ir.view ?? {}) as ViewBlock);
+  const last = positions[nodes[nodes.length - 1].id] ?? ORIGIN;
+  return { x: last.x + 40, y: last.y + 40 };
 }
 
 export function addNode(ir: IRDocument, type: string, position: XYPosition): IRDocument {

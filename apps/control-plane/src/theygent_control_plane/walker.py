@@ -535,31 +535,89 @@ class ToolCall:
 class ChunkDelta:
     """One parsed streaming chunk. M21 extends the M9 reasoning/content split with ``tool_calls`` —
     the raw per-chunk ``delta.tool_calls`` fragment list (each {index, id?, function:{name?,
-    arguments?}}). A non-tool chunk has ``tool_calls=None`` — byte-identical to pre-M21."""
+    arguments?}}). A non-tool chunk has ``tool_calls=None`` — byte-identical to pre-M21.
+    ``usage`` is the normalized token accounting a stream's final chunk carries when the request
+    asked for it (``stream_options.include_usage``); ``None`` on every other chunk."""
 
     reasoning: str | None
     content: str | None
     finish_reason: str | None
     tool_calls: list[Any] | None = None
+    usage: dict[str, int] | None = None
+
+
+def read_usage(response: Any) -> dict[str, int] | None:
+    """Normalize a chunk's (or a completion's) ``usage`` object to plain int fields. Two real
+    wire shapes for the usage chunk: engines emit it with ``choices: []``, while a proxying
+    router re-emits it with a non-empty choices list whose delta is all-null — so usage is read
+    off the top-level object, never gated on the choices shape. A missing ``total_tokens`` is
+    derived from the two parts when both are present; a server that reports nothing → ``None``
+    (recorded as "not reported", never faked)."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    out: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, (int, float)):
+            out[key] = int(value)
+    if "total_tokens" not in out and "prompt_tokens" in out and "completion_tokens" in out:
+        out["total_tokens"] = out["prompt_tokens"] + out["completion_tokens"]
+    return out or None
+
+
+def merge_usage(
+    acc: dict[str, int] | None, turn: Mapping[str, int] | None
+) -> dict[str, int] | None:
+    """Sum one model turn's token usage into the accumulator — a multi-turn tool loop is one llm
+    node, so its span carries the node's TOTAL usage across turns. ``None`` in, ``acc`` out (a
+    turn without usage never zeroes what earlier turns reported)."""
+    if not turn:
+        return acc
+    merged = dict(acc or {})
+    for key, value in turn.items():
+        merged[key] = merged.get(key, 0) + int(value)
+    return merged
+
+
+def usage_attributes(usage: Mapping[str, int] | None) -> dict[str, Any]:
+    """GenAI-semconv span attributes for accumulated token usage. ``total_tokens`` is the key the
+    quota gate sums over spans (read, not re-metered); input/output are the semconv splits the
+    waterfall reads (tok/s). Empty when the server reported nothing — an absent attribute is an
+    honest 'unreported', a zero would be a fake measurement."""
+    if not usage:
+        return {}
+    attrs: dict[str, Any] = {}
+    if "prompt_tokens" in usage:
+        attrs["gen_ai.usage.input_tokens"] = usage["prompt_tokens"]
+    if "completion_tokens" in usage:
+        attrs["gen_ai.usage.output_tokens"] = usage["completion_tokens"]
+    if "total_tokens" in usage:
+        attrs["gen_ai.usage.total_tokens"] = usage["total_tokens"]
+    return attrs
 
 
 def parse_chunk(chunk: Any) -> ChunkDelta:
     """The one streaming-chunk parser the ``execute_llm`` body uses (and, via it, both runtimes): a
     reasoning model emits ``reasoning_content`` (thinking) before ``content`` (the answer), kept
-    distinct (m9.md reasoning split); M21 also surfaces ``tool_calls`` for the loop."""
+    distinct (m9.md reasoning split); M21 also surfaces ``tool_calls`` for the loop. Token usage is
+    read before the choices guard — the usage chunk's choices list is empty (or all-null through a
+    proxy), so gating on choices would drop it."""
 
+    usage = read_usage(chunk)
     if not chunk.choices:
-        return ChunkDelta(None, None, None)
+        return ChunkDelta(None, None, None, usage=usage)
     choice = chunk.choices[0]
     finish_reason = choice.finish_reason
     delta = choice.delta
     if delta is None:
-        return ChunkDelta(None, None, finish_reason)
+        return ChunkDelta(None, None, finish_reason, usage=usage)
     return ChunkDelta(
         reasoning=getattr(delta, "reasoning_content", None),
         content=getattr(delta, "content", None),
         finish_reason=finish_reason,
         tool_calls=getattr(delta, "tool_calls", None),
+        usage=usage,
     )
 
 
@@ -617,6 +675,9 @@ class LlmActivityResult:
     finish_reason: str | None
     truncated_empty: bool
     tool_calls: tuple[ToolCall, ...] = ()
+    # This turn's token usage as the server reported it ({prompt,completion,total}_tokens), or
+    # None when the upstream didn't report any — the caller aggregates turns onto the node span.
+    usage: dict[str, int] | None = None
 
 
 async def execute_llm(
@@ -646,14 +707,18 @@ async def execute_llm(
         extra_headers=extra_headers,
         tools=tools,
         tool_choice=tool_choice,
+        include_usage=True,  # the final chunk carries token usage → the node span / quota gate
     )
     output = ""
     finish_reason: str | None = None
+    usage: dict[str, int] | None = None
     tool_acc: dict[int, dict[str, Any]] = {}
     async for chunk in upstream:
         parsed = parse_chunk(chunk)
         if parsed.finish_reason:
             finish_reason = parsed.finish_reason
+        if parsed.usage:
+            usage = parsed.usage
         if parsed.reasoning and on_delta is not None:
             on_delta(parsed.reasoning, "reasoning")
         if parsed.content:
@@ -668,6 +733,7 @@ async def execute_llm(
         finish_reason=finish_reason,
         truncated_empty=truncated_empty,
         tool_calls=tuple(_finalize_tool_calls(tool_acc)),
+        usage=usage,
     )
 
 
@@ -1015,7 +1081,12 @@ async def execute_http_tool(
     if body is not None:
         kwargs["json"] = body  # JSON request (REST or GraphQL {query, variables})
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        # Redirects are NOT followed: the request carries connection-injected auth (bearer /
+        # api-key / basic headers), and auto-following a redirect would replay those headers at
+        # whatever host the response names — only `Authorization` is stripped cross-host by the
+        # client, an `X-API-Key` would leak. A 3xx comes back as a normal {status, …} value,
+        # consistent with "a non-2xx status is a normal return value".
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             resp = await client.request(method.upper(), final_url, **kwargs)
     except Exception as exc:  # transport failure → err (m6.md §4), never a hang
         return ActivityOutcome(ok=False, value=f"http tool request failed: {exc}")
@@ -1129,7 +1200,10 @@ async def run_http_tool(
         call = build_http_call(binding, config, ports, node_id=node_id, run_id=run_id)
     except Exception as exc:  # unresolvable $in in url/headers/body → structured err (m6.md §4)
         return ActivityOutcome(ok=False, value=f"http tool {config.tool!r}: {exc}")
-    conn = await resolver(call.connection_id) if resolver is not None else None
+    try:
+        conn = await resolver(call.connection_id) if resolver is not None else None
+    except Exception as exc:  # e.g. an undecryptable secret — an honest err, never a run failure
+        return ActivityOutcome(ok=False, value=f"http tool {config.tool!r}: {exc}")
     return await execute_http_tool(
         conn,
         method=call.method,
@@ -1171,7 +1245,12 @@ def _fn_schema(
 
 
 async def _schema_for_binding(
-    name: str, binding: Any, *, registry: ToolRegistry, mcp: McpManager
+    name: str,
+    binding: Any,
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> dict[str, Any] | None:
     """One OpenAI function schema from a tool BINDING object — the shared core of the M21 ir.tools
     path and the M22 capability-node path. ``name`` is the function name the model echoes back: an
@@ -1186,11 +1265,27 @@ async def _schema_for_binding(
             for d in await mcp.list_tools(binding.server):
                 if d.name == binding.tool:
                     return _fn_schema(name, d.description, d.input_schema)
+    if isinstance(binding, McpTool) and binding.connection and tool_auth is not None:
+        # A CONNECTION-backed server describes its tools too — without this lookup the binding
+        # was silently absent from the model's schemas, making the tool uncallable via ir.tools
+        # while the dispatch path fully supported it.
+        with contextlib.suppress(Exception):  # unresolvable/unreachable → no schema (best-effort)
+            conn = await tool_auth(binding.connection)
+            if conn is not None:
+                cfg = mcp_config_from_connection(conn)
+                for d in await mcp.list_connection_tools(binding.connection, cfg):
+                    if d.name == binding.tool:
+                        return _fn_schema(name, d.description, d.input_schema)
     return None
 
 
 async def build_tool_schemas(
-    ir: IRDocument, tool_keys: list[str], *, registry: ToolRegistry, mcp: McpManager
+    ir: IRDocument,
+    tool_keys: list[str],
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> list[dict[str, Any]]:
     """Build the OpenAI ``tools`` array from an llm node's ``tools`` keys (the M21 ir.tools path).
     The function NAME is the ir.tools key (so a tool_call maps back to its binding); a key with no
@@ -1204,7 +1299,9 @@ async def build_tool_schemas(
             if meta is not None:
                 schemas.append(_fn_schema(key, meta[0], meta[1]))
             continue
-        schema = await _schema_for_binding(key, binding, registry=registry, mcp=mcp)
+        schema = await _schema_for_binding(
+            key, binding, registry=registry, mcp=mcp, tool_auth=tool_auth
+        )
         if schema is not None:
             schemas.append(schema)
     return schemas
@@ -1258,12 +1355,16 @@ def _capability_binding(ir: IRDocument, name: str) -> Any | None:
 
 
 async def build_capability_schemas(
-    nodes: list[Node], *, registry: ToolRegistry, mcp: McpManager
+    nodes: list[Node],
+    *,
+    registry: ToolRegistry,
+    mcp: McpManager,
+    tool_auth: ConnectionResolver | None = None,
 ) -> list[dict[str, Any]]:
     """OpenAI tool schemas for M22 capability nodes — the function NAME is the NODE id (collision-
     safe: two llms may wire different nodes that share a builtin/server). Description + parameters
     come from each node's inline config: builtin from the registry, http from ``description`` +
-    ``parameterSchema``, mcp from the server's ``list_tools`` (a connection-based or unreachable mcp
+    ``parameterSchema``, mcp from the server's ``list_tools`` (an unreachable/unresolvable mcp
     falls back to its authored ``description`` with no parameter schema — m22.md D3)."""
     schemas: list[dict[str, Any]] = []
     for node in nodes:
@@ -1278,6 +1379,17 @@ async def build_capability_schemas(
                                 node.id, cfg.description or d.description, d.input_schema
                             )
                             break
+            elif cfg.connection and tool_auth is not None:
+                with contextlib.suppress(Exception):  # unreachable → the authored fallback below
+                    conn = await tool_auth(cfg.connection)
+                    if conn is not None:
+                        mcfg = mcp_config_from_connection(conn)
+                        for d in await mcp.list_connection_tools(cfg.connection, mcfg):
+                            if d.name == cfg.tool:
+                                schema = _fn_schema(
+                                    node.id, cfg.description or d.description, d.input_schema
+                                )
+                                break
             schemas.append(schema or _fn_schema(node.id, cfg.description, None))
         else:  # a tool node — builtin or http
             tcfg = ToolConfig.model_validate(node.config)
@@ -1346,7 +1458,10 @@ async def execute_tool_call(
     if isinstance(binding, McpTool):
         if binding.server:
             return await execute_mcp_tool(mcp, binding.server, binding.tool, call.arguments)
-        conn = await tool_auth(binding.connection or "") if tool_auth is not None else None
+        try:
+            conn = await tool_auth(binding.connection or "") if tool_auth is not None else None
+        except Exception as exc:  # e.g. an undecryptable secret — honest err, never a run failure
+            return ActivityOutcome(ok=False, value=f"mcp connection {binding.connection!r}: {exc}")
         if conn is None:
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {binding.connection!r} not found or disabled"
@@ -1480,15 +1595,16 @@ async def execute_guardrail_model(
     prompt: str,
     input_value: Any,
     extra_headers: Mapping[str, str],
-) -> str:
-    """Run a model guardrail's classifier call (m19.md §2.6) — the runtime-agnostic body both
-    runtimes wrap. Builds one user message (the judge prompt + the input) and assembles the answer
-    via ``execute_llm``; the caller compares it to ``pass_on``. One cheap call before the costly."""
+) -> LlmActivityResult:
+    """Run a model guardrail's classifier call — the runtime-agnostic body both runtimes wrap.
+    Builds one user message (the judge prompt + the input) and runs one model turn via
+    ``execute_llm``. Returns the FULL turn result: the caller compares ``.output`` to ``pass_on``
+    and lands ``.usage`` on the call's generate span — the judge call spends real tokens, so the
+    quota gate must see them like any other model call."""
     messages = [{"role": "user", "content": f"{prompt}\n\nInput:\n{_stringify(input_value)}"}]
-    result = await execute_llm(
+    return await execute_llm(
         gateway, model_id=model_id, params=params, messages=messages, extra_headers=extra_headers
     )
-    return result.output
 
 
 def guardrail_model_passed(answer: str, pass_on: str) -> bool:
@@ -1565,14 +1681,20 @@ def _error_handles(node: Node) -> set[str]:
     return {p.id for p in node.ports.out if p.type == "error"}
 
 
+# The reserved key a failed node's error is recorded under when it declares NO error-typed
+# out-port. Never a declared handle, so no edge can read it — it exists solely so the honest
+# empty-output reason can name the CAUSE instead of letting the error message vanish.
+_DROPPED_ERROR_KEY = "__dropped_error__"
+
+
 def _bind_outcome(
     node: Node,
     outcome: ActivityOutcome,
     values: dict[tuple[str, str], Any],
     live_handles: dict[str, set[str]],
 ) -> None:
-    """Bind a ``tool``/``mcp_tool`` :class:`ActivityOutcome` to the node's handles (m6.md §4): the
-    success value to the non-error handles on ``ok``, the error message to the ``err`` handle(s)
+    """Bind a ``tool``/``mcp_tool`` :class:`ActivityOutcome` to the node's handles: the success
+    value to the non-error handles on ``ok``, the error message to the ``err`` handle(s)
     otherwise — activating exactly the taken handle set so the un-taken branch's edges are dead.
     Shared by the interactive walker and (conceptually) the durable compiler's value threading."""
 
@@ -1580,6 +1702,10 @@ def _bind_outcome(
     live_handles[node.id] = handles
     for handle in handles:
         values[(node.id, handle)] = outcome.value
+    if not outcome.ok and not handles:
+        # The node failed but declares no error-typed out-port: the error has nowhere to bind.
+        # Record it under the reserved key so finalize_empty_reason can surface the cause.
+        values[(node.id, _DROPPED_ERROR_KEY)] = outcome.value
 
 
 def _edge_live(edge: Edge, skipped: set[str], live_handles: dict[str, set[str]]) -> bool:
@@ -1713,7 +1839,7 @@ async def walk(
                 elif node.type == "mcp_tool":
                     await _walk_mcp_tool(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "guardrail":  # model guardrail (rule⇒orchestration branch below)
-                    await _walk_guardrail_model(node, ir, ctx, values, skipped, live_handles)
+                    await _walk_guardrail_model(node, ir, ctx, values, skipped, live_handles, scope)
                 elif node.type in ("ratelimit", "quota"):
                     await _walk_gate(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "transcribe":
@@ -1732,8 +1858,16 @@ async def walk(
                     _walk_transform(node, ir, values, skipped, live_handles)
                 elif node.type == "guardrail":  # rule guardrail (model⇒activity branch above)
                     _walk_guardrail_rule(node, ir, values, skipped, live_handles)
+                elif node.type in ("loop", "map"):
+                    # Durable-only lowerings (bounded repetition / durable fan-out) — rejected up
+                    # front by the run endpoints; this raise is the direct-caller backstop.
+                    raise NotImplementedError(
+                        f"orchestration node {node.id!r} (type {node.type!r}) is durable-only — "
+                        "run it on the durable runtime (a durable run or trigger), not the "
+                        "interactive path"
+                    )
                 else:
-                    # loop / map — durable-only (M14, raise here in the interactive walker).
+                    # condition / iterator — declared in the IR schema but not executable yet.
                     raise NotImplementedError(
                         f"orchestration node {node.id!r} (type {node.type!r}) "
                         "is not implemented yet"
@@ -1752,7 +1886,27 @@ async def walk(
             truncated_empty_nodes=result.truncated_empty_nodes,
             skipped=skipped,
             live_handles=live_handles,
+            values=values,
         )
+
+
+def _node_error_cause(
+    ir: IRDocument, node_id: str, values: dict[tuple[str, str], Any] | None
+) -> str | None:
+    """The error message a failed node bound (to its ``err`` handle, or to the reserved
+    dropped-error key when it declares none) — so the honest empty-output reason can carry the
+    CAUSE, not just the node id. ``None`` when unavailable (older call sites pass no values)."""
+    if values is None:
+        return None
+    node = next((n for n in ir.nodes if n.id == node_id), None)
+    if node is None:
+        return None
+    for handle in (_DROPPED_ERROR_KEY, *sorted(_error_handles(node))):
+        if (node_id, handle) in values:
+            value = values[(node_id, handle)]
+            text = value if isinstance(value, str) else json.dumps(value, default=str)
+            return text if len(text) <= 300 else text[:300] + "…"
+    return None
 
 
 def finalize_empty_reason(
@@ -1763,27 +1917,44 @@ def finalize_empty_reason(
     truncated_empty_nodes: list[str],
     skipped: set[str],
     live_handles: dict[str, set[str]],
+    values: dict[tuple[str, str], Any] | None = None,
 ) -> str | None:
-    """The m9.md §2.4 honest-empty-output reason, single-sourced so the interactive walk AND the
-    durable compiler (M13) compute it identically. If the walk finished with NO output node having
-    run and some node short-circuited to its ``err`` handle, the run reached no output *because* of
-    that handled-but-unconsumed error (its ``ok`` path to the output was skipped) — name it so the
-    control-plane doesn't report a green ``completed`` masquerading as success. If the output node
-    ran but is blank because an ``llm`` spent its whole budget (a reasoning model thinking, or
-    ``maxTokens`` too low), name that instead of a green blank. Returns ``None`` when the output is
-    legitimately present. Does NOT change the M6 error-as-structured-output contract."""
+    """The honest-empty-output reason, single-sourced so the interactive walk AND the durable
+    compiler compute it identically. If the walk finished with NO output node having run and some
+    node short-circuited to its ``err`` handle, the run reached no output *because* of that
+    handled-but-unconsumed error (its ``ok`` path to the output was skipped) — name it (and the
+    error message, when ``values`` is provided) so the control-plane doesn't report a green
+    ``completed`` masquerading as success. A graph that declares no output node, or whose taken
+    branch reaches none, gets an honest note too — never a silent blank. If the output node ran
+    but is blank because an ``llm`` spent its whole budget (a reasoning model thinking, or
+    ``maxTokens`` too low), name that instead of a green blank. Returns ``None`` when the output
+    is legitimately present. Does NOT change the error-as-structured-output contract."""
 
     if not output_produced:
-        errored = [
-            node.id
-            for node in ir.nodes
-            if node.id not in skipped
-            and live_handles.get(node.id)
-            and live_handles[node.id] <= _error_handles(node)
-        ]
+
+        def _errored(node: Node) -> bool:
+            live = live_handles.get(node.id)
+            if live is None or node.id in skipped:
+                return False  # never executed — not the cause
+            if live:
+                return live <= _error_handles(node)  # only its error handle(s) activated
+            # An EMPTY live set on an executed activity (or a composed subgraph) means its
+            # failure had nowhere to bind (no error-typed out-port declared) — the error would
+            # otherwise vanish and the run would read as a green success with an empty output.
+            # The output boundary is the one node that legitimately activates nothing.
+            return node.kind == "activity" or node.type == "subgraph"
+
+        errored = [node.id for node in ir.nodes if _errored(node)]
         if errored:
-            return f"output empty: upstream error on node {errored[0]!r}"
-        return None
+            reason = f"output empty: upstream error on node {errored[0]!r}"
+            cause = _node_error_cause(ir, errored[0], values)
+            return f"{reason}: {cause}" if cause else reason
+        if not any(n.type == "output" for n in ir.nodes):
+            return "output empty: the graph declares no output node"
+        return (
+            "output empty: no output node executed this run "
+            "(the taken branch reaches no output node)"
+        )
     if _is_blank(output) and truncated_empty_nodes:
         return (
             f"output empty: node {truncated_empty_nodes[0]!r} hit the token limit "
@@ -1874,18 +2045,30 @@ def _walk_boundary(
         for handle in live_handles[node.id]:
             values[(node.id, handle)] = input_value
     elif node.type == "output":
-        # The output node's in-port value IS the run's canonical output (m6.md §4) — read from a
-        # live edge, so a routed run returns whichever branch actually produced it.
+        # The output node's in-port value IS the run's canonical output — read from a live edge,
+        # so a routed run returns whichever branch actually produced it.
         live_handles[node.id] = set()
         ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
         value = _single_in_value(ports, node)
         if result is not None:
+            if result.output_produced:
+                # Two output nodes both executed: the run's canonical output would silently be
+                # whichever topo order visits last. Ambiguity is a loud failure, never a silent
+                # pick — same rule as _single_in_value.
+                raise TemplateError(
+                    f"node {node.id!r}: a second output node executed — the run output would be "
+                    "ambiguous. Route exclusive branches (router/guardrail) so at most one "
+                    "output node is live per run."
+                )
             result.output = value
-            result.output_produced = True  # an output node ran (m9.md §2.4)
+            result.output_produced = True  # an output node ran
     else:
-        # human / subgraph — deferred (§7).
+        # human / subgraph lower onto the durable runtime (a durable wait / a child workflow) —
+        # this interactive walker cannot run them. The run endpoints reject these up front
+        # (durable_required); this raise is the backstop for direct walk() callers.
         raise NotImplementedError(
-            f"boundary node {node.id!r} (type {node.type!r}) is not implemented yet"
+            f"boundary node {node.id!r} (type {node.type!r}) is durable-only — run it on the "
+            "durable runtime (a durable run or trigger), not the interactive path"
         )
 
 
@@ -1923,9 +2106,13 @@ async def _walk_llm(
     cap_nodes = _capability_tool_nodes(ir, node.id)
     schemas: list[dict[str, Any]] = []
     if config.tools:
-        schemas += await build_tool_schemas(ir, config.tools, registry=ctx.tools, mcp=ctx.mcp)
+        schemas += await build_tool_schemas(
+            ir, config.tools, registry=ctx.tools, mcp=ctx.mcp, tool_auth=ctx.tool_auth
+        )
     if cap_nodes:
-        schemas += await build_capability_schemas(cap_nodes, registry=ctx.tools, mcp=ctx.mcp)
+        schemas += await build_capability_schemas(
+            cap_nodes, registry=ctx.tools, mcp=ctx.mcp, tool_auth=ctx.tool_auth
+        )
     has_tools = bool(schemas)
     tool_schemas: list[dict[str, Any]] | None = schemas if has_tools else None
     tool_choice: Any = _to_openai_tool_choice(config.tool_choice) if has_tools else None
@@ -1934,6 +2121,7 @@ async def _walk_llm(
     first_token_ns: int | None = None
     final_output = ""
     final_finish: str | None = None
+    usage_acc: dict[str, int] | None = None
     truncated = False
     capped = False
     async with gen_cm as gen_scope:
@@ -1952,7 +2140,10 @@ async def _walk_llm(
                     )
                 )
 
-            async def _turn(q: asyncio.Queue[Delta | None] = deltas) -> LlmActivityResult:
+            async def _turn(
+                q: asyncio.Queue[Delta | None] = deltas,
+                tc: Any = tool_choice,  # bound at definition — the loop rebinds tool_choice
+            ) -> LlmActivityResult:
                 # A pre-stream 503/404 or a mid-stream death raises here and re-raises at
                 # `await task` → failed run, as the inline loop did.
                 try:
@@ -1964,7 +2155,7 @@ async def _walk_llm(
                         extra_headers=ctx.extra_headers,
                         on_delta=_on_delta,
                         tools=tool_schemas,
-                        tool_choice=tool_choice,
+                        tool_choice=tc,
                     )
                 finally:
                     q.put_nowait(None)  # sentinel: producer done (success OR error)
@@ -1988,6 +2179,7 @@ async def _walk_llm(
                         await task
 
             final_finish = turn.finish_reason
+            usage_acc = merge_usage(usage_acc, turn.usage)  # node total across tool-loop turns
             # No tool calls (or the node has no tools — legacy or capability) → answer is final.
             if not (turn.tool_calls and has_tools):
                 final_output = turn.output
@@ -2002,15 +2194,20 @@ async def _walk_llm(
             # next turn sees them (the OpenAI loop shape). A tool error is fed back, not fatal
             # (M6/M7).
             messages.append(assistant_tool_calls_message(list(turn.tool_calls)))
-            for call in turn.tool_calls:
+            for ci, call in enumerate(turn.tool_calls):
                 yield Delta(
                     node_id=node.id, content=call.name, kind="tool_call"
                 )  # visible progress
                 # M17: each tool call is a child span under the llm node span, so the waterfall
-                # shows
-                # the autonomous loop's tool steps inside the model node (m21.md Phase 6 / §6).
+                # shows the autonomous loop's tool steps inside the model node. The phase id
+                # carries iteration + call index — the span PK is deterministic per
+                # (run, node, phase), so repeat calls to ONE tool need a discriminator or every
+                # row after the first is dropped by the idempotent insert. The display name
+                # stays `tool.<name>`.
                 tool_cm = (
-                    scope.child_phase(f"tool.{call.name}") if scope is not None else _null_acm()
+                    scope.child_phase(f"tool.{call.name}#{iteration}.{ci}", f"tool.{call.name}")
+                    if scope is not None
+                    else _null_acm()
                 )
                 async with tool_cm as tool_scope:
                     outcome = await execute_tool_call(
@@ -2026,15 +2223,23 @@ async def _walk_llm(
                     if tool_scope is not None:
                         tool_scope.set_attributes({"tool.name": call.name, "tool.ok": outcome.ok})
                 messages.append(tool_result_message(call, outcome))
+            # A FORCED tool_choice ("required" / a named function) applies to the FIRST turn
+            # only — re-sending it would force a tool call on every turn, so the model could
+            # never produce a final answer and a write tool would re-execute until the cap.
+            if tool_choice is not None and tool_choice != "auto":
+                tool_choice = "auto"
             iteration += 1
 
-        # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model).
+        # GenAI-semconv scalars on the generate span (time-to-first-token, finish reason, model,
+        # token usage). Usage lands on THIS span only (never mirrored onto the node span) — the
+        # quota gate SUMS the attribute across a run's spans, so a mirror would double-count.
         if gen_scope is not None:
             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
             if final_finish is not None:
                 attrs["gen_ai.response.finish_reason"] = final_finish
             if first_token_ns is not None:
                 attrs["ttft_ms"] = round((first_token_ns - gen_scope.span.start_ns) / 1e6, 1)
+            attrs.update(usage_attributes(usage_acc))
             gen_scope.set_attributes(attrs)
 
     # Mirror the model id onto the node span too, so the waterfall's left rail can label the llm
@@ -2070,21 +2275,28 @@ async def _walk_tool(
 
     config = ToolConfig.model_validate(node.config)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    # M19 §2.3: route http-vs-builtin. An ``http`` binding in ``ir.tools`` → a real outbound call
-    # with connection-injected auth (server-side, at step time); otherwise the M6 builtin registry
-    # path. An unresolvable ``$in`` ref is a structured err either way (m6.md §4): bind ``err``.
+    # Route the step by what ``config.tool`` resolves to: an ``http`` binding in ``ir.tools`` → a
+    # real outbound call with connection-injected auth (server-side, at step time); a ``builtin``
+    # binding → its registered ``ref``; a directly-registered builtin name → itself. An unresolvable
+    # ``$in`` ref is a structured err either way: bind ``err``.
     binding = is_http_tool(ir, config.tool)
     if binding is not None:
         outcome = await run_http_tool(
             binding, config, ports, node_id=node.id, run_id=ctx.run_id, resolver=ctx.tool_auth
         )
     else:
+        # A ``builtin`` binding names its callable via ``ref`` (the ir.tools key is a logical name);
+        # a bare ``config.tool`` is itself a registered builtin. An ``mcp`` binding is the wrong
+        # shape for a step-mode tool node (that is the ``mcp_tool`` node's job) — the up-front check
+        # rejects it, so it never reaches here.
+        ir_binding = ir.tools.get(config.tool)
+        builtin_name = ir_binding.ref if isinstance(ir_binding, BuiltinTool) else config.tool
         try:
             args = {k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()}
         except Exception as exc:
             outcome = ActivityOutcome(ok=False, value=str(exc))
         else:
-            outcome = await execute_tool(ctx.tools, config.tool, args)
+            outcome = await execute_tool(ctx.tools, builtin_name, args)
     _bind_outcome(node, outcome, values, live_handles)
     if not outcome.ok:
         logger.info(
@@ -2175,7 +2387,10 @@ async def _mcp_tool_outcome(
     if config.connection:
         if ctx.tool_auth is None:
             return ActivityOutcome(ok=False, value="mcp_tool: no connection resolver configured")
-        conn = await ctx.tool_auth(config.connection)
+        try:
+            conn = await ctx.tool_auth(config.connection)
+        except Exception as exc:  # e.g. an undecryptable secret — honest err, never a run failure
+            return ActivityOutcome(ok=False, value=f"mcp connection {config.connection!r}: {exc}")
         if conn is None:
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {config.connection!r} not found or disabled"
@@ -2320,8 +2535,9 @@ async def _walk_guardrail_model(
     values: dict[tuple[str, str], Any],
     skipped: set[str],
     live_handles: dict[str, set[str]],
+    scope: SpanScope | None = None,
 ) -> None:
-    """Run a MODEL guardrail (m19.md §2.6, activity): a cheap classifier call decides pass/block.
+    """Run a MODEL guardrail (activity): a cheap classifier call decides pass/block.
     The model sub-config is guaranteed present (validated in packages/ir); the model id resolves
     like an ``llm`` (engine-name rejected). Then the same pass/block binding as the rule path."""
     config = GuardrailConfig.model_validate(node.config)
@@ -2330,17 +2546,26 @@ async def _walk_guardrail_model(
     model_id, params = resolve_model_key(ir, mcfg.model)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
     input_value = _single_in_value(ports, node)
-    answer = await execute_guardrail_model(
-        ctx.gateway,
-        model_id=model_id,
-        params=params,
-        prompt=mcfg.prompt,
-        input_value=input_value,
-        extra_headers=ctx.extra_headers,
-    )
+    # The classifier call runs inside a `model.generate` phase span, like an llm node's turn.
+    # Its token usage lands on THAT span only (never mirrored onto the node span) — the quota
+    # gate SUMS the attribute across a run's spans, so a mirror would double-count.
+    gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
+    async with gen_cm as gen_scope:
+        result = await execute_guardrail_model(
+            ctx.gateway,
+            model_id=model_id,
+            params=params,
+            prompt=mcfg.prompt,
+            input_value=input_value,
+            extra_headers=ctx.extra_headers,
+        )
+        if gen_scope is not None:
+            gen_scope.set_attributes(
+                {"gen_ai.request.model": model_id, **usage_attributes(result.usage)}
+            )
     _bind_guardrail(
         node,
-        guardrail_model_passed(answer, mcfg.pass_on),
+        guardrail_model_passed(result.output, mcfg.pass_on),
         input_value,
         config.on_block,
         values,

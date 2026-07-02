@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -105,6 +106,18 @@ def _result_value(result: types.CallToolResult) -> Any:
 _Call = tuple[str, dict[str, Any], "asyncio.Future[McpResult]"]
 
 
+def _call_timeout_s() -> float:
+    """Per-call ceiling for one MCP tool invocation. The actor serves calls SERIALLY off its
+    queue, so a single wedged server call would otherwise block every later call — and the run
+    (or an unattended trigger fire) awaiting it — forever. Generous by default (tools can be
+    genuinely slow); tunable via ``THEYGENT_MCP_CALL_TIMEOUT_S``."""
+    raw = os.environ.get("THEYGENT_MCP_CALL_TIMEOUT_S")
+    try:
+        return float(raw) if raw else 120.0
+    except ValueError:
+        return 120.0
+
+
 class _ActorMcpClient:
     """A persistent MCP connection owned by a single background task (m7.md §3.1).
     Transport-agnostic: a subclass provides :meth:`_open_transport`; everything else (the queue /
@@ -163,19 +176,35 @@ class _ActorMcpClient:
                     pending[2].set_exception(McpConnectionError("MCP connection closed"))
 
     async def _serve(self, session: ClientSession) -> None:
+        timeout = _call_timeout_s()
         while True:
             item = await self._queue.get()
             if item is None:  # close sentinel
                 return
             name, args, fut = item
             try:
-                result = await session.call_tool(name, args)
+                result = await asyncio.wait_for(session.call_tool(name, args), timeout=timeout)
                 if not fut.done():
                     res = McpResult(value=_result_value(result), is_error=bool(result.isError))
                     fut.set_result(res)
-            except Exception as exc:  # transport broke mid-call: fail this call AND end the task
-                if not fut.done():  # (a dead session can't serve further calls) so the manager
-                    fut.set_exception(exc)  # reconnects on the retry.
+            except TimeoutError:
+                # A wedged server: fail the call AND end the task (a session whose in-flight
+                # request never answered is not trustworthy for later calls) — the manager's
+                # retry reconnects fresh. Without a ceiling here the serial queue wedges forever.
+                if not fut.done():
+                    fut.set_exception(
+                        McpConnectionError(f"MCP call {name!r} timed out after {timeout:.0f}s")
+                    )
+                raise
+            except BaseException as exc:  # incl. cancellation of the actor task (close/shutdown):
+                # the item was already dequeued, so the post-loop drain can't reach this future —
+                # fail it here or its caller awaits forever.
+                if not fut.done():
+                    fut.set_exception(
+                        exc
+                        if isinstance(exc, Exception)
+                        else McpConnectionError("MCP connection closed")
+                    )
                 raise
 
     async def list_tools(self) -> list[McpToolDescriptor]:

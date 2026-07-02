@@ -486,6 +486,18 @@ def test_unbounded_loop_rejected_at_compile() -> None:
         validate_graph(parse_document(zero))
 
 
+def test_non_positive_max_depth_rejected_at_compile() -> None:
+    # maxDepth 0 (or negative) passed every static check and only failed when the durable depth
+    # guard tripped at run time — now rejected at validation, for every pinned-body type.
+    zero = _subgraph_ir("agt_depth0", "agt_child", content_hash_pin="deadbeef", max_depth=0)
+    with pytest.raises(GraphValidationError, match="maxDepth"):
+        validate_graph(parse_document(zero))
+    neg = _loop_ir("agt_depthneg", "agt_body", version="0.1.0", max_iterations=2)
+    neg["nodes"][1]["config"]["maxDepth"] = -1
+    with pytest.raises(GraphValidationError, match="maxDepth"):
+        validate_graph(parse_document(neg))
+
+
 # ── map: durable fan-out/join + partial resume + partial-failure policy ──────────
 
 
@@ -874,8 +886,11 @@ async def test_resume_guards_unknown_and_non_waiting(pg_url: str) -> None:
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
                 hdr = {"Authorization": f"Bearer {TOKEN}"}
-                # Missing token → 401 (the require_token gate, before any handler logic).
-                assert (await ac.post("/runs/x/resume", json={"input": "x"})).status_code == 401
+                # Resume is an INTERACTIVE surface (the person answering the gate is the cockpit
+                # user, same auth as starting the durable run) — no invoke token required. The
+                # token gates only the unattended surfaces (/invoke, /hooks).
+                no_token = await ac.post("/runs/nope/resume", json={"input": "x"})
+                assert no_token.status_code == 404  # past auth; unknown run
                 # Unknown run → 404.
                 r404 = await ac.post("/runs/nope/resume", json={"input": "x"}, headers=hdr)
                 assert r404.status_code == 404
@@ -935,6 +950,203 @@ async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
                     f"/runs/{run.id}/resume", json={"input": "not-an-object"}, headers=hdr
                 )
                 assert bad2.status_code == 422
+
+
+async def test_resume_refuses_waiting_run_without_awaiting_node(pg_url: str) -> None:
+    # A waiting run always records its awaiting node (mark_waiting writes both); a row that says
+    # waiting but records none cannot be targeted — the old bare-topic fallback 202'd a send
+    # nothing would ever recv. Refused loudly instead.
+    await reset_dbos_schema(pg_url)
+    with FakeInference() as fake:
+        app = create_app(
+            inference_base_url=fake.v1_url,
+            database_url=pg_url,
+            invoke_token=TOKEN,
+            durable=True,
+            dbos_fast_polling=True,
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                sm = app.state.sessionmaker
+                async with sm() as s, s.begin():
+                    run = await RunStore().create_run(
+                        s, model="", thread_id=None, params=None, graph_id="agt_x"
+                    )
+                    await RunStore().set_status(s, run.id, "waiting")
+                r = await ac.post(f"/runs/{run.id}/resume", json={"input": "x"})
+                assert r.status_code == 409
+                assert r.json()["error"]["code"] == "awaiting_node_missing"
+
+
+async def test_rule_guardrail_before_input_preserves_run_input(pg_url: str) -> None:
+    # A rule guardrail with an OPTIONAL, unfed in-port has zero indegree, so topo order can visit
+    # it BEFORE an input node that sorts after it. The guardrail branch must evaluate its own
+    # in-port value under a branch-local name — rebinding the workflow's `input_value` there
+    # corrupted the run input every later input node bound.
+    await reset_dbos_schema(pg_url)
+    ir = _doc(
+        [
+            {
+                "id": "a_guard",  # sorts BEFORE z_in — runs first
+                "type": "guardrail",
+                "kind": "orchestration",
+                "config": {
+                    "check": {"type": "rule", "rule": {"kind": "deny", "spec": {"values": []}}},
+                    "onBlock": {"message": "blocked"},
+                },
+                "ports": {
+                    "in": [{"id": "in", "type": "any", "required": False}],
+                    "out": [{"id": "pass", "type": "any"}, {"id": "block", "type": "any"}],
+                },
+            },
+            _node("z_in", "input", "boundary", outs=["out"]),
+            _node("z_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "z_in", "out", "z_out")],
+    )
+    ir["id"] = "agt_guard_order"
+    with FakeInference() as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": aid, "version": ver, "content_hash": None}, "REAL-INPUT"
+            )
+            res = await handle.get_result()
+            assert res["status"] == "completed"
+            assert res["output"] == "REAL-INPUT"  # not the guardrail's None/"" leak
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
+async def test_subgraph_failed_child_binds_err_and_flows(pg_url: str) -> None:
+    # A failed child binds the subgraph node's error-typed out-port (the tool ok/err contract) —
+    # with the `err` port wired to an output, the failure message flows instead of vanishing.
+    await reset_dbos_schema(pg_url)
+    child = _router_body("agt_err_child")  # fails when input names no declared handle
+    _, child_hash, _ = canonical_ir(child)
+    parent = _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node(
+                "n_sg",
+                "subgraph",
+                "boundary",
+                config={"agent": "agt_err_child", "contentHash": child_hash, "maxDepth": 3},
+                ins=["in"],
+                outs=["ok", "err"],
+            ),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_sg"), _edge("e2", "n_sg", "err", "n_out")],
+    )
+    parent["id"] = "agt_err_parent"
+    with FakeInference() as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        await save_agent(sm, agents, child)
+        paid, pver = await save_agent(sm, agents, parent)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": paid, "version": pver, "content_hash": None},
+                {"handle": "nonexistent"},
+            )
+            res = await handle.get_result()
+            assert res["status"] == "completed"
+            assert "failed" in str(res["output"]) and "agt_err_child" in str(res["output"])
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
+async def test_durable_two_live_outputs_fail_loudly(pg_url: str) -> None:
+    # Parity with the interactive walker: two output nodes that BOTH execute fail the durable run
+    # loudly (the run output would silently be whichever topo order visits last).
+    await reset_dbos_schema(pg_url)
+    ir = _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node("n_out_a", "output", "boundary", ins=["in"]),
+            _node("n_out_z", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_out_a"), _edge("e2", "n_in", "out", "n_out_z")],
+    )
+    ir["id"] = "agt_two_out_durable"
+    with FakeInference() as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
+        rt.launch()
+        try:
+            handle = await rt.enqueue_run(
+                {"agent_id": aid, "version": ver, "content_hash": None}, "x"
+            )
+            res = await handle.get_result()
+            assert res["status"] == "failed"
+            assert "second output node" in res["error"]
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+
+async def test_durable_runs_endpoint_rejects_unexecutable_types(pg_url: str) -> None:
+    # A saved agent with a schema-legal-but-unexecutable node (code) passes validate_graph, so it
+    # saves fine — but the durable-run endpoint must refuse it up front (400), like the
+    # interactive initiators, instead of enqueueing a workflow that can only die.
+    await reset_dbos_schema(pg_url)
+    ir = _doc(
+        [
+            _node("n_in", "input", "boundary", outs=["out"]),
+            _node("n_code", "code", "activity", config={}, ins=["in"], outs=["out"]),
+            _node("n_out", "output", "boundary", ins=["in"]),
+        ],
+        [_edge("e1", "n_in", "out", "n_code"), _edge("e2", "n_code", "out", "n_out")],
+    )
+    ir["id"] = "agt_code_durable"
+    with FakeInference() as fake:
+        app = create_app(
+            inference_base_url=fake.v1_url,
+            database_url=pg_url,
+            invoke_token=TOKEN,
+            durable=True,
+            dbos_fast_polling=True,
+        )
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as ac:
+                assert (await ac.post("/agents", json={"ir": ir})).status_code == 201
+                r = await ac.post(f"/agents/{ir['id']}/durable-runs", json={"input": "x"})
+                assert r.status_code == 400
+                assert r.json()["error"]["code"] == "node_type_unavailable"
+                # The same agent can't be DEPLOYED either: a trigger for it is refused at create
+                # time (an unattended fire of an unrunnable agent helps nobody).
+                t = await ac.post(
+                    "/triggers",
+                    json={
+                        "agent_id": ir["id"],
+                        "kind": "webhook",
+                        "version": "0.1.0",
+                        "config": {"secret": "s3cret"},
+                    },
+                )
+                assert t.status_code == 400
+                assert t.json()["error"]["code"] == "node_type_unavailable"
 
 
 # ── no-IR-change: the new types round-trip through the registry, hash stable ─────

@@ -8,7 +8,13 @@ import { getRouteApi, useBlocker, useNavigate } from "@tanstack/react-router";
 import type { IRDocument } from "@theygent/ir-types";
 import { Check, ChevronLeft, ChevronRight, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { type Selection, relayout, withDerivedTools } from "../adapter";
+import {
+  type Selection,
+  addNode,
+  defaultAddPosition,
+  relayout,
+  withDerivedTools,
+} from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { IRCodeEditor } from "../components/IRCodeEditor";
 import { Inspector } from "../components/Inspector";
@@ -328,6 +334,11 @@ export function Editor() {
     setReseedKey((k) => k + 1);
   };
 
+  // Click-to-add from the palette (drag stays the precise-placement path). The spot is a cascade
+  // off the last node, derived from the IR alone — the editor never reaches into the canvas
+  // viewport, so React Flow stays behind the adapter.
+  const onPaletteAdd = (type: string) => applyIr(addNode(ir, type, defaultAddPosition(ir)));
+
   // Keep the keyboard-shortcut handlers pointing at the current closures. Cmd/Ctrl+S honors the
   // same validation gate as the Save button — no saving an invalid graph from the keyboard.
   actionsRef.current = {
@@ -559,7 +570,7 @@ export function Editor() {
                 style={{ width: paletteWidth }}
               >
                 <CollapseButton side="left" onClick={() => setPaletteCollapsed(true)} />
-                <Palette />
+                <Palette onAdd={onPaletteAdd} />
               </aside>
               <ResizeHandle
                 width={paletteWidth}

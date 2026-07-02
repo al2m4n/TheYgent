@@ -42,11 +42,17 @@ export function useRun(id: string, opts: { live?: boolean; enabled?: boolean } =
     // user switches tabs mid-run — poll in the background too, not only while the tab is focused.
     refetchIntervalInBackground: opts.live ?? false,
     // While the run is live we poll faster so a terminal status lands promptly even if the
-    // SSE stream was attached elsewhere; a terminal run stops polling. `waiting` is deliberately
-    // NOT live — a run paused at a human node has no resume UI yet, so we don't poll it forever.
+    // SSE stream was attached elsewhere; a terminal run stops polling. A `waiting` run (paused at
+    // a human node) polls at a relaxed cadence so a resume — from this tab or anywhere else —
+    // shows up without a manual reload.
     refetchInterval: (q) => {
       const s = q.state.data?.status;
       if (opts.live && (s === "created" || s === "streaming")) return 1500;
+      if (opts.live && s === "waiting") return 2500;
+      // Still unknown (first fetch failed / not yet landed) on a live poll: keep trying (bounded,
+      // so a genuinely-missing run doesn't poll forever) — a transient GET failure must not
+      // strand the poller.
+      if (opts.live && q.state.data === undefined && q.state.fetchFailureCount < 5) return 2500;
       return false;
     },
   });

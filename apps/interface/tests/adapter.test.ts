@@ -1,6 +1,7 @@
 import {
   addNode,
   connect,
+  defaultAddPosition,
   deleteEdges,
   deleteNodes,
   duplicateNode,
@@ -214,6 +215,26 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(view.nodes?.[added?.id ?? ""]?.position).toEqual({ x: 200, y: 300 });
   });
 
+  it("defaultAddPosition cascades off the last node so click-added nodes never stack", () => {
+    // Click-to-add has no drop point — the position is derived from the IR alone.
+    const ir = sampleGraph();
+    const lastId = ir.nodes?.[ir.nodes.length - 1]?.id ?? "";
+    const lastPos = (ir.view as ViewBlock).nodes?.[lastId]?.position;
+    if (!lastPos) throw new Error("fixture needs a view position on the last node");
+    expect(defaultAddPosition(ir)).toEqual({ x: lastPos.x + 40, y: lastPos.y + 40 });
+
+    // Two successive click-adds land at DIFFERENT spots (each cascades off the previous add).
+    const once = addNode(ir, "tool", defaultAddPosition(ir));
+    const twice = addNode(once, "tool", defaultAddPosition(once));
+    const view = twice.view as ViewBlock;
+    const added = (twice.nodes ?? []).slice(-2).map((n) => view.nodes?.[n.id]?.position);
+    expect(added[1]).toEqual({ x: (added[0]?.x ?? 0) + 40, y: (added[0]?.y ?? 0) + 40 });
+
+    // An empty graph starts at the layout origin.
+    const empty = { ...sampleGraph(), nodes: [], edges: [], view: {} };
+    expect(defaultAddPosition(empty)).toEqual({ x: 60, y: 60 });
+  });
+
   it("connect creates a valid data edge referencing real handles", () => {
     let ir = sampleGraph();
     ir = deleteEdges(ir, ["e2"]); // free up n_out's in-port
@@ -373,6 +394,34 @@ describe("canvas edits produce valid IR (§4)", () => {
   it("M22 D1: setToolKind is a no-op when the kind is unchanged", () => {
     const ir = capabilityBase();
     expect(setToolKind(ir, "n_echo", "builtin")).toBe(ir);
+  });
+
+  it("an mcp_tool node reached by a CONNECTION derives a connection-backed binding", () => {
+    // The editor's MCP panel can bind an mcp_server connection (HTTP MCP), not just a registered
+    // server — the derived ir.tools binding must carry `connection`, matching the backend.
+    const wired = (() => {
+      const r = connect(capabilityBase(), {
+        source: "n_echo",
+        sourceHandle: "use",
+        target: "n_llm",
+        targetHandle: "tools",
+      });
+      const mcp = setToolKind(withDerivedTools(r.ir!), "n_echo", "mcp");
+      // the panel sets a connection and clears server (exactly-one)
+      const nodes = mcp.nodes?.map((n) =>
+        n.id === "n_echo"
+          ? {
+              ...n,
+              config: { ...n.config, tool: "echo", connection: "con_http_mcp", server: null },
+            }
+          : n,
+      );
+      return withDerivedTools({ ...mcp, nodes });
+    })();
+    const binding = wired.tools?.n_echo as { kind?: string; connection?: string; server?: string };
+    expect(binding.kind).toBe("mcp");
+    expect(binding.connection).toBe("con_http_mcp");
+    expect(binding.server).toBeUndefined(); // null server not emitted (exactly-one holds)
   });
 
   it("deleteNodes removes the node, its incident edges, and its view entry", () => {

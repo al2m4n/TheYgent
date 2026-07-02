@@ -43,6 +43,20 @@ def test_created_run_also_swept(fake_inference: FakeInference, pg_url: str) -> N
     assert row is not None and row["status"] == "failed"
 
 
+def test_durable_run_not_swept(fake_inference: FakeInference, pg_url: str) -> None:
+    # A durable run recovers and resumes via its workflow engine after a crash — sweeping it to
+    # `failed` would report a false terminal state for a run that is about to complete (and, in
+    # the split API/worker topology, fail a run a healthy sibling process is executing).
+    durable = str(ULID())
+    inproc = str(ULID())
+    asyncio.run(seed_run(pg_url, durable, "created", runtime="durable"))
+    asyncio.run(seed_run(pg_url, inproc, "created", runtime="inproc"))
+    app = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    with TestClient(app) as client:
+        assert client.get(f"/runs/{durable}").json()["status"] == "created"
+        assert client.get(f"/runs/{inproc}").json()["status"] == "failed"
+
+
 def test_terminal_runs_untouched(fake_inference: FakeInference, pg_url: str) -> None:
     # A completed (or failed) run must be left exactly as it was — the sweep only touches zombies.
     done = str(ULID())

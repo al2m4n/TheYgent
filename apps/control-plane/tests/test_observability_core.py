@@ -89,6 +89,46 @@ async def test_off_capture_writes_no_io_but_span_still_lands(pg_url: str) -> Non
         await engine.dispose()
 
 
+async def test_off_capture_leaks_no_byte_sizes(pg_url: str) -> None:
+    # 'off' is the sovereignty hard stop: not even I/O-DERIVED metadata (byte counts) may land on
+    # the span row (or ride the OTLP export) — that is what distinguishes it from 'metadata'.
+    engine, sm = await _make(pg_url)
+    try:
+        run_id = await _seed_run(sm)
+        tel = Telemetry(sessionmaker=sm, ceiling="full", topology="full")
+        rt = tel.begin_run(run_id, executor_id="inproc", capture_level="off")
+        async with rt.node_span(_FakeNode("n", "llm", "activity")) as scope:
+            scope.set_io(inputs={"in": "x"}, outputs={"ok": "y"})
+        await rt.finish()
+        async with sm() as s:
+            spans = await tel.trace_store.list_spans(s, run_id)
+        node = next(sp for sp in spans if sp.node_id == "n")
+        attrs = node.attributes or {}
+        assert "theygent.bytes_in" not in attrs and "theygent.bytes_out" not in attrs
+    finally:
+        await engine.dispose()
+
+
+async def test_pathological_payload_never_fails_the_span_close(pg_url: str) -> None:
+    # A circular value defeats json serialization TWICE (sizing, then the truncation preview) —
+    # the capture must degrade, never raise out of the span close into the run.
+    engine, sm = await _make(pg_url)
+    try:
+        run_id = await _seed_run(sm)
+        tel = Telemetry(sessionmaker=sm, ceiling="full", topology="full", max_bytes=8)
+        rt = tel.begin_run(run_id, executor_id="inproc", capture_level="full")
+        circular: dict[str, object] = {}
+        circular["self"] = circular
+        async with rt.node_span(_FakeNode("n", "tool", "activity")) as scope:
+            scope.set_io(inputs={"in": circular}, outputs={"ok": "fine"})
+        await rt.finish()  # reaching here at all is the assertion — no exception escaped
+        async with sm() as s:
+            spans = await tel.trace_store.list_spans(s, run_id)
+        assert any(sp.node_id == "n" for sp in spans)  # the timing span still landed
+    finally:
+        await engine.dispose()
+
+
 async def test_over_cap_payload_truncates(pg_url: str) -> None:
     engine, sm = await _make(pg_url)
     try:

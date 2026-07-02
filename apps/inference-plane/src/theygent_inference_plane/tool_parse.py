@@ -287,6 +287,12 @@ async def rewrite_mlx_tool_stream(
     if calls and template is not None:
         for synth in _synthetic_tool_call_chunks(template, calls):
             yield synth
+        # The buffered CONTENT became synthetic tool_calls, but a held terminal chunk carrying
+        # token usage is accounting, not content — re-emit it so a usage-requesting caller
+        # (stream_options.include_usage) still gets its usage on the tool-call turn.
+        for h in held:
+            if h.get("usage"):
+                yield h
     else:
         for h in held:
             yield h

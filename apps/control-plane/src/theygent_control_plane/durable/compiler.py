@@ -107,10 +107,12 @@ from theygent_control_plane.walker import (
     is_http_tool,
     llm_models,
     mcp_config_from_connection,
+    merge_usage,
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
     tool_result_message,
+    usage_attributes,
 )
 from theygent_control_plane.walker import ToolCall as _ToolCall
 
@@ -126,10 +128,19 @@ logger = logging.getLogger("theygent.control_plane.durable")
 # per-node config; the thin-M14 bound is "how many branches in flight at once".
 MAP_QUEUE = Queue("theygent_map")
 
-# M14 §1.1: the topic the ``human`` node recvs on and ``POST /runs/{id}/resume`` sends to. A
-# constant is sufficient — human nodes execute one-at-a-time in topological order, and DBOS buffers
-# sends per topic FIFO, so a resume arriving before (or after) the node reaches recv is delivered.
+# M14 §1.1: the topic prefix the ``human`` node recvs on and ``POST /runs/{id}/resume`` sends to.
+# The topic is per-NODE (``human:<node_id>``): DBOS buffers sends per topic FIFO, so with one shared
+# topic a duplicate resume (double-clicked Approve, client retry) would buffer a second message that
+# silently satisfied the run's NEXT human gate with a stale payload. Per-node topics make a stray
+# duplicate inert — it sits on the already-consumed node's topic forever.
 HUMAN_TOPIC = "human"
+
+
+def human_topic(node_id: str | None) -> str:
+    """The delivery topic for one ``human`` node's awaited input (``human:<node_id>``). A missing
+    node id (defensive — an old row without ``awaiting_node``) falls back to the bare prefix."""
+    return f"{HUMAN_TOPIC}:{node_id}" if node_id else HUMAN_TOPIC
+
 
 # A pragmatic "wait forever" for an un-timed human wait (DBOS.recv has no None=infinite; it takes a
 # float seconds). 100 years — the run survives restarts while paused, the whole point of the durable
@@ -287,6 +298,10 @@ async def _llm_step(
         "tool_calls": [
             {"id": c.id, "name": c.name, "arguments": c.arguments} for c in out.tool_calls
         ],
+        # Token usage journals WITH the turn: a replayed step re-reports the same usage instead of
+        # re-metering (and a resumed run never loses a completed turn's accounting). None when the
+        # upstream reported nothing; readers use .get() so pre-usage journal entries replay fine.
+        "usage": out.usage,
     }
 
 
@@ -316,7 +331,10 @@ async def _mcp_conn_step(
     HERE, inside the step (server-side — §1.1), build the transport config, then call. The secret
     never journals; a completed step replays from the journal."""
     res = _res()
-    conn = await res.tool_auth(connection_id) if res.tool_auth is not None else None
+    try:
+        conn = await res.tool_auth(connection_id) if res.tool_auth is not None else None
+    except Exception as exc:  # e.g. an undecryptable secret — an honest err, never a run failure
+        return {"ok": False, "value": f"mcp connection {connection_id!r}: {exc}"}
     if conn is None:
         return {"ok": False, "value": f"mcp connection {connection_id!r} not found or disabled"}
     cfg = mcp_config_from_connection(conn)
@@ -343,7 +361,10 @@ async def _http_step(
     replay-stable. A completed step replays from the journal (no duplicated POST); the
     ``idempotency_key`` covers the crash-after-send window (§2.5)."""
     resolver = _res().tool_auth
-    conn = await resolver(connection_id) if resolver is not None else None
+    try:
+        conn = await resolver(connection_id) if resolver is not None else None
+    except Exception as exc:  # e.g. an undecryptable secret — an honest err, never a run failure
+        return {"ok": False, "value": f"http tool connection {connection_id!r}: {exc}"}
     out = await execute_http_tool(
         conn,
         method=method,
@@ -422,6 +443,36 @@ async def _durable_tool_call(
 
 
 @DBOS.step(**_RETRY)
+async def _tool_schemas_step(
+    run_id: str,
+    node_id: str,
+    ir_dict: dict[str, Any],
+    tool_keys: list[str],
+    cap_node_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Build the OpenAI tool-schema union for one llm node as a JOURNALED step. Schema building is
+    real I/O for MCP-backed tools (``list_tools`` lazily (re)connects the server), so it must not
+    run bare in the workflow body: the body re-executes on crash-recovery, and a transient MCP
+    failure there would silently drop the schemas, flip the tool loop off, and make the resumed
+    walk ignore journaled turns that DID carry tool calls. Journaling the union keeps replay
+    stable — the recovering process replays the same schemas the original run negotiated."""
+    res = _res()
+    ir = parse_document(ir_dict)
+    schemas: list[dict[str, Any]] = []
+    if tool_keys:
+        schemas += await build_tool_schemas(
+            ir, tool_keys, registry=DEFAULT_REGISTRY, mcp=res.mcp, tool_auth=res.tool_auth
+        )
+    if cap_node_ids:
+        by_id = {n.id: n for n in ir.nodes}
+        nodes = [by_id[i] for i in cap_node_ids if i in by_id]
+        schemas += await build_capability_schemas(
+            nodes, registry=DEFAULT_REGISTRY, mcp=res.mcp, tool_auth=res.tool_auth
+        )
+    return schemas
+
+
+@DBOS.step(**_RETRY)
 async def _guardrail_model_step(
     run_id: str,
     node_id: str,
@@ -429,11 +480,13 @@ async def _guardrail_model_step(
     params: dict[str, Any],
     prompt: str,
     input_value: Any,
-) -> str:
-    """A MODEL guardrail's classifier call as a durable step (M19 §2.6) — the cheap judge call
-    before the expensive node. Returns the classifier answer (journaled); the caller decides
-    pass/block."""
-    return await execute_guardrail_model(
+) -> dict[str, Any]:
+    """A MODEL guardrail's classifier call as a durable step — the cheap judge call before the
+    expensive node. Journals ``{"answer", "usage"}``: the caller decides pass/block from the
+    answer and lands the usage on the call's generate span (the judge call spends real tokens,
+    so the quota gate must see them). Entries journaled before usage was carried replay as a
+    bare answer string — the caller reads both shapes, so an old run resumes fine."""
+    out = await execute_guardrail_model(
         _res().gateway,
         model_id=model_id,
         params=params,
@@ -441,6 +494,7 @@ async def _guardrail_model_step(
         input_value=input_value,
         extra_headers={"x-theygent-run-id": run_id},
     )
+    return {"answer": out.output, "usage": out.usage}
 
 
 @DBOS.step(**_RETRY)
@@ -558,6 +612,27 @@ async def _complete_run_step(
         await res.store.set_status(session, run_id, status, output=output, error=error)  # type: ignore[arg-type]
 
 
+async def _fail_run(run_id: str, run_trace: Any, reason: str) -> dict[str, Any]:
+    """Terminalize a failed run so the row can never be left non-terminal. The journaled step is
+    the normal path (idempotent on replay); if the step call itself raises — e.g. a recovered
+    workflow whose failure point now precedes its journaled operations, so the step intercept
+    collides with a differently-named recorded operation — fall back to a DIRECT store write.
+    An unjournaled duplicate write is harmless (set_status is idempotent); a permanently
+    non-terminal durable run (excluded from the reconcile sweep, un-resumable) is not."""
+    try:
+        await _complete_run_step(run_id, "failed", None, reason)
+    except Exception:
+        logger.warning("durable.terminalize_fallback", extra={"run_id": run_id, "error": reason})
+        try:
+            res = _res()
+            async with res.sessionmaker() as session, session.begin():
+                await res.store.set_status(session, run_id, "failed", error=reason)
+        except Exception:  # pragma: no cover - even the direct write failed; nothing left to try
+            logger.exception("durable.terminalize_failed", extra={"run_id": run_id})
+    await _finish_run_trace(run_trace, "err", reason)
+    return {"runId": run_id, "status": "failed", "error": reason}
+
+
 @DBOS.step(**_RETRY)
 async def _mark_waiting_step(run_id: str, node_id: str) -> None:
     """Pause the Run at a ``human`` node (M14 §1.1): status → ``waiting`` + record the node, so the
@@ -629,10 +704,11 @@ def _eval_loop_condition(condition: str, value: Any, node_id: str) -> bool:
 
 async def _map_fanout(
     run_id: str,
-    node_id: str,
+    node: Node,
     child_ref: dict[str, Any],
     elements: list[Any],
     concurrency: int | None,
+    run_trace: Any = None,
 ) -> list[dict[str, Any]]:
     """Fan out one ``theygent_run`` child per element on the durable queue and await all, preserving
     element order (M14 §1.4). Each element's child has a DETERMINISTIC workflow id
@@ -646,15 +722,20 @@ async def _map_fanout(
     sem = asyncio.Semaphore(concurrency) if concurrency and concurrency > 0 else None
 
     async def _one(index: int, element: Any) -> dict[str, Any]:
-        cwid = f"{run_id}-map-{node_id}-{index}"
-        _log_branch(run_id, node_id, "map", index)  # M14 §2: one span per fan-out branch
+        cwid = f"{run_id}-map-{node.id}-{index}"
+        _log_branch(run_id, node.id, "map", index)
 
         async def _go() -> dict[str, Any]:
-            with SetWorkflowID(cwid):
-                handle = await MAP_QUEUE.enqueue_async(
-                    theygent_run, dict(child_ref), element, None, None
-                )
-            return await handle.get_result()
+            # One span per fan-out branch (named `<node>#<i>`), so the parent waterfall shows
+            # every element instead of one opaque map bar. Deterministic id → replay-idempotent;
+            # the branch's full trace lives under its child run.
+            branch_cm = run_trace.branch_span(node, index) if run_trace is not None else _null_acm()
+            async with branch_cm:
+                with SetWorkflowID(cwid):
+                    handle = await MAP_QUEUE.enqueue_async(
+                        theygent_run, dict(child_ref), element, None, None
+                    )
+                return await handle.get_result()
 
         if sem is None:
             return await _go()
@@ -665,7 +746,12 @@ async def _map_fanout(
 
 
 async def _durable_walk(
-    ir: IRDocument, input_value: Any, run_id: str, depth: int = 0, run_trace: Any = None
+    ir: IRDocument,
+    input_value: Any,
+    run_id: str,
+    depth: int = 0,
+    run_trace: Any = None,
+    ir_dict: dict[str, Any] | None = None,
 ) -> tuple[Any, bool, str | None]:
     """Walk a validated IR deterministically, awaiting an activity step per ``activity`` node and
     running ``orchestration``/``boundary`` inline (M13 §2). This mirrors ``walker.walk`` exactly —
@@ -720,6 +806,14 @@ async def _durable_walk(
                 elif node.type == "output":
                     live_handles[node.id] = set()
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+                    if output_produced:
+                        # Two output nodes both executed: the run output would silently be
+                        # whichever topo order visits last. Loud, like the interactive walker.
+                        raise TemplateError(
+                            f"node {node.id!r}: a second output node executed — the run output "
+                            "would be ambiguous. Route exclusive branches (router/guardrail) so "
+                            "at most one output node is live per run."
+                        )
                     output = _single_in_value(ports, node)
                     output_produced = True
                 elif node.type == "human":
@@ -731,7 +825,7 @@ async def _durable_walk(
                     config = HumanConfig.model_validate(node.config)
                     await _mark_waiting_step(run_id, node.id)
                     timeout = config.timeout if config.timeout is not None else _FOREVER_SECONDS
-                    message = await DBOS.recv_async(HUMAN_TOPIC, timeout_seconds=timeout)
+                    message = await DBOS.recv_async(human_topic(node.id), timeout_seconds=timeout)
                     await _set_running_step(run_id)
                     if message is None:  # timed out (recv → None) — honest fail or declared default
                         if config.on_timeout == "fail":
@@ -795,16 +889,18 @@ async def _durable_walk(
                     # pre-M21.
                     # M22 (parity with the walker): union the legacy ir.tools keys (config.tools)
                     # with the capability nodes wired to this llm's `tools` port. Capability schemas
-                    # name the function by NODE id; both dispatch through _durable_tool_call.
+                    # name the function by NODE id; both dispatch through _durable_tool_call. Built
+                    # inside a journaled step — MCP schema lookup is I/O and must replay stably.
                     cap_nodes = _capability_tool_nodes(ir, node.id)
                     schemas: list[dict[str, Any]] = []
-                    if config.tools:
-                        schemas += await build_tool_schemas(
-                            ir, config.tools, registry=DEFAULT_REGISTRY, mcp=_res().mcp
-                        )
-                    if cap_nodes:
-                        schemas += await build_capability_schemas(
-                            cap_nodes, registry=DEFAULT_REGISTRY, mcp=_res().mcp
+                    if config.tools or cap_nodes:
+                        doc = ir_dict or ir.model_dump(mode="json", by_alias=True)
+                        schemas = await _tool_schemas_step(
+                            run_id,
+                            node.id,
+                            doc,
+                            list(config.tools or []),
+                            [n.id for n in cap_nodes],
                         )
                     has_tools = bool(schemas)
                     tool_schemas = schemas if has_tools else None
@@ -817,6 +913,7 @@ async def _durable_walk(
                     )
                     final_output = ""
                     final_finish: str | None = None
+                    usage_acc: dict[str, int] | None = None
                     truncated = False
                     capped = False
                     async with gen_cm as gen_scope:
@@ -832,6 +929,9 @@ async def _durable_walk(
                                 tool_choice,
                             )
                             final_finish = res.get("finish_reason")
+                            # Node total across tool-loop turns (.get: pre-usage journal entries
+                            # replay without the key).
+                            usage_acc = merge_usage(usage_acc, res.get("usage"))
                             calls = [
                                 _ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"])
                                 for c in res.get("tool_calls", [])
@@ -845,16 +945,44 @@ async def _durable_walk(
                                 final_output = res["output"]
                                 break
                             messages.append(assistant_tool_calls_message(calls))
-                            for call in calls:
-                                outcome = await _durable_tool_call(
-                                    ir, call, run_id, node.id, iteration
+                            for ci, call in enumerate(calls):
+                                # Each tool call is a child span under the llm node span — the
+                                # same waterfall shape as the interactive walker (one wrapper,
+                                # both runtimes). The phase id carries iteration + call index so
+                                # repeat calls to one tool get distinct rows; deterministic per
+                                # walk, so replay idempotency holds.
+                                tool_cm = (
+                                    scope.child_phase(
+                                        f"tool.{call.name}#{iteration}.{ci}",
+                                        name=f"tool.{call.name}",
+                                    )
+                                    if scope is not None
+                                    else _null_acm()
                                 )
+                                async with tool_cm as tool_scope:
+                                    outcome = await _durable_tool_call(
+                                        ir, call, run_id, node.id, iteration
+                                    )
+                                    if tool_scope is not None:
+                                        tool_scope.set_attributes(
+                                            {"tool.name": call.name, "tool.ok": outcome.ok}
+                                        )
                                 messages.append(tool_result_message(call, outcome))
+                            # A FORCED tool_choice ("required" / a named function) applies to the
+                            # FIRST turn only — re-sending it would force a tool call on every
+                            # turn, so the model could never produce a final answer and a write
+                            # tool would re-execute until the iteration cap.
+                            if tool_choice is not None and tool_choice != "auto":
+                                tool_choice = "auto"
                             iteration += 1
+                        # Usage lands on the generate span only (never mirrored onto the node
+                        # span) — the quota gate sums across a run's spans; a mirror would
+                        # double-count.
                         if gen_scope is not None:
                             attrs: dict[str, Any] = {"gen_ai.request.model": model_id}
                             if final_finish:
                                 attrs["gen_ai.response.finish_reason"] = final_finish
+                            attrs.update(usage_attributes(usage_acc))
                             gen_scope.set_attributes(attrs)
                     if truncated or (capped and _is_blank(final_output)):
                         truncated_empty_nodes.append(node.id)
@@ -892,7 +1020,22 @@ async def _durable_walk(
                                 call.timeout,
                             )
                             outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                    elif isinstance(ir.tools.get(config.tool), McpTool):
+                        # An mcp binding is the wrong shape for a step-mode tool node (the mcp_tool
+                        # node runs MCP as a step). The interactive path rejects this up front; the
+                        # durable-runs path skips those checks, so bind a clear err here for parity
+                        # of message quality (never a cryptic tool-not-found key).
+                        outcome = ActivityOutcome(
+                            ok=False,
+                            value=f"tool {config.tool!r} is an MCP binding — use an mcp_tool node",
+                        )
                     else:
+                        # A ``builtin`` binding names its callable via ``ref``; a bare name is a
+                        # directly-registered builtin (parity with the interactive walker).
+                        ir_binding = ir.tools.get(config.tool)
+                        builtin_name = (
+                            ir_binding.ref if isinstance(ir_binding, BuiltinTool) else config.tool
+                        )
                         try:
                             args = {
                                 k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()
@@ -900,7 +1043,7 @@ async def _durable_walk(
                         except Exception as exc:  # an unresolvable arg ref is a structured err (§4)
                             outcome = ActivityOutcome(ok=False, value=str(exc))
                         else:
-                            step_out = await _tool_step(run_id, node.id, config.tool, args)
+                            step_out = await _tool_step(run_id, node.id, builtin_name, args)
                             outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     _bind_outcome(node, outcome, values, live_handles)
                 elif node.type == "mcp_tool":
@@ -930,20 +1073,39 @@ async def _durable_walk(
                     mcfg = config.check.model
                     assert mcfg is not None  # validate_graph guarantees this for a model check
                     model_id, params = resolve_model_key(ir, mcfg.model)
-                    input_value = _single_in_value(ports, node)
-                    answer = await _guardrail_model_step(
-                        run_id, node.id, model_id, params, mcfg.prompt, input_value
+                    # A branch-local name: rebinding `input_value` here would corrupt the RUN
+                    # input the `input` boundary reads when a guardrail sorts before it.
+                    gr_input = _single_in_value(ports, node)
+                    # The classifier call runs inside a `model.generate` phase span, like an llm
+                    # turn. Its usage lands on THAT span only (never mirrored onto the node span)
+                    # — the quota gate SUMS across a run's spans; a mirror would double-count.
+                    gen_cm = (
+                        scope.child_phase("model.generate") if scope is not None else _null_acm()
                     )
+                    async with gen_cm as gen_scope:
+                        step_out = await _guardrail_model_step(
+                            run_id, node.id, model_id, params, mcfg.prompt, gr_input
+                        )
+                        # A journal entry written before usage was carried replays as the bare
+                        # answer string.
+                        if isinstance(step_out, str):
+                            answer, gr_usage = step_out, None
+                        else:
+                            answer, gr_usage = step_out.get("answer", ""), step_out.get("usage")
+                        if gen_scope is not None:
+                            gen_scope.set_attributes(
+                                {"gen_ai.request.model": model_id, **usage_attributes(gr_usage)}
+                            )
                     _bind_guardrail(
                         node,
                         guardrail_model_passed(answer, mcfg.pass_on),
-                        input_value,
+                        gr_input,
                         config.on_block,
                         values,
                         live_handles,
                     )
                 elif node.type in ("ratelimit", "quota"):  # M19 §2.8: the gate seam
-                    input_value = _single_in_value(ports, node)
+                    gate_input = _single_in_value(ports, node)
                     if node.type == "ratelimit":
                         rcfg = RateLimitConfig.model_validate(node.config)
                         key = resolve_gate_key(rcfg.key_expr, ports, node.id)
@@ -957,7 +1119,7 @@ async def _durable_walk(
                         reason = (
                             f"token budget exceeded ({qcfg.budget_tokens}/{qcfg.window_seconds}s)"
                         )
-                    _bind_gate(node, allowed, input_value, reason, values, live_handles)
+                    _bind_gate(node, allowed, gate_input, reason, values, live_handles)
                 elif node.type == "transcribe":  # M19 §2.2 audio-ref → text
                     tcfg = TranscribeConfig.model_validate(node.config)
                     model_id, binding_params = resolve_model_key(ir, tcfg.model)
@@ -1025,12 +1187,13 @@ async def _durable_walk(
                     # _walk_guardrail_rule.
                     config = GuardrailConfig.model_validate(node.config)
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-                    input_value = _single_in_value(ports, node)
+                    # A branch-local name: rebinding `input_value` here would corrupt the RUN
+                    # input the `input` boundary reads when a guardrail sorts before it (an
+                    # optional, unfed in-port gives the guardrail zero indegree).
+                    gr_input = _single_in_value(ports, node)
                     assert config.check.rule is not None  # validate_graph guarantees this
-                    passed = evaluate_guardrail_rule(config.check.rule, input_value)
-                    _bind_guardrail(
-                        node, passed, input_value, config.on_block, values, live_handles
-                    )
+                    passed = evaluate_guardrail_rule(config.check.rule, gr_input)
+                    _bind_guardrail(node, passed, gr_input, config.on_block, values, live_handles)
                 elif node.type == "loop":
                     # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned
                     # body
@@ -1050,12 +1213,23 @@ async def _durable_walk(
                     current = _node_input(ports, node)
                     for i in range(config.max_iterations):
                         child_wid = f"{run_id}-loop-{node.id}-{i}"
-                        _log_branch(run_id, node.id, "loop", i)  # M14 §2: one span per iteration
-                        with SetWorkflowID(child_wid):
-                            handle = await DBOS.start_workflow_async(
-                                theygent_run, _child_ref(config, depth + 1), current, None, None
-                            )
-                        child = await handle.get_result()
+                        _log_branch(run_id, node.id, "loop", i)
+                        # One span per iteration (named `<node>#<i>`), so the parent waterfall
+                        # shows each pass instead of one opaque loop bar. Deterministic id →
+                        # replay-idempotent; the iteration's full trace lives under the child run.
+                        branch_cm = (
+                            run_trace.branch_span(node, i) if run_trace is not None else _null_acm()
+                        )
+                        async with branch_cm:
+                            with SetWorkflowID(child_wid):
+                                handle = await DBOS.start_workflow_async(
+                                    theygent_run,
+                                    _child_ref(config, depth + 1),
+                                    current,
+                                    None,
+                                    None,
+                                )
+                            child = await handle.get_result()
                         if child.get("status") == "failed":
                             raise LoopError(
                                 f"loop {node.id!r}: iteration {i} failed: {child.get('error')}"
@@ -1090,10 +1264,11 @@ async def _durable_walk(
                         collection = parsed
                     results = await _map_fanout(
                         run_id,
-                        node.id,
+                        node,
                         _child_ref(config, depth + 1),
                         collection,
                         config.concurrency,
+                        run_trace,
                     )
                     failures = [
                         (i, r) for i, r in enumerate(results) if r.get("status") == "failed"
@@ -1137,6 +1312,7 @@ async def _durable_walk(
         truncated_empty_nodes=truncated_empty_nodes,
         skipped=skipped,
         live_handles=live_handles,
+        values=values,
     )
     return output, output_produced, empty_reason
 
@@ -1229,26 +1405,18 @@ async def theygent_run(
 
     try:
         output, _produced, empty_reason = await _durable_walk(
-            ir, input_value, run_id, depth, run_trace
+            ir, input_value, run_id, depth, run_trace, ir_dict
         )
     except (RouterError, TemplateError, TransformError, EngineNameNotAllowed) as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
-    # M14: a bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
-    # failure, exactly like the M5 router/template errors above (m14.md §1: "fails honestly").
+        return await _fail_run(run_id, run_trace, str(exc))
+    # A bounded-composition guard tripped (depth/iteration/list/timeout) — an honest, named
+    # failure, exactly like the router/template errors above.
     except (SubgraphDepthError, LoopError, MapError, HumanTimeout) as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
     except NotImplementedError as exc:
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
     except Exception as exc:  # inference died mid-walk / unreachable plane: fail cleanly (§1.4)
-        await _complete_run_step(run_id, "failed", None, str(exc))
-        await _finish_run_trace(run_trace, "err", str(exc))
-        return {"runId": run_id, "status": "failed", "error": str(exc)}
+        return await _fail_run(run_id, run_trace, str(exc))
 
     out_str = _coerce_output(output)
     await _complete_run_step(run_id, "completed", out_str, empty_reason)
@@ -1309,6 +1477,17 @@ async def _load_trigger_step(trigger_id: str) -> dict[str, Any] | None:
     }
 
 
+@DBOS.step(**_RETRY)
+async def _mark_fired_step(trigger_id: str, fired_at: datetime) -> None:
+    """Stamp ``trigger.last_fired_at`` for a scheduled fire (idempotent — re-stamping the same
+    instant is a no-op write). Without this the trigger row lies (``lastFiredAt`` stays NULL for
+    the whole durable stretch) AND a later switch back to the in-process dispatcher immediately
+    re-fires every schedule, because its due-ness math falls back to ``created_at``."""
+    res = _res()
+    async with res.sessionmaker() as session, session.begin():
+        await res.triggers.mark_fired(session, trigger_id, fired_at)
+
+
 @DBOS.workflow(name="theygent_scheduled_fire")
 async def theygent_scheduled_fire(scheduled_time: datetime, context: Any) -> None:
     """The one generic scheduled workflow DBOS dynamic schedules drive (M13 §4). ``context`` is the
@@ -1325,4 +1504,8 @@ async def theygent_scheduled_fire(scheduled_time: datetime, context: Any) -> Non
         "version": trig["version"],
         "content_hash": trig["content_hash"],
     }
+    # The trigger row stays the source of truth for "when did this last fire" in BOTH modes —
+    # stamped from the schedule's own instant (deterministic across replay), before the run so a
+    # crashed fire still advances the window (the no-backfill posture the dispatcher established).
+    await _mark_fired_step(trigger_id, scheduled_time)
     await theygent_run(agent_ref, trig["input"], None, trigger_id)

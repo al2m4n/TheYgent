@@ -174,3 +174,22 @@ def test_model_guardrail_blocks_on_no(no_client: TestClient) -> None:
     out = _run(no_client, _model_guardrail("block"), "tell me a joke")
     assert out["status"] == "completed"
     assert "blocked" in out["output"]  # the classifier said no → block branch
+
+
+def test_model_guardrail_usage_lands_on_generate_span(yes_client: TestClient) -> None:
+    # The judge call spends real tokens: the fake engine reports {1,2,3} on the stream's final
+    # chunk, and the capture writes it onto the guardrail's model.generate phase span — so the
+    # quota gate (which SUMS gen_ai.usage.total_tokens across a run's spans) meters guardrail
+    # calls like any other model call. Exactly ONE span carries the usage: no mirror onto the
+    # node span, which would double-count.
+    out = _run(yes_client, _model_guardrail("pass"), "please book a table")
+    assert out["status"] == "completed"
+    spans = yes_client.get(f"/runs/{out['runId']}/trace").json()["spans"]
+    gen = next(s for s in spans if s["phase"] == "model.generate")
+    attrs = gen["attributes"] or {}
+    assert attrs["gen_ai.usage.total_tokens"] == 3
+    assert attrs["gen_ai.usage.input_tokens"] == 1
+    assert attrs["gen_ai.usage.output_tokens"] == 2
+    assert attrs["gen_ai.request.model"] == "judge-fast"  # the logical id, like an llm turn
+    node = next(s for s in spans if s["name"] == "n_g" and s["phase"] is None)
+    assert "gen_ai.usage.total_tokens" not in (node["attributes"] or {})  # no double-count mirror

@@ -159,18 +159,31 @@ class Span:
 def _json_bytes(value: Any) -> int:
     try:
         return len(json.dumps(value, default=str).encode("utf-8"))
-    except (TypeError, ValueError):
-        return len(str(value).encode("utf-8"))
+    except (TypeError, ValueError, RecursionError):
+        try:
+            return len(str(value).encode("utf-8"))
+        except Exception:  # even repr can blow up (recursive __str__) — size unknown, not fatal
+            return 0
 
 
 def cap_payload(value: Any, max_bytes: int) -> tuple[Any, int, bool]:
     """Return ``(stored_value, true_byte_count, truncated)`` for one payload. Under the cap, the
     value passes through unchanged. Over the cap, it is replaced by a truncated preview + the true
-    byte count (never silently dropped — §1.7), so the drawer can show "first N bytes of M"."""
+    byte count (never silently dropped — §1.7), so the drawer can show "first N bytes of M".
+
+    Every serialization here is guarded: a pathological value (circular reference, non-string
+    dict keys, absurd nesting) must degrade the CAPTURE, never kill the run that produced it —
+    the sizing above already fell back on exactly the error the preview dump would re-raise."""
     raw = _json_bytes(value)
     if raw <= max_bytes:
         return value, raw, False
-    preview = json.dumps(value, default=str)[: max(0, max_bytes)]
+    try:
+        preview = json.dumps(value, default=str)[: max(0, max_bytes)]
+    except (TypeError, ValueError, RecursionError):
+        try:
+            preview = str(value)[: max(0, max_bytes)]
+        except Exception:
+            preview = "<unserializable>"
     return {"_truncated": True, "_bytes": raw, "_preview": preview}, raw, True
 
 

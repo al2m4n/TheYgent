@@ -89,7 +89,9 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
           position={Position.Right}
           style={{
             top: handlePos(i, outs.length),
-            background: p.id === "err" ? "#f87171" : "#34d399",
+            // Error handles are red by port TYPE — the runtime's error semantics key on
+            // `type == "error"`, not on the conventional id "err".
+            background: p.type === "error" ? "#f87171" : "#34d399",
           }}
           title={`out · ${p.id}`}
         />

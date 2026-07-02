@@ -6,6 +6,7 @@
 
 import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
 import Ajv, { type ValidateFunction } from "ajv";
+import { DURABLE_ONLY } from "./durable";
 import { expectedKind } from "./kind";
 
 export interface ValidationIssue {
@@ -177,6 +178,52 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
         });
       }
     }
+    // The depth budget must admit the body itself (mirrors the backend rule): maxDepth 0 or
+    // negative could never run its pinned body.
+    if (PINNED_BODY_TYPES.has(n.type)) {
+      const md = config.maxDepth;
+      if (md !== undefined && md !== null && (typeof md !== "number" || md < 1)) {
+        issues.push({
+          severity: "error",
+          message: "maxDepth must be a whole number ≥ 1",
+          nodeId: n.id,
+        });
+      }
+    }
+    // A human gate that falls back to its default on timeout should HAVE a default — otherwise a
+    // timeout silently feeds null downstream.
+    if (n.type === "human" && config.onTimeout === "default") {
+      const d = config.default;
+      if (d === undefined || d === null) {
+        issues.push({
+          severity: "warning",
+          message: "onTimeout is 'default' but no default value is set — a timeout flows null",
+          nodeId: n.id,
+        });
+      }
+    }
+  }
+
+  // Durable-only node types (human/subgraph/loop/map) run only on the durable runtime — say so at
+  // the graph level (a builder who never selects the node otherwise learns it from a 400).
+  const durableTypes = [
+    ...new Set(nodes.filter((n) => DURABLE_ONLY.has(n.type)).map((n) => n.type)),
+  ];
+  if (durableTypes.length > 0) {
+    issues.push({
+      severity: "warning",
+      message: `contains durable-only node type(s) ${durableTypes.join(", ")} — run with "Run durably" (needs THEYGENT_DURABLE=1)`,
+    });
+  }
+
+  // Two output nodes on the SAME live path fail at run time (an ambiguous run output) — multiple
+  // outputs are fine only on exclusive branches (router/guardrail/gate).
+  const outputCount = nodes.filter((n) => n.type === "output").length;
+  if (outputCount > 1) {
+    issues.push({
+      severity: "warning",
+      message: `${outputCount} output nodes: make sure at most one executes per run (exclusive branches) — two live outputs fail the run`,
+    });
   }
 
   // 4: edges reference existing nodes + declared handles.

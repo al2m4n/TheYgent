@@ -12,6 +12,7 @@ import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState }
 import { createPortal } from "react-dom";
 import type { Selection } from "../adapter";
 import { GraphCanvas } from "../components/GraphCanvas";
+import { ResumePanel, parseTyped } from "../components/ResumePanel";
 import {
   Button,
   Card,
@@ -44,11 +45,14 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     enabled: Boolean(version),
   });
   const [input, setInput] = useState("");
+  // An agent whose graph drills `$in.in.<field>` takes an OBJECT input: JSON mode parses the text
+  // client-side (loudly — an unparsable payload never leaves the tab as a look-alike string).
+  const [inputMode, setInputMode] = useState<"text" | "json">("text");
   const [result, setResult] = useState<{ runId: string; output?: string; error?: string } | null>(
     null,
   );
   // The durable path enqueues a run and polls its id (the endpoint returns no terminal result).
-  const [durableRunId, setDurableRunId] = useState<string | null>(null);
+  const [durableRunId, setDurableRunId] = useState<null | string>(null);
   // Set when a durable run is attempted but the server isn't in durable mode (400 durable_required).
   const [durableUnavailable, setDurableUnavailable] = useState(false);
   const [highlight, setHighlight] = useState<Selection>(null);
@@ -57,15 +61,26 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   const ir = stored.data?.ir as IRDocument | undefined;
   // A durable-only agent (loop/map/subgraph/human) can ONLY run durably. Any other agent can run
   // either way — a normal streaming run, or a durable run that checkpoints each step and resumes
-  // after a crash — so we offer both.
+  // after a crash — so we offer both. While the pinned IR is still loading we can't KNOW which,
+  // so the run buttons wait for it (else a durable-only agent would briefly offer a plain Run
+  // that can only 400).
   const durableOnly = ir ? isDurableOnly(ir) : false;
+  // Gate the run buttons only while the fetch is IN FLIGHT — a failed fetch surfaces its error
+  // below and leaves the buttons usable (the server re-checks everything anyway), rather than
+  // sticking them disabled with no feedback.
+  const irLoading = Boolean(version) && stored.isPending;
 
-  // Poll the durable run to completion (the endpoint returns a run id, not a terminal result).
+  // Poll the durable run (the endpoint returns a run id, not a terminal result). A `waiting` run
+  // is paused at a human node — the resume panel below delivers the awaited input.
   const durablePoll = useRun(durableRunId ?? "", { live: true, enabled: Boolean(durableRunId) });
   const durableRun = durablePoll.data;
   const durableTerminal = durableRun?.status === "completed" || durableRun?.status === "failed";
+  const durableWaiting = durableRun?.status === "waiting";
+
+  const typedInput = parseTyped(inputMode, input);
 
   async function run(durable: boolean) {
+    if (!typedInput.ok) return;
     setRunning(true);
     setResult(null);
     setDurableRunId(null);
@@ -73,10 +88,13 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     setHighlight(null);
     try {
       if (durable) {
-        const { run_id } = await api.runAgentDurable(agent.id, { input, version });
+        const { run_id } = await api.runAgentDurable(agent.id, {
+          input: typedInput.value,
+          version,
+        });
         setDurableRunId(run_id);
       } else {
-        setResult(await api.runAgent(agent.id, { input, version }));
+        setResult(await api.runAgent(agent.id, { input: typedInput.value, version }));
       }
     } catch (e) {
       // Only the durable endpoint's 400 means "server isn't in durable mode" — surface that as an
@@ -107,16 +125,25 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
           error: result.error,
         }
       : null;
-  // A durable run keeps the button busy until the poll reaches a terminal status.
-  const busy = running || (Boolean(durableRunId) && !durableTerminal);
+  // A durable run keeps the buttons busy until the poll reaches a terminal status — except while
+  // it is `waiting` at a human gate: the wait can outlive this tab, so the resume panel takes
+  // over and the run buttons stay usable (starting a new run leaves the paused one waiting
+  // server-side, visible under Runs).
+  const busy = running || (Boolean(durableRunId) && !durableTerminal && !durableWaiting);
   const inProgress = view?.status && view.status !== "completed" && view.status !== "failed";
+  const runDisabled = busy || irLoading || !typedInput.ok;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-slate-200">{agent.name}</span>
         <Field label="Pin">
-          <Select value={version} onChange={(e) => setPicked(e.target.value)} className="w-48">
+          <Select
+            value={version}
+            onChange={(e) => setPicked(e.target.value)}
+            className="w-48"
+            aria-label="Version pin"
+          >
             {agent.versions.map((v) => (
               <option key={v.version} value={v.version}>
                 v{v.version} · {shortId(v.content_hash, 12)}
@@ -127,13 +154,30 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       </div>
 
       <Field label="Input">
-        <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Run input…" />
+        <div className="flex items-start gap-2">
+          <Select
+            value={inputMode}
+            onChange={(e) => setInputMode(e.target.value as "text" | "json")}
+            className="w-24"
+            aria-label="Input mode"
+          >
+            <option value="text">Text</option>
+            <option value="json">JSON</option>
+          </Select>
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={inputMode === "json" ? '{"field": "value"}' : "Run input…"}
+            className="flex-1"
+          />
+        </div>
       </Field>
+      {!typedInput.ok && <p className="text-xs text-amber-400">{typedInput.error}</p>}
       <div className="flex items-center gap-2">
         {durableOnly ? (
           // Durable-only agents can't run any other way — a single button, no choice.
           <>
-            <Button variant="primary" onClick={() => run(true)} disabled={busy}>
+            <Button variant="primary" onClick={() => run(true)} disabled={runDisabled}>
               {busy ? "Running…" : "Run durably"}
             </Button>
             <span className="text-[11px] text-slate-500">
@@ -144,7 +188,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
           // Any other agent can run either way — a split button: the primary segment runs the
           // normal streaming path immediately, the caret opens a menu with the durable choice
           // (which checkpoints each step and resumes after a crash).
-          <RunMenu busy={busy} onRun={run} />
+          <RunMenu busy={busy} disabled={runDisabled} onRun={run} />
         )}
       </div>
 
@@ -155,13 +199,18 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
           {!durableOnly && " You can still use Run for a normal (non-resumable) run."}
         </NoteBanner>
       )}
+      {stored.isError && <ErrorBanner error={stored.error} />}
+      {durablePoll.isError && <ErrorBanner error={durablePoll.error} />}
 
-      {inProgress && (
-        <p className="text-sm text-slate-400">
-          {view?.status === "waiting"
-            ? `Paused — awaiting ${durableRun?.awaiting_node ?? "input"}`
-            : `Running… (${view?.status})`}
-        </p>
+      {inProgress && !durableWaiting && (
+        <p className="text-sm text-slate-400">{`Running… (${view?.status})`}</p>
+      )}
+      {durableWaiting && durableRunId && (
+        <ResumePanel
+          runId={durableRunId}
+          awaitingNode={durableRun?.awaiting_node ?? null}
+          onResumed={() => durablePoll.refetch()}
+        />
       )}
       {view?.error && <ErrorBanner error={view.error} />}
       {view?.output && (
@@ -197,7 +246,15 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
 // durable-only agent gets a single button). The menu is PORTALED to the body with fixed positioning
 // so the scrollable bench modal (overflow-auto) can't clip it. Focus moves into the menu on open,
 // arrow keys cycle the items, and Escape/selection hand focus back to the caret.
-function RunMenu({ busy, onRun }: { busy: boolean; onRun: (durable: boolean) => void }) {
+function RunMenu({
+  busy,
+  disabled,
+  onRun,
+}: {
+  busy: boolean;
+  disabled: boolean;
+  onRun: (durable: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -279,7 +336,7 @@ function RunMenu({ busy, onRun }: { busy: boolean; onRun: (durable: boolean) => 
         variant="primary"
         className="rounded-r-none"
         onClick={() => onRun(false)}
-        disabled={busy}
+        disabled={disabled}
         title="A normal, streaming run on the interactive path"
       >
         {busy ? "Running…" : "Run"}
@@ -290,7 +347,7 @@ function RunMenu({ busy, onRun }: { busy: boolean; onRun: (durable: boolean) => 
         type="button"
         className={buttonClass("primary", "rounded-l-none border-l-blue-400 px-1.5")}
         onClick={toggle}
-        disabled={busy}
+        disabled={disabled}
         aria-label="Run options"
         aria-haspopup="menu"
         aria-expanded={open}
