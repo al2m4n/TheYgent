@@ -193,8 +193,8 @@ dist/
 .turbo/
 *.tsbuildinfo
 
-# pnpm
-pnpm-lock.yaml
+# Local agent-session state (worktrees under .claude/ are full repo copies — never commit)
+.claude/
 
 # Vite
 .env.local

@@ -1,10 +1,11 @@
 """The durable-run endpoint (``POST /agents/{id}/durable-runs``) — the UI's path to run a
 durable-only agent (loop/map/subgraph/human) on the durable runtime and poll its run id.
 
-Durable-OFF must degrade cleanly: the endpoint returns ``durable_required`` (400) BEFORE touching the
-registry, so a non-durable server never half-starts a run it can't finish. The durable-ON happy path
-(enqueue → 202 ``{run_id}`` → poll ``GET /runs/{id}`` → completed) is exercised end-to-end against the
-real DBOS runtime + real Postgres, since it needs the process-global durable singleton.
+Durable-OFF must degrade cleanly: the endpoint returns ``durable_required`` (400) BEFORE
+touching the registry, so a non-durable server never half-starts a run it can't finish. The
+durable-ON happy path (enqueue → 202 ``{run_id}`` → poll ``GET /runs/{id}`` → completed) is
+exercised end-to-end against the real DBOS runtime + real Postgres, since it needs the
+process-global durable singleton.
 """
 
 from __future__ import annotations
