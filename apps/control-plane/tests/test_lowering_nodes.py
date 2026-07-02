@@ -517,20 +517,34 @@ async def test_map_fans_out_and_resumes_only_incomplete_branches(pg_url: str) ->
         maid, mver = await save_agent(sm, agents, mp)
         rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
         rt.launch()
+        from dbos import DBOS
+
         handle = await rt.enqueue_run(
             {"agent_id": maid, "version": mver, "content_hash": None}, ["a", "b", "c"]
         )
         wid = handle.workflow_id
+
+        async def _child_journaled(index: int) -> bool:
+            # fake.calls only proves the HTTP request landed, not that DBOS durably journaled the
+            # step outcome — under xdist's added CPU/IO contention that gap can outlive this poll
+            # loop, so branch "a"/"c" would legitimately (per the at-least-once guarantee) re-run
+            # on resume. Poll the child workflow's OWN persisted status instead — the true signal.
+            status = await DBOS.get_workflow_status_async(f"{wid}-map-n_map-{index}")
+            return status is not None and status.status == "SUCCESS"
+
         for _ in range(1000):
-            if fake.blocked_entered.is_set() and fake.calls.get("a") and fake.calls.get("c"):
+            if (
+                fake.blocked_entered.is_set()
+                and await _child_journaled(0)
+                and await _child_journaled(2)
+            ):
                 break
             await _sleep()
         assert fake.blocked_entered.is_set()
+        assert await _child_journaled(0) and await _child_journaled(2)  # a, c durably journaled
         assert fake.calls.get("a") == 1 and fake.calls.get("c") == 1  # a, c completed once
 
-        rt.shutdown()  # CRASH after a + c done, mid-b
-
-        from dbos import DBOS
+        rt.shutdown()  # CRASH after a + c are durably journaled, mid-b
 
         rt2, gw2 = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
         rt2.launch()
