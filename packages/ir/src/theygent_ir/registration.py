@@ -1,11 +1,11 @@
-"""Inference-plane registration payload — theygent-stack-9.1.md §9.1.3.
+"""Inference-plane registration payload.
 
 The wire format is camelCase (the control-plane speaks it); internally we use
-snake_case via Pydantic aliases. The `binding` enum (theygent-graph-schema.md
-§8.4) is load-bearing: ``mlx | vllm | llamacpp`` are the engines theygent
-manages the lifecycle of, ``openai-compatible`` is a reachable passthrough.
-``source`` (where the weights come from) is orthogonal to ``binding`` (which
-engine serves them) — never conflate them.
+snake_case via Pydantic aliases. The `binding` enum is load-bearing:
+``mlx | vllm | llamacpp`` are the engines theygent manages the lifecycle of,
+``openai-compatible`` is a reachable passthrough. ``source`` (where the
+weights come from) is orthogonal to ``binding`` (which engine serves them) —
+never conflate them.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ ManagedBindingName = Literal["mlx", "vllm", "llamacpp"]
 ReachableBindingName = Literal["openai-compatible"]
 SourceName = Literal["hf", "local-path", "url"]
 
-#: The frozen modality vocabulary (M18 §1.2 / theygent-stack-9.1.md §9.1.2). The bench's tester
-#: panels are keyed on these — a new modality is a new key + a panel registered against it, never a
-#: hardcoded ``if vision … else if stt …`` tree. ``vision`` is a sub-capability of ``chat`` (M18
-#: §1.3): a vision model reports ``["chat", "vision"]`` and runs on ``/v1/chat/completions``.
-#: ``images.generation`` and ``rerank`` are RESERVED/DEFERRED (named, not implemented).
+#: The frozen modality vocabulary. The bench's tester panels are keyed on these — a new modality is
+#: a new key + a panel registered against it, never a hardcoded ``if vision … else if stt …`` tree.
+#: ``vision`` is a sub-capability of ``chat``: a vision model reports ``["chat", "vision"]`` and
+#: runs on ``/v1/chat/completions``. ``images.generation`` and ``rerank`` are RESERVED/DEFERRED
+#: (named, not implemented).
 Modality = Literal["chat", "vision", "embeddings", "audio.transcription", "audio.speech"]
 MODALITIES: frozenset[str] = frozenset(
     {"chat", "vision", "embeddings", "audio.transcription", "audio.speech"}
@@ -31,7 +31,7 @@ MODALITIES: frozenset[str] = frozenset(
 
 #: Engines whose lifecycle the inference plane owns (spawn / warm / evict).
 MANAGED_BINDINGS: frozenset[str] = frozenset({"mlx", "vllm", "llamacpp"})
-#: Every legal `binding` value (§8.4). Used to reject engine names on /v1/*.
+#: Every legal `binding` value. Used to reject engine names on /v1/*.
 BINDING_NAMES: frozenset[str] = MANAGED_BINDINGS | {"openai-compatible"}
 
 
@@ -55,14 +55,14 @@ class Lifecycle(_Wire):
 class ManagedBinding(_Wire):
     """A lifecycle-managed local engine (mlx / vllm / llamacpp).
 
-    ``modality`` (M20) is the THIRD orthogonal axis, alongside ``binding`` (*which engine* owns the
+    ``modality`` is the THIRD orthogonal axis, alongside ``binding`` (*which engine* owns the
     lifecycle) and ``source`` (*where the weights* come from): it names the *task* the model serves
     (``chat`` / ``vision`` / ``embeddings`` / ``audio.*``). The manager dispatches the **spawn** on
     it — ``mlx`` chat spawns ``mlx_lm.server`` while ``mlx`` vision spawns ``mlx_vlm.server``;
     ``llamacpp`` embeddings adds ``--embeddings`` to the same ``llama-server``. It is NOT a new
-    ``binding`` value (the §8.4 enum stays frozen — ``mlx-vlm`` is still the ``mlx`` engine, only
-    the task differs) and it defaults to ``"chat"`` so every pre-M20 registration is unchanged. A
-    deliberate, named additive extension (theygent-stack-9.1.md §9.1.3).
+    ``binding`` value (the binding enum stays frozen — ``mlx-vlm`` is still the ``mlx`` engine, only
+    the task differs) and it defaults to ``"chat"`` so every prior registration is unchanged. A
+    deliberate, named additive extension.
 
     Lands ONLY here, never on ``ReachableBinding`` (a reachable upstream self-describes its own
     modality over its URL). NOTE the distinction from the graph IR's ``graph.ModelBinding``: this is
@@ -83,7 +83,7 @@ class ReachableBinding(_Wire):
     """A reachable passthrough: a URL + credential reference, never managed.
 
     ``credential_ref`` resolves in the user's trust domain only and must never
-    cross a cloud boundary (theygent-stack.md §10).
+    cross a cloud boundary.
     """
 
     binding: ReachableBindingName
@@ -108,7 +108,7 @@ def parse_registration(data: Any) -> ManagedBinding | ReachableBinding:
 
 
 class Capabilities(_Wire):
-    """What a bound model actually supports — §9.1.2.
+    """What a bound model actually supports.
 
     The compiler queries this *before* a run to validate that a node's model
     supports the tool-calling / structured output / context the graph needs.
@@ -122,7 +122,7 @@ class Capabilities(_Wire):
     #: so it rides the ``approximate`` flag like the other inferred fields.
     reasoning: bool = False
     max_context: int | None = None
-    #: What the bench routes its tester panels on (M18 §1.2 / §9.1.2). DERIVED, not a new probe:
+    #: What the bench routes its tester panels on. DERIVED, not a new probe:
     #: left at its default it is filled from the flags — ``["chat"]`` (+ ``"vision"`` when the
     #: ``vision`` flag is set), the right answer for every chat/VLM engine theygent manages today.
     #: A non-chat engine (an embeddings server, a Whisper STT, a TTS) declares its modalities
@@ -130,9 +130,8 @@ class Capabilities(_Wire):
     #: So it rides the ``approximate`` flag like the other inferred fields.
     modalities: list[Modality] = Field(default_factory=list)
     #: True when some fields are conservative/inferred rather than probed from the
-    #: engine (e.g. MLX exposes no capability endpoint — same posture as the M1
-    #: chat_template_caps follow-up). A consumer should treat such a report as
-    #: best-effort, not authoritative.
+    #: engine (e.g. MLX exposes no capability endpoint — inferred from the chat
+    #: template). A consumer should treat such a report as best-effort, not authoritative.
     approximate: bool = False
 
     @model_validator(mode="after")
@@ -140,7 +139,7 @@ class Capabilities(_Wire):
         # Empty (the default) → derive from the capability flags: every managed engine today is a
         # chat engine, with ``vision`` as a sub-capability. A non-chat engine passes ``modalities``
         # explicitly, which is preserved. ``extra="forbid"`` + the ``Modality`` Literal reject an
-        # unknown key/value loudly (the §4 "unknown modality is rejected" guard).
+        # unknown key/value loudly (the "unknown modality is rejected" guard).
         if not self.modalities:
             mods: list[Modality] = ["chat"]
             if self.vision:

@@ -9,7 +9,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "litellm>=1.40",
     "httpx>=0.27",
-    # M18: the /v1/audio/transcriptions endpoint parses a multipart upload via request.form().
+    # the /v1/audio/transcriptions endpoint parses a multipart upload via request.form().
     "python-multipart>=0.0.9",
     "psutil>=5.9",
     # MLX exposes no /props; the capability probe reads config.json (max context) from
@@ -31,6 +31,7 @@ packages = ["src/theygent_inference_plane"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-xdist>=3",
     "ruff>=0.5",
     "ty>=0.0.1a1",
 ]

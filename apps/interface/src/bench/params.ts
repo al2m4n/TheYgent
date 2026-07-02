@@ -1,4 +1,4 @@
-// Schema-driven, capability-NARROWED param forms (M18 §2.2 / the §1.2 data-driven discipline).
+// Schema-driven, capability-NARROWED param forms (data-driven discipline).
 //
 // Each modality declares its param surface as DATA; the panel renders it generically (no hardcoded
 // per-param JSX). A param that needs a capability the model doesn't advertise is HIDDEN, not greyed
@@ -24,7 +24,7 @@ export interface ParamSpec {
 }
 
 // Panels are keyed by the panel-bearing modalities. `vision` rides the chat panel (it is a chat
-// sub-capability — §1.3), so it has no entry of its own; the chat panel shows image attach when
+// sub-capability), so it has no entry of its own; the chat panel shows image attach when
 // `caps.vision` is set.
 export type PanelModality = "chat" | "embeddings" | "audio.transcription" | "audio.speech";
 
@@ -50,7 +50,7 @@ const CHAT_PARAMS: ParamSpec[] = [
     step: 0.1,
   },
   { key: "seed", label: "Seed", type: "number", step: 1 },
-  // Capability-gated — hidden unless the model advertises the flag (the §2.2 / §4 narrowing guard):
+  // Capability-gated — hidden unless the model advertises the flag:
   {
     key: "tool_choice",
     label: "Tool choice",

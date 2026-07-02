@@ -1,9 +1,10 @@
-"""M19 §2.8 / §1.6 — the gate seam (ratelimit · quota), per-KEY (per-user deferred).
+"""Gate seam (ratelimit · quota), per-KEY (per-user deferred).
 
-A gate emits ``allow`` (input through) or ``deny`` (a clean result — never a hang). ``ratelimit`` is
-a trivial per-key counter; ``quota`` READS accumulated token usage off M17 spans (no new metering).
+A gate emits ``allow`` (input through) or ``deny`` (a clean result — never a hang).
+``ratelimit`` is a trivial per-key counter; ``quota`` READS accumulated token usage off
+recorded spans (no new metering).
 The guards: deny past the limit/budget, per-key independence, and per-USER is NOT implemented (the
-key is the M12-token/keyExpr bucket; the identity work is deferred — by scoping, not faked).
+key is the invoke-token/keyExpr bucket; the identity work is deferred — by scoping, not faked).
 """
 
 from __future__ import annotations

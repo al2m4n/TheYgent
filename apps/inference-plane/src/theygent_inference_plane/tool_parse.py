@@ -2,7 +2,7 @@
 ``message.tool_calls`` shape (the inference-plane's job: absorb an engine quirk so the seam between
 planes stays the OpenAI shape).
 
-WHY THIS EXISTS (the M22 follow-up). Llama 3.x emits a function call in its NATIVE text format —
+WHY THIS EXISTS. Llama 3.x emits a function call in its NATIVE text format —
 ``<|python_tag|>{"name": "fn", "parameters": {...}}`` — and ``mlx_lm.server`` returns that as plain
 assistant ``content`` rather than a structured ``tool_calls`` array. llama.cpp's ``llama-server``
 parses the same format into ``tool_calls`` internally; MLX does not. The control-plane tool loop

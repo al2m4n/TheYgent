@@ -1,4 +1,4 @@
-"""The M17 observability fast suite — the waterfall API, capture policy, authz chokepoint, the
+"""Observability fast suite — the waterfall API, capture policy, authz chokepoint, the
 two-sink wiring, and worker attribution, over real PG + the fake inference + the in-process walker.
 
 Field names are **snake_case**, matching the existing theygent API convention (``/runs`` is too) and
@@ -23,7 +23,7 @@ def _graph_run(client: TestClient, ir: dict, input_value: str = "hi") -> str:
     return r.json()["runId"]
 
 
-# ── the span tree (§7: shape, gap derivable, phase attribution, worker attribution) ──
+# ── the span tree (shape, gap derivable, phase attribution, worker attribution) ──
 
 
 def test_trace_is_a_span_tree_with_one_node_span_per_node(client: TestClient) -> None:
@@ -74,7 +74,7 @@ def test_interactive_spans_carry_worker_attribution(client: TestClient) -> None:
         assert s["worker_host"]  # host:pid stamped
 
 
-# ── node I/O capture (§7: post-$in, multi-input, lazy) ──
+# ── node I/O capture (post-$in, multi-input, lazy) ──
 
 
 def test_node_io_full_capture_records_payloads(client: TestClient) -> None:
@@ -96,14 +96,14 @@ def test_multi_input_node_io_one_entry_per_port(client: TestClient) -> None:
     ir = two_input_llm_ir("file=$in.file q=$in.question", "FILE-BODY", "QUESTION-TEXT")
     run_id = _graph_run(client, ir, input_value="ignored")
     io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
-    assert set(io["inputs"]) == {"file", "question"}  # one entry per named in-port (M10)
+    assert set(io["inputs"]) == {"file", "question"}  # one entry per named in-port
     assert io["inputs"]["file"] == "FILE-BODY" and io["inputs"]["question"] == "QUESTION-TEXT"
 
 
 def test_trace_carries_no_payloads_io_is_lazy(client: TestClient) -> None:
     run_id = _graph_run(client, trivial_ir(), input_value="secret prompt body")
     spans = client.get(f"/runs/{run_id}/trace").json()["spans"]
-    assert "secret prompt body" not in json.dumps(spans)  # /trace is payload-free (§1.3)
+    assert "secret prompt body" not in json.dumps(spans)  # /trace is payload-free
     io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
     assert io["inputs"]["in"] == "secret prompt body"  # …but /io returns it (lazy click-through)
 
@@ -130,7 +130,7 @@ def test_prompt_run_is_traced_too(client: TestClient) -> None:
     assert io["outputs"]["output"]  # the answer, captured as output
 
 
-# ── live SSE (§7) ──
+# ── live SSE ──
 
 
 def test_trace_stream_done_on_terminal_run(client: TestClient) -> None:
@@ -144,7 +144,7 @@ def test_trace_stream_done_on_terminal_run(client: TestClient) -> None:
     assert "event: done" in body
 
 
-# ── two-sink wiring + redaction (§7) ──
+# ── two-sink wiring + redaction ──
 
 
 def test_otlp_sink_off_by_default_on_when_configured() -> None:
@@ -154,7 +154,7 @@ def test_otlp_sink_off_by_default_on_when_configured() -> None:
 
 
 def test_otlp_redacts_configured_attr_while_local_keeps_it(monkeypatch) -> None:
-    # The RedactingSpanProcessor of §4: the span row keeps every attribute locally; the OTLP copy
+    # The RedactingSpanProcessor: the span row keeps every attribute locally; the OTLP copy
     # has the sensitive scalar stripped.
     monkeypatch.setenv("THEYGENT_OTEL_REDACT_ATTRS", "gen_ai.prompt")
     seen: dict = {}
@@ -175,7 +175,7 @@ def test_otlp_redacts_configured_attr_while_local_keeps_it(monkeypatch) -> None:
     assert span.attributes["gen_ai.prompt"] == "secret"  # the local span keeps it
 
 
-# ── per-agent capture policy (§7: off/metadata/full, precedence, hash unchanged) + authz ──
+# ── per-agent capture policy (off/metadata/full, precedence, hash unchanged) + authz ──
 
 
 def _save_agent(client: TestClient, ir: dict) -> str:
@@ -197,7 +197,9 @@ def test_io_policy_off_writes_no_payloads_but_spans_still_land(client: TestClien
     )
     run_id = _agent_run(client, agent_id)
     spans = client.get(f"/runs/{run_id}/trace").json()["spans"]
-    assert any(s["node_id"] == "n_llm" for s in spans)  # timing span still written (§4)
+    assert any(
+        s["node_id"] == "n_llm" for s in spans
+    )  # timing span still written when capture is off
     io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
     assert io["capture_level"] == "off" and io["inputs"] is None
     assert "disabled" in io["reason"].lower()
@@ -225,7 +227,7 @@ def test_io_policy_full_writes_payloads(client: TestClient) -> None:
 def test_io_policy_metadata_ceiling_caps_an_agent_requesting_full(
     fake_inference: FakeInference, pg_url: str, monkeypatch
 ) -> None:
-    # A metadata DEPLOYMENT CEILING (§1.7 env) caps an agent that requested full → effective
+    # A metadata DEPLOYMENT CEILING (env var) caps an agent that requested full → effective
     # metadata, capped. The ceiling is read at Telemetry construction, so set it BEFORE the app.
     monkeypatch.setenv("THEYGENT_IO_CAPTURE", "metadata")
     app = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
@@ -247,7 +249,7 @@ def test_io_policy_edit_does_not_change_content_hash(client: TestClient) -> None
     client.put(f"/agents/{agent_id}/io-policy", json={"io_capture": "off"})
     after = client.get(f"/agents/{agent_id}").json()
     assert [v["content_hash"] for v in after["versions"]] == before  # policy not in the hashed IR
-    assert len(after["versions"]) == len(before)  # no new version minted (§1.8)
+    assert len(after["versions"]) == len(before)  # no new version minted
 
 
 def test_io_policy_unknown_agent_is_404(client: TestClient) -> None:
@@ -257,7 +259,7 @@ def test_io_policy_unknown_agent_is_404(client: TestClient) -> None:
 
 def test_authz_denial_gates_payloads_not_the_timeline(client: TestClient, monkeypatch) -> None:
     # With io:read denied (but trace:read allowed), /io returns the no-payload shape + a reason (not
-    # a 500/403), while /trace still renders — the §1.9/§6 "captured but not visible to you" state.
+    # a 500/403), while /trace still renders — the "captured but not visible to you" state.
     run_id = _graph_run(client, trivial_ir(), input_value="private")
 
     def fake_authorize(principal, permission, resource):

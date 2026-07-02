@@ -1,4 +1,4 @@
-"""theygent durable worker (M13, §8 process type 2).
+"""theygent durable worker (process type 2: durable workflow executor).
 
 The durable worker is the one process that "earns its own service" in the server / air-gapped
 topology: it launches DBOS, registers the single ``theygent_run`` workflow (+ its steps and the
@@ -8,8 +8,8 @@ needed at all — the control-plane launches the very same DBOS runtime *in-proc
 library), so there is never a second architecture, only a second deployable.
 
 The worker reaches inference only over the gateway HTTP seam (the plane boundary holds — it never
-imports an engine), and shares M4's Postgres with the control-plane (app tables in ``public``, DBOS
-state in ``dbos``).
+imports an engine), and shares the same Postgres instance with the control-plane (app tables in
+``public``, DBOS state in ``dbos``).
 """
 
 from theygent_worker.app import build_runtime, run_worker

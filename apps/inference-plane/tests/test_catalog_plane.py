@@ -1,9 +1,9 @@
-"""M16 §1.2 plane guard — discovery + install stay in the inference plane.
+"""Plane guard — discovery + install stay in the inference plane.
 
 Models install HERE (the user's trust domain): the download runs in-process and the registration
 writes to the inference-plane-local registry. So ``catalog`` and ``downloader`` must reach for NO
 control-plane Postgres — no SQLAlchemy / asyncpg / control-plane import. A model install crossing
-the shared DB would be a §4-class plane regression. Checked against real imports (AST), mirroring
+the shared DB would be a plane-boundary regression. Checked against real imports (AST), mirroring
 ``test_registry_persistence.py``'s guard, so a docstring mentioning "Postgres" never trips it.
 """
 

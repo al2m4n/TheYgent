@@ -1,12 +1,11 @@
-"""The ``McpClient`` lifecycle seam + the stdio AND http transport implementations (m7.md §3.1 +
-M19 §2.4).
+"""The ``McpClient`` lifecycle seam + the stdio AND http transport implementations.
 
 ``McpClient`` is the protocol the control-plane depends on; ``StdioMcpClient`` (the server is a
 subprocess, JSON-RPC over stdin/stdout) and ``HttpMcpClient`` (streamable-HTTP / SSE to a remote
 server) are the two transports — both wrap the official ``mcp`` SDK. **The SDK is wrapped here and
 nowhere else** (same discipline as ``gateway-client`` wrapping the OpenAI SDK): the rest of the
-control-plane imports only this module's protocol + dataclasses, never ``mcp`` directly. (M7 shipped
-stdio only; M19 §2.4 adds http against the SAME protocol — the node contract is identical.)
+control-plane imports only this module's protocol + dataclasses, never ``mcp`` directly. (Stdio
+shipped first; http was added against the SAME protocol — the node contract is identical.)
 
 The hard part this module owns: a **persistent** connection that survives across request tasks. The
 SDK's transport / ``ClientSession`` are anyio context managers whose cancel scopes must be entered
@@ -54,21 +53,21 @@ class McpResult:
 class McpConnectionError(RuntimeError):
     """A transport/connection failure: the server didn't spawn, the process died, or the session
     broke. Distinct from a tool-level error (:class:`McpResult` with ``is_error``). The manager
-    catches this to drive its one reconnect-retry (m7.md §3.2)."""
+    catches this to drive its one reconnect-retry."""
 
 
 class McpToolNotFound(KeyError):
     """A ``call_tool`` named a tool the connected server doesn't expose. The walker binds ``err``
-    (runtime miss — caught at validation only if the server was already connected, m7.md §4)."""
+    (runtime miss — caught at validation only if the server was already connected)."""
 
 
 class McpServerConfig(BaseModel):
-    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload, m7.md §3.2 + M19 §2.4).
+    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload).
     ``transport`` is ``stdio`` (a local subprocess — ``command``/``args``/``env``/``cwd``) or
     ``http`` (a remote streamable-HTTP/SSE server — ``url``/``headers``). For stdio, ``env`` carries
     the user's secrets/paths INTO the subprocess; for http, an auth header is built SERVER-SIDE from
-    a connection secret (§1.1) and lands in ``headers`` — never in the IR, never logged with values,
-    never resolved in theygent cloud (the §10 sovereignty invariant)."""
+    a connection secret and lands in ``headers`` — never in the IR, never logged with values,
+    never resolved in theygent cloud (the sovereignty invariant)."""
 
     transport: Literal["stdio", "http"] = "stdio"
     command: str | None = None  # stdio
@@ -80,7 +79,8 @@ class McpServerConfig(BaseModel):
 
 
 class McpClient(Protocol):
-    """The lifecycle seam (m7.md §3.1). Transport-agnostic; ``StdioMcpClient`` is M7's only impl."""
+    """The lifecycle seam. Transport-agnostic; ``StdioMcpClient`` is the stdio-only
+    implementation."""
 
     async def connect(self) -> None: ...
     async def list_tools(self) -> list[McpToolDescriptor]: ...
@@ -119,7 +119,7 @@ def _call_timeout_s() -> float:
 
 
 class _ActorMcpClient:
-    """A persistent MCP connection owned by a single background task (m7.md §3.1).
+    """A persistent MCP connection owned by a single background task.
     Transport-agnostic: a subclass provides :meth:`_open_transport`; everything else (the queue /
     serve / reconnect contract) is shared so stdio and http behave identically."""
 
@@ -208,7 +208,7 @@ class _ActorMcpClient:
                 raise
 
     async def list_tools(self) -> list[McpToolDescriptor]:
-        # Cached on connect for the connection lifetime (m7.md §4 capability caching).
+        # Cached on connect for the connection lifetime (capability caching).
         return list(self._tools)
 
     async def call_tool(self, name: str, args: dict[str, Any]) -> McpResult:
@@ -244,7 +244,7 @@ class _ActorMcpClient:
 
 
 class StdioMcpClient(_ActorMcpClient):
-    """A persistent stdio MCP connection (m7.md §3.1) — the server is a local subprocess."""
+    """A persistent stdio MCP connection — the server is a local subprocess."""
 
     def __init__(
         self,
@@ -265,8 +265,8 @@ class StdioMcpClient(_ActorMcpClient):
 
 
 class HttpMcpClient(_ActorMcpClient):
-    """A persistent streamable-HTTP / SSE MCP connection (M19 §2.4) — a remote server by url.
-    ``headers`` carries the auth built SERVER-SIDE from a connection secret (§1.1); the secret never
+    """A persistent streamable-HTTP / SSE MCP connection — a remote server by url.
+    ``headers`` carries the auth built SERVER-SIDE from a connection secret; the secret never
     appears in the IR. Same actor machinery as stdio — only the transport differs."""
 
     def __init__(self, *, url: str, headers: Mapping[str, str] | None = None) -> None:

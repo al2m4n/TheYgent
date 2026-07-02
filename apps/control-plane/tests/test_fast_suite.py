@@ -1,7 +1,7 @@
 """Fast suite (gates PRs) — control-plane against a real (fake-model) inference plane.
 
 Everything is real except the model: the gateway-client really talks HTTP to a threaded
-OpenAI-compatible server. Asserts the full M3 §6 loop.
+OpenAI-compatible server. Asserts the full run loop.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_stream_run_full_loop(client: TestClient, fake_inference: FakeInference)
 
     # The logical id reached the wire verbatim (never rewritten to an engine name).
     assert fake_inference.captured["model"] == "triage-fast"
-    # Run-id was forwarded as a header for request identity (§5).
+    # Run-id was forwarded as a header for request identity.
     assert fake_inference.captured["run_id_header"] == run_id
 
     # GET /runs/{id} reflects the terminal status.
@@ -74,7 +74,7 @@ def test_non_stream_accumulates(client: TestClient) -> None:
 
 
 def test_engine_name_rejected(client: TestClient, fake_inference: FakeInference) -> None:
-    # §3.2 negative test: an engine name is not a logical id and is rejected up front;
+    # Negative test: an engine name is not a logical id and is rejected up front;
     # it must never reach the inference wire.
     for engine in ("mlx", "vllm", "llamacpp"):
         resp = client.post("/runs", json={"input": "x", "model": engine, "stream": False})

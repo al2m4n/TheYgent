@@ -1,4 +1,4 @@
-"""The two HTTP surfaces (theygent-stack-9.1.md §9.1.0), never conflated.
+"""The two HTTP surfaces (management plane and data plane), never conflated.
 
   * /admin/* — management plane (theygent-native): registry, lifecycle, caps, health
   * /v1/*    — data plane (OpenAI-compatible): the `model` field is a LOGICAL id
@@ -68,9 +68,8 @@ class ChatRequest(BaseModel):
 
 
 class EmbeddingsRequest(BaseModel):
-    # M18: the embeddings data-plane shape (§9.1.1 — already in the contract, completed here for the
-    # bench's embeddings tester). `model` is a LOGICAL id; extras (dimensions / encoding_format)
-    # flow through to the upstream as generation params.
+    # The embeddings data-plane shape follows the OpenAI contract. `model` is a LOGICAL id;
+    # extras (dimensions / encoding_format) flow through to the upstream as generation params.
     model_config = ConfigDict(extra="allow")
 
     model: str
@@ -78,7 +77,7 @@ class EmbeddingsRequest(BaseModel):
 
 
 class SpeechRequest(BaseModel):
-    # M18 §1.1: the OpenAI text-to-speech shape. `model` is a LOGICAL id. `voice`/`response_format`/
+    # The OpenAI text-to-speech shape. `model` is a LOGICAL id. `voice`/`response_format`/
     # `speed` ride through as params; the response is audio bytes.
     model_config = ConfigDict(extra="allow")
 
@@ -112,7 +111,7 @@ def _engine_unavailable(exc: Exception) -> JSONResponse:
 
 
 def _cockpit_cors_origins() -> list[str]:
-    # The M8 cockpit SPA calls the management plane (/admin/models, /admin/engines) DIRECTLY
+    # The interface SPA calls the management plane (/admin/models, /admin/engines) DIRECTLY
     # from the browser — the inference plane is user-controlled and reachable, not proxied
     # through the control-plane (the two-plane split). So the browser needs CORS for the dev
     # origin here too, symmetric with the control-plane's. Narrow dev-origin only (never `*`);
@@ -120,7 +119,8 @@ def _cockpit_cors_origins() -> list[str]:
     raw = os.environ.get("THEYGENT_CORS_ORIGINS")
     if raw is not None:
         return [o.strip() for o in raw.split(",") if o.strip()]
-    # The cockpit (:5173) and the M15 visual interface (:5174) both call /admin/models directly.
+    # Both the control-plane cockpit (:5173) and the visual interface (:5174) call
+    # /admin/models directly.
     return [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -143,7 +143,7 @@ def create_app(
     downloader: Downloader | None = None,
     model_dir: Path | None = None,
 ) -> FastAPI:
-    # M9 §2.3: persist the logical-model registry LOCALLY to the inference plane (never the
+    # Persist the logical-model registry LOCALLY to the inference plane (never the
     # control-plane's Postgres — the plane boundary). `state_path=None` keeps it in-memory (the
     # fast suite never touches disk); the real entrypoint passes a path under the plane's state dir.
     registry = Registry(state_path)
@@ -155,7 +155,7 @@ def create_app(
     )
     # One launcher per (engine, modality), behind a single dispatcher so the manager stays
     # engine-agnostic (MLX/vLLM — and now the non-chat modalities — added with zero EngineManager
-    # changes). Tests inject a single fake launcher that serves every binding. M20: llama.cpp serves
+    # changes). Tests inject a single fake launcher that serves every binding. llama.cpp serves
     # chat + embeddings from the SAME llama-server (one instance, flags differ — two keys); MLX chat
     # (mlx_lm.server) and vision (mlx_vlm.server) are distinct programs.
     _llamacpp = LlamaCppLauncher()
@@ -177,11 +177,11 @@ def create_app(
         max_resident=max_resident,
     )
     gateway = Gateway()
-    # M16: discovery + in-plane install. The catalog provider (HF today; the seam takes MCP/Apify
+    # Discovery + in-plane install. The catalog provider (HF today; the seam takes MCP/Apify
     # adapters later) and the downloader are injectable so the fast suite runs with a fake Hub + a
     # fake fetcher — no network, no weights on disk. Both live HERE, in the inference plane: install
     # downloads in the user's trust domain and registers into the local registry, never the control
-    # plane (M16 §1.2). `model_dir` is where installed weights land (used by the real downloader).
+    # plane. `model_dir` is where installed weights land (used by the real downloader).
     catalog: CatalogProvider = catalog_provider or HuggingFaceProvider()
     _model_dir = model_dir or (Path.home() / ".theygent" / "inference" / "models")
     downloads = downloader or Downloader(registry, _model_dir)
@@ -255,7 +255,7 @@ def create_app(
 
     @app.get("/admin/engines")
     async def list_engines() -> dict[str, Any]:
-        # Running managed engines + resident state (§9.1.2). Count-based arbitration,
+        # Running managed engines + resident state. Count-based arbitration,
         # so no RAM/VRAM bytes yet — maxResident is the ceiling the policy enforces.
         return {"maxResident": manager.max_resident, "resident": manager.resident_engines()}
 
@@ -299,7 +299,7 @@ def create_app(
             except EngineUnavailableError as exc:
                 return _engine_unavailable(exc)
         else:
-            # Reachable upstreams aren't probed locally in M1; advertise defaults.
+            # Reachable upstreams aren't probed locally; advertise defaults.
             caps = Capabilities()
         return JSONResponse(caps.model_dump(by_alias=True))
 
@@ -374,9 +374,9 @@ def create_app(
             )
         return Response(status_code=204)
 
-    # ── management plane: /admin/catalog/* (M16 discovery + install) ─────
+    # ── management plane: /admin/catalog/* (discovery + install) ─────────
     # Browse a provider, then install the chosen variant by downloading it HERE and registering it
-    # locally. Engine-compatibility (§6) is enforced server-side: the listing is filtered to the
+    # locally. Engine-compatibility is enforced server-side: the listing is filtered to the
     # engines this host actually has ready, so an unrunnable model is never surfaced.
 
     def _ready_engines() -> list[str]:
@@ -419,7 +419,7 @@ def create_app(
         # `sort` is validated at the edge (an unknown value → 422) since it's the Sort literal.
         ready = _ready_engines()
         # An optional `engines` override narrows to a subset — but only ever within what's ready, so
-        # the §6 invariant (never surface an unrunnable model) holds even if the client asks wider.
+        # The invariant (never surface an unrunnable model) holds even if the client asks wider.
         if engines is not None:
             requested = {e.strip() for e in engines.split(",") if e.strip()}
             selected = [e for e in ready if e in requested]
@@ -624,17 +624,18 @@ def create_app(
         result = await gateway.complete(upstream, req.messages, params)
         return JSONResponse(result)
 
-    # ── data plane: embeddings + audio (M18) ────────────────────────────
+    # ── data plane: embeddings + audio ──────────────────────────────────
     # Same logical-id resolution + managed/reachable dispatch as chat, factored into one lease
     # helper. The `model` field is a LOGICAL id on these too — an engine name is simply not a
-    # registered id (model_not_found), never rewritten onto the wire (§9.1.1, the M3 §3.2 negative
-    # test extended to audio/embeddings). These are non-streaming awaited calls, so a spawn/capacity
-    # failure surfaces as a clean error before the response is built (no pre-commit dance needed).
+    # registered id (model_not_found), never rewritten onto the wire. These are non-streaming
+    # awaited calls, so a spawn/capacity failure surfaces as a clean error before the response is
+    # built (no pre-commit dance needed).
 
     @contextlib.asynccontextmanager
     async def _lease_for(model: str):
         """Yield ``(binding, upstream)`` for a logical id — warming + leasing a managed engine, or
-        resolving the reachable upstream's credential locally (§10). Raises ``UnknownLogicalId`` /
+        resolving the reachable upstream's credential locally (credentials stay in the inference
+        plane's trust domain, never crossing to the control plane). Raises ``UnknownLogicalId`` /
         ``EngineUnavailableError`` / ``NoCapacityError`` / ``CredentialResolutionError`` for the
         caller to map, exactly like the chat path."""
         binding = registry.require(model)

@@ -79,7 +79,7 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     expect(issues.some((i) => i.edgeId === "e1" && /no in-port/.test(i.message))).toBe(true);
   });
 
-  // M22: a capability tool node + an llm tools port wired by a `tool` edge.
+  // A capability tool node + an llm tools port wired by a `tool` edge.
   function capabilityGraph() {
     const ir = sampleGraph();
     ir.nodes
@@ -108,7 +108,7 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     return ir;
   }
 
-  it("M22: a capability tool node is NOT flagged for its unfed required in-port", () => {
+  it("a capability tool node is NOT flagged for its unfed required in-port", () => {
     // Regression: the validator must exempt a capability node (its args come from the model).
     const issues = validateGraph(capabilityGraph());
     expect(issues.some((i) => i.nodeId === "n_echo" && /not connected/.test(i.message))).toBe(
@@ -117,7 +117,7 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
     expect(issues.filter((i) => i.severity === "error")).toEqual([]);
   });
 
-  it("M22: flags a tool node wired as BOTH a capability and a step", () => {
+  it("flags a tool node wired as BOTH a capability and a step", () => {
     const ir = capabilityGraph();
     // also wire n_echo's output into n_out as a data edge → mixed mode.
     ir.edges?.push({

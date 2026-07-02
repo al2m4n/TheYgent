@@ -1,11 +1,11 @@
 """vLLM launcher — interface-only, CUDA-canonical, and UNPROVEN on this machine.
 
-vLLM's slot in theygent is NVIDIA/CUDA high-throughput GPU serving (stack §9). This
+vLLM's slot in theygent is NVIDIA/CUDA high-throughput GPU serving. This
 launcher targets ``vllm serve`` on a CUDA host. Its real path has **never run green
 here** — its integration test is CUDA-gated and skips clean. "Written and type-checks"
-is NOT "works" (the M1 lesson).
+is NOT "works" (the llama.cpp integration taught this lesson early).
 
-The governing rule (brief §3): **no CUDA/VRAM assumption may escape this module.** The
+The governing rule: **no CUDA/VRAM assumption may escape this module.** The
 ``EngineManager``, ``EvictionPolicy`` and gateway stay engine-agnostic; vLLM's GPU-ness
 is this launcher's private business. In particular, ``vllm-metal`` (Apple Silicon, MLX
 underneath) must NOT shape or "verify" this launcher — proving it on a Mac would be a

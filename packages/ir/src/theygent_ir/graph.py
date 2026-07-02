@@ -1,19 +1,19 @@
-"""The Agent Graph IR — the builder ↔ runtime seam (theygent-graph-schema.md §8).
+"""The Agent Graph IR — the builder ↔ runtime seam.
 
-This is the §4-class, hard-to-reverse decision M5 first exercises: the IR is the input
+This is the hard-to-reverse decision the IR first exercises: the IR is the input
 format the walker executes, the no-code builder will *write*, the registry will *version*,
-and observability will *map spans onto*. M1 froze the inference-plane registration payload
-(``registration.py``); M5 lands the rest of §8 — the document envelope (§8.2), nodes/edges
-(§8.3), model bindings (§8.4), and the determinism-class ``kind`` taxonomy (§8.1).
+and observability will *map spans onto*. The inference-plane registration payload
+(``registration.py``) froze first; this module adds the document envelope, nodes/edges,
+model bindings, and the determinism-class ``kind`` taxonomy.
 
 Two rules this module encodes, both load-bearing:
 
-* **Dispatch is by ``kind`` (§8.1), never ``type`` (§3.2 of M5).** ``kind``
+* **Dispatch is by ``kind``, never ``type``.** ``kind``
   (``activity`` / ``orchestration`` / ``boundary``) is the determinism class the compiler
   lowers on; ``type`` (``llm`` / ``input`` / ``output`` / …) selects the *handler within a
   kind*. ``NODE_TYPE_KIND`` pins the one correct ``kind`` for every known ``type`` so a
   ``type``/``kind`` mismatch is rejected, not silently lowered wrong.
-* **Layout never pollutes logic (§8.0/§8.2).** The optional ``view`` block holds React-Flow
+* **Layout never pollutes logic.** The optional ``view`` block holds React-Flow
   positions and is *never* hashed; ``content_hash`` (``contenthash.py``) is computed over the
   view-stripped, key-sorted JSON, so dragging a node never produces a "new version".
 
@@ -31,13 +31,13 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from pydantic.alias_generators import to_camel
 
-# ── the determinism taxonomy (§8.1) ──────────────────────────────────────────
+# ── the determinism taxonomy ─────────────────────────────────────────────────
 
 NodeKind = Literal["activity", "orchestration", "boundary"]
 
-#: The one correct ``kind`` for every known node ``type`` (§8.3). The walker dispatches on
+#: The one correct ``kind`` for every known node ``type``. The walker dispatches on
 #: ``kind``; this table is what makes a ``type``/``kind`` mismatch a validation error rather
-#: than a wrong lowering. Extended additively as the plugin API opens (§8.3 is extensible).
+#: than a wrong lowering. Extended additively as the plugin API opens.
 NODE_TYPE_KIND: dict[str, NodeKind] = {
     # boundary — graph entry/exit, human wait, sub-graph call
     "input": "boundary",
@@ -53,12 +53,12 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     "retriever": "activity",
     "memory": "activity",
     "code": "activity",
-    # M19 §2 — audio model-call types + the gate seam (all activities)
-    "transcribe": "activity",  # §2.2 — POST /v1/audio/transcriptions
-    "speak": "activity",  # §2.2 — POST /v1/audio/speech
-    "ratelimit": "activity",  # §2.8 — per-key counter (I/O)
-    "quota": "activity",  # §2.8 — accumulated-usage read (I/O)
-    # M19 §1.2 — ``guardrail`` is the first PER-INSTANCE kind: rule⇒orchestration, model⇒activity.
+    # audio model-call types + the gate seam (all activities)
+    "transcribe": "activity",  # POST /v1/audio/transcriptions
+    "speak": "activity",  # POST /v1/audio/speech
+    "ratelimit": "activity",  # per-key counter (I/O)
+    "quota": "activity",  # accumulated-usage read (I/O)
+    # ``guardrail`` is the first PER-INSTANCE kind: rule⇒orchestration, model⇒activity.
     # This is the table's DEFAULT (the rule backend, the default config); validate_graph derives the
     # real expected kind from each instance's ``check.type`` and enforces it (``_expected_kind``).
     "guardrail": "orchestration",
@@ -68,23 +68,23 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     "loop": "orchestration",
     "iterator": "orchestration",
     "map": "orchestration",
-    "transform": "orchestration",  # M19 §2.9 — deterministic reshape, inline, no I/O
+    "transform": "orchestration",  # deterministic reshape, inline, no I/O
 }
 
 #: Types whose ``kind`` is determined PER INSTANCE by their ``config``, not fixed in
-#: ``NODE_TYPE_KIND`` (m19.md §1.2). ``validate_graph`` derives the expected kind via
+#: ``NODE_TYPE_KIND``. ``validate_graph`` derives the expected kind via
 #: ``_expected_kind`` and enforces it; the table value above is only the palette/default.
 _PER_INSTANCE_KIND_TYPES: frozenset[str] = frozenset({"guardrail"})
 
 #: The node ``type``s the walker actually executes. Every other known ``type`` is a valid IR
 #: shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is an
-#: additive walker handler, not a refactor. M5 shipped ``input``/``output``/``llm``; M6 added
-#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node); M7 adds
-#: ``mcp_tool`` (an external MCP server's tool, same contract over a new transport) — m7.md §0.
-#: M14 adds ``human``/``subgraph`` (``boundary``) and ``loop``/``map`` (``orchestration``) — the
-#: four additive-lowering types. They run ONLY on the durable runtime (each lowers onto a DBOS
+#: additive walker handler, not a refactor. The initial walker shipped ``input``/``output``/``llm``;
+#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node) were added next;
+#: ``mcp_tool`` (an external MCP server's tool, same contract over a new transport) followed.
+#: ``human``/``subgraph`` (``boundary``) and ``loop``/``map`` (``orchestration``) are the
+#: additive-lowering types. They run ONLY on the durable runtime (each lowers onto a DBOS
 #: primitive: ``recv`` / child workflow / bounded inline repetition / durable-queue fan-out);
-#: the interactive M5 walker still raises ``NotImplementedError`` for them (m14.md §0/§1).
+#: the non-durable walker still raises ``NotImplementedError`` for them.
 EXECUTABLE_TYPES: frozenset[str] = frozenset(
     {
         "input",
@@ -97,7 +97,7 @@ EXECUTABLE_TYPES: frozenset[str] = frozenset(
         "subgraph",
         "loop",
         "map",
-        # M19 §2 — the node palette
+        # the node palette — audio/gate/transform types
         "transcribe",
         "speak",
         "guardrail",
@@ -110,8 +110,7 @@ EXECUTABLE_TYPES: frozenset[str] = frozenset(
 
 class _Wire(BaseModel):
     """camelCase on the wire (the builder/registry speak it), snake_case in code; reject
-    unknown keys so an IR typo fails loudly instead of being silently dropped (§3.1: refuse
-    anything that isn't the IR)."""
+    unknown keys so an IR typo fails loudly instead of being silently dropped."""
 
     model_config = ConfigDict(
         alias_generator=to_camel,
@@ -121,26 +120,24 @@ class _Wire(BaseModel):
     )
 
 
-# ── model bindings (§8.4) ─────────────────────────────────────────────────────
+# ── model bindings ────────────────────────────────────────────────────────────
 
 BindingName = Literal["mlx", "vllm", "llamacpp", "openai-compatible"]
 SourceName = Literal["hf", "local-path", "url"]
 
 
 class ModelBinding(_Wire):
-    """A logical model the graph's nodes reference by key (§8.4) — the sovereignty dial.
+    """A logical model the graph's nodes reference by key — the sovereignty dial.
 
     Nodes never hardcode a provider; they name a key in ``IRDocument.models`` and the
     ``binding`` resolves at runtime through the L0 gateway. ``binding`` names only the engines
     theygent manages (``mlx``/``vllm``/``llamacpp``) plus the catch-all ``openai-compatible``;
     ``source`` (where the *weights* come from) is orthogonal and never an engine.
 
-    ``model`` is the id forwarded to the inference seam. M5 has no registry/lifecycle manager
-    (M5 §7), so the walker forwards ``model`` as the logical id the inference plane already
-    knows (the §9.1.1 logical-id invariant still holds — an engine name here is rejected at
-    the seam). ``source`` is optional: it answers a lifecycle question (fetch the weights from
-    where?) that only matters once theygent manages the engine, which M5 does not — so the
-    trivial M5 graph omits it, while a §8.4 document that includes it still validates.
+    ``model`` is the id forwarded to the inference seam. The walker forwards ``model`` as the
+    logical id the inference plane already knows (the logical-id invariant holds — an engine
+    name here is rejected at the seam). ``source`` is optional: it answers a lifecycle question
+    (fetch the weights from where?) that only matters once theygent manages the engine.
     """
 
     binding: BindingName
@@ -149,7 +146,7 @@ class ModelBinding(_Wire):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
-# ── tools (§8.5) ──────────────────────────────────────────────────────────────
+# ── tools ─────────────────────────────────────────────────────────────────────
 
 
 class BuiltinTool(_Wire):
@@ -158,25 +155,26 @@ class BuiltinTool(_Wire):
 
 
 class HttpTool(_Wire):
-    """An http/REST/GraphQL tool binding (M19 §2.3) — the workhorse + the substrate for action tools
-    (§2.5) and crawler tools (§1.4). ``connection`` is the id of an ``http_auth`` connection (M19
-    §1.1) whose secret the handler injects SERVER-SIDE at step time — never inline in the IR. The
-    optional ``template`` names a provider request shape (e.g. ``slack.chat.postMessage``) for the
-    small built-in action set; everything else is the raw http tool config on the node (§2.3)."""
+    """An http/REST/GraphQL tool binding — the workhorse + the substrate for action tools
+    and crawler tools. ``connection`` is the id of an ``http_auth`` connection whose secret the
+    handler injects SERVER-SIDE at step time — never inline in the IR. The optional ``template``
+    names a provider request shape (e.g. ``slack.chat.postMessage``) for the small built-in action
+    set; everything else is the raw http tool config on the node."""
 
     kind: Literal["http"]
     connection: str
     template: str | None = None
-    # M21 — a model-callable http tool is SELF-DESCRIBING: ``description`` + ``parameter_schema``
+    # A model-callable http tool is SELF-DESCRIBING: ``description`` + ``parameter_schema``
     # (an OpenAI function ``parameters`` JSON-Schema) are what the model reads to decide the call.
     # The request shape lives here too, so the binding is a COMPLETE, reusable tool the llm
     # tool-loop invokes by reference (no wired node) — one HttpTool serves both invocation modes.
-    # Auth stays in ``connection`` (injected server-side), never a slot. All optional, so a pre-M21
-    # http binding (node-wired, M19) is unchanged; the contentHash shift on a graph that USES an
-    # http binding is the same additive typed-field evolution M19's ``Port.role`` made without a
-    # schemaVersion bump (m21.md §6 Q4). For an http tool used by an llm, the validator requires
-    # ``description`` + ``parameter_schema`` AND that the schema's top-level properties equal the
-    # ``$in.*`` slots referenced by ``url_template``/``body_template`` (m21.md §6 Q3 equivalence).
+    # Auth stays in ``connection`` (injected server-side), never a slot. All optional, so a
+    # node-wired http binding is unchanged; the contentHash shift on a graph that USES such a
+    # binding is the same additive typed-field evolution Port.role made without a schemaVersion
+    # bump.
+    # For an http tool used by an llm, the validator requires ``description`` + ``parameter_schema``
+    # AND that the schema's top-level properties equal the ``$in.*`` slots referenced by
+    # ``url_template``/``body_template`` (slot↔property equivalence).
     description: str | None = None
     parameter_schema: dict[str, Any] | None = None
     method: str | None = None  # GET|POST|PUT|PATCH|DELETE
@@ -186,18 +184,18 @@ class HttpTool(_Wire):
     body_template: Any = None  # JSON body; $in.<param> slots at any depth
     headers: dict[str, str] = Field(default_factory=dict)  # connection adds auth headers at runtime
     response_map: str | None = None  # optional JSONPath ($.data) to shape the tool result
-    idempotency_key: str | None = None  # §2.5 — replay-safe re-run for unsafe methods
-    # M22: a per-request timeout (mirrors ToolConfig.timeout_seconds), so a node-authored http tool
+    idempotency_key: str | None = None  # replay-safe re-run for unsafe methods
+    # A per-request timeout (mirrors ToolConfig.timeout_seconds), so a node-authored http tool
     # wired as a CAPABILITY keeps its configured timeout instead of dropping to the httpx default
     # (step-mode reads it from ToolConfig; capability-mode rebuilds a ToolConfig from this binding).
     timeout_seconds: float | None = None
 
 
 class McpTool(_Wire):
-    """An MCP tool binding (M7 + M19 §2.4). ``tool`` is the named tool the server exposes; the
-    server is reached EITHER by the M7 ``server`` name (a registered ``mcp_server``) OR — M19 — by a
-    ``connection`` id (an ``mcp_server`` connection, stdio or http, auth via its secret_ref).
-    Exactly one of ``server`` / ``connection`` is set (validated below); no secret in the IR."""
+    """An MCP tool binding. ``tool`` is the named tool the server exposes; the server is reached
+    EITHER by the ``server`` name (a registered ``mcp_server``) OR by a ``connection`` id (an
+    ``mcp_server`` connection, stdio or http, auth via its secret_ref). Exactly one of
+    ``server`` / ``connection`` is set (validated below); no secret in the IR."""
 
     kind: Literal["mcp"]
     tool: str
@@ -208,8 +206,8 @@ class McpTool(_Wire):
     def _exactly_one_target(self) -> McpTool:
         if bool(self.server) == bool(self.connection):
             raise ValueError(
-                "an mcp tool binding must set EXACTLY ONE of `server` (M7 registered name) or "
-                "`connection` (M19 mcp_server connection id)"
+                "an mcp tool binding must set EXACTLY ONE of `server` "
+                "(a registered server name) or `connection` (an mcp_server connection id)"
             )
         return self
 
@@ -217,35 +215,34 @@ class McpTool(_Wire):
 ToolBinding = Annotated[BuiltinTool | HttpTool | McpTool, Field(discriminator="kind")]
 
 
-# ── nodes & edges (§8.3) ──────────────────────────────────────────────────────
+# ── nodes & edges ─────────────────────────────────────────────────────────────
 
 
-# M22: ``tool`` joins ``data``/``control`` as a port role + edge channel. A ``tool`` handle on an
+# ``tool`` joins ``data``/``control`` as a port role + edge channel. A ``tool`` handle on an
 # ``llm`` (its ``tools`` in-port) receives capability edges from configured tool nodes — the model
-# may CALL those tools (autonomous tool-calling, M21), distinct from a ``data`` edge (the tool runs
-# as a step, output flows) and a ``control`` edge (pure sequencing). Additive value: every pre-M22
+# may CALL those tools (autonomous tool-calling), distinct from a ``data`` edge (the tool runs
+# as a step, output flows) and a ``control`` edge (pure sequencing). Additive value: every existing
 # port/edge keeps ``data``/``control``, so old IRs parse + hash unchanged (no schemaVersion bump).
 PortRole = Literal["data", "control", "tool"]
 
 
 class Port(_Wire):
-    """A declared (not inferred) connection point, so the compiler can type-check edges
-    (§8.3). ``type`` is advisory in M5 (``any``/``error``); real port typing lands with the
-    node types that need it.
+    """A declared (not inferred) connection point, so the compiler can type-check edges.
+    ``type`` is advisory (``any``/``error``); real port typing lands with the node types
+    that need it.
 
-    ``required`` is meaningful for **in**-ports (M10 §3): a required in-port must be fed by a
-    ``data`` edge or the graph fails validation; ``required: false`` declares an in-port that may
-    be left unfed and resolves to ``null`` at runtime. The default is required, so an unfed input
-    is a loud validation error rather than a silent ``None`` — the multi-input analogue of M9's
+    ``required`` is meaningful for **in**-ports: a required in-port must be fed by a ``data`` edge
+    or the graph fails validation; ``required: false`` declares an in-port that may be left unfed
+    and resolves to ``null`` at runtime. The default is required, so an unfed input is a loud
+    validation error rather than a silent ``None`` — the multi-input analogue of the
     no-silent-pass-through rule. (Ignored on out-ports.)
 
-    ``role`` (M19 §2.10) is the channel a handle carries: ``data`` (the default — threads a value)
-    or ``control`` (pure ordering: "run after this passes", no value). The editor renders the two
+    ``role`` is the channel a handle carries: ``data`` (the default — threads a value) or
+    ``control`` (pure ordering: "run after this passes", no value). The editor renders the two
     distinctly and only allows data→data / control→control connections; an edge's ``channel`` is
     DERIVED from the handles it joins, not a separate toggle. The walker/compiler dispatch by edge
     ``channel`` exactly as before — ``role`` is the per-handle declaration the channel follows, so a
-    pre-M19 IR (all ports default ``data``) is unchanged in meaning. This is the ONLY IR-shape
-    addition in M19 (§0/§5)."""
+    port that omits ``role`` defaults to ``data`` and is unchanged in meaning."""
 
     id: str
     type: str = "any"
@@ -262,8 +259,8 @@ EdgeChannel = Literal["data", "control", "tool"]
 
 
 class Node(_Wire):
-    """One graph node (§8.3). ``id`` is stable — it is what an OTel span binds to later
-    (M5 stamps it on per-node logs, the attach-point). ``config`` is ``type``-specific and
+    """One graph node. ``id`` is stable — it is what an OTel span binds to later
+    (stamped on per-node logs as the attach-point). ``config`` is ``type``-specific and
     validated against a per-``type`` schema in ``validate_graph`` — Pydantic at the boundary,
     not a free-form dict the walker trusts blindly."""
 
@@ -276,9 +273,9 @@ class Node(_Wire):
 
 
 class Edge(_Wire):
-    """A directed connection (§8.3). ``channel: data`` passes a value along the edge;
+    """A directed connection. ``channel: data`` passes a value along the edge;
     ``channel: control`` is pure sequencing. ``condition`` is reserved for router-driven
-    edges (the first ``orchestration`` node, deferred — M5 §7)."""
+    edges."""
 
     id: str
     source: str
@@ -290,9 +287,9 @@ class Edge(_Wire):
 
 
 class IRDocument(_Wire):
-    """A saved agent — one JSON document (§8.2). ``id`` + ``version`` is the registry
-    coordinate; ``content_hash`` (computed over the view-stripped graph) gives content-addressed
-    deploys. ``view`` is the React-Flow layer and is **never** hashed (§8.6)."""
+    """A saved agent — one JSON document. ``id`` + ``version`` is the registry coordinate;
+    ``content_hash`` (computed over the view-stripped graph) gives content-addressed deploys.
+    ``view`` is the React-Flow layer and is **never** hashed."""
 
     schema_version: str
     id: str
@@ -309,19 +306,18 @@ class IRDocument(_Wire):
     metadata: dict[str, Any] | None = None
 
 
-# ── per-type config schemas (§8.7 step 3, scoped to M5's three types) ─────────
+# ── per-type config schemas ───────────────────────────────────────────────────
 
 
-# ── multimodal message content (M20 cross-plane follow-up) ────────────────────
+# ── multimodal message content ────────────────────────────────────────────────
 #
-# M20 made the inference plane serve vision locally (mlx_vlm.server on /v1/chat/completions). To
-# DRIVE a vision agent from a graph, an ``llm`` node's message ``content`` must carry an image, not
-# just text. These models mirror the OpenAI chat content-part shape: a ``content`` is EITHER a plain
-# string (pre-M20 — unchanged) OR a list of parts, each a ``text`` or ``image_url`` block. A part's
-# text and an image's url are both ``$in``-templatable, so the image enters from a graph in-port
-# (``$in.image``) rather than being hardcoded — the whole point of "drive a vision agent from a
-# graph". LiteLLM already forwards ``image_url`` parts, so the control-plane threads them through
-# unchanged (m20.md follow-up).
+# The inference plane can serve vision locally. To drive a vision agent from a graph, an ``llm``
+# node's message ``content`` must carry an image, not just text. These models mirror the OpenAI
+# chat content-part shape: a ``content`` is EITHER a plain string (the original shape, unchanged)
+# OR a list of parts, each a ``text`` or ``image_url`` block. A part's text and an image's url
+# are both ``$in``-templatable, so the image enters from a graph in-port (``$in.image``) rather
+# than being hardcoded. LiteLLM already forwards ``image_url`` parts, so the control-plane
+# threads them through unchanged.
 
 
 class _TextContentPart(_Wire):
@@ -348,25 +344,24 @@ class _ImageContentPart(_Wire):
     image_url: _ImageUrl
 
 
-#: One block of a multimodal message ``content`` (M20). Discriminated on ``type`` so an unknown
+#: One block of a multimodal message ``content``. Discriminated on ``type`` so an unknown
 #: block fails loudly (``_Wire`` forbids extra keys) rather than being silently dropped.
 _ContentPart = Annotated[_TextContentPart | _ImageContentPart, Field(discriminator="type")]
 
 
 class _Message(_Wire):
-    # M20 cross-plane follow-up: ``content`` is EITHER a plain string (the pre-M20 shape, unchanged)
-    # OR a list of OpenAI content parts (text + image_url) so a vision agent can carry an image. The
-    # union is backward-compatible by construction: a string validates as ``str`` and serializes
-    # byte-for-byte as before, so a pre-M20 IR's ``contentHash`` is UNMOVED (the canonical dump is
-    # identical — contenthash.py decision D2). A list ``content`` is the new multimodal form. Only a
-    # list ``content`` changes the hash; a string does not — so ``schemaVersion`` is NOT bumped
-    # (the addition is purely additive + back-compat: name the extension, don't break the frozen
-    # surface).
+    # ``content`` is EITHER a plain string (the original shape, unchanged) OR a list of OpenAI
+    # content parts (text + image_url) so a vision agent can carry an image. The union is
+    # backward-compatible by construction: a string validates as ``str`` and serializes
+    # byte-for-byte as before, so an existing IR's ``contentHash`` is UNMOVED (the canonical dump
+    # is identical). A list ``content`` is the new multimodal form. Only a list ``content`` changes
+    # the hash; a string does not — so ``schemaVersion`` is NOT bumped (the addition is purely
+    # additive + back-compat).
     role: Literal["system", "user", "assistant"]
     content: str | list[_ContentPart]
 
 
-# ── M21 tool-calling: tool_choice vocabulary (the OpenAI shape) ───────────────
+# ── tool-calling: tool_choice vocabulary (the OpenAI shape) ──────────────────
 
 
 class _ToolFunctionName(_Wire):
@@ -386,163 +381,159 @@ ToolChoice = Literal["auto", "none", "required"] | _NamedToolChoice
 
 
 class LlmConfig(_Wire):
-    """``llm`` node config. ``model`` names a key in
-    ``IRDocument.models``; ``messages`` is the prompt template — content fields use the ONE
-    port-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``
-    (§8.5 / m10.md §1.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named
-    in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown
-    port or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,
-    renamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name — see m10.md.)
+    """``llm`` node config. ``model`` names a key in ``IRDocument.models``; ``messages`` is the
+    prompt template — content fields use the port-addressed substitution token language shared with
+    ``tool``/``mcp_tool``/``router``: ``$in`` is the default in-port ``in``, ``$in.<port>`` selects
+    a named in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An
+    unknown port or token fails loudly, never silent literal pass-through. (``$input`` was the
+    original spelling, renamed to ``$in``; the segment after ``$in.`` is a port name.)
 
-    M20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +
-    image_url), not only a string, so a graph can drive a vision model (mlx_vlm on
-    ``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,
-    so an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and
-    hashes identically (see ``_Message``)."""
+    A message ``content`` may be a list of OpenAI content parts (text + image_url), not only a
+    string, so a graph can drive a vision model (on ``/v1/chat/completions``). The ``$in`` grammar
+    applies inside each text part and each image url, so an image enters from an in-port
+    (``$in.image``); a plain-string ``content`` is unchanged and hashes identically (see
+    ``_Message``)."""
 
     model: str
     messages: list[_Message]
-    # ``messages`` content uses the §8.5 token grammar: ``$in`` (default in-port ``in``),
+    # ``messages`` content uses the token grammar: ``$in`` (default in-port ``in``),
     # ``$in.<port>`` (a named in-port — so one llm node can compose ``$in.file`` AND
     # ``$in.question``), ``$in.<port>.<field>`` (drill into it). Unknown port / unknown token →
-    # loud error (m10.md §1.2). The token lives inside the opaque content string — no schema change.
+    # loud error. The token lives inside the opaque content string — no schema change.
     #
-    # M21 — autonomous tool-calling. ``tools`` lists keys into ``IRDocument.tools`` the model may
-    # call; EMPTY (the default) is a single-shot completion exactly as pre-M21 (the loop branch is
-    # taken only when ``tools`` is non-empty). ``tool_choice`` follows the OpenAI vocabulary;
-    # ``max_tool_iterations`` bounds the loop (>= 1, validated). ``Node.config`` is hashed as the
-    # opaque authored dict (not hydrated through this model), so adding these does NOT shift any
-    # llm graph's contentHash — no schemaVersion bump (m21.md §6 Q4). There is NO compile-time
-    # model-capability gate (plane-split: no inference Capabilities here) — a model that ignores
-    # ``tools`` emits no tool_calls, the loop runs zero iterations, you get plain content.
+    # Autonomous tool-calling. ``tools`` lists keys into ``IRDocument.tools`` the model may call;
+    # EMPTY (the default) is a single-shot completion (the loop branch is taken only when ``tools``
+    # is non-empty). ``tool_choice`` follows the OpenAI vocabulary; ``max_tool_iterations`` bounds
+    # the loop (>= 1, validated). ``Node.config`` is hashed as the opaque authored dict (not
+    # hydrated through this model), so adding these does NOT shift any llm graph's contentHash —
+    # no schemaVersion bump. There is NO compile-time model-capability gate (plane-split: no
+    # inference Capabilities here) — a model that ignores ``tools`` emits no tool_calls, the loop
+    # runs zero iterations, you get plain content.
     tools: list[str] = Field(default_factory=list)
     tool_choice: ToolChoice = "auto"
     max_tool_iterations: int = 8
 
 
-# M19 §2.1: the I/O modality vocabulary (DISTINCT from the model ``Modality`` in registration.py —
+# The I/O modality vocabulary (DISTINCT from the model ``Modality`` in registration.py —
 # that is chat/vision/embeddings/audio.*; this is the payload SHAPE a boundary declares). Non-text
 # payloads enter/leave as REFERENCES (a stored blob handle + content type), never multi-MB blobs
-# journaled through step args (m13-dbos.md §3 / M17 §1.3).
+# journaled through step args.
 InputModality = Literal["text", "audio", "image", "video", "json", "file"]
 OutputModality = Literal["text", "audio", "image", "json"]
 
 
 class InputConfig(_Wire):
-    """``input`` boundary node — the single typed entry (M19 §2.1, made real). ``modality`` declares
-    the payload shape (text by default — a pre-M19 input is unchanged); ``schema`` is the JSON
-    Schema of the expected payload that M12 triggers map their source onto (§1.5). Both are
-    declarative — the walker still binds the run input to the out-port; modality/schema drive the
-    editor + trigger mapping, not execution."""
+    """``input`` boundary node — the single typed entry. ``modality`` declares the payload shape
+    (text by default); ``schema`` is the JSON Schema of the expected payload that triggers map
+    their source onto. Both are declarative — the walker still binds the run input to the out-port;
+    modality/schema drive the editor + trigger mapping, not execution."""
 
     modality: InputModality = "text"
     payload_schema: dict[str, Any] | None = Field(default=None, alias="schema")
 
 
 class OutputConfig(_Wire):
-    """``output`` boundary node — the run's return value (M19 §2.1, made real). ``modality`` is the
-    result shape (text default); for audio/image it is a REFERENCE to the artifact a ``speak``/tool
-    produced upstream. ``output`` performs NO side effect (§0) — posting/sending is a tool step."""
+    """``output`` boundary node — the run's return value. ``modality`` is the result shape (text
+    default); for audio/image it is a REFERENCE to the artifact a ``speak``/tool produced upstream.
+    ``output`` performs NO side effect — posting/sending is a tool step."""
 
     modality: OutputModality = "text"
     payload_schema: dict[str, Any] | None = Field(default=None, alias="schema")
 
 
 class ToolConfig(_Wire):
-    """``tool`` activity node config (§8.3 / m6.md §2/§3.1 + M19 §2.3). ``tool`` is a logical name:
-    a key in ``ir.tools`` (an ``http`` connection-backed binding — M19 — or an M6 ``builtin``) OR a
-    directly-registered builtin (``echo``/``http_fetch``). Membership is checked in the control
-    plane, not here (``packages/ir`` stays pure).
+    """``tool`` activity node config. ``tool`` is a logical name: a key in ``ir.tools`` (an ``http``
+    connection-backed binding or a ``builtin``) OR a directly-registered builtin
+    (``echo``/``http_fetch``). Membership is checked in the control plane, not here
+    (``packages/ir`` stays pure).
 
-    M6 path (builtin): ``args`` is the arg template — each value a literal or a ``$in``-reference
+    Builtin path: ``args`` is the arg template — each value a literal or a ``$in``-reference
     (``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) resolved before the call.
 
-    M19 http path (when ``tool`` resolves to an ``http`` binding, §2.3): the request is described by
-    the additive fields below, all optional so a builtin ``tool`` node is byte-identical to M6. The
-    connection (resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE — auth
-    never appears in the IR or the rendered template. ``url_template``/``headers``/``body_template``
-    use the unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape
-    the step output; ``idempotency_key`` (set for unsafe methods — §2.5) makes a partial-failure
-    re-run a provider no-op."""
+    Http path (when ``tool`` resolves to an ``http`` binding): the request is described by the
+    additive fields below, all optional so a builtin ``tool`` node is byte-identical. The connection
+    (resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE — auth never
+    appears in the IR or the rendered template. ``url_template``/``headers``/``body_template`` use
+    the unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape the
+    step output; ``idempotency_key`` (set for unsafe methods) makes a partial-failure re-run a
+    provider no-op."""
 
     tool: str
     args: dict[str, Any] = Field(default_factory=dict)
-    # M19 §2.3 http-tool fields (all optional — present only when ``tool`` is an http binding).
+    # http-tool fields (all optional — present only when ``tool`` is an http binding).
     method: str | None = None  # GET|POST|PUT|PATCH|DELETE
     url_template: str | None = None  # supports $in.field; query string ok
     headers: dict[str, str] = Field(default_factory=dict)  # connection adds auth headers at runtime
     body_template: Any = None  # JSON body; for GraphQL: {"query": ..., "variables": {...}}
     timeout_seconds: float | None = None
     response_map: str | None = None  # optional JSONPath ($.data) to shape the step output
-    idempotency_key: str | None = None  # §2.5 — set for unsafe methods (replay-safe re-run)
-    # M22 — the binding lives ON the node (m22.md D3). ``connection`` is the http_auth connection id
-    # (replaces the M19 ``ir.tools[tool].connection`` indirection for node-authored http tools —
-    # still an id, never a secret; resolved server-side). ``description`` is the "use this when…"
+    idempotency_key: str | None = None  # set for unsafe methods (replay-safe re-run)
+    # The binding lives ON the node. ``connection`` is the http_auth connection id (resolves
+    # auth server-side — still an id, never a secret). ``description`` is the "use this when…"
     # hint the model reads to decide a call; ``parameter_schema`` is the OpenAI function schema —
-    # both REQUIRED for an http tool node wired as a CAPABILITY (validated), so it self-describes
-    # like the M21 http binding. A ``data``/``control``-wired (step-mode) tool node ignores them.
+    # both REQUIRED for an http tool node wired as a CAPABILITY (validated), so it self-describes.
+    # A ``data``/``control``-wired (step-mode) tool node ignores them.
     connection: str | None = None
     description: str | None = None
     parameter_schema: dict[str, Any] | None = None
 
 
 class RouterConfig(_Wire):
-    """``router`` orchestration node config (§8.3 / m6.md §3.2). ``select`` is a ``$in``-reference
-    that must resolve to the **name of one of this node's outgoing handles** — handle-name routing,
-    not an expression DSL. The walker follows only the edge(s) from the selected handle."""
+    """``router`` orchestration node config. ``select`` is a ``$in``-reference that must resolve
+    to the **name of one of this node's outgoing handles** — handle-name routing, not an expression
+    DSL. The walker follows only the edge(s) from the selected handle."""
 
     select: str
 
 
 class McpToolConfig(_Wire):
-    """``mcp_tool`` activity node config (§8.5 / m7.md §2 + M19 §2.4). The server is reached EITHER
-    by the M7 ``server`` (the **logical name** of a registered MCP server, resolved by the manager)
-    OR — M19 — by a ``connection`` id (an ``mcp_server`` connection, stdio or http, whose auth is
-    resolved SERVER-SIDE at step time — the IR carries no secret, §1.1). EXACTLY ONE of
-    ``server`` / ``connection`` is set (validated below). ``tool`` is the tool that server exposes;
-    ``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool`` — the IR seam matches a
-    local tool, only the transport differs."""
+    """``mcp_tool`` activity node config. The server is reached EITHER by the ``server`` name (the
+    **logical name** of a registered MCP server, resolved by the manager) OR by a ``connection`` id
+    (an ``mcp_server`` connection, stdio or http, whose auth is resolved SERVER-SIDE at step time —
+    the IR carries no secret). EXACTLY ONE of ``server`` / ``connection`` is set (validated below).
+    ``tool`` is the tool that server exposes; ``args`` is the same ``$in`` / ``$in.a.b`` arg
+    template as a ``tool`` node — the IR seam matches a local tool, only the transport differs."""
 
     tool: str
     server: str | None = None
     connection: str | None = None
     args: dict[str, Any] = Field(default_factory=dict)
-    # M22 — the "use this when…" hint, surfaced when this mcp_tool is wired as an llm CAPABILITY
-    # (m22.md D3). Optional: an mcp tool already self-describes at runtime via the server's
-    # ``list_tools`` inputSchema, so a description only augments it; step-mode ignores it.
+    # The "use this when…" hint, surfaced when this mcp_tool is wired as an llm CAPABILITY.
+    # Optional: an mcp tool already self-describes at runtime via the server's ``list_tools``
+    # inputSchema, so a description only augments it; step-mode ignores it.
     description: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_target(self) -> McpToolConfig:
         if bool(self.server) == bool(self.connection):
             raise ValueError(
-                "an mcp_tool node must set EXACTLY ONE of `server` (M7 registered name) or "
-                "`connection` (M19 mcp_server connection id)"
+                "an mcp_tool node must set EXACTLY ONE of `server` (a registered server name) or "
+                "`connection` (an mcp_server connection id)"
             )
         return self
 
 
-# ── M14 the additive-lowering tier (m14.md §1) — config shapes only ───────────
+# ── additive-lowering tier — config shapes only ────────────────────────────────
 #
 # Four node types whose ``kind`` is ``boundary`` (``human``/``subgraph``) or ``orchestration``
 # (``loop``/``map``). The IR package owns their *shape*; the lowering onto DBOS primitives lives in
 # the control-plane's durable compiler (the ``dbos`` import never reaches here). ``subgraph``/
-# ``loop``/``map`` all compose a SAVED, PINNED agent as their body (never inline IR — m14.md §1.2 /
-# the Do-NOT): the unit of composition/repetition/fan-out is one saved-agent invocation, which the
-# durable runtime already runs as ``theygent_run``. The pin is part of ``config`` and therefore part
-# of the hashed IR, so it is **frozen into the parent's contentHash** — composition is immutable
-# even when the child agent publishes a new version (m14.md §1.2).
+# ``loop``/``map`` all compose a SAVED, PINNED agent as their body (never inline IR): the unit of
+# composition/repetition/fan-out is one saved-agent invocation, which the durable runtime runs as
+# ``theygent_run``. The pin is part of ``config`` and therefore part of the hashed IR, so it is
+# **frozen into the parent's contentHash** — composition is immutable even when the child agent
+# publishes a new version.
 
 
 class HumanConfig(_Wire):
-    """``human`` boundary node config (m14.md §1.1) — a durable wait for external input. The node
-    lowers onto ``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while
-    paused; ``POST /runs/{id}/resume`` (→ ``DBOS.send``) delivers the awaited input and the workflow
+    """``human`` boundary node config — a durable wait for external input. The node lowers onto
+    ``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while paused;
+    ``POST /runs/{id}/resume`` (→ ``DBOS.send``) delivers the awaited input and the workflow
     resumes from the checkpoint. ``prompt`` describes what input is expected (advisory);
-    ``input_schema`` is the awaited input's declared shape (advisory in M14 — resume records it,
-    doesn't enforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever)
-    bounds the wait; on timeout the node fails honestly (``on_timeout='fail'``, the default →
-    ``failed`` run, M9) or binds the declared ``default`` (``on_timeout='default'``)."""
+    ``input_schema`` is the awaited input's declared shape (advisory — resume records it, doesn't
+    enforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever) bounds
+    the wait; on timeout the node fails honestly (``on_timeout='fail'``, the default → ``failed``
+    run) or binds the declared ``default`` (``on_timeout='default'``)."""
 
     prompt: str | None = None
     input_schema: dict[str, Any] | None = None
@@ -552,14 +543,13 @@ class HumanConfig(_Wire):
 
 
 class SubgraphConfig(_Wire):
-    """``subgraph`` boundary node config (m14.md §1.2) — an agent calls another SAVED agent, run as
-    a DBOS child workflow (independently durable + resumable). ``agent`` is the child's §8.2 id; the
-    node pins it with EXACTLY ONE of ``version`` / ``content_hash`` (validated in
-    ``validate_graph``) and the pin is frozen into the parent's contentHash, so composition is
-    immutable. ``max_depth`` bounds recursion (the ``subgraph`` analogue of ``loop``'s
-    ``max_iterations``): exceeding it fails honestly, preventing unbounded / mutually-recursive
-    expansion. The parent's in-port value is the child's run input (M10 named ports); the child's
-    output binds the node's success handle."""
+    """``subgraph`` boundary node config — an agent calls another SAVED agent, run as a DBOS child
+    workflow (independently durable + resumable). ``agent`` is the child's IR id; the node pins it
+    with EXACTLY ONE of ``version`` / ``content_hash`` (validated in ``validate_graph``) and the
+    pin is frozen into the parent's contentHash, so composition is immutable. ``max_depth`` bounds
+    recursion: exceeding it fails honestly, preventing unbounded / mutually-recursive expansion.
+    The parent's in-port value is the child's run input (named ports); the child's output binds
+    the node's success handle."""
 
     agent: str
     version: str | None = None
@@ -568,15 +558,15 @@ class SubgraphConfig(_Wire):
 
 
 class LoopConfig(_Wire):
-    """``loop`` orchestration node config (m14.md §1.3) — bounded, deterministic agentic repetition
+    """``loop`` orchestration node config — bounded, deterministic agentic repetition
     (think→act→observe). Each iteration runs the pinned ``agent`` (a SAVED agent, child workflow);
     the previous iteration's output feeds the next as input. ``max_iterations`` is **REQUIRED** (no
     unbounded loops — the termination + determinism guarantee). ``condition`` (optional) is a
-    ``$in``-reference over the iteration output (the same port-addressed grammar the router uses —
-    m14.md §1.3 "reuse the router expression evaluator"): the loop **stops early** when it resolves
-    truthy. The loop control is deterministic orchestration with NO I/O — it reads journaled child
-    results, never calls inference, so a crash mid-loop resumes at the last completed iteration (no
-    completed iteration re-runs). ``max_depth`` bounds nesting as in ``subgraph``."""
+    ``$in``-reference over the iteration output (the same port-addressed grammar the router uses):
+    the loop **stops early** when it resolves truthy. The loop control is deterministic
+    orchestration with NO I/O — it reads journaled child results, never calls inference, so a crash
+    mid-loop resumes at the last completed iteration (no completed iteration re-runs). ``max_depth``
+    bounds nesting as in ``subgraph``."""
 
     agent: str
     version: str | None = None
@@ -587,13 +577,13 @@ class LoopConfig(_Wire):
 
 
 class MapConfig(_Wire):
-    """``map`` orchestration node config (m14.md §1.4) — durable fan-out/join over a collection. The
-    in-port value must be a list; one task (the pinned ``agent`` run as a child workflow) is
-    enqueued on a DBOS durable queue per element, then all results are durably awaited — so a crash
-    mid-fan-out resumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are
-    in flight at once (``None`` = unbounded). ``on_error`` is the partial-failure policy:
-    ``fail_fast`` (default — any element error fails the map) vs ``collect`` (gather successes +
-    per-element errors). ``max_depth`` bounds nesting as in ``subgraph``."""
+    """``map`` orchestration node config — durable fan-out/join over a collection. The in-port
+    value must be a list; one task (the pinned ``agent`` run as a child workflow) is enqueued on a
+    DBOS durable queue per element, then all results are durably awaited — so a crash mid-fan-out
+    resumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are in flight at
+    once (``None`` = unbounded). ``on_error`` is the partial-failure policy: ``fail_fast`` (default
+    — any element error fails the map) vs ``collect`` (gather successes + per-element errors).
+    ``max_depth`` bounds nesting as in ``subgraph``."""
 
     agent: str
     version: str | None = None
@@ -603,56 +593,55 @@ class MapConfig(_Wire):
     max_depth: int = 8
 
 
-# ── M19 the node palette (m19.md §2) — config shapes only ─────────────────────
+# ── node palette additions — config shapes only ────────────────────────────────
 #
-# Six genuinely-new node types M19 adds to the palette. Each is a runtime-agnostic handler + a
-# dispatch branch + this per-type ``config`` schema; no envelope/edge/``kind`` shape moves (m19.md
-# §0). ``transcribe``/``speak`` are the only new MODEL-call types (the two OpenAI audio endpoints,
-# §2.2); ``guardrail`` is the first type whose ``kind`` is per-instance (§1.2 — rule⇒orchestration,
-# model⇒activity); ``ratelimit``/``quota`` are the lean gate seam (§2.8/§1.6); ``transform`` is a
-# deterministic reshape, NOT a code sandbox (§2.9). The http/action/crawler tools reuse the existing
-# ``tool`` type (its M19 fields above), and ``switch`` is the existing ``router`` (§2.7) — no new
-# types for those.
+# Additional node types. Each is a runtime-agnostic handler + a dispatch branch + this per-type
+# ``config`` schema; no envelope/edge/``kind`` shape changes. ``transcribe``/``speak`` are the
+# MODEL-call types (the two OpenAI audio endpoints); ``guardrail`` is the first type whose ``kind``
+# is per-instance (rule⇒orchestration, model⇒activity); ``ratelimit``/``quota`` are the lean gate
+# seam; ``transform`` is a deterministic reshape, NOT a code sandbox. The http/action/crawler tools
+# reuse the existing ``tool`` type (its additive fields above), and ``switch`` is the existing
+# ``router`` — no new types for those.
 
 
 class TranscribeConfig(_Wire):
-    """``transcribe`` activity node config (m19.md §2.2) — audio-ref in → text out, mapping 1:1 to
-    ``POST /v1/audio/transcriptions`` (M18 §1.1). ``model`` names a key in ``IRDocument.models``
-    whose binding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven —
-    an incompatible binding is rejected at run, not silently); ``params`` (language/prompt/…) ride
+    """``transcribe`` activity node config — audio-ref in → text out, mapping 1:1 to
+    ``POST /v1/audio/transcriptions``. ``model`` names a key in ``IRDocument.models`` whose
+    binding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven — an
+    incompatible binding is rejected at run, not silently); ``params`` (language/prompt/…) ride
     through to the endpoint. The audio bytes go to the inference base URL in the user's trust
-    domain, never the control plane (§10 / M18 §1.4)."""
+    domain, never the control plane."""
 
     model: str
     params: dict[str, Any] = Field(default_factory=dict)
 
 
 class SpeakConfig(_Wire):
-    """``speak`` activity node config (m19.md §2.2) — text in → audio-ref out, mapping 1:1 to
-    ``POST /v1/audio/speech`` (M18 §1.1). ``model`` names a ``models`` key whose binding advertises
-    the ``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's
-    return value is a REFERENCE to the produced audio (bytes are an artifact, never journaled —
-    m13-dbos.md §6); it feeds an ``output`` (``modality:audio``) or an action ``tool``."""
+    """``speak`` activity node config — text in → audio-ref out, mapping 1:1 to
+    ``POST /v1/audio/speech``. ``model`` names a ``models`` key whose binding advertises the
+    ``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's
+    return value is a REFERENCE to the produced audio (bytes are an artifact, never journaled); it
+    feeds an ``output`` (``modality:audio``) or an action ``tool``."""
 
     model: str
     params: dict[str, Any] = Field(default_factory=dict)
 
 
 class GuardrailRule(_Wire):
-    """A deterministic guardrail check backend (m19.md §2.6, ``check.type == "rule"``). ``kind``
-    selects the predicate; ``spec`` carries its knob (the regex, the min/max length, the json
-    schema, the allow/deny list, the PII pattern set). Evaluated INLINE over journaled input — no
-    I/O, no latency — so a rule guardrail is ``kind: orchestration`` (§1.2)."""
+    """A deterministic guardrail check backend (``check.type == "rule"``). ``kind`` selects the
+    predicate; ``spec`` carries its knob (the regex, the min/max length, the json schema, the
+    allow/deny list, the PII pattern set). Evaluated INLINE over journaled input — no I/O, no
+    latency — so a rule guardrail is ``kind: orchestration``."""
 
     kind: Literal["regex", "length", "json_schema", "allow", "deny", "pii"]
     spec: dict[str, Any] = Field(default_factory=dict)
 
 
 class GuardrailModel(_Wire):
-    """A model guardrail check backend (m19.md §2.6, ``check.type == "model"``) — an LLM-judge "is
-    this in scope?" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model
-    guardrail is ``kind: activity`` — §1.2); ``prompt`` is the judge question; ``pass_on`` is the
-    model answer that PASSES (default ``"yes"``) — anything else routes to ``block``."""
+    """A model guardrail check backend (``check.type == "model"``) — an LLM-judge "is this in
+    scope?" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model
+    guardrail is ``kind: activity``); ``prompt`` is the judge question; ``pass_on`` is the model
+    answer that PASSES (default ``"yes"``) — anything else routes to ``block``."""
 
     model: str
     prompt: str
@@ -660,9 +649,9 @@ class GuardrailModel(_Wire):
 
 
 class GuardrailCheck(_Wire):
-    """The guardrail's check (m19.md §2.6). ``type`` picks the backend: ``rule`` (deterministic,
-    ⇒orchestration) or ``model`` (a classifier call, ⇒activity). Exactly the matching sub-config is
-    set; the node's ``kind`` follows the backend and is validated against it (§1.2)."""
+    """The guardrail's check. ``type`` picks the backend: ``rule`` (deterministic,
+    ⇒orchestration) or ``model`` (a classifier call, ⇒activity). Exactly the matching sub-config
+    is set; the node's ``kind`` follows the backend and is validated against it."""
 
     type: Literal["rule", "model"]
     rule: GuardrailRule | None = None
@@ -670,23 +659,22 @@ class GuardrailCheck(_Wire):
 
 
 class GuardrailConfig(_Wire):
-    """``guardrail`` node config (m19.md §2.6) — a first-class check that short-circuits before
-    downstream work. ``pass`` carries the input through; ``block`` carries the ``on_block`` payload
-    (or the violation) — wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is
-    per-instance (§1.2): the editor stamps ``orchestration`` for a rule check, ``activity`` for a
-    model check, and ``validate_graph`` enforces the match."""
+    """``guardrail`` node config — a first-class check that short-circuits before downstream work.
+    ``pass`` carries the input through; ``block`` carries the ``on_block`` payload (or the
+    violation) — wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is
+    per-instance: the editor stamps ``orchestration`` for a rule check, ``activity`` for a model
+    check, and ``validate_graph`` enforces the match."""
 
     check: GuardrailCheck
     on_block: dict[str, Any] = Field(default_factory=dict)  # e.g. {"message": "..."}
 
 
 class RateLimitConfig(_Wire):
-    """``ratelimit`` activity node config (m19.md §2.8/§1.6) — the lean per-key gate seam.
-    ``key_expr`` resolves the caller key from the M12 token / webhook signature or a ``$in`` field
-    (per-USER is the deferred identity work — §1.6). Denies past ``limit`` requests in
-    ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: "deny"`` emits the
-    ``deny`` port (a clean 429-style result); ``policy: "wait"`` (a bounded suspend) is NAMED, not
-    built in M19 — start with deny."""
+    """``ratelimit`` activity node config — the lean per-key gate seam. ``key_expr`` resolves the
+    caller key from a trigger token / webhook signature or a ``$in`` field. Denies past ``limit``
+    requests in ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: "deny"``
+    emits the ``deny`` port (a clean 429-style result); ``policy: "wait"`` (a bounded suspend) is
+    NAMED but not yet built — start with deny."""
 
     key_expr: str
     limit: int
@@ -695,10 +683,9 @@ class RateLimitConfig(_Wire):
 
 
 class QuotaConfig(_Wire):
-    """``quota`` activity node config (m19.md §2.8/§1.6) — a token-budget gate that READS
-    accumulated usage, never re-meters (§1.6). ``source: "spans"`` rolls up the per-node token
-    counts already on M17 spans; denies past ``budget_tokens`` in ``window_seconds`` per key.
-    Builds NO new metering pipeline (the §8 Do-NOT)."""
+    """``quota`` activity node config — a token-budget gate that READS accumulated usage, never
+    re-meters. ``source: "spans"`` rolls up the per-node token counts already on existing spans;
+    denies past ``budget_tokens`` in ``window_seconds`` per key. Builds NO new metering pipeline."""
 
     key_expr: str
     budget_tokens: int
@@ -707,10 +694,10 @@ class QuotaConfig(_Wire):
 
 
 class TransformConfig(_Wire):
-    """``transform`` orchestration node config (m19.md §2.9) — a lightweight, deterministic payload
-    reshaper (a JSONata/jq-style ``expr``) so a builder maps ``A.out → B.in`` without a code node.
-    NO sandbox, NO I/O — evaluated inline over journaled input (``kind: orchestration``). This is
-    explicitly NOT the ``code`` type (sandboxed user code; a subsystem; deferred — M14 §4)."""
+    """``transform`` orchestration node config — a lightweight, deterministic payload reshaper (a
+    JSONata/jq-style ``expr``) so a builder maps ``A.out → B.in`` without a code node. NO sandbox,
+    NO I/O — evaluated inline over journaled input (``kind: orchestration``). This is explicitly NOT
+    the ``code`` type (sandboxed user code; a separate subsystem)."""
 
     expr: str
 
@@ -726,7 +713,7 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "subgraph": SubgraphConfig,
     "loop": LoopConfig,
     "map": MapConfig,
-    # M19 §2 — the node palette
+    # node palette — audio/gate/transform types
     "transcribe": TranscribeConfig,
     "speak": SpeakConfig,
     "guardrail": GuardrailConfig,
@@ -735,10 +722,9 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "transform": TransformConfig,
 }
 
-#: The M14 node types that compose a saved, pinned agent body (m14.md §1.2). Each must pin EXACTLY
-#: ONE of ``version`` / ``content_hash`` — an unbounded "latest" body would let composition
-#: silently drift, the same immutability discipline triggers hold (M12 §1.1). Validated in
-#: ``validate_graph``.
+#: Node types that compose a saved, pinned agent body. Each must pin EXACTLY ONE of ``version`` /
+#: ``content_hash`` — an unbounded "latest" body would let composition silently drift (the same
+#: immutability discipline as trigger agents). Validated in ``validate_graph``.
 _PINNED_BODY_TYPES: frozenset[str] = frozenset({"subgraph", "loop", "map"})
 
 _IR_ADAPTER: TypeAdapter[IRDocument] = TypeAdapter(IRDocument)
@@ -751,13 +737,13 @@ class GraphValidationError(ValueError):
 
 
 def parse_document(data: Any) -> IRDocument:
-    """Validate a raw IR payload into an :class:`IRDocument` (the §8.2 envelope). Raises
+    """Validate a raw IR payload into an :class:`IRDocument`. Raises
     ``pydantic.ValidationError`` on a shape error — the caller maps it to 400."""
 
     return _IR_ADAPTER.validate_python(data)
 
 
-# ── M21 tool-calling: $in-slot extraction for the Q3 equivalence check ────────
+# ── tool-calling: $in-slot extraction for the slot↔property equivalence check ─
 
 _IN_SLOT_RE = re.compile(r"\$in(?:\.([A-Za-z_][A-Za-z0-9_]*))?")
 
@@ -765,9 +751,9 @@ _IN_SLOT_RE = re.compile(r"\$in(?:\.([A-Za-z_][A-Za-z0-9_]*))?")
 def _in_slots(value: Any) -> tuple[set[str], bool]:
     """Extract the named ``$in.<slot>`` references in an http tool template (a string, or a JSON
     body scanned recursively over its string leaves). Returns ``(named_slots, has_whole)`` —
-    ``has_whole`` is true if a bare ``$in`` (the whole args object) appears. ``$$`` escapes ``$``
-    (M9), so it is stripped before scanning. Used to validate an http tool's slots against its
-    ``parameter_schema`` (m21.md §6 Q3)."""
+    ``has_whole`` is true if a bare ``$in`` (the whole args object) appears. ``$$`` escapes ``$``,
+    so it is stripped before scanning. Used to validate an http tool's slots against its
+    ``parameter_schema`` (slot↔property equivalence)."""
 
     named: set[str] = set()
     saw_whole = False
@@ -793,19 +779,19 @@ def _in_slots(value: Any) -> tuple[set[str], bool]:
 
 
 def _expected_kind(node: Node, cfg: _Wire | None) -> NodeKind | None:
-    """The ``kind`` a node MUST carry (§8.1). For most types this is the fixed ``NODE_TYPE_KIND``
-    value. For a PER-INSTANCE-kind type (m19.md §1.2 — only ``guardrail`` today) it is DERIVED from
-    the validated config: a ``rule`` check ⇒ ``orchestration`` (no I/O, inline), a ``model`` check
-    ⇒ ``activity`` (a classifier call). Returns ``None`` for an unknown type (the caller errors)."""
+    """The ``kind`` a node MUST carry. For most types this is the fixed ``NODE_TYPE_KIND`` value.
+    For a PER-INSTANCE-kind type (only ``guardrail`` today) it is DERIVED from the validated
+    config: a ``rule`` check ⇒ ``orchestration`` (no I/O, inline), a ``model`` check ⇒
+    ``activity`` (a classifier call). Returns ``None`` for an unknown type (the caller errors)."""
     if node.type == "guardrail" and isinstance(cfg, GuardrailConfig):
         return "activity" if cfg.check.type == "model" else "orchestration"
     return NODE_TYPE_KIND.get(node.type)
 
 
 def _model_refs(cfg: _Wire | None) -> list[str]:
-    """Every ``models`` key a node's config references (§8.4) — so each is checked against
-    ``ir.models`` up front. ``llm``/``transcribe``/``speak`` name one model directly; a ``model``
-    guardrail names one in ``check.model.model``. Anything else references no model."""
+    """Every ``models`` key a node's config references — so each is checked against ``ir.models``
+    up front. ``llm``/``transcribe``/``speak`` name one model directly; a ``model`` guardrail names
+    one in ``check.model.model``. Anything else references no model."""
     if isinstance(cfg, LlmConfig | TranscribeConfig | SpeakConfig):
         return [cfg.model]
     if isinstance(cfg, GuardrailConfig) and cfg.check.type == "model" and cfg.check.model:
@@ -814,20 +800,20 @@ def _model_refs(cfg: _Wire | None) -> list[str]:
 
 
 def validate_graph(ir: IRDocument) -> None:
-    """Static, execution-independent graph validation (§5 step 1-2). Raises
-    :class:`GraphValidationError` on the first problem. This runs *before* a ``Run`` is created,
-    so an invalid graph never persists anything.
+    """Static, execution-independent graph validation. Raises :class:`GraphValidationError` on the
+    first problem. This runs *before* a ``Run`` is created, so an invalid graph never persists
+    anything.
 
     Checks, in order:
-      1. every ``type`` is known and carries its one correct ``kind`` (§8.1 / ``NODE_TYPE_KIND``);
-      2. per-``type`` ``config`` validates (M5: ``input``/``output``/``llm``);
-      3. ``llm`` nodes reference a declared model key (§8.4);
+      1. every ``type`` is known and carries its one correct ``kind`` (``NODE_TYPE_KIND``);
+      2. per-``type`` ``config`` validates (``input``/``output``/``llm`` and all palette types);
+      3. ``llm`` nodes reference a declared model key;
       4. every edge references existing nodes *and* declared handles;
-      4b. no in-port is fed by more than one ``data`` edge (M10 §3 — an ambiguous multi-input
-          binding: which upstream value would ``$in.<port>`` mean?);
-      5. every *required* in-port is fed by a ``data`` edge (M10 §3 — per-port, not per-node:
+      4b. no in-port is fed by more than one ``data`` edge (an ambiguous multi-input binding:
+          which upstream value would ``$in.<port>`` mean?);
+      5. every *required* in-port is fed by a ``data`` edge (per-port, not per-node:
           a multi-input node must have each required port wired);
-      6. no cycle among ``data`` edges (M5 has no ``loop``/``map`` — §7).
+      6. no cycle among ``data`` edges (``loop``/``map`` only run on the durable runtime).
     """
 
     node_by_id = {n.id: n for n in ir.nodes}
@@ -842,9 +828,9 @@ def validate_graph(ir: IRDocument) -> None:
         config_model = _CONFIG_MODELS.get(node.type)
         cfg: _Wire | None = None
         # For a FIXED-kind type the type/kind mismatch is the clearest error (even when the config
-        # is also wrong), so check it BEFORE parsing config — the M5 message order. For a
-        # PER-INSTANCE-kind type (guardrail) the expected kind is DERIVED from the config, so parse
-        # the config first, then derive + check the kind (m19.md §1.2).
+        # is also wrong), so check it BEFORE parsing config. For a PER-INSTANCE-kind type
+        # (guardrail) the expected kind is DERIVED from the config, so parse the config first,
+        # then derive + check the kind.
         if not per_instance:
             fixed = NODE_TYPE_KIND[node.type]
             if node.kind != fixed:
@@ -863,38 +849,38 @@ def validate_graph(ir: IRDocument) -> None:
                 raise GraphValidationError(
                     f"node {node.id!r}: type {node.type!r} must have kind {expected!r}, got "
                     f"{node.kind!r} (a guardrail's kind follows its check: rule⇒orchestration, "
-                    "model⇒activity — m19.md §1.2)"
+                    "model⇒activity)"
                 )
         if cfg is not None:
-            # Every model the node references must be a declared ``models`` key (§8.4) —
-            # llm/transcribe/speak directly, a model guardrail via check.model (m19.md §1.2/§2.2).
+            # Every model the node references must be a declared ``models`` key —
+            # llm/transcribe/speak directly, a model guardrail via check.model.
             for model_key in _model_refs(cfg):
                 if model_key not in ir.models:
                     raise GraphValidationError(
                         f"node {node.id!r}: references undeclared model {model_key!r}"
                     )
-            # M19 §2.6: a guardrail's check must carry the sub-config matching its ``type`` (a rule
-            # check needs ``rule``; a model check needs ``model``) — a loud shape error, never a
+            # A guardrail's check must carry the sub-config matching its ``type`` (a rule check
+            # needs ``rule``; a model check needs ``model``) — a loud shape error, never a
             # silently-empty check that would pass everything.
             if isinstance(cfg, GuardrailConfig):
                 if cfg.check.type == "rule" and cfg.check.rule is None:
                     raise GraphValidationError(
-                        f"node {node.id!r}: a rule guardrail needs check.rule (m19.md §2.6)"
+                        f"node {node.id!r}: a rule guardrail needs check.rule"
                     )
                 if cfg.check.type == "model" and cfg.check.model is None:
                     raise GraphValidationError(
-                        f"node {node.id!r}: a model guardrail needs check.model (m19.md §2.6)"
+                        f"node {node.id!r}: a model guardrail needs check.model"
                     )
-            # M14 §1.2: a subgraph/loop/map composes a SAVED, PINNED agent — exactly one of
-            # version / content_hash, so composition is immutable (never silently "latest"). The
-            # pin is part of config, hence frozen into the parent's contentHash.
+            # A subgraph/loop/map composes a SAVED, PINNED agent — exactly one of version /
+            # content_hash, so composition is immutable (never silently "latest"). The pin is part
+            # of config, hence frozen into the parent's contentHash.
             if node.type in _PINNED_BODY_TYPES:
                 version = getattr(cfg, "version", None)
                 chash = getattr(cfg, "content_hash", None)
                 if bool(version) == bool(chash):
                     raise GraphValidationError(
                         f"node {node.id!r}: a {node.type!r} body must pin EXACTLY ONE of `version` "
-                        f"or `contentHash` (m14.md §1.2 — composition is immutable, never 'latest')"
+                        f"or `contentHash` (composition is immutable, never 'latest')"
                     )
                 # The depth budget must admit at least the body itself: `maxDepth: 0` (or
                 # negative) would pass every static check and only fail when the durable lowering
@@ -905,21 +891,20 @@ def validate_graph(ir: IRDocument) -> None:
                         f"node {node.id!r}: `maxDepth` must be >= 1 (got {max_depth}) — a "
                         "non-positive depth budget can never run its body"
                     )
-            # M14 §1.3: a loop is bounded — max_iterations is required (Pydantic) AND must be ≥ 1
-            # (no unbounded/zero-iteration loop). This is the termination + determinism guarantee.
+            # A loop is bounded — max_iterations is required (Pydantic) AND must be ≥ 1 (no
+            # unbounded/zero-iteration loop). This is the termination + determinism guarantee.
             if isinstance(cfg, LoopConfig) and cfg.max_iterations < 1:
                 raise GraphValidationError(
                     f"node {node.id!r}: loop `maxIterations` must be >= 1 "
-                    f"(got {cfg.max_iterations}) — an unbounded or zero-iteration loop is "
-                    "rejected (m14.md §1.3)"
+                    f"(got {cfg.max_iterations}) — an unbounded or zero-iteration loop is rejected"
                 )
-            # M21: an llm with autonomous tools (pure-IR checks only — runtime model-capability is
-            # NOT gated here, the plane-split). Empty `tools` is the pre-M21 single-shot path.
+            # An llm with autonomous tools (pure-IR checks only — runtime model-capability is NOT
+            # gated here, the plane-split). Empty `tools` is the single-shot path.
             if isinstance(cfg, LlmConfig) and cfg.tools:
                 if cfg.max_tool_iterations < 1:
                     raise GraphValidationError(
                         f"node {node.id!r}: llm `maxToolIterations` must be >= 1 "
-                        f"(got {cfg.max_tool_iterations}) — m21.md §2"
+                        f"(got {cfg.max_tool_iterations})"
                     )
                 if len(set(cfg.tools)) != len(cfg.tools):
                     raise GraphValidationError(
@@ -938,11 +923,11 @@ def validate_graph(ir: IRDocument) -> None:
                             f"node {node.id!r}: `toolChoice` names {forced!r}, which is not in "
                             f"this node's `tools` {cfg.tools!r}"
                         )
-                # An http tool a model can call must SELF-DESCRIBE (m21.md §0/§6 Q2) and its schema
-                # top-level properties must equal the `$in.*` slots its url/body reference (Q3): a
-                # slot with no property is unfillable, a property with no slot is dead. (MCP tools
-                # self-describe at runtime via list_tools; builtin describability is checked in the
-                # control-plane up-front, where the registry is visible.)
+                # An http tool a model can call must SELF-DESCRIBE and its schema top-level
+                # properties must equal the `$in.*` slots its url/body reference: a slot with no
+                # property is unfillable, a property with no slot is dead. (MCP tools self-describe
+                # at runtime via list_tools; builtin describability is checked in the control-plane
+                # up-front, where the registry is visible.)
                 for tkey in cfg.tools:
                     binding = ir.tools[tkey]
                     if not isinstance(binding, HttpTool):
@@ -951,7 +936,7 @@ def validate_graph(ir: IRDocument) -> None:
                         raise GraphValidationError(
                             f"node {node.id!r}: http tool {tkey!r} used by an llm must set "
                             "`description` + `parameterSchema` (a model-callable tool "
-                            "self-describes — m21.md §0)"
+                            "self-describes)"
                         )
                     props = set((binding.parameter_schema.get("properties") or {}).keys())
                     named, saw_whole = _in_slots(binding.url_template)
@@ -962,14 +947,14 @@ def validate_graph(ir: IRDocument) -> None:
                         raise GraphValidationError(
                             f"node {node.id!r}: http tool {tkey!r} template references $in slot(s) "
                             f"{sorted(unfillable)} with no matching `parameterSchema` property "
-                            "(unfillable — m21.md §6 Q3)"
+                            "(unfillable)"
                         )
                     dead = props - slots
                     if dead and not (saw_whole or body_whole):
                         raise GraphValidationError(
                             f"node {node.id!r}: http tool {tkey!r} `parameterSchema` declares "
                             f"propert(ies) {sorted(dead)} with no matching $in slot in the "
-                            "url/body template (dead — m21.md §6 Q3)"
+                            "url/body template (dead)"
                         )
 
     # 4: edges reference existing nodes + declared handles.
@@ -990,8 +975,8 @@ def validate_graph(ir: IRDocument) -> None:
             )
 
     # 4b: at most one ``data`` edge may target a given in-port. Two would be an ambiguous
-    # multi-input binding (M10 §3) — ``$in.<port>`` could mean either upstream value — so reject
-    # it statically. ``control`` edges impose no value and are unconstrained.
+    # multi-input binding — ``$in.<port>`` could mean either upstream value — so reject it
+    # statically. ``control`` edges impose no value and are unconstrained.
     fed_ports: set[tuple[str, str]] = set()
     for edge in ir.edges:
         if edge.channel != "data":
@@ -1004,12 +989,12 @@ def validate_graph(ir: IRDocument) -> None:
             )
         fed_ports.add(key)
 
-    # 4c: M22 — a ``tool``-channel edge wires a configured tool node to an llm as a CAPABILITY (the
-    # model may call it), distinct from a ``data`` edge (the tool runs as a step, output flows). It
-    # must source a tool/mcp_tool node and target an ``llm``'s ``tool``-role in-port. A tool node is
-    # a capability OR a step, never both (mixed out-channels are ambiguous). An http capability node
-    # must self-describe (description + parameterSchema + slot↔property equivalence) — the M21 http
-    # binding check, now read from the node's own config (m22.md §5 / D3).
+    # 4c: a ``tool``-channel edge wires a configured tool node to an llm as a CAPABILITY (the model
+    # may call it), distinct from a ``data`` edge (the tool runs as a step, output flows). It must
+    # source a tool/mcp_tool node and target an ``llm``'s ``tool``-role in-port. A tool node is a
+    # capability OR a step, never both (mixed out-channels are ambiguous). An http capability node
+    # must self-describe (description + parameterSchema + slot↔property equivalence), read from
+    # the node's own config.
     role_by_in_port = {(n.id, p.id): p.role for n in ir.nodes for p in n.ports.in_}
     for edge in ir.edges:
         if edge.channel != "tool":
@@ -1019,7 +1004,7 @@ def validate_graph(ir: IRDocument) -> None:
         if src.type not in {"tool", "mcp_tool"}:
             raise GraphValidationError(
                 f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool node, "
-                f"not {src.type!r} (m22.md §2)"
+                f"not {src.type!r}"
             )
         if tgt.type != "llm":
             raise GraphValidationError(
@@ -1041,7 +1026,7 @@ def validate_graph(ir: IRDocument) -> None:
             raise GraphValidationError(
                 f"edge {edge.id!r}: a `{edge.channel}` edge cannot target the `tool`-role port "
                 f"{edge.target!r}.{edge.target_handle!r} — only a `tool` capability edge may "
-                "(m22.md §5)"
+                "(only a `tool` capability edge may)"
             )
 
     for node in ir.nodes:
@@ -1052,20 +1037,19 @@ def validate_graph(ir: IRDocument) -> None:
         if is_capability and out_channels - {"tool"}:
             raise GraphValidationError(
                 f"node {node.id!r}: a tool node is either a capability (`tool` edges to an llm) "
-                f"or a step (`data`/`control` edges), not both (m22.md §5)"
+                f"or a step (`data`/`control` edges), not both"
             )
         # NOTE: a capability node's id IS its `ir.tools` key — the editor derives the global tool
         # registry from the wired nodes (keyed by node id), so ``ir.tools[node.id]`` mirrors the
         # node config (like ir.models). Dispatch resolves the node id via either source, so the
-        # id↔key coincidence is intentional, never a shadowing bug (m22.md D1).
+        # id↔key coincidence is intentional, never a shadowing bug.
         if is_capability and node.type == "tool":
             cfg = ToolConfig.model_validate(node.config)
             if cfg.connection or cfg.url_template:  # an http tool (vs a builtin ref)
                 if cfg.description is None or cfg.parameter_schema is None:
                     raise GraphValidationError(
                         f"node {node.id!r}: an http tool wired as a capability must set "
-                        "`description` + `parameterSchema` (a model-callable tool "
-                        "self-describes — m22.md §5)"
+                        "`description` + `parameterSchema` (a model-callable tool self-describes)"
                     )
                 props = set((cfg.parameter_schema.get("properties") or {}).keys())
                 named, saw_whole = _in_slots(cfg.url_template)
@@ -1076,21 +1060,21 @@ def validate_graph(ir: IRDocument) -> None:
                     raise GraphValidationError(
                         f"node {node.id!r}: http tool template references $in slot(s) "
                         f"{sorted(unfillable)} with no matching `parameterSchema` property "
-                        "(unfillable — m22.md §5)"
+                        "(unfillable)"
                     )
                 dead = props - slots
                 if dead and not (saw_whole or body_whole):
                     raise GraphValidationError(
                         f"node {node.id!r}: `parameterSchema` declares propert(ies) "
-                        f"{sorted(dead)} with no matching $in slot (dead — m22.md §5)"
+                        f"{sorted(dead)} with no matching $in slot (dead)"
                     )
 
-    # 5: every REQUIRED in-port must be fed by a ``data`` edge (M10 §3 — per-port, not per-node).
+    # 5: every REQUIRED in-port must be fed by a ``data`` edge (per-port, not per-node).
     # An ``input`` boundary legitimately has no inbound edge; an in-port declared ``required:
     # false`` may be unfed (resolves to null at runtime). Without this the walker would read an
-    # unbound port — the silent ``None`` M9 was written to forbid. M22: a CAPABILITY tool node (a
-    # ``tool`` out-edge) is exempt — its args are supplied by the model at call time, not an
-    # upstream edge, so its (M6) ``in`` port is legitimately unfed.
+    # unbound port — the silent ``None`` this rule was written to forbid. A CAPABILITY tool node
+    # (with a ``tool`` out-edge) is exempt — its args are supplied by the model at call time, not
+    # an upstream edge, so its ``in`` port is legitimately unfed.
     capability_nodes = {e.source for e in ir.edges if e.channel == "tool"}
     for node in ir.nodes:
         if node.type == "input" or node.id in capability_nodes:
@@ -1106,9 +1090,9 @@ def validate_graph(ir: IRDocument) -> None:
 
 
 def topological_order(ir: IRDocument) -> list[Node]:
-    """Order nodes so every edge points forward (§8.7 step 1). ``data`` edges thread values,
-    ``control`` edges sequence — both constrain order. Raises :class:`GraphValidationError` on a
-    cycle (M5 rejects cycles; ``loop``/``map`` arrive with the durable runtime — §7)."""
+    """Order nodes so every edge points forward. ``data`` edges thread values, ``control`` edges
+    sequence — both constrain order. Raises :class:`GraphValidationError` on a cycle
+    (``loop``/``map`` only run on the durable runtime; non-durable graphs must be acyclic)."""
 
     node_by_id = {n.id: n for n in ir.nodes}
     indegree: dict[str, int] = {n.id: 0 for n in ir.nodes}
@@ -1117,7 +1101,7 @@ def topological_order(ir: IRDocument) -> list[Node]:
         if edge.source not in node_by_id or edge.target not in node_by_id:
             # validate_graph reports this precisely; ignore here so topo can run standalone.
             continue
-        # M22: a ``tool``-channel edge is a CAPABILITY wire (the llm may call the tool on-demand),
+        # A ``tool``-channel edge is a CAPABILITY wire (the llm may call the tool on-demand),
         # NOT sequencing — it imposes no order, so it is excluded from the topo sort (the walker
         # runs the capability lazily inside the llm step, never as a standalone node).
         if edge.channel == "tool":
@@ -1136,5 +1120,5 @@ def topological_order(ir: IRDocument) -> list[Node]:
                 ready.append(nxt)
 
     if len(order) != len(ir.nodes):
-        raise GraphValidationError("graph has a cycle (M5 rejects cycles — no loop/map yet)")
+        raise GraphValidationError("graph has a cycle (loop/map only run on the durable runtime)")
     return order

@@ -1,17 +1,18 @@
-"""The opt-in OTLP export sink — the *second* sink (M17 §0/§1.1/§4).
+"""The opt-in OTLP export sink — the *second* sink alongside the in-UI Postgres sink.
 
-The one rule (§0): the in-UI waterfall reads theygent's own ``span`` store and needs **zero external
+The one rule: the in-UI waterfall reads theygent's own ``span`` store and needs **zero external
 infrastructure** (air-gapped, self-hosted, localhost all get the full picture). The OTLP exporter is
 an **export target, never a dependency** — constructed **only when ``OTEL_EXPORTER_OTLP_ENDPOINT``
 is
 set**, and the OpenTelemetry SDK is **lazily imported** so the control-plane's core has no new heavy
-dep (§10). When the endpoint is set but the SDK isn't installed, this logs a clear warning and stays
+dep. When the endpoint is set but the SDK isn't installed, this logs a clear warning and stays
 off — never crashes a run.
 
-Redaction by construction (§1.3/§6): the user's full-fidelity I/O stays local in ``node_io`` (never
+Redaction by construction: the user's full-fidelity I/O stays local in ``node_io`` (never
 touched here — this sink only ever sees span *scalars*), and any scalar attribute the user marks
 sensitive (``THEYGENT_OTEL_REDACT_ATTRS``) is stripped before export — so the ``span`` row keeps it
-locally while the OTLP path does not. This is the ``RedactingSpanProcessor`` of §4, as a sink.
+locally while the OTLP path does not. This sink applies redaction before forwarding to the
+collector.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ def _redact_attrs_from_env() -> frozenset[str]:
 
 
 class OtlpSpanSink:
-    """Ships finished spans to the user's collector with sensitive scalars stripped (§1.3). The
+    """Ships finished spans to the user's collector with sensitive scalars stripped. The
     ``span`` row keeps every attribute locally; this redacted copy is what leaves the machine."""
 
     def __init__(
@@ -76,10 +77,10 @@ class OtlpSpanSink:
 def build_otlp_sink(
     *, endpoint: str | None = None, send: SendFn | None = None
 ) -> OtlpSpanSink | None:
-    """Construct the OTLP sink **iff** an endpoint is configured (§1.1: env set → on, unset → off).
+    """Construct the OTLP sink **iff** an endpoint is configured (env set → on, unset → off).
     ``send`` is injectable for tests; otherwise the real OpenTelemetry OTLP/HTTP exporter is built
     **lazily** — if the SDK isn't installed the request degrades to off with a warning (the core has
-    no hard OTel dep, §10). Returns ``None`` when export is off, so the caller can assert which
+    no hard OTel dep). Returns ``None`` when export is off, so the caller can assert which
     sinks
     exist (the ``test_two_sink_wiring`` claim)."""
     resolved = endpoint if endpoint is not None else os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")

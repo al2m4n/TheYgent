@@ -1,8 +1,8 @@
-"""Fast suite for M9 §2.3 — the inference-plane model registry persists LOCALLY (finding F6.1).
+"""Fast suite — the inference-plane model registry persists LOCALLY.
 
 The control-plane's MCP registry persists to Postgres; the inference plane's model registry must
 NOT — it runs in the user's trust domain and persisting it into the shared control-plane DB would
-couple the two planes (a §4-class regression, theygent-stack.md §10). So it persists to a small
+couple the two planes (a plane-split regression). So it persists to a small
 local JSON state file. These tests prove both halves: it survives a restart, and it does so with no
 control-plane / database dependency whatsoever (the plane-split guard).
 """
@@ -58,7 +58,7 @@ def test_persisted_to_local_file_not_a_database(tmp_path: Path) -> None:
 
 
 def test_in_memory_when_no_state_path() -> None:
-    # Default (no state_path): pure in-memory, M1 behaviour — a restart starts empty, and nothing
+    # Default (no state_path): pure in-memory — a restart starts empty, and nothing
     # is written to disk. This is what the rest of the fast suite relies on.
     with TestClient(create_app(launcher=FakeUpstreamLauncher(), enable_reaper=False)) as c1:
         c1.put("/admin/models/ephemeral", json=managed_payload())
@@ -66,10 +66,10 @@ def test_in_memory_when_no_state_path() -> None:
         assert c2.get("/admin/models").json()["models"] == []
 
 
-def test_pre_m20_registry_downgrades_to_chat(tmp_path: Path) -> None:
-    # A registry.json written BEFORE M20 has no `modality` key on its managed bindings. Loading it
-    # must default every such binding to "chat" (backward compatibility) and resolve it to the chat
-    # launcher — never crash, never skip the row. This is the M20 downgrade guarantee.
+def test_legacy_registry_downgrades_to_chat(tmp_path: Path) -> None:
+    # A registry.json written before the modality axis was introduced has no `modality` key on
+    # its managed bindings. Loading it must default every such binding to "chat" (backward
+    # compatibility) and resolve it to the chat launcher — never crash, never skip the row.
     state = tmp_path / "registry.json"
     state.write_text(
         json.dumps(

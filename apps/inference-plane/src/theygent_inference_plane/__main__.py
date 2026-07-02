@@ -19,12 +19,12 @@ def _state_dir() -> Path:
 
 
 def _state_path() -> Path:
-    """Where the logical-model registry persists (M9 §2.3) — under the local state dir."""
+    """Where the logical-model registry persists — under the local state dir."""
     return _state_dir() / "registry.json"
 
 
 def _model_dir() -> Path:
-    """Where M16-installed model weights land (downloaded in-plane). Defaults under the state dir;
+    """Where downloaded model weights land (in-plane download). Defaults under the state dir;
     ``THEYGENT_INFERENCE_PLANE_MODEL_DIR`` overrides it (e.g. a large external volume)."""
     base = os.environ.get("THEYGENT_INFERENCE_PLANE_MODEL_DIR")
     return Path(base) if base else _state_dir() / "models"

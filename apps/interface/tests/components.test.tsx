@@ -1,4 +1,4 @@
-// Light React Testing Library coverage (§4 toolchain). The canvas itself needs a real React Flow
+// Light React Testing Library coverage (Vitest + RTL toolchain). The canvas itself needs a real React Flow
 // host, so we cover the two pure-DOM surfaces: the palette (derived from the registry) and the
 // inspector (schema-driven config editing → valid IR mutations).
 
@@ -24,7 +24,7 @@ function renderWithClient(ui: ReactNode) {
 describe("Palette (derived from the registry, never hardcoded)", () => {
   it("renders one draggable item per registry node type (minus the hidden ones)", () => {
     render(<Palette />);
-    // M22 D1: `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
+    // `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
     // palette shows every registry type EXCEPT the deliberately-hidden ones.
     const hidden = new Set(["mcp_tool"]);
     for (const spec of NODE_TYPE_LIST) {
@@ -351,7 +351,7 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
   });
 
   it("shows the graph's derived tool registry (read-only) when nothing is selected", () => {
-    // M22: ir.tools is the derived global registry (keyed by node id, like ir.models). The graph
+    // ir.tools is the derived global registry (keyed by node id, like ir.models). The graph
     // panel lists it read-only; tools are added by wiring tool nodes on the canvas, not here.
     const ir = sampleGraph();
     ir.tools = { n_echo: { kind: "builtin", ref: "echo" } };

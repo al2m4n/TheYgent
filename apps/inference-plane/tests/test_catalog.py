@@ -1,8 +1,8 @@
-"""Fast suite for M16 — discovery + install (the HF model adapter, the seam, the install path).
+"""Fast suite for discovery + install (the HF model adapter, the seam, the install path).
 
 Everything-real-except-the-Hub-and-the-weights: a ``FakeHfApi`` returns canned ``ModelInfo``-shaped
 objects and a fake fetcher writes a stub file instead of downloading GB of weights. This proves the
-contract M16 §5 asks for: normalization (raw → identical ``CatalogEntry``), the engine filter (never
+contract: normalization (raw → identical ``CatalogEntry``), the engine filter (never
 surface an unrunnable model), the fit hint, install dispatch (right binding per engine), and the
 download → register state machine — without touching the network or the filesystem cache.
 """
@@ -148,7 +148,7 @@ def test_list_normalizes_to_catalog_entry() -> None:
     assert mlx.engines == ["mlx"]
 
 
-# ── engine filter (§6: never surface an unrunnable model) ────────────────────────
+# ── engine filter (never surface an unrunnable model) ────────────────────────────
 
 
 def test_engine_filter_excludes_unavailable_engines() -> None:
@@ -489,7 +489,7 @@ def test_installed_cross_reference(tmp_path: Path) -> None:
         assert by_ref["bartowski/Qwen2.5-7B-Instruct-GGUF"]["installed"] is False
 
 
-# ── M20: modality derived from pipeline_tag → recorded on plan / variant / binding ───
+# ── modality derived from pipeline_tag → recorded on plan / variant / binding ────────
 
 
 def _qwen_vl_mlx() -> FakeModelInfo:
@@ -564,7 +564,7 @@ def test_install_plan_derives_embeddings_modality() -> None:
 
 
 def test_install_plan_defaults_chat_for_text_models() -> None:
-    # A plain chat repo (no special pipeline_tag) → chat, identical to pre-M20 behaviour.
+    # A plain chat repo (no special pipeline_tag) → chat, identical to the pre-modality behaviour.
     api = FakeHfApi(by_repo={"mlx-community/Qwen2.5-0.5B-Instruct-4bit": _qwen_mlx()})
     p = HuggingFaceProvider(hf_api=api)
     plan = p.install_plan("mlx-community/Qwen2.5-0.5B-Instruct-4bit", "mlx", "", "qwen")

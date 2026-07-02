@@ -1,4 +1,4 @@
-"""The M14 real durable proof (m14.md §3 integration) — real Postgres + real DBOS + real MLX.
+"""Real durable integration proof — real Postgres + real DBOS + real MLX.
 
 The fast suite proves each lowering against real embedded DBOS with a fake model frozen mid-step.
 This env-gated test adds the headline demo on the real surface: an agent with a ``map`` fan-out
@@ -11,9 +11,9 @@ Silicon, an inference plane already serving a logical id ``triage-fast``)::
     DATABASE_URL=postgresql+asyncpg://localhost/theygent \
     THEYGENT_INFERENCE_PLANE_BASE_URL=http://127.0.0.1:8081/v1 \
         uv run --package theygent-control-plane pytest -m integration \
-        apps/control-plane/tests/test_integration_m14.py
+        apps/control-plane/tests/test_integration_lowering_nodes.py
 
-The full hand-driven clip (m14.md §7 / §5) — an agent that calls a sub-agent, fans out over a list,
+The full hand-driven clip — an agent that calls a sub-agent, fans out over a list,
 then pauses for human approval, killed mid-run and resumed — is the 30-second architecture story.
 """
 
@@ -84,7 +84,7 @@ def _summarizer_ir() -> dict:
 
 
 def _demo_ir(body_version: str, sum_version: str) -> dict:
-    # The §5.7 headline shape — all three new features in one run: the agent CALLS a sub-agent
+    # The headline shape — all three new features in one run: the agent CALLS a sub-agent
     # (subgraph), FANS OUT over a list (map), then PAUSES for human approval (human):
     #   input → map(body per element) → subgraph(summarizer) → human(approve) → output.
     ir = _doc(

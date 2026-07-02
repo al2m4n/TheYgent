@@ -1,15 +1,15 @@
-"""The lean gate backend — the M19 §2.8/§1.6 seam (NOT a metering/billing engine).
+"""The lean gate backend — the rate-limit / quota seam (NOT a metering/billing engine).
 
 Two gate nodes share this DB-backed backend, injected into the walker (``WalkContext.gates``) and
 the durable resources so it owns the DB and the walker never opens a session:
 
 * ``ratelimit`` → a trivial fixed-window counter (``gate_counter``): ``hit`` atomically increments
-  the current window's count for a scope+key and returns it; the node denies past ``limit`` (§2.8).
-* ``quota`` → READS accumulated token usage off M17 ``span`` rows (§1.6: usage read, not re-metered,
+  the current window's count for a scope+key and returns it; the node denies past ``limit``.
+* ``quota`` → READS accumulated token usage off existing ``span`` rows (usage read, not re-metered,
   builds no new metering pipeline): ``usage_tokens`` sums ``gen_ai.usage.total_tokens`` across the
   agent's spans in the window; the node denies past ``budget_tokens``.
 
-Granularity is per-KEY now; per-USER is the deferred identity milestone (§1.6) — so quota usage is
+Granularity is per-KEY now; per-USER is deferred until identity/auth work lands — so quota usage is
 scoped to the AGENT (per-user attribution off spans needs the identity work; recorded, not faked).
 """
 
@@ -26,7 +26,7 @@ from theygent_control_plane.run import now
 
 
 class GateBackend:
-    """Postgres-backed gate state (M19 §2.8). Stateless ops over the app's session factory; owns the
+    """Postgres-backed gate state. Stateless ops over the app's session factory; owns the
     DB so the walker stays session-free (the same injection pattern as the connection resolver +
     telemetry). The counter is the only new table; quota reads existing spans."""
 
@@ -55,11 +55,11 @@ class GateBackend:
         return int(count)
 
     async def usage_tokens(self, agent_id: str | None, window_seconds: int) -> int:
-        """Sum ``gen_ai.usage.total_tokens`` across the agent's spans in the window (M19 §1.6 —
-        read, not re-meter). Joins span→run on ``run_id``, filters ``run.graph_id``. The llm
-        capture writes the attribute on each ``model.generate`` span from the usage the server
-        reports; when none is recorded (an upstream that reports no usage), returns 0 — an honest
-        'no usage measured → allow'. Per-USER attribution is the deferred identity work (§1.6)."""
+        """Sum ``gen_ai.usage.total_tokens`` across the agent's spans in the window (read, not
+        re-meter). Joins span→run on ``run_id``, filters ``run.graph_id``. The llm capture writes
+        the attribute on each ``model.generate`` span from the usage the server reports; when none
+        is recorded (an upstream that reports no usage), returns 0 — an honest 'no usage measured →
+        allow'. Per-USER attribution is deferred until identity/auth work lands."""
         window_seconds = max(1, int(window_seconds))
         since = now().timestamp() - window_seconds
         token_expr = func.coalesce(SpanRow.attributes["gen_ai.usage.total_tokens"].as_float(), 0.0)

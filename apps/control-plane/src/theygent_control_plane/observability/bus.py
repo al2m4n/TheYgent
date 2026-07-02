@@ -1,4 +1,4 @@
-"""The in-process span bus — the live side-channel for the growing waterfall (M17 §5/§6).
+"""The in-process span bus — the live side-channel for the growing waterfall.
 
 The durable ``span`` table is the **durable record** the static ``GET /runs/{id}/trace`` reads; this
 bus is the **ephemeral live view** ``GET /runs/{id}/trace/stream`` subscribes to so the waterfall
@@ -24,7 +24,7 @@ from typing import Any
 class SpanEvent:
     """One live span lifecycle event: ``open`` (a bar appears, in-flight) or ``close`` (it settles).
     ``payload`` is the lightweight span shape the SSE relay forwards — timing + status + ids, never
-    a payload (those are lazy-loaded on click, §1.3)."""
+    a payload (those are lazy-loaded on click)."""
 
     kind: str  # "open" | "close"
     payload: dict[str, Any]

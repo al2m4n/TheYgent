@@ -1,8 +1,8 @@
-// The capability-routed panel registry (M18 §1.2 / §2.1) — the load-bearing data-driven seam.
+// The capability-routed panel registry — the load-bearing data-driven seam.
 //
 // Panels are registered AGAINST capability keys. The model tester queries `capabilities`, then
 // renders the panel(s) the model's `modalities` declare — there is NO hardcoded
-// `if vision … else if stt …` tree (the same discipline as M16's "providers are data" and M15's
+// `if vision … else if stt …` tree (the same discipline as "providers are data" and
 // "derive node types from the registry"). A new modality = a new key here + a panel; nothing else.
 
 import type { ComponentType } from "react";
@@ -24,7 +24,7 @@ export interface PanelProps {
 
 export type PanelComponent = ComponentType<PanelProps>;
 
-// `vision` rides the chat panel (a chat sub-capability, §1.3) — it is NOT a registry key of its own;
+// `vision` rides the chat panel (a chat sub-capability) — it is NOT a registry key of its own;
 // the chat panel turns on image attach when `caps.vision` is set.
 export const PANEL_REGISTRY: Record<PanelModality, PanelComponent> = {
   chat: ChatPanel,

@@ -1,4 +1,4 @@
-// SSE over fetch + ReadableStream (M8 §3.2 — the recorded fork). `EventSource` can't POST a
+// SSE over fetch + ReadableStream. `EventSource` can't POST a
 // body, send custom headers (we need x-theygent-run-id-class headers), or abort cleanly, and
 // the run composer *creates and streams from the same POST*. So every streaming surface goes
 // through this one parser. It is transport-agnostic: hand it any byte stream of SSE frames.
@@ -13,7 +13,7 @@ export interface SSEEvent {
 /**
  * Parse a raw SSE text buffer into complete events. Returns the events found and the
  * leftover (incomplete trailing frame) to be prepended to the next chunk. Pure + sync so it
- * is trivially unit-testable (M8 §5) — the streaming I/O lives in {@link readSSE}.
+ * is trivially unit-testable — the streaming I/O lives in {@link readSSE}.
  */
 export function parseSSEBuffer(buffer: string): { events: SSEEvent[]; rest: string } {
   // Frames are separated by a blank line. Normalize CRLF first.

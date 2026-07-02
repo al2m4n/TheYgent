@@ -1,6 +1,6 @@
-"""M16 — in-plane model download with live progress.
+"""In-plane model download with live progress.
 
-The "convincing" half of browse-and-install (``docs/private/m16-discovery.md`` §3.1): once the user
+The "convincing" half of browse-and-install: once the user
 picks a variant, the weights are fetched **here, in the inference plane** (their machine), and on
 completion the model is registered in the inference-plane-local registry — so it appears under
 "Installed" and is immediately usable on ``/v1/*``. theygent-the-vendor never sees the download.
@@ -188,7 +188,7 @@ class Downloader:
             job.done_bytes = job.total_bytes
         job.status = "registering"
         try:
-            # M20: carry the plan's modality onto the binding so the manager spawns the right server
+            # Carry the plan's modality onto the binding so the manager spawns the right server
             # (e.g. an installed VLM registers modality="vision" → mlx_vlm.server); default chat.
             binding = ManagedBinding(
                 binding=job.plan.engine,

@@ -1,11 +1,12 @@
-"""Fast suite for the substitution token language (m9.md §1 + m10.md §1.2).
+"""Fast suite for the substitution token language.
 
-Before M9 the ``llm`` node spoke ``$input`` (whole-value-only) while ``tool``/``router`` spoke
+Previously the ``llm`` node spoke ``$input`` (whole-value-only) while ``tool``/``router`` spoke
 ``$in``/``$in.field`` — two look-alike languages that don't compose, and a wrong token passed
-through as LITERAL TEXT so a run completed green with nonsense (finding F1.1). M9 unified them onto
-``$in``/``$in.field`` and made an unknown token a LOUD failure. M10 made in-ports the addressable
-unit: the segment after ``$in.`` is a **port name**, so M9's single-value drilling now lives at
-``$in.in.<field>`` (the file+question composition lives in ``test_multi_input.py``).
+through as LITERAL TEXT so a run completed green with nonsense. The substitution layer unified them
+onto ``$in``/``$in.field`` and made an unknown token a LOUD failure. The multi-input extension made
+in-ports the addressable unit: the segment after ``$in.`` is a **port name**, so single-value
+drilling now lives at ``$in.in.<field>`` (the file+question composition lives in
+``test_multi_input.py``).
 
 These prove the per-llm-node behaviours, now port-addressed:
   * ``$in`` in an llm node == the default in-port's whole value (parity with the old ``$input``);
@@ -40,8 +41,8 @@ def test_dollar_in_is_whole_in_port_value(
 def test_dollar_in_port_field_drills_into_object(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # M10 port-addressed drilling: the default in-port `in` carries an object, and
-    # $in.in.<field> selects a field of it (M9's $in.field drilling now lives at $in.in.field).
+    # Port-addressed drilling: the default in-port `in` carries an object, and
+    # $in.in.<field> selects a field of it (the old $in.field drilling now lives at $in.in.field).
     ir = llm_over_object_ir("Summarize:\n\n$in.in.body", {"body": "war and peace", "meta": 1})
     body = _run(client, ir)
     assert body["status"] == "completed"
@@ -53,7 +54,7 @@ def test_dollar_in_port_field_drills_into_object(
 def test_old_dollar_in_field_form_is_a_loud_migration_error(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # M10 migration loudness (m10.md §5): the OLD M9 spelling `$in.body` now reads as "in-port
+    # Migration loudness: the OLD single-port spelling `$in.body` now reads as "in-port
     # named body", which doesn't exist on a single-`in`-port node → loud error naming the ports,
     # not a silent green run with garbage. The fix is the named hint: $in.in.body.
     ir = llm_over_object_ir("Summarize: $in.body", {"body": "war and peace"})
@@ -93,7 +94,7 @@ def test_missing_field_names_available_fields(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
     # A $in.<port>.<field> drill into a field that doesn't exist is a loud error, and the message
-    # lists what WAS available on that port's value (M10: drilling lives at $in.in.<field>).
+    # lists what WAS available on that port's value (drilling lives at $in.in.<field>).
     ir = llm_over_object_ir("$in.in.nope", {"body": "x", "title": "y"})
     body = _run(client, ir)
     assert body["error"]["code"] == "template_error"

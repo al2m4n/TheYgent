@@ -1,10 +1,10 @@
-"""Span value types, id minting, and the capture-policy algebra (M17 §2/§3/§1.8).
+"""Span value types, id minting, and the capture-policy algebra.
 
 Plain data + pure functions — no DB, no OTel, no DBOS. The wrapper (``telemetry.py``) builds a
 :class:`Span` per node/phase and hands it to the sinks; the API maps :class:`SpanView` /
 :class:`NodeIoView` / :class:`AgentIoPolicyView` out (domain shapes, like ``run.Run`` — never ORM
-rows). ``resolve_effective_capture`` is the §1.8 precedence (deployment ceiling ∧ topology default ∧
-agent policy), kept here as one tested function so the wrapper and the API agree.
+rows). ``resolve_effective_capture`` is the effective-capture precedence (deployment ceiling ∧
+topology default ∧ agent policy), kept here as one tested function so the wrapper and the API agree.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-# ── capture-policy algebra (§1.8) ────────────────────────────────────────────
+# ── capture-policy algebra ───────────────────────────────────────────────────
 # Whether a node's raw I/O is persisted is a per-agent decision, capped by the deployment and the
 # topology. The three levels are totally ordered by restrictiveness; ``min_capture`` is the meet.
 CaptureLevel = Literal["off", "metadata", "full"]
@@ -35,10 +35,10 @@ def min_capture(*levels: CaptureLevel) -> CaptureLevel:
 def resolve_effective_capture(
     *, ceiling: CaptureLevel, topology_default: CaptureLevel, agent_policy: CaptureLevel | None
 ) -> CaptureLevel:
-    """The §1.8 effective capture level for a run. ``ceiling`` is the deployment hard cap (§1.7 env
-    —
+    """The effective capture level for a run. ``ceiling`` is the deployment hard cap (the
+    ``THEYGENT_IO_CAPTURE`` env var —
     nothing exceeds it). The agent's explicit policy, if set, applies up to the ceiling — so on a
-    hosted topology an agent may *opt into* ``full`` above the ``metadata`` topology default (§1.8).
+    hosted topology an agent may *opt into* ``full`` above the ``metadata`` topology default.
     Absent agent policy falls back to the ``topology_default`` (local → ``full``; hosted →
     ``metadata``,
     the sovereignty default — raw payloads never land in theygent's cloud Postgres by default).
@@ -51,14 +51,14 @@ def resolve_effective_capture(
 
 
 def deployment_ceiling() -> CaptureLevel:
-    """The deployment hard cap (§1.7): ``THEYGENT_IO_CAPTURE`` (off|metadata|full), default ``full``
+    """The deployment hard cap: ``THEYGENT_IO_CAPTURE`` (off|metadata|full), default ``full``
     for the localhost daily-driver. ``off`` disables payload capture entirely (spans still flow)."""
     raw = (os.environ.get("THEYGENT_IO_CAPTURE") or "full").strip().lower()
     return raw if raw in _CAPTURE_RANK else "full"  # type: ignore[return-value]
 
 
 def topology_default() -> CaptureLevel:
-    """The topology default (§1.8): ``THEYGENT_TOPOLOGY`` (local|hosted), default ``local``. Local /
+    """The topology default: ``THEYGENT_TOPOLOGY`` (local|hosted), default ``local``. Local /
     self-hosted → ``full`` allowed (the user's own machine); hosted (Pro/Team) → ``metadata`` unless
     an agent explicitly opts into ``full`` (sovereignty: raw payloads never default into the
     cloud)."""
@@ -70,7 +70,7 @@ def topology_default() -> CaptureLevel:
 
 
 def capture_max_bytes() -> int:
-    """The per-payload cap (§1.7): ``THEYGENT_IO_CAPTURE_MAX_BYTES``, default 256 KiB. Over-cap
+    """The per-payload cap: ``THEYGENT_IO_CAPTURE_MAX_BYTES``, default 256 KiB. Over-cap
     payloads are truncated with ``truncated=true`` and the true byte count — never silently
     dropped."""
     raw = os.environ.get("THEYGENT_IO_CAPTURE_MAX_BYTES")
@@ -84,7 +84,7 @@ def capture_max_bytes() -> int:
 
 
 def now_ns() -> int:
-    """Epoch nanoseconds (§1.4) — the waterfall's clock. ``end-start`` = duration, ``next.start -
+    """Epoch nanoseconds — the waterfall's clock. ``end-start`` = duration, ``next.start -
     prev.end`` = gap; clean integer arithmetic, sub-ms precision."""
     return time.time_ns()
 
@@ -92,7 +92,7 @@ def now_ns() -> int:
 def span_pk(
     run_id: str, *, node_id: str | None, phase: str | None, branch_index: int | None
 ) -> str:
-    """The deterministic span PRIMARY KEY (§1.2 idempotency). A resumed durable run re-executes the
+    """The deterministic span PRIMARY KEY (idempotency). A resumed durable run re-executes the
     workflow body and re-opens every span; a deterministic id + ``ON CONFLICT DO NOTHING`` makes the
     redundant re-write a no-op AND preserves the row written by the worker that actually completed
     the step (first-writer-wins) — so a crash-resumed run visibly hops workers instead of
@@ -115,7 +115,7 @@ def derive_trace_id(run_id: str) -> str:
 
 def derive_span_id(pk: str) -> str:
     """A 16-hex-char OTel-shaped span id, **deterministic from the span PK** — so a span's id (and
-    thus its children's ``parent_span_id``) is identical on every replay/worker (§1.2)."""
+    thus its children's ``parent_span_id``) is identical on every replay/worker."""
     return hashlib.sha256(f"span:{pk}".encode()).hexdigest()[:16]
 
 
@@ -126,8 +126,8 @@ def derive_span_id(pk: str) -> str:
 class Span:
     """One span the wrapper opens, fills, and closes (a run-root, a node, or a phase). Carries
     GenAI-semconv SCALARS in ``attributes`` (model, token counts, finish_reason, ttft_ms, …) — NEVER
-    payloads (those go to ``node_io``, §1.3). ``executor_id``/``worker_host`` are the worker
-    attribution (§1)."""
+    payloads (those go to ``node_io``). ``executor_id``/``worker_host`` are the worker
+    attribution."""
 
     id: str
     run_id: str
@@ -153,7 +153,7 @@ class Span:
     seq: int | None = None
 
 
-# ── payload sizing + capping (§1.7) ──────────────────────────────────────────
+# ── payload sizing + capping ─────────────────────────────────────────────────
 
 
 def _json_bytes(value: Any) -> int:
@@ -169,7 +169,7 @@ def _json_bytes(value: Any) -> int:
 def cap_payload(value: Any, max_bytes: int) -> tuple[Any, int, bool]:
     """Return ``(stored_value, true_byte_count, truncated)`` for one payload. Under the cap, the
     value passes through unchanged. Over the cap, it is replaced by a truncated preview + the true
-    byte count (never silently dropped — §1.7), so the drawer can show "first N bytes of M".
+    byte count (never silently dropped), so the drawer can show "first N bytes of M".
 
     Every serialization here is guarded: a pathological value (circular reference, non-string
     dict keys, absurd nesting) must degrade the CAPTURE, never kill the run that produced it —
@@ -187,11 +187,11 @@ def cap_payload(value: Any, max_bytes: int) -> tuple[Any, int, bool]:
     return {"_truncated": True, "_bytes": raw, "_preview": preview}, raw, True
 
 
-# ── domain read models (the API maps these out; never ORM rows — M4 §1.3) ────
+# ── domain read models (the API maps these out; never ORM rows) ──────────────
 
 
 class SpanView(BaseModel):
-    """A waterfall row (GET /runs/{id}/trace — §5). Lightweight: timing + status + scalar attrs +
+    """A waterfall row (GET /runs/{id}/trace). Lightweight: timing + status + scalar attrs +
     worker attribution; NO payloads. The frontend positions a bar from ``start_ns``/``end_ns`` and
     indents by the ``parent_span_id`` chain."""
 
@@ -214,13 +214,13 @@ class SpanView(BaseModel):
     executor_id: str | None = None
     worker_host: str | None = None
     seq: int
-    # Convenience for the edge-size annotations + drawer header (joined from node_io — §3 notes).
+    # Convenience for the edge-size annotations + drawer header (joined from node_io).
     bytes_in: int | None = None
     bytes_out: int | None = None
 
 
 class NodeIoView(BaseModel):
-    """The click-through payload (GET /runs/{id}/nodes/{nodeId}/io — §5/§6). ``capture_level`` and
+    """The click-through payload (GET /runs/{id}/nodes/{nodeId}/io). ``capture_level`` and
     ``reason`` drive the drawer's gated states (full / sizes-only / off / not-permitted), so the
     timeline always renders and only the payloads are gated — never a 500."""
 
@@ -236,7 +236,7 @@ class NodeIoView(BaseModel):
 
 
 class AgentIoPolicyView(BaseModel):
-    """The effective + stored capture policy for an agent (GET/PUT /agents/{id}/io-policy — §5/§6).
+    """The effective + stored capture policy for an agent (GET/PUT /agents/{id}/io-policy).
     ``effective`` is what actually happens (ceiling ∧ topology ∧ stored) so the UI shows the real
     behavior, not a lie; ``capped`` flags when the deployment/topology pins it below the request."""
 

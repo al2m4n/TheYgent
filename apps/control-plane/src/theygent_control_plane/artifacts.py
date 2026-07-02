@@ -1,10 +1,11 @@
-"""Audio/blob artifact storage — the M19 §2.1/§2.2 reference seam.
+"""Audio/blob artifact storage — the artifact reference seam.
 
 Non-text payloads (audio in/out) are passed as **references**, never multi-MB blobs in step args
-(m13-dbos.md §3 / M17 §1.3). A reference is ``{"ref": <id|url|path>, "contentType":
-<mime>}``. ``transcribe`` FETCHES bytes from its input ref (a stored artifact, an http url, or a
-local path) and streams them to the inference plane; ``speak`` PUTS the produced bytes as a new
-artifact and returns the ref (the bytes are an artifact, not journaled — a resumed run replays the
+(durable step args must be small and serialisable). A reference is
+``{"ref": <id|url|path>, "contentType": <mime>}``. ``transcribe`` FETCHES bytes from its input ref
+(a stored artifact, an http url, or a local path) and streams them to the inference plane;
+``speak`` PUTS the produced bytes as a new artifact and returns the ref (the bytes are an artifact,
+not journaled — a resumed run replays the
 ref, not the audio).
 
 This is the **minimal honest** local-filesystem store (the user's trust domain), the same posture as
@@ -49,7 +50,7 @@ def _read_local_blocking(base_dir: str, target: str) -> bytes:
 
 
 class LocalArtifactStore:
-    """Local-filesystem artifact storage (M19 §2.1). ``put`` writes bytes under a fresh
+    """Local-filesystem artifact storage. ``put`` writes bytes under a fresh
     ``art_<ulid>`` id and returns the reference; ``fetch`` resolves a reference (stored id, url, or
     local path) to ``(bytes, content_type)``. Injected into the walker/durable steps so handlers
     stay runtime-agnostic — they call this, the store owns the I/O (file ops off the event loop)."""
@@ -60,7 +61,7 @@ class LocalArtifactStore:
 
     async def put(self, data: bytes, content_type: str) -> dict[str, object]:
         """Store ``data``, return its reference (``{ref, contentType, bytes}``). The bytes live on
-        disk (an artifact); only the reference is journaled/returned (§2.2)."""
+        disk (an artifact); only the reference is journaled/returned."""
         ref_id = f"art_{ULID()}"
         await asyncio.to_thread(_write_blocking, os.path.join(self._dir, ref_id), data)
         return {"ref": ref_id, "contentType": content_type, "bytes": len(data)}

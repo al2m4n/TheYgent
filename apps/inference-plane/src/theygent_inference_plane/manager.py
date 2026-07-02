@@ -1,7 +1,7 @@
 """EngineManager — lazy-spawn, port tracking, idle teardown, eviction.
 
-This is "our code" (theygent-stack.md §9): LiteLLM gives routing/fallback/cost/
-cache; spawn-on-demand + evict-under-pressure is here. It depends only on the
+This is "our code" (spawn-on-demand + evict-under-pressure layer): LiteLLM gives
+routing/fallback/cost/cache; spawn-on-demand + evict-under-pressure is here. It depends only on the
 EngineLauncher and EvictionPolicy seams — it never calls Popen and never bakes in
 eviction logic. Reachable (`openai-compatible`) bindings are NOT managed here;
 the gateway proxies them directly.
@@ -46,11 +46,12 @@ class Upstream:
     api_base: str
     model: str
     api_key: str
-    # M22 follow-up: the resident engine is MLX chat (`mlx_lm.server`), which returns Llama's native
+    # The resident engine is MLX chat (`mlx_lm.server`), which returns Llama's native
     # text tool call as `content` instead of structured `tool_calls`. The gateway applies
-    # `tool_parse` normalization ONLY when this is set — never for llama.cpp/hosted (they already
-    # emit structured calls; double-parsing is the hazard). The flag is engine *behaviour*, set by
-    # the manager from the binding — it carries no engine NAME onto `/v1/*` (§9.1 rule holds).
+    # `tool_parse` normalization ONLY when this is set — never for llama.cpp/hosted (they
+    # already emit structured calls; double-parsing is the hazard). The flag is engine
+    # *behaviour*, set by the manager from the binding — it carries no engine NAME onto
+    # `/v1/*` (the logical-id rule holds).
     needs_tool_parse: bool = False
 
 
@@ -171,7 +172,7 @@ class EngineManager:
 
     def resident_engines(self) -> list[dict[str, Any]]:
         """Currently-resident managed engines (the /admin/engines view). We track
-        count + priority, not RAM/VRAM bytes (count-based arbitration in M1/M2)."""
+        count + priority, not RAM/VRAM bytes (count-based arbitration; RAM accounting deferred)."""
         return [
             {
                 "logicalId": lid,

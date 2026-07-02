@@ -1,4 +1,4 @@
-"""The real durable proof (M13 §7 integration) — real Postgres + real DBOS + real MLX.
+"""The real durable proof (real Postgres + real DBOS + real MLX).
 
 The fast suite proves kill-and-resume against **real embedded DBOS** (the same runtime), with a fake
 model frozen mid-activity. This env-gated test adds the one thing the fast suite can't: a real
@@ -14,7 +14,7 @@ Silicon, an inference plane already serving a logical id ``triage-fast``)::
         uv run --package theygent-control-plane pytest -m integration \
         apps/control-plane/tests/test_integration_durable.py
 
-The full **kill-the-worker-mid-MLX-run** demo (§9 step 9) is the hand-driven proof: start a run,
+The full **kill-the-worker-mid-MLX-run** demo is the hand-driven proof: start a run,
 ``kill`` the worker process, restart it, watch it resume and finish without re-doing the completed
 step. The deterministic version of that property is the fast suite's kill-and-resume test.
 """

@@ -4,7 +4,7 @@ members = ["apps/*", "packages/*"]
 # packages/ir-types is the generated IR types package.
 exclude = ["apps/interface", "packages/ir-types"]
 
-# ── Shared toolchain config (theygent-stack.md §6: uv · Ruff · ty) ──
+# ── Shared toolchain config (uv · Ruff · ty) ──
 
 [tool.ruff]
 line-length = 100
@@ -26,4 +26,7 @@ asyncio_mode = "auto"
 markers = [
     "integration: opt-in tests that spawn a real llama-server (needs THEYGENT_GGUF_PATH + binary)",
 ]
-addopts = "-m 'not integration'"
+# -n auto (pytest-xdist): distribute the fast suite across CPU cores. The macOS integration
+# job spawns real engine processes against a shared HF cache and overrides this with -p no:xdist
+# (see .github/workflows/ci.yml) — it must stay serial.
+addopts = "-n auto -m 'not integration'"

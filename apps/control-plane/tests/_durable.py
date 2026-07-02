@@ -1,8 +1,8 @@
-"""Helpers for the M13 durable fast suite: a streaming, *blockable* fake inference (so a run can be
+"""Helpers for the durable fast suite: a streaming, *blockable* fake inference (so a run can be
 frozen mid-activity to simulate a crash) and small builders for saving agents + resetting the DBOS
 schema between durable tests.
 
-DBOS is a process-global singleton (decisions D2), so each durable test launches and destroys it,
+DBOS is a process-global singleton, so each durable test launches and destroys it,
 and must start from a clean ``dbos`` schema — else a workflow a prior test left pending would be
 *recovered* by the next test's launch. ``reset_dbos_schema`` drops + re-migrates the ``dbos`` schema
 (never ``public`` — that is Alembic's, truncated by the existing ``clean_db`` fixture).
@@ -109,7 +109,7 @@ class BlockingInference:
 class TransientFailInference:
     """A real SSE server that returns 503 ``engine_unavailable`` for the first ``fail_count`` calls,
     then streams ``content``. Models a transient inference failure (an engine warming up) so a test
-    can prove DBOS step-level retry covers what the M12 gateway retry used to (M13 §2 / the 503
+    can prove DBOS step-level retry covers what the earlier gateway retry used to (the 503
     regression the durable gateway's ``max_retries=0`` would otherwise re-introduce)."""
 
     def __init__(self, *, fail_count: int = 1, content: str = "RECOVERED") -> None:
@@ -154,7 +154,7 @@ class TransientFailInference:
 
 
 # A non-idempotent, OBSERVABLE external side effect registered as a built-in tool, used to prove the
-# honest durability guarantee (decision D9): exactly-once for COMPLETED (journaled) steps,
+# honest durability guarantee: exactly-once for COMPLETED (journaled) steps,
 # at-least-once for an INTERRUPTED one. ``_SIDE_EFFECT["count"]`` is the effect; the FIRST call (the
 # crash victim) blocks forever so the test can destroy DBOS while the tool step is in-flight; the
 # RECOVERED call (count==2) returns — i.e. the effect happened TWICE, the at-least-once property.
@@ -214,8 +214,8 @@ def _chunk(delta: dict, finish: str | None = None) -> str:
 
 
 def canonical_ir(ir_dict: dict[str, Any]) -> tuple[Any, str, dict[str, Any]]:
-    """(parsed IRDocument, contentHash, canonical view-stripped dict) — the registry storage shape
-    (M11 §1.2), so a test can save an agent exactly as the API does."""
+    """(parsed IRDocument, contentHash, canonical view-stripped dict) — the registry storage shape,
+    so a test can save an agent exactly as the API does."""
     doc = parse_document(ir_dict)
     chash = content_hash(doc)
     canon = doc.model_dump(mode="json", by_alias=True, exclude_none=False)
@@ -238,7 +238,7 @@ async def save_agent(sessionmaker: Any, agents: Any, ir_dict: dict[str, Any]) ->
 
 async def reset_dbos_schema(pg_url: str) -> None:
     """Drop + recreate the DBOS ``dbos`` schema so each durable test starts with no pending or
-    recovered workflows from a prior test (D2 isolation). Never touches ``public`` (Alembic's)."""
+    recovered workflows from a prior test. Never touches ``public`` (Alembic's)."""
     conn = await asyncpg.connect(dsn=plain_dsn(pg_url))
     try:
         await conn.execute("DROP SCHEMA IF EXISTS dbos CASCADE")

@@ -1,8 +1,8 @@
-"""Fast suite for M9 §2.1 — startup reconciliation of orphaned runs (finding F5.2).
+"""Fast suite for startup reconciliation of orphaned runs.
 
 A control-plane crash mid-stream leaves a run stuck at ``streaming`` forever — ``error`` null,
-``updated_at`` frozen — a zombie that lies about being alive. The in-process M5 walker can't resume
-it (that's the durable-runtime fork, §4), but it must not lie. On startup the control-plane sweeps
+``updated_at`` frozen — a zombie that lies about being alive. The in-process walker can't resume
+it (that's the durable-runtime fork), but it must not lie. On startup the control-plane sweeps
 every non-terminal run to ``failed`` with a distinct reason so it's distinguishable from a real
 inference failure. This is the cheap honest mitigation, nothing more.
 """

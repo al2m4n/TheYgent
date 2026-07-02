@@ -1,6 +1,6 @@
-"""DB engine + session lifecycle (M4 §1.2) — the convention every later table inherits.
+"""DB engine + session lifecycle — the convention every later table inherits.
 
-The control-plane is near-stateless and scales horizontally (stack §8), so nothing here
+The control-plane is near-stateless and scales horizontally, so nothing here
 may assume a single instance: a pooled async engine created once at startup and disposed
 at shutdown, and a fresh ``AsyncSession`` per logical operation — never a global/module
 session, never a process-local cache. Postgres is the *shared* state.
@@ -10,7 +10,7 @@ Two ways to get a session, both off the one ``async_sessionmaker``:
     ``Depends`` defined in ``app.py``); opened and closed within the request.
   * the sessionmaker directly, for writes that outlive the handler return — a streaming
     run commits its turns *after* the response object is returned, so it cannot borrow a
-    request-scoped session (§1.2 "per logical operation").
+    request-scoped session (one session per logical operation).
 """
 
 from __future__ import annotations
@@ -38,6 +38,6 @@ def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
 
 
 async def ping(engine: AsyncEngine) -> None:
-    """Raise if Postgres is unreachable — drives /readyz honesty (§1.4)."""
+    """Raise if Postgres is unreachable — drives /readyz honesty."""
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))

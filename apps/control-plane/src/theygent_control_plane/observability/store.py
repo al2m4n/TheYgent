@@ -1,12 +1,12 @@
-"""Postgres persistence for the observability tables (M17 §3) — the same M4 discipline as
+"""Postgres persistence for the observability tables — same discipline as
 ``RunStore``: stateless ops over a caller-provided ``AsyncSession``, domain shapes out
 (:class:`SpanView` / :class:`NodeIoView` / :class:`AgentIoPolicyView`), ORM rows never leak.
 
-Two write paths, both **idempotent on a durable replay** (§4): the span row is keyed by the
+Two write paths, both **idempotent on a durable replay**: the span row is keyed by the
 deterministic ``span.id`` with **ON CONFLICT DO NOTHING** (first-writer-wins, so a resumed run's
 re-opened span does not overwrite the worker that actually completed it — the worker-attribution
 demo), and ``node_io`` by ``UNIQUE(run_id, node_id)`` likewise. ``seq`` is allocated per-run
-``MAX+1`` at insert (the M4 §3 ordering key) — a run's spans are written sequentially by its single
+``MAX+1`` at insert (the ordering key) — a run's spans are written sequentially by its single
 walk, so no lock is needed (unlike ``append_turn``, which races across instances).
 """
 
@@ -32,13 +32,13 @@ from theygent_control_plane.run import new_ulid, now
 
 
 class TraceStore:
-    """Span timeline persistence (the durable record the waterfall reads — §1.2)."""
+    """Span timeline persistence (the durable record the waterfall reads)."""
 
     async def write_span(self, session: AsyncSession, span: Span) -> None:
-        """Persist one finished (or in-flight) span, idempotently (§4). Allocates ``seq`` =
+        """Persist one finished (or in-flight) span, idempotently. Allocates ``seq`` =
         per-run ``MAX+1`` and inserts ON CONFLICT (id) DO NOTHING — a durable replay re-opens the
         span with the SAME deterministic id, so the re-write is a no-op and the original
-        (completing-worker) row stands. Never inside ``@DBOS.transaction`` (m13-dbos §3) — a plain
+        (completing-worker) row stands. Never inside ``@DBOS.transaction`` — a plain
         data-layer write.
 
         ``span.seq`` is pre-assigned when the run buffered its spans in memory (the interactive
@@ -82,11 +82,11 @@ class TraceStore:
         )
 
     async def list_spans(self, session: AsyncSession, run_id: str) -> list[SpanView]:
-        """Every span for a run, ordered by ``seq`` (M4 §3 — the §5 contract; the waterfall itself
+        """Every span for a run, ordered by ``seq`` (the stable ordering key; the waterfall itself
         positions bars by ``start_ns`` and nests by ``parent_span_id``, so list order is just a
         stable hint, not load-bearing for rendering). Joins per-node byte sizes from ``node_io`` so
-        the timeline can annotate each transition ("→ 4.2 KB") WITHOUT loading the blob (§3 notes).
-        No payloads here — they are lazy (§1.3)."""
+        the timeline can annotate each transition ("→ 4.2 KB") WITHOUT loading the blob.
+        No payloads here — they are lazy-loaded on demand."""
         rows = (
             (
                 await session.execute(
@@ -146,7 +146,7 @@ class TraceStore:
 
 
 class NodeIoStore:
-    """Per-node I/O persistence (lazy-loaded, never exported — §1.3)."""
+    """Per-node I/O persistence (lazy-loaded, never exported)."""
 
     async def write_io(
         self,
@@ -162,11 +162,10 @@ class NodeIoStore:
         bytes_out: int,
         truncated: bool,
     ) -> None:
-        """Write one ``node_io`` row, idempotently (§4 — ON CONFLICT (run_id, node_id) DO NOTHING,
-        so
-        a durable replay's re-capture is a no-op). The caller has already resolved + capped payloads
-        per the effective capture level (``full`` → payloads + sizes; ``metadata`` → sizes only,
-        payloads None; ``off`` → not called at all)."""
+        """Write one ``node_io`` row, idempotently (ON CONFLICT (run_id, node_id) DO NOTHING,
+        so a durable replay's re-capture is a no-op). The caller has already resolved + capped
+        payloads per the effective capture level (``full`` → payloads + sizes; ``metadata`` →
+        sizes only, payloads None; ``off`` → not called at all)."""
         await session.execute(
             pg_insert(NodeIoRow)
             .values(
@@ -206,8 +205,9 @@ class NodeIoStore:
 
 
 class AgentIoPolicyStore:
-    """Per-agent capture policy persistence (§1.8). Keyed to the stable ``agent_id`` — editing it
-    never changes ``contentHash`` (M11 immutability). Absent row → the topology default."""
+    """Per-agent capture policy persistence. Keyed to the stable ``agent_id`` — editing it
+    never changes ``contentHash`` (agents are immutable content-addressed artifacts).
+    Absent row → the topology default."""
 
     async def get_policy(self, session: AsyncSession, agent_id: str) -> AgentIoPolicyRow | None:
         return await session.get(AgentIoPolicyRow, agent_id)
@@ -266,9 +266,9 @@ class AgentIoPolicyStore:
         ceiling: CaptureLevel,
         topo_default: CaptureLevel,
     ) -> AgentIoPolicyView:
-        """Build the §5/§6 effective+stored policy view. ``effective`` is what actually happens, so
+        """Build the effective+stored policy view. ``effective`` is what actually happens, so
         the UI shows the real behavior; ``capped`` flags when the deployment/topology pins it below
-        the stored request (so the user sees "Full requested; capped to Sizes only", §6)."""
+        the stored request (so the user sees "Full requested; capped to Sizes only")."""
         stored: CaptureLevel = (
             cast(CaptureLevel, row.io_capture) if row is not None else topo_default
         )

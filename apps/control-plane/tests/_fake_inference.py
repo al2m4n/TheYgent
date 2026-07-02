@@ -1,8 +1,8 @@
 """A real, threaded, OpenAI-compatible *fake inference plane* for the fast suite.
 
 Everything real except the model: a genuine uvicorn server on an ephemeral port so the
-control-plane's gateway-client really talks HTTP across the seam (M3 §6 — the in-process
-shortcut is exactly the trap §3.1 forbids). Mirrors the inference plane's own
+control-plane's gateway-client really talks HTTP across the seam (the in-process
+shortcut defeats the purpose of testing the real HTTP boundary). Mirrors the inference plane's own
 ``tests/_fake_upstream._ThreadedServer`` mechanics.
 
 Selectable ``mode`` exercises the control-plane's error paths:
@@ -12,11 +12,12 @@ Selectable ``mode`` exercises the control-plane's error paths:
   * ``drop_midstream`` — stream a chunk then drop the connection mid-stream
   * ``reasoning``      — a reasoning model: emits ``reasoning_content`` deltas then ``content``
   * ``empty_length``   — emits only ``reasoning_content`` then ``finish_reason: length`` (the
-                         budget-exhausted-no-answer case M9 surfaces honestly)
+                         budget-exhausted-no-answer case surfaced honestly)
 
 An optional ``response`` overrides the streamed/returned content (default ``"hello world"``).
-M6 uses it to make an ``llm`` node emit a deterministic routing decision (e.g. a JSON
-``{"handle": "yes", ...}``) so the combined ``llm → router`` graph is fully deterministic.
+The optional ``response`` override makes an ``llm`` node emit a deterministic routing decision
+(e.g. a JSON ``{"handle": "yes", ...}``) so the combined ``llm → router`` graph is fully
+deterministic.
 """
 
 from __future__ import annotations
@@ -55,8 +56,8 @@ def _build_app(
             "data": [{"id": "triage-fast", "object": "model", "owned_by": "theygent"}],
         }
 
-    # M19 §2.2: the audio data-plane endpoints (the control-plane's transcribe/speak nodes call
-    # THESE — proving the bytes go to the inference base URL, never a control-plane route, §10).
+    # The audio data-plane endpoints (the control-plane's transcribe/speak nodes call
+    # THESE — proving the bytes go to the inference base URL, never a control-plane route).
     @app.post("/v1/audio/transcriptions")
     async def transcriptions(request: Request):
         form = await request.form()
@@ -79,7 +80,7 @@ def _build_app(
         captured["run_id_header"] = request.headers.get("x-theygent-run-id")
         captured["model"] = body.get("model")
         # Capture the full messages array so thread-replay tests can assert the prior
-        # turns (in order) were prepended to the new input (M4 §6).
+        # turns (in order) were prepended to the new input.
         captured["messages"] = body.get("messages")
 
         if mode == "error_503":
@@ -111,7 +112,7 @@ def _build_app(
         # asserting usage landed proves the control-plane actually requested it.
         include_usage = bool((body.get("stream_options") or {}).get("include_usage"))
         captured["stream_options"] = body.get("stream_options")
-        # M21 tool-calling: the scripted loop emits a tool_call on the FIRST turn, then — once a
+        # Tool-calling: the scripted loop emits a tool_call on the FIRST turn, then — once a
         # ``{role: tool}`` result is in the transcript — the final answer. Stateless (driven by the
         # request) so the control-plane's loop terminates naturally.
         messages_in = body.get("messages") or []
@@ -215,7 +216,7 @@ async def _stream(
             yield _usage_chunk(model)
         yield "data: [DONE]\n\n"
 
-    # M21 tool-calling: stream a tool_call (fragmented arguments — proves the accumulator) on the
+    # Tool-calling: stream a tool_call (fragmented arguments — proves the accumulator) on the
     # first turn, then the final answer once the tool result is in the transcript.
     if mode == "tool_call":
         name, args, has_result = tool_spec
@@ -273,7 +274,7 @@ async def _stream(
         yield _chunk(model, delta)
         if mode == "drop_midstream":
             # Simulate inference dying mid-stream: stop emitting without [DONE] and
-            # raise so the connection drops, exactly the §4 mid-stream-failure case.
+            # raise so the connection drops, exactly the mid-stream-failure case.
             raise RuntimeError("inference dropped mid-stream")
     yield _chunk(model, {}, finish="stop")
     for piece in _tail():

@@ -1,27 +1,28 @@
-"""bench store — saved benchmark results + suites/cases + param presets (M18 §1.6/§1.7)
+"""bench store — saved benchmark results + suites/cases + param presets
 
-The Bench (M18) proves a model/agent works and *measures* it. A benchmark is only honest if pinned
-to exactly what ran (§1.6), so the results store keys each ``bench_run`` to either a MODEL pin
+The Bench proves a model/agent works and *measures* it. A benchmark is only honest if pinned
+to exactly what ran, so the results store keys each ``bench_run`` to either a MODEL pin
 (``logical_id`` + ``model_ref`` + ``binding`` + ``params_digest`` — temperature 0.2 vs 0.9 are
 DIFFERENT benchmarks, so params are part of the identity) or an AGENT pin (``agent_id`` +
-``version`` + ``content_hash`` — the M11 content-addressing discipline; params already live inside
+``version`` + ``content_hash`` — the content-addressing discipline; params already live inside
 the hashed IR). The two pin shapes share one row.
 
-**Metrics + digests by default — raw payloads are NEVER journaled here** (§1.6 / §10): in the cloud
-topology this Postgres is hosted, so a captured prompt / output / audio / image would breach §10.
-``metrics`` (JSONB) holds the numbers; ``output_digest`` is a cheap content identity for the compare
-diff without the raw output; ``capture_ref`` is the opt-in LOCAL reference to raw I/O (a reference,
-never a blob in the hot table — the M14 "pass references, don't journal blobs" rule).
+**Metrics + digests by default — raw payloads are NEVER journaled here**: in the cloud
+topology this Postgres is hosted, so a captured prompt / output / audio / image would breach
+the sovereignty boundary. ``metrics`` (JSONB) holds the numbers; ``output_digest`` is a cheap
+content identity for the compare diff without the raw output; ``capture_ref`` is the opt-in
+LOCAL reference to raw I/O (a reference, never a blob in the hot table — pass references,
+don't journal blobs).
 
-* ``bench_suite`` / ``bench_case`` — golden cases pinned to a target (§2.5). A suite's cases are an
+* ``bench_suite`` / ``bench_case`` — golden cases pinned to a target. A suite's cases are an
   AUTHORED test spec (distinct from a captured run payload), stored in full so the suite re-runs.
 * ``bench_run`` — one recorded result; ``suite_id``/``case_id`` tag suite runs so a regression
   across versions is one query.
-* ``bench_preset`` — a named, modality-scoped, LITERAL param set (§1.7), a sibling of results (not a
+* ``bench_preset`` — a named, modality-scoped, LITERAL param set, a sibling of results (not a
   third subsystem). Values only — "apply preset" copies them into the IR; the IR never stores a
   preset *reference* (that would be a contentHash-drift bug).
 
-Hand-written and fully reversible — the §6 round-trip test exercises upgrade head -> downgrade base
+Hand-written and fully reversible — the round-trip test exercises upgrade head -> downgrade base
 including all four ``bench_*`` tables.
 """
 
@@ -67,7 +68,7 @@ def upgrade() -> None:
         sa.Column("expected", postgresql.JSONB(), nullable=True),  # optional expected output
         sa.Column("assertion", sa.String(), nullable=False),  # exact|contains|regex|json-path|judge
         sa.Column("assertion_config", postgresql.JSONB(), nullable=True),
-        sa.Column("seq", sa.Integer(), nullable=False),  # ordering within the suite (M4 §3)
+        sa.Column("seq", sa.Integer(), nullable=False),  # ordering within the suite
         sa.Column("created_at", _TZ, nullable=False),
     )
     op.create_index("ix_bench_case_suite_seq", "bench_case", ["suite_id", "seq"])
@@ -87,13 +88,13 @@ def upgrade() -> None:
         sa.Column("agent_id", sa.String(), nullable=True),
         sa.Column("version", sa.String(), nullable=True),
         sa.Column("content_hash", sa.String(), nullable=True),
-        # the numbers + content identity (NO raw payloads — §1.6 / §10)
+        # the numbers + content identity (NO raw payloads — never journaled)
         sa.Column("metrics", postgresql.JSONB(), nullable=False),
         sa.Column("output_digest", sa.String(), nullable=True),
         sa.Column(
             "capture_ref", sa.String(), nullable=True
         ),  # opt-in LOCAL reference, never a blob
-        # suite linkage (§2.5)
+        # suite linkage
         sa.Column("suite_id", sa.String(), nullable=True),
         sa.Column("case_id", sa.String(), nullable=True),
         sa.Column("assertion", sa.String(), nullable=True),
@@ -113,9 +114,9 @@ def upgrade() -> None:
         "bench_preset",
         sa.Column("id", sa.String(), primary_key=True),
         sa.Column("name", sa.String(), nullable=False),
-        sa.Column("modality", sa.String(), nullable=False),  # the §1.2 vocabulary
+        sa.Column("modality", sa.String(), nullable=False),  # modality scope for this preset
         sa.Column("logical_id", sa.String(), nullable=True),  # optional tuned-against tag
-        sa.Column("params", postgresql.JSONB(), nullable=False),  # literal values only (§1.7)
+        sa.Column("params", postgresql.JSONB(), nullable=False),  # literal values only
         sa.Column("created_at", _TZ, nullable=False),
         sa.Column("updated_at", _TZ, nullable=False),
     )

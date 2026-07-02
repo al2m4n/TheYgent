@@ -1,4 +1,4 @@
-// @theygent/ir-types — the generated IR contract the frontends consume (M15 §1.3).
+// @theygent/ir-types — the generated IR contract the frontends consume.
 //
 // The ONE rule this package enforces: the IR types are GENERATED from `packages/ir` (the
 // Pydantic source of truth), never hand-written in TypeScript. `ir.d.ts` is produced by
@@ -9,17 +9,17 @@
 
 import nodeTypesJson from "./node-types.json";
 
-// The generated §8.2 IR document shapes: IRDocument, Node, Edge, Port, Ports, ModelBinding, …
+// The generated IR document shapes: IRDocument, Node, Edge, Port, Ports, ModelBinding, …
 // Re-exported as types only — `ir.d.ts` is pure declarations, zero runtime.
 export type * from "./ir";
 
 import type { Kind, Ports } from "./ir";
 
-// ── the node-type registry (§2.2) ────────────────────────────────────────────
+// ── the node-type registry ────────────────────────────────────────────────────
 // Each executable node `type` → its determinism `kind` (so a React-Flow node never carries
 // `kind`; the canvas looks it up here), its per-type `config` JSON Schema, a default `config`
 // filled from that schema, and the default `ports` a freshly-dropped node declares. The palette
-// derives its list from this object — an M14-style type added in Python appears for free.
+// derives its list from this object — a new type added in Python appears for free.
 
 export interface NodeTypeSpec {
   /** The node `type` selector (`llm`, `tool`, `router`, …). */
@@ -43,7 +43,7 @@ const registry = nodeTypesJson as NodeTypeRegistry;
 /** The full node-type registry keyed by `type`. */
 export const NODE_TYPES: Record<string, NodeTypeSpec> = registry.types;
 
-/** The sorted list of palette-able node types (derived, never hardcoded — M15 §2.2). */
+/** The sorted list of palette-able node types (derived, never hardcoded). */
 export const NODE_TYPE_LIST: NodeTypeSpec[] = Object.keys(NODE_TYPES)
   .sort()
   .map((t) => NODE_TYPES[t]);

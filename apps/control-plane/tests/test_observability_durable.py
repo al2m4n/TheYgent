@@ -1,7 +1,7 @@
-"""M17 observability on the DURABLE path (DBOS) — worker attribution + queue.wait + the crash-resume
+"""Observability on the DURABLE path (DBOS) — worker attribution + queue.wait + the crash-resume
 worker-hop, the user's "see which worker handled what" ask made concrete.
 
-Reuses the M13 kill-and-resume harness (``_build_runtime`` auto-wires a Telemetry, so durable spans
+Reuses the kill-and-resume harness (``_build_runtime`` auto-wires a Telemetry, so durable spans
 land through the SAME wrapper the interactive walker uses). DBOS is process-global, so each test
 resets the ``dbos`` schema and the autouse teardown in this module force-destroys it.
 """
@@ -217,7 +217,7 @@ async def test_durable_guardrail_usage_lands_on_generate_span(pg_url: str) -> No
 
 
 async def test_resume_does_not_duplicate_spans_and_preserves_worker(pg_url: str) -> None:
-    # The §4 resume-idempotency claim, on the real durable path: n_a COMPLETES + journals; the
+    # The resume-idempotency invariant, on the real durable path: n_a COMPLETES + journals; the
     # worker CRASHES mid-n_b; the run is recovered and finishes n_b. The recovered workflow
     # re-executes the walk body — re-opening n_a's span — but the deterministic-id ON CONFLICT DO
     # NOTHING means n_a's row is NOT duplicated and KEEPS the first-completing worker. Both
@@ -263,7 +263,7 @@ async def test_resume_does_not_duplicate_spans_and_preserves_worker(pg_url: str)
             await gw2.aclose()
             await engine.dispose()
 
-    # No duplicate span rows after resume — the deterministic-id ON CONFLICT DO NOTHING (§4).
+    # No duplicate span rows after resume — the deterministic-id ON CONFLICT DO NOTHING.
     node_spans = [s for s in spans if s.node_id and s.phase is None]
     names = [s.name for s in node_spans]
     assert len(names) == len(set(names)), f"duplicate node spans after resume: {names}"

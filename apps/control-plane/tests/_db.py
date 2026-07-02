@@ -1,6 +1,6 @@
 """Direct-DB helpers for tests — assert persisted state the API doesn't expose.
 
-There is no /messages endpoint (M4 builds no standalone memory resource — §7), so the
+There is no /messages endpoint (no standalone memory resource is exposed), so the
 thread-memory tests inspect the ``message`` / ``run`` rows directly over asyncpg. Reads
 only; the production path always goes through the app + Alembic-managed schema.
 """
@@ -37,7 +37,7 @@ async def seed_run(
     model: str = "triage-fast",
     runtime: str | None = None,
 ) -> None:
-    """Insert a run row directly in a given lifecycle state (M9 §2.1 reconciliation tests need a
+    """Insert a run row directly in a given lifecycle state (reconciliation tests need a
     run stuck at ``streaming`` as if a crash left it there — the app would never create one).
     ``runtime`` seeds the lifecycle-owner marker (``'durable'`` = the sweep must leave it alone)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))

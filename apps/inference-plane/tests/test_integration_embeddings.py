@@ -1,7 +1,8 @@
-"""M20 integration — REAL llama.cpp embeddings on /v1/embeddings (the first non-chat managed slice).
+"""Integration test — REAL llama.cpp embeddings on /v1/embeddings (the first non-chat managed
+slice).
 
 llama.cpp is the "one binary, many modalities via flags" engine: the SAME ``llama-server`` serves
-``/v1/embeddings`` once spawned with ``--embeddings`` (M20 §2). Embeddings is "supported" only
+``/v1/embeddings`` once spawned with ``--embeddings``. Embeddings is "supported" only
 because this runs green — skipped by default (``-m 'not integration'``) and skips clean when the
 prereqs are absent. Run::
 

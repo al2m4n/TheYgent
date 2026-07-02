@@ -1,24 +1,24 @@
 """Generate the frontend's IR contract artifacts from ``packages/ir`` — the single source of
-truth (M15 §1.3, theygent-graph-schema.md §8).
+truth for the IR schema.
 
 The frontend (``apps/interface``, ``apps/web``) must NEVER hand-write IR types: a second,
-drifting definition of the IR is exactly the corruption M15 §1 guards against. This script is
+drifting definition of the IR is exactly the corruption this script guards against. This script is
 the one-way generator: it imports the Pydantic models and emits
 
-  * ``src/ir.schema.json``    — ``IRDocument.model_json_schema()`` (the §8.2 envelope schema).
+  * ``src/ir.schema.json``    — ``IRDocument.model_json_schema()`` (the envelope schema).
                                 ``json-schema-to-typescript`` turns this into ``src/ir.d.ts``.
-  * ``src/node-types.json``   — the **node-type registry** (§2.2): for every executable node
+  * ``src/node-types.json``   — the **node-type registry**: for every executable node
                                 ``type``, its determinism ``kind`` (from ``NODE_TYPE_KIND`` —
                                 so React-Flow nodes never carry ``kind``, they look it up), its
                                 per-type ``config`` JSON Schema (from ``_CONFIG_MODELS``), a
                                 default ``config`` filled from that schema, and the default
                                 ``ports`` a freshly-dropped node declares. The palette derives
-                                its list from this file, so an M14-style type added in Python
+                                its list from this file, so a new node type added in Python
                                 appears on the canvas for free — never hardcoded in the FE.
 
 Run via ``pnpm --filter @theygent/ir-types generate`` (which shells ``uv run`` then ``json2ts``).
 The CI drift guard re-runs this and ``git diff --exit-code`` — if Python's IR moved and the
-checked-in artifacts didn't, the build fails (M15 §1.3 / §4 type-drift guard).
+checked-in artifacts didn't, the build fails (type-drift guard).
 """
 
 from __future__ import annotations
@@ -34,20 +34,20 @@ from theygent_ir.graph import (
     IRDocument,
 )
 
-# ── default ports per node type (§8.3) ────────────────────────────────────────
+# ── default ports per node type ───────────────────────────────────────────────
 # Ports are declared per-node-instance in the IR, not in the per-type config model, so the
 # *default* set a freshly-dropped node carries lives here — next to NODE_TYPE_KIND, the backend
 # side of the seam. A type without an explicit entry falls back to one ``in`` + one ``out`` port,
-# so a new executable type still drops onto the canvas as a connectable node (M15 §2.2: "new
-# types appear automatically"). ``err`` is the second out-port the tool ok/err contract needs
-# (m6.md §4); ``input`` has no in-port and ``output`` no out-port (graph boundaries).
+# so a new executable type still drops onto the canvas as a connectable node ("new types appear
+# automatically"). ``err`` is the second out-port the tool ok/err contract needs;
+# ``input`` has no in-port and ``output`` no out-port (graph boundaries).
 _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "input": {"in": [], "out": ["out"]},
     "output": {"in": ["in"], "out": []},
-    # M22: the llm declares a `tools` in-port (role "tool", optional) — capability edges from tool
+    # The llm declares a `tools` in-port (role "tool", optional) — capability edges from tool
     # nodes target it (the model may CALL those tools). See _PORT_OVERRIDES for its role/required.
     "llm": {"in": ["in", "tools"], "out": ["out"]},
-    # M22: tool/mcp_tool gain a `use` out-port (role "tool") — the capability connector that wires
+    # tool/mcp_tool carry a `use` out-port (role "tool") — the capability connector that wires
     # into an llm's `tools` port. The data `out`/`err` stay for STEP-mode (run as a graph step).
     "tool": {"in": ["in"], "out": ["out", "err", "use"]},
     "mcp_tool": {"in": ["in"], "out": ["out", "err", "use"]},
@@ -58,9 +58,9 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "subgraph": {"in": ["in"], "out": ["out", "err"]},
     "loop": {"in": ["in"], "out": ["out"]},
     "map": {"in": ["in"], "out": ["out"]},
-    # M19 §2 — the node palette. transcribe/speak carry an ``err`` out-port (the tool ok/err
-    # contract — §2.2); guardrail emits ``pass``/``block`` (§2.6); the gates emit ``allow``/``deny``
-    # (§2.8); transform is a plain reshape (§2.9).
+    # transcribe/speak carry an ``err`` out-port (the tool ok/err contract);
+    # guardrail emits ``pass``/``block``; the gates emit ``allow``/``deny``;
+    # transform is a plain reshape.
     "transcribe": {"in": ["audio"], "out": ["text", "err"]},
     "speak": {"in": ["text"], "out": ["audio", "err"]},
     "guardrail": {"in": ["in"], "out": ["pass", "block"]},
@@ -70,7 +70,7 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
 }
 _FALLBACK_PORTS: dict[str, list[str]] = {"in": ["in"], "out": ["out"]}
 
-# M22: ports whose default role/required differ from the (data, required) norm. The llm's `tools`
+# Ports whose default role/required differ from the (data, required) norm. The llm's `tools`
 # IN-port and the tool/mcp_tool `use` OUT-port both carry role "tool" (the capability wire); the
 # llm's is optional (an llm with no wired tools is valid).
 _PORT_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
@@ -103,7 +103,7 @@ def _default_for(prop_schema: dict[str, Any]) -> Any:
     A freshly-dropped node should produce a *shaped* (if not yet valid) config the inspector can
     edit — ``{"model": "", "messages": []}`` rather than ``{}`` — so the form has fields to show.
     The graph won't validate until the user fills required values; that loud failure is the point
-    (M15 §2.2 / M9 no-silent-pass). ``default`` always wins when the schema declares one."""
+    (no silent pass). ``default`` always wins when the schema declares one."""
 
     if "default" in prop_schema:
         return prop_schema["default"]
@@ -148,7 +148,7 @@ def build_node_types() -> dict[str, Any]:
             "ports": {
                 "in": [_in_port(node_type, pid) for pid in ports["in"]],
                 # An out-port named ``err`` is error-typed (the tool/llm/transcribe/speak ok-err
-                # contract — m6.md §4); the walker keys ``_error_handles`` off ``type == "error"``,
+                # contract); the walker keys ``_error_handles`` off ``type == "error"``,
                 # so the palette default must match how real IRs declare it (tests/_ir.py).
                 "out": [_out_port(node_type, pid) for pid in ports["out"]],
             },

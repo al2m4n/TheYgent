@@ -1,6 +1,6 @@
 """The EngineLauncher seam + the managed engines (llama.cpp, MLX, vLLM).
 
-This is the load-bearing seam (M1 plan §"EngineLauncher protocol"): every managed
+This is the load-bearing seam (the ``EngineLauncher`` protocol): every managed
 engine implements the *same* ``EngineLauncher`` protocol, so the fast suite is
 everything-real-except-the-weights via a fake, and the ``EngineManager`` stays
 engine-agnostic. Adding MLX (engine #2) and vLLM (#3) required **zero EngineManager
@@ -140,7 +140,7 @@ class _SubprocessHandle:
             self._proc.wait(timeout=5)
 
 
-# ── llama.cpp (managed, proven in M1) ───────────────────────────────────
+# ── llama.cpp (managed, proven) ─────────────────────────────────────────
 
 
 class LlamaCppHandle(_SubprocessHandle):
@@ -204,7 +204,7 @@ class LlamaCppLauncher:
         else:  # local-path | url
             cmd += ["-m", binding.model]
         if binding.modality == "embeddings":
-            # llama.cpp is the "one binary, many modalities via flags" engine (M20 §1): the SAME
+            # llama.cpp is the "one binary, many modalities via flags" engine: the SAME
             # llama-server serves /v1/embeddings once embeddings mode is on. Pooling must not be
             # `none` for the OpenAI endpoint (it returns one vector per input) → `mean`.
             cmd += ["--embeddings", "--pooling", "mean"]
@@ -246,10 +246,11 @@ def _fetch_hf_config(model: str) -> str | None:
 
 
 # ── reasoning ("thinking") detection from the chat template ─────────────────
-# The pure detector lives in ``capabilities.py`` — shared with the M16 catalog, which runs the SAME
-# heuristic against Hugging Face metadata at browse time (no download). Re-exported here under the
-# module-private names the probe and tests already use, so the probe's honest *local* signal (no
-# network, no model-name guessing) and the catalog's browse-time hint can never drift apart.
+# The pure detector lives in ``capabilities.py`` — shared with the HF catalog browser, which runs
+# the SAME heuristic against Hugging Face metadata at browse time (no download). Re-exported here
+# under the module-private names the probe and tests already use, so the probe's honest *local*
+# signal (no network, no model-name guessing) and the catalog's browse-time hint can never drift
+# apart.
 _REASONING_MARKERS = REASONING_MARKERS
 _template_implies_reasoning = template_implies_reasoning
 
@@ -400,9 +401,9 @@ class MlxLauncher:
 # ── MLX vision (managed — the `mlx` engine, `vision` modality) ───────────
 # A DIFFERENT program from mlx_lm.server: mlx-vlm ships its own OpenAI-compatible server for
 # vision-language models, served on /v1/chat/completions with image_url content parts (vision is a
-# sub-capability of chat — M18 §1.3). Same EngineLauncher protocol + spawn lifecycle as mlx_lm; the
+# sub-capability of chat). Same EngineLauncher protocol + spawn lifecycle as mlx_lm; the
 # manager dispatches to it purely by the (engine, modality) key and never learns there are two MLX
-# servers (M20 §1 — zero EngineManager caller changes).
+# servers (zero EngineManager caller changes).
 
 
 class MlxVlmHandle(_SubprocessHandle):
@@ -431,8 +432,9 @@ class MlxVlmLauncher:
     """Spawns ``mlx_vlm.server`` for an Apple-Silicon VLM — the MLX ``vision`` modality.
 
     UNPROVEN until its env-gated integration test runs green here (mlx-vlm is not installed by
-    default); "written + type-checks" is not "works" (the M1 lesson). Same protocol/lifecycle shape
-    as ``MlxLauncher`` — the manager cannot tell them apart.
+    default); "written + type-checks" is not "works" — a lesson learned from the first engine
+    integration. Same protocol/lifecycle shape as ``MlxLauncher`` — the manager cannot tell them
+    apart.
     """
 
     ENV_VAR = "THEYGENT_MLX_VLM_BIN"
@@ -506,13 +508,13 @@ class ManagedLauncherSet:
     the non-chat modalities) dropped in without touching the manager. ``launch(binding)`` keeps its
     exact signature; the key is private to this set.
 
-    M20: the dispatch key grew from the engine alone to ``(engine, modality)`` so one engine can
+    The dispatch key spans ``(engine, modality)`` so one engine can
     serve several modalities by *different programs* (``mlx``: ``mlx_lm.server`` chat vs
     ``mlx_vlm.server`` vision) or the *same binary with different flags* (``llamacpp``:
     ``llama-server``, ``+ --embeddings``). A bare-string key (``"llamacpp"``) is normalized to
     ``(engine, "chat")``, so a chat-only set (and the fast-suite stubs) construct unchanged.
 
-    **Fail-closed dispatch (M19 "reject, don't serve wrong").** Lookup is on the EXACT
+    **Fail-closed dispatch (reject, don't serve wrong).** Lookup is on the EXACT
     ``(engine, modality)`` key — there is NO fallback to the chat launcher. An ``(mlx, embeddings)``
     binding when no ``(mlx, embeddings)`` launcher is registered is *rejected* (503), never silently
     spawned on ``mlx_lm.server`` (where an embeddings request would get a wrong, chat shape with no
@@ -532,7 +534,7 @@ class ManagedLauncherSet:
         }
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
-        # EXACT (engine, modality) — no chat fallback (fail-closed; M19 reject-don't-serve-wrong).
+        # EXACT (engine, modality) — no chat fallback (fail-closed: reject, don't serve wrong).
         launcher = self._by_key.get((binding.binding, binding.modality))
         if launcher is None:
             raise EngineUnavailableError(

@@ -1,4 +1,4 @@
-"""M2 fast suite — the manager treats every managed engine identically.
+"""Fast suite — the manager treats every managed engine identically.
 
 Parametrized over all three managed bindings via the engine-agnostic fake launcher.
 This proves *routing* (the binding selects an engine and the manager lifecycle is the

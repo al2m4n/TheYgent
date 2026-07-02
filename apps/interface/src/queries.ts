@@ -23,7 +23,7 @@ export const keys = {
   models: () => ["models"] as const,
 };
 
-// Runs list auto-refreshes ~3s while the tab is visible (M8 §1.1). Query pauses background
+// Runs list auto-refreshes ~3s while the tab is visible. Query pauses background
 // refetch when the tab is hidden by default (refetchIntervalInBackground stays false).
 export function useRuns(limit = 50) {
   return useQuery({
@@ -58,7 +58,7 @@ export function useRun(id: string, opts: { live?: boolean; enabled?: boolean } =
   });
 }
 
-// M17: the run waterfall's persisted spans. Polls while the run is live so node bars appear as
+// The run waterfall's persisted spans. Polls while the run is live so node bars appear as
 // nodes complete (each span is written on close); the live in-flight bars are overlaid from the
 // /trace/stream SSE in the Waterfall component. Stops polling when the run is terminal.
 export function useTrace(id: string, opts: { live?: boolean } = {}) {
@@ -94,7 +94,7 @@ export function useModels() {
   return useQuery({ queryKey: keys.models(), queryFn: () => api.listModels() });
 }
 
-// M11 "Save as agent": a new agent id → create; an existing id → add a version. Each invalidates
+// "Save as agent": a new agent id → create; an existing id → add a version. Each invalidates
 // the agent list + that agent's detail so the canvas Home/Editor pick up the new version.
 export function useAgentMutations() {
   const qc = useQueryClient();

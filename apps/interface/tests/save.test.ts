@@ -1,5 +1,5 @@
-// Save-payload + contentHash tests (§4). The frontend sends IR + `view` and DISPLAYS the
-// server-computed contentHash — it never computes a hash itself (§1.2). We mock the network at
+// Save-payload + contentHash tests. The frontend sends IR + `view` and DISPLAYS the
+// server-computed contentHash — it never computes a hash itself. We mock the network at
 // `fetch` so this stays a pure unit test of the save path.
 
 import { afterEach, beforeEach, vi } from "vitest";
@@ -48,7 +48,7 @@ describe("toSavePayload", () => {
   });
 });
 
-describe("saveAgent (§2.4 / §4)", () => {
+describe("saveAgent", () => {
   it("a new agent POSTs to /agents with { ir } carrying the view", async () => {
     const ir = sampleGraph();
     const detail = await saveAgent(ir, false);
@@ -81,7 +81,7 @@ describe("saveAgent (§2.4 / §4)", () => {
   });
 
   // The common real-world save: a graph the user opened as "new" whose id already exists. The raw
-  // API does NOT auto-route; the FE composes 409 agent_exists → add-version (M11 seam #1). This is
+  // API does NOT auto-route; the FE composes 409 agent_exists → add-version. This is
   // the most-used path, so it gets a dedicated test rather than riding on the happy create.
   it("create → 409 agent_exists → switches to add-version and shows the new server hash", async () => {
     vi.stubGlobal(

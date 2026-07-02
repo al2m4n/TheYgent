@@ -1,7 +1,7 @@
-// Agent-document helpers: the seam between M11's registry envelopes and the typed IRDocument the
+// Agent-document helpers: the seam between the agent registry envelopes and the typed IRDocument the
 // canvas edits. Loading re-attaches the separately-stored `view` onto the IR; saving sends the IR
-// (with its `view`) to M11, which strips/hashes/persists. M15 invents NO version semantics — it
-// reuses whatever M11 exposes (§2.4).
+// (with its `view`) to the registry, which strips/hashes/persists. No new version semantics are
+// invented here — we reuse whatever the registry exposes.
 
 import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
 import type { StoredVersion } from "./api";
@@ -60,14 +60,14 @@ export function blankGraph(id: string, name: string): IRDocument {
 }
 
 /** Merge a loaded registry version (stored IR + separate `view`) into one IRDocument the adapter
- * can render. The stored IR is view-stripped with `contentHash` stamped (M11 §1.2); we re-attach
+ * can render. The stored IR is view-stripped with `contentHash` stamped by the server; we re-attach
  * the layout so dragging picks up where the author left off. */
 export function fromStoredVersion(sv: StoredVersion): IRDocument {
   return { ...sv.ir, view: (sv.view ?? undefined) as IRDocument["view"] };
 }
 
-/** The save body for M11: `{ ir }` where the IR carries its `view`. The server strips `view`,
- * canonicalizes, hashes, and persists — the frontend computes NO hash (§1.2). */
+/** The save body for the agent registry: `{ ir }` where the IR carries its `view`. The server strips
+ * `view`, canonicalizes, hashes, and persists — the frontend computes NO hash. */
 export function toSavePayload(ir: IRDocument): { ir: IRDocument } {
   return { ir };
 }

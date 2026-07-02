@@ -1,4 +1,4 @@
-"""Post-M9 fixes for the reasoning-model rough edges found in dogfooding.
+"""Fixes for the reasoning-model rough edges found in dogfooding.
 
 A reasoning model (e.g. Qwen3.5-9B-OptiQ) emits a hidden ``reasoning_content`` block BEFORE its
 ``content`` answer. That produced three real symptoms in multi-turn use:

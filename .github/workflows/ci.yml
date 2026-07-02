@@ -17,13 +17,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  # Gates PRs: lint, format, type-check (ty non-blocking, §6 hedge), fast suite.
+  # Gates PRs: lint, format, type-check (ty non-blocking), fast suite.
   fast:
     name: fast suite (gates)
     runs-on: ubuntu-latest
     env:
       # The control-plane fast suite runs against a REAL ephemeral Postgres via
-      # testcontainers (M4 §6) — ubuntu runners ship a working Docker daemon, so no
+      # testcontainers — ubuntu runners ship a working Docker daemon, so no
       # `services:` block is needed. Disable Ryuk: the fixture stops its own container and
       # Ryuk's reaper callback is a known source of CI flakiness.
       TESTCONTAINERS_RYUK_DISABLED: "true"
@@ -49,10 +49,10 @@ jobs:
       - name: pytest control-plane (fast suite — real HTTP seam, fake model)
         run: uv run --package theygent-control-plane pytest apps/control-plane/tests -m "not integration"
 
-  # Gates PRs touching the TS workspace (M15): the IR type-drift guard + the interface SPA
+  # Gates PRs touching the TS workspace: the IR type-drift guard + the interface SPA
   # (Biome · tsc · Vitest · build). The drift guard regenerates @theygent/ir-types from the
-  # Pydantic IR and fails if the checked-in generated types moved — FE/BE IR stay in lockstep
-  # (M15 §1.3 / §4). The cockpit (apps/web) has been folded into the interface and removed.
+  # Pydantic IR and fails if the checked-in generated types moved — FE/BE IR stay in lockstep.
+  # The cockpit (apps/web) has been folded into the interface and removed.
   frontend:
     name: frontend (ir-types drift + interface)
     runs-on: ubuntu-latest
@@ -110,7 +110,7 @@ jobs:
       HOMEBREW_NO_ENV_HINTS: "1"
       # macos-14 is Apple Silicon, so the MLX (Tier A) real path runs here too.
       THEYGENT_MLX_MODEL: mlx-community/Qwen2.5-0.5B-Instruct-4bit
-      # M4: the control-plane integration tests need a REAL Postgres + real migrations.
+      # The control-plane integration tests need a REAL Postgres + real migrations.
       # macOS runners have no Docker (so no testcontainers) — use a brew-installed PG over
       # a local trust-auth DSN (superuser = the `runner` OS user). Tests skip if unset.
       DATABASE_URL: postgresql+asyncpg://runner@127.0.0.1:5432/theygent
@@ -163,14 +163,17 @@ jobs:
             echo "GGUF absent — llama.cpp integration will skip"
           fi
           # THEYGENT_MLX_MODEL is set in job env; the MLX test gates on mlx_lm.server too.
-          uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration
+          # -p no:xdist: these spawn real llama-server/mlx_lm.server processes against a shared
+          # HF cache dir and real unified memory — parallelizing them races real engine spawns,
+          # not just test code (root addopts sets -n auto for the fast suite; override it here).
+          uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration -p no:xdist
       - name: integration test (control-plane -> real inference -> real MLX, cross-process)
         run: |
           # Same MLX env (THEYGENT_MLX_MODEL + mlx_lm.server on PATH); skips clean if absent.
           # The control-plane spawns the real inference plane as a subprocess and drives /runs.
-          uv run --package theygent-control-plane pytest apps/control-plane/tests -m integration
+          uv run --package theygent-control-plane pytest apps/control-plane/tests -m integration -p no:xdist
 
-  # TODO: vLLM real-path job — UNVERIFIED until run on a CUDA host (brief §3).
+  # TODO: vLLM real-path job — UNVERIFIED until run on a CUDA host.
   # We don't have a CUDA runner, so this is intentionally NOT wired. To enable it,
   # add a GPU runner (self-hosted NVIDIA or a cloud GPU box) and a job like:
   #

@@ -2,7 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// SPA only (M15: same posture as the cockpit — no SSR, Vite-served, never bundled into FastAPI).
+// SPA only (same posture as the cockpit — no SSR, Vite-served, never bundled into FastAPI).
 // The interface runs on :5174 so it can sit alongside the cockpit (:5173) during dev. Both call
 // the control-plane directly; the control-plane CORS allows both dev origins.
 export default defineConfig({

@@ -1,11 +1,11 @@
-"""The durable worker bootstrap (M13 §5).
+"""The durable worker bootstrap.
 
 Stand up the durable runtime against the shared Postgres, rehydrate the MCP registry (so
 ``mcp_tool`` activities can spawn their servers in the worker's trust domain), reconcile DBOS
 schedules to the enabled schedule-triggers, then block while DBOS background threads consume the
 durable queue and recover any workflows a crash left pending.
 
-Topologies (m13-dbos.md §5): in the **server / air-gapped** topology this runs as a separate
+Topologies: in the **server / air-gapped** topology this runs as a separate
 process against the shared PG; in the **desktop sidecar** the control-plane launches the same
 runtime in-process and this binary is unused. One codebase, one runtime — only the deployable
 differs.
@@ -30,7 +30,7 @@ logger = logging.getLogger("theygent.worker")
 def _database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:
-        raise RuntimeError("DATABASE_URL is required (postgresql+asyncpg://…) — §3")
+        raise RuntimeError("DATABASE_URL is required (postgresql+asyncpg://…)")
     return url
 
 
@@ -43,12 +43,12 @@ async def build_runtime(
 ) -> tuple[DurableRuntime, McpManager, GatewayClient, AsyncEngine]:
     """Assemble (but do not launch) the worker's durable runtime + its dependencies. Returns the
     runtime, the MCP manager (registry rehydrated), the gateway (provider-retry OFF — DBOS owns
-    retry, §2), and the SQLAlchemy engine so the caller can dispose it. Factored out so a test can
+    retry), and the SQLAlchemy engine so the caller can dispose it. Factored out so a test can
     drive the worker's exact wiring without the blocking loop."""
     engine = db.create_engine(database_url)
     sessionmaker = db.create_sessionmaker(engine)
     mcp = mcp or McpManager()
-    # Rehydrate the MCP registry so mcp_tool activities can connect (m7.md §3.2 — connections stay
+    # Rehydrate the MCP registry so mcp_tool activities can connect (connections stay
     # lazy; only the registration is restored). Same posture as the control-plane lifespan.
     mcp_store = McpStore()
     async with sessionmaker() as session:

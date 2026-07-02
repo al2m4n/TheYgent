@@ -1,12 +1,12 @@
-"""M20 — the ``modality`` axis on the inference-plane registration payload (registration.py §9.1.3).
+"""The ``modality`` axis on the inference-plane registration payload (registration.py).
 
 ``modality`` is the THIRD orthogonal axis (alongside ``binding`` = engine and ``source`` = weights):
 it names the *task* a managed model serves and the manager dispatches the spawn on it. The guards:
 
-* it is ADDITIVE + backward-compatible — a pre-M20 payload (no ``modality`` key) parses as ``chat``;
-* the frozen ``Modality`` vocabulary is enforced (an unknown value fails loudly, the §4 guard);
+* it is ADDITIVE + backward-compatible — a payload without a ``modality`` key parses as ``chat``;
+* the frozen ``Modality`` vocabulary is enforced (an unknown value fails loudly);
 * it lands ONLY on ``ManagedBinding`` — a reachable binding rejects it (``extra="forbid"``);
-* it is NOT a new ``binding`` value — the §8.4 enum is untouched;
+* it is NOT a new ``binding`` value — the binding enum is untouched;
 * it round-trips through the registry-persistence wire shape (``model_dump(by_alias=True)``).
 """
 
@@ -16,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 from theygent_ir import ManagedBinding, parse_registration
 
-# ── backward compatibility: a pre-M20 payload has no modality → "chat" ───────
+# ── backward compatibility: a payload without modality defaults to "chat" ─────
 
 
 def test_managed_binding_defaults_modality_to_chat() -> None:
@@ -47,7 +47,7 @@ def test_every_frozen_modality_parses(modality: str) -> None:
     assert b.modality == modality
 
 
-# ── the frozen vocabulary is enforced (the §4 guard) ─────────────────────────
+# ── the frozen vocabulary is enforced ────────────────────────────────────────
 
 
 def test_unknown_modality_value_is_rejected() -> None:

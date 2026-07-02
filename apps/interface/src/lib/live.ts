@@ -1,4 +1,4 @@
-// A tiny in-memory registry of *live* runs (M8 §1.4/§3.2). The run composer creates and
+// A tiny in-memory registry of *live* runs. The run composer creates and
 // streams from one POST, then navigates to the run detail — which would lose the in-memory
 // stream. So the composer parks the stream here, keyed by runId, and the run detail attaches
 // to it. This is local UI state (a module singleton + pub-sub), deliberately NOT TanStack
@@ -52,7 +52,7 @@ function patch(runId: string, next: Partial<LiveRun>) {
 /**
  * POST a run/graph run and stream it into the live registry. Resolves with the runId as soon
  * as the backend's first `run` frame arrives, so the caller can navigate. A pre-stream error
- * (400/404/503 before any frame) rejects, exactly as the backend surfaces it (M3/M5).
+ * (400/404/503 before any frame) rejects, exactly as the backend surfaces it.
  */
 export async function startLiveRun(path: string, body: unknown): Promise<string> {
   const handle = await streamRun(path, body);

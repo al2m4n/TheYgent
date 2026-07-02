@@ -1,32 +1,32 @@
-"""The in-process schedule dispatcher (M12 §1.2/§3) — the *reversible* half of the trigger layer.
+"""The in-process schedule dispatcher — the *reversible* half of the trigger layer.
 
-M12's one rule: freeze the trigger *contract*, keep the trigger *mechanism* swappable. The contract
-(``Trigger`` + the ``trigger`` table) is the hard-to-reverse seam; THIS file is the throwaway. The
-stack doc (§8) says schedules ultimately belong in the durable worker (process type 2), which isn't
-built — so the scheduler is a thin asyncio loop over the persisted trigger registry, fronting the
-single ``fire(trigger, input)`` seam. M13 re-points firing at the worker without reshaping the
-trigger definition, the API, or the persisted rows.
+The trigger layer's one rule: freeze the trigger *contract*, keep the trigger *mechanism* swappable.
+The contract (``Trigger`` + the ``trigger`` table) is the hard-to-reverse seam; THIS file is the
+throwaway. Schedules ultimately belong in the durable worker (process type 2), which isn't built —
+so the scheduler is a thin asyncio loop over the persisted trigger registry, fronting the single
+``fire(trigger, input)`` seam. The durable runtime re-points firing at the worker without reshaping
+the trigger definition, the API, or the persisted rows.
 
 Two deliberate properties:
 
-* **Rehydration is free (§3).** The dispatcher holds no in-memory schedule state — every tick
-  re-reads enabled schedules from Postgres. So a fresh control-plane instance after a restart picks
-  up every persisted schedule automatically (the F6.1 lesson M9 closed for the MCP registry, here
-  for free because the read is per-tick).
-* **No backfill, no retry (§0/§4).** ``last_fired_at`` is persisted so the next due instant is
-  computed from it: a restart neither double-fires within a window nor replays a long downtime. A
-  fired run that fails is recorded honestly (the Run row + a log) and the schedule simply advances —
-  M12 builds no retry/backoff engine (that is the M13 durable-runtime fork).
+* **Rehydration is free.** The dispatcher holds no in-memory schedule state — every tick re-reads
+  enabled schedules from Postgres. So a fresh control-plane instance after a restart picks up every
+  persisted schedule automatically (the read is per-tick, so no separate rehydration step is
+  needed).
+* **No backfill, no retry.** ``last_fired_at`` is persisted so the next due instant is computed from
+  it: a restart neither double-fires within a window nor replays a long downtime. A fired run that
+  fails is recorded honestly (the Run row + a log) and the schedule simply advances — this
+  dispatcher builds no retry/backoff engine (that belongs in the durable runtime).
 
 **KNOWN CONSTRAINT — single dispatcher instance only.** The control-plane otherwise scales
-horizontally on shared Postgres (stack §8), but this dispatcher does **not**: two instances each run
-this loop, both read the same due schedule before either stamps ``last_fired_at``, and both fire →
+horizontally on shared Postgres, but this dispatcher does **not**: two instances each run this loop,
+both read the same due schedule before either stamps ``last_fired_at``, and both fire →
 a **double-fire**. There is no cross-instance claim/lock (an advisory lock or a conditional
-"claim the tick" UPDATE would be the cheap fix, but that is M13's concern — its runtime ships
-**native durable schedules** that resolve this, m13.md §6). For M12, run the dispatcher on **exactly
-one** instance. *Within* one instance there is no double-fire: ``_run_forever`` awaits the entire
-``tick`` (every fire AND its ``mark_fired``) before sleeping, so ticks are strictly serial and a
-re-tick at the same instant sees the advanced ``last_fired_at`` and is no longer due.
+"claim the tick" UPDATE would be the cheap fix, but the durable runtime ships **native durable
+schedules** that resolve this). Run the dispatcher on **exactly one** instance. *Within* one
+instance there is no double-fire: ``_run_forever`` awaits the entire ``tick`` (every fire AND its
+``mark_fired``) before sleeping, so ticks are strictly serial and a re-tick at the same instant sees
+the advanced ``last_fired_at`` and is no longer due.
 
 ``tick(now)`` is callable directly (the fast suite drives it deterministically); ``run_forever``
 is the production background loop, started in the FastAPI lifespan and cancelled at shutdown.
@@ -48,10 +48,10 @@ from theygent_control_plane.store import TriggerStore
 
 logger = logging.getLogger("theygent.control_plane")
 
-# The firing seam (§1.2): given a trigger and its resolved input, run the pinned saved agent through
-# the existing M5 walker path and return the run outcome. Owned by the app (it needs the gateway,
-# the run store, the agent registry); the dispatcher only *calls* it, so M13 can re-point the same
-# seam at the durable worker without touching this loop.
+# The firing seam: given a trigger and its resolved input, run the pinned saved agent through
+# the walker path and return the run outcome. Owned by the app (it needs the gateway,
+# the run store, the agent registry); the dispatcher only *calls* it, so the durable runtime can
+# re-point the same seam at the worker without touching this loop.
 FireFn = Callable[[Trigger, Any], Awaitable[Any]]
 
 
@@ -92,9 +92,9 @@ class ScheduleDispatcher:
     async def tick(self, at: datetime | None = None) -> list[str]:
         """One scan: fire every enabled schedule due at ``at`` (default: now), returning the ids
         fired. ``last_fired_at`` is stamped AFTER the attempt regardless of the run's outcome — a
-        failed fire is recorded honestly and the schedule advances; M12 does not retry (§4). Read
-        and bookkeeping use short, separate transactions so one slow/failed fire can't wedge the
-        scan or hold a row lock across the agent run."""
+        failed fire is recorded honestly and the schedule advances; this dispatcher does not retry.
+        Read and bookkeeping use short, separate transactions so one slow/failed fire can't wedge
+        the scan or hold a row lock across the agent run."""
         at = at or now()
         async with self._sessionmaker() as session:
             schedules = await self._store.list_enabled_schedules(session)
@@ -128,7 +128,7 @@ class ScheduleDispatcher:
                 "trigger.fired",
                 extra={"trigger_id": trigger.id, "agent_id": trigger.agent_id, "status": status},
             )
-        except Exception:  # a fired run must never wedge the dispatcher loop (§4): log and advance.
+        except Exception:  # a fired run must never wedge the dispatcher loop: log and advance.
             logger.exception("trigger.fire_failed", extra={"trigger_id": trigger.id})
         finally:
             # Stamp the fire attempt even on failure so we don't re-fire the same window (no retry).

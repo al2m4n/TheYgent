@@ -1,7 +1,7 @@
-"""The DB-backed connection resolver — the server-side half of the M19 §1.1 tool/MCP auth seam.
+"""The DB-backed connection resolver — the server-side half of the tool/MCP auth seam.
 
 The walker/durable steps resolve a connection's auth through a ``ConnectionResolver`` callable so
-they never open a DB session themselves (the M5 walker seam; the same indirection M17 telemetry
+they never open a DB session themselves (the walker seam; the same indirection the telemetry layer
 uses). This module is the one concrete impl: it reads the (non-secret) ``connection`` row +
 decrypts its ``secret`` (``SecretStore``) AT STEP TIME, and hands back a ``ResolvedConnection``
 (config + the plaintext secret). The plaintext exists only for the call; it is never journaled,
@@ -18,7 +18,7 @@ from theygent_control_plane.walker import ResolvedConnection
 
 
 class DbConnectionResolver:
-    """Resolves a connection id → ``ResolvedConnection`` over Postgres (M19 §1.1). Constructed once
+    """Resolves a connection id → ``ResolvedConnection`` over Postgres. Constructed once
     at app/runtime startup with the session factory + the connection/secret stores; the resolver
     instance is the ``ConnectionResolver`` callable injected into ``WalkContext.tool_auth`` and the
     durable resources. ``__call__`` makes it a plain async callable (the walker's seam type)."""

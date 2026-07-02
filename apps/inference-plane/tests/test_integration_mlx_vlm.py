@@ -1,8 +1,8 @@
-"""M20 integration — REAL MLX vision via mlx_vlm.server on /v1/chat/completions (Apple Silicon).
+"""Integration test — REAL MLX vision via mlx_vlm.server on /v1/chat/completions (Apple Silicon).
 
 mlx-vlm ships its OWN OpenAI-compatible server for vision-language models — a DIFFERENT program from
-``mlx_lm.server`` (chat), dispatched by the ``(mlx, vision)`` key (M20 §1). Vision rides chat (an
-``image_url`` part on ``/v1/chat/completions`` — M18 §1.3), never its own endpoint. MLX vision is
+``mlx_lm.server`` (chat), dispatched by the ``(mlx, vision)`` key. Vision rides chat (an
+``image_url`` part on ``/v1/chat/completions``), never its own endpoint. MLX vision is
 "supported" only because this runs green — skipped by default; skips clean when prereqs absent::
 
     THEYGENT_MLX_VLM_MODEL=mlx-community/Qwen2.5-VL-3B-Instruct-4bit \

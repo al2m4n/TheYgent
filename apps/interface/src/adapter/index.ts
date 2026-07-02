@@ -1,7 +1,7 @@
-// The IR ⇄ React Flow view adapter (M15 §2.1 / §8.6) — the load-bearing module the whole
-// milestone hinges on. THIS FILE AND `types.ts` ARE THE ONLY MODULES THAT KNOW REACT FLOW'S
+// The IR ⇄ React Flow view adapter — the load-bearing module the whole
+// canvas hinges on. THIS FILE AND `types.ts` ARE THE ONLY MODULES THAT KNOW REACT FLOW'S
 // NODE/EDGE SHAPE. App state, API calls, and persistence speak the generated IR types
-// (@theygent/ir-types) — never React Flow's (the one rule, §0).
+// (@theygent/ir-types) — never React Flow's (the one rule).
 //
 // Two directions:
 //   • Load  (irToReactFlow):  IR → React Flow nodes/edges for the canvas. Positions come from the
@@ -118,9 +118,9 @@ function portFrom(view: {
   role: "data" | "control" | "tool";
 }): Port {
   const port: Port = { id: view.id, type: view.type, required: view.required };
-  // `role` defaults to `data` (the server fills it — D2), so OMIT the default and emit only an
-  // explicit `control`/`tool` — a role-less (pre-M19) IR round-trips to itself, byte-for-byte
-  // (§2.10 / M22).
+  // `role` defaults to `data` (the server fills it), so OMIT the default and emit only an
+  // explicit `control`/`tool` — a role-less IR (one with no explicit role) round-trips to itself,
+  // byte-for-byte.
   if (view.role === "control" || view.role === "tool") port.role = view.role;
   return port;
 }
@@ -167,7 +167,7 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
     condition: re.data?.condition ?? null,
   }));
 
-  // Split positions back into a `view` block — layout, never hashed (§8.6). The icon override (a
+  // Split positions back into a `view` block — layout, never hashed. The icon override (a
   // display-only field) round-trips here too, so it survives save/load without touching content.
   const viewNodes: Record<string, { position: XYPosition; icon?: string }> = {};
   for (const rn of rf.nodes) {
@@ -178,11 +178,11 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
   }
   const view: ViewBlock = { ...(base.view as ViewBlock | undefined), nodes: viewNodes };
 
-  // M22: keep `ir.tools` in sync with the wired tool nodes (the global registry — like ir.models).
+  // Keep `ir.tools` in sync with the wired tool nodes (the global registry — like ir.models).
   return withDerivedTools({ ...base, nodes, edges, view });
 }
 
-// ── IR → IR mutation helpers (the canvas interactions, §2.2) ──────────────────
+// ── IR → IR mutation helpers (the canvas interactions) ────────────────────────
 // Each returns a NEW IRDocument; React Flow types never appear in their signatures except
 // `Connection`/positions, which the canvas (an adapter consumer) hands in and which never escape.
 
@@ -196,8 +196,9 @@ function freshId(prefix: string, taken: Set<string>): string {
   return id;
 }
 
-/** Set/replace a node's layout position (drag/pan) — touches `view` ONLY (decision §1.4). Merges
- * into the existing view entry so a sibling display field (e.g. an icon override) survives a drag. */
+/** Set/replace a node's layout position (drag/pan) — touches `view` ONLY (positions are never
+ * hashed content). Merges into the existing view entry so a sibling display field (e.g. an icon
+ * override) survives a drag. */
 export function setNodePositions(
   ir: IRDocument,
   positions: Record<string, XYPosition>,
@@ -211,7 +212,7 @@ export function setNodePositions(
 }
 
 /** Set (or clear, with `null`) a node's icon override — a `view`-only display change, never hashed
- * content (§1.4), exactly like a drag. Clearing reverts the node to its type's default icon. */
+ * content, exactly like a drag. Clearing reverts the node to its type's default icon. */
 export function setNodeIcon(ir: IRDocument, id: string, icon: string | null): IRDocument {
   const prev = (ir.view as ViewBlock | undefined) ?? {};
   const nextNodes = { ...(prev.nodes ?? {}) };
@@ -223,7 +224,7 @@ export function setNodeIcon(ir: IRDocument, id: string, icon: string | null): IR
 }
 
 /** Re-run the layered auto-layout, overwriting every node's `view` position (the "Tidy" button).
- * Touches `view` ONLY — a pure layout change, never hashed content (§1.4). Preserves any per-node
+ * Touches `view` ONLY — a pure layout change, never hashed content. Preserves any per-node
  * display field (e.g. an icon override) — only positions are rewritten. */
 export function relayout(ir: IRDocument): IRDocument {
   const positions = autoLayout(ir.nodes ?? [], ir.edges ?? []);
@@ -236,8 +237,8 @@ export function relayout(ir: IRDocument): IRDocument {
 }
 
 /** Drop a palette `type` onto the canvas: a new IR node with the registry's kind, default config,
- * and declared ports (§2.2). The type list/kind/ports are all derived from the registry — nothing
- * is hardcoded, so an M14-style type appears for free. */
+ * and declared ports. The type list/kind/ports are all derived from the registry — nothing
+ * is hardcoded, so a newly added node type appears for free. */
 // No-code convenience: seed a friendlier starting config for a freshly DROPPED node than the IR
 // schema's bare default (which is intentionally empty). Builder-only and applied at add time — it
 // never changes the IR schema, the generated registry default, or any existing node. The llm's most
@@ -253,9 +254,9 @@ function builderDefaultConfig(
     if (Array.isArray(config.messages) && config.messages.length === 0) {
       config.messages = [{ role: "user", content: "$in" }];
     }
-    // M21 tool-calling fields default to "no tools" — keep a freshly dropped llm node clean (and
+    // Tool-calling fields default to "no tools" — keep a freshly dropped llm node clean (and
     // hash-equivalent to a hand-authored {model, messages}); they're configured via the Tools panel
-    // once the tool-calling loop ships (m21.md Phase 6). The RawConfig/Code views still expose them.
+    // once the tool-calling loop ships. The RawConfig/Code views still expose them.
     for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete config[k];
   }
   return config;
@@ -295,12 +296,12 @@ export interface ConnectResult {
   error?: string;
 }
 
-/** Create an IR edge from a canvas connection (§2.2 / M19 §2.10). Rejects connections to
+/** Create an IR edge from a canvas connection. Rejects connections to
  * non-existent handles, a **cross-role** connection (data→control or control→data — the role of the
  * handles must match), and a second `data` edge into one in-port (the ambiguous-multi-input rule the
  * backend enforces, mirrored here for an immediate red rather than a 400 at save). The edge
  * `channel` is **derived** from the connected handles' role (data→data ⇒ `data`, control→control ⇒
- * `control`) — not a separate toggle (M19 §2.10). */
+ * `control`) — not a separate toggle. */
 export function connect(ir: IRDocument, c: Connection): ConnectResult {
   const src = (ir.nodes ?? []).find((n) => n.id === c.source);
   const tgt = (ir.nodes ?? []).find((n) => n.id === c.target);
@@ -314,7 +315,7 @@ export function connect(ir: IRDocument, c: Connection): ConnectResult {
     return { error: `node ${tgt.id} has no in-port ${c.targetHandle ?? "(none)"}` };
   }
   // The edge `channel` is DERIVED from the handles it joins, never a separate toggle. Connect
-  // like-to-like: data↔data (M19 §2.10), control↔control, tool↔tool (M22 — a tool/mcp_tool node's
+  // like-to-like: data↔data, control↔control, tool↔tool (a tool/mcp_tool node's
   // `use` OUT-handle into an llm's `tools` port, making the tool model-callable). The roles match, so
   // one rule covers all three channels.
   const srcRole = outPort.role ?? "data";
@@ -403,7 +404,7 @@ export function updateEdge(
   };
 }
 
-/** Bind a `tool` (http) node to a connection (M19 §2.10 / §1.1): set the node's `config.tool` to a
+/** Bind a `tool` (http) node to a connection: set the node's `config.tool` to a
  * logical key and declare `ir.tools[key] = { kind:"http", connection }`. The IR references the
  * connection by **id** — never the secret (which is resolved server-side at step time). */
 export function setHttpToolBinding(
@@ -420,7 +421,7 @@ export function setHttpToolBinding(
   return { ...ir, tools, nodes };
 }
 
-/** A tool binding declared once in `ir.tools` (M21) — the model-callable tools any llm node may then
+/** A tool binding declared once in `ir.tools` — the model-callable tools any llm node may then
  * select. The three kinds: `builtin` (a registered backend tool), `http` (connection-backed REST),
  * `mcp` (a server + tool). Adding/removing one changes hashed *content* (it's authoring, like a
  * node), never the `view`. */
@@ -460,11 +461,11 @@ function toolBindingFromNode(n: IRNode): ToolBinding | null {
   return null;
 }
 
-/** Re-derive `ir.tools` as a GLOBAL REGISTRY of the tools wired into the agent (M22, like `ir.models`
+/** Re-derive `ir.tools` as a GLOBAL REGISTRY of the tools wired into the agent (like `ir.models`
  * auto-fills as you add llm bindings). A capability tool node — the source of a `channel:"tool"` edge
  * — contributes `ir.tools[<node id>] = <its binding>` (the binding LIVES on the node; this is the
- * index, tagged with its `kind`). Pre-existing legacy keys that aren't a node id (the M6/M19
- * step-tool refs via `config.tool`) are preserved; stale node-id mirrors are dropped. Idempotent, so
+ * index, tagged with its `kind`). Pre-existing legacy keys that aren't a node id (step-tool refs
+ * via `config.tool`) are preserved; stale node-id mirrors are dropped. Idempotent, so
  * a load→save round-trip is identity. */
 export function withDerivedTools(ir: IRDocument): IRDocument {
   const nodes = ir.nodes ?? [];
@@ -474,7 +475,7 @@ export function withDerivedTools(ir: IRDocument): IRDocument {
     edges.filter((e) => (e.channel ?? "data") === "tool").map((e) => e.source),
   );
   const tools: Record<string, ToolBinding> = {};
-  // keep legacy entries whose key is NOT a current node id (M6/M19 config.tool refs); drop stale.
+  // keep legacy entries whose key is NOT a current node id (step config.tool refs); drop stale.
   for (const [k, v] of Object.entries(ir.tools ?? {})) {
     if (!nodeById.has(k)) tools[k] = v as ToolBinding;
   }
@@ -486,7 +487,7 @@ export function withDerivedTools(ir: IRDocument): IRDocument {
   return { ...ir, tools };
 }
 
-/** The three tool kinds, presented as ONE "Tool" node with a kind picker (M22 D1) rather than two
+/** The three tool kinds, presented as ONE "Tool" node with a kind picker rather than two
  * palette entries. `builtin`/`rest` are the `tool` node type; `mcp` is the `mcp_tool` type. */
 export type ToolKind = "builtin" | "rest" | "mcp";
 
@@ -499,7 +500,7 @@ export function toolKindOf(n: IRNode): ToolKind {
   return cfg.connection || cfg.urlTemplate ? "rest" : "builtin";
 }
 
-/** Switch a tool node between its three kinds (M22 D1 — one node, the kind is a picker, not two
+/** Switch a tool node between its three kinds (one node, the kind is a picker, not two
  * palette types). `builtin`/`rest` keep the `tool` node type; `mcp` swaps to `mcp_tool`. The swap
  * reseeds `config` from the target type's default shape (carrying `description`/`tool` across) so the
  * kind is re-derivable: `rest` seeds a `urlTemplate` placeholder so an empty REST tool still reads as

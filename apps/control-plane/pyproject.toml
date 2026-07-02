@@ -1,33 +1,33 @@
 [project]
 name = "theygent-control-plane"
 version = "0.1.0"
-description = "theygent control-plane — the cockpit API. M3: owns a single run end to end over the inference HTTP seam."
+description = "theygent control-plane — the cockpit API. Owns a single run end to end over the inference HTTP seam."
 requires-python = ">=3.12"
 dependencies = [
     "theygent-gateway-client",
-    # M5: the control-plane imports the Agent Graph IR for the first time (m5.md §2) — the
-    # walker validates + executes an IRDocument. The IR package stays pure (no engine SDK).
+    # The control-plane imports the Agent Graph IR — the walker validates + executes an IRDocument.
+    # The IR package stays pure (no engine SDK).
     "theygent-ir",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "python-ulid>=2",
-    # M4: Postgres is the control-plane store (stack §3). Async engine + asyncpg driver
-    # (§1.2); Alembic owns the schema — no create_all anywhere, incl. tests (§0).
+    # Postgres is the control-plane store. Async engine + asyncpg driver;
+    # Alembic owns the schema — no create_all anywhere, incl. tests.
     "sqlalchemy[asyncio]>=2",
     "asyncpg>=0.29",
     "alembic>=1.13",
-    # M6: the `http_fetch` built-in tool imports httpx directly (m6.md §9). It was already
+    # The `http_fetch` built-in tool imports httpx directly. It was already
     # present transitively (via openai); declare it now that we depend on it at runtime.
     "httpx>=0.27",
-    # M7: the official MCP Python SDK, wrapped behind `McpClient` (mcp/client.py) — the rest of
-    # the control-plane never imports `mcp` directly (m7.md §3.1/§11).
+    # The official MCP Python SDK, wrapped behind `McpClient` (mcp/client.py) — the rest of
+    # the control-plane never imports `mcp` directly.
     "mcp>=1.2",
-    # M12: cron parsing for the in-process schedule dispatcher (m12.md §8). Deliberately kept
-    # BEHIND the `fire()` seam / the dispatcher (dispatcher.py) so M13's durable worker can replace
+    # Cron parsing for the in-process schedule dispatcher. Deliberately kept
+    # BEHIND the `fire()` seam / the dispatcher (dispatcher.py) so the durable worker can replace
     # the tick mechanism without an API or schema change — a light, swappable dep, not a commitment.
     "croniter>=2",
     "dbos>=1",
-    # M19 §1.1: encrypt tool/MCP secret material at rest (Fernet) behind a secret_ref, so the IR
+    # Encrypt tool/MCP secret material at rest (Fernet) behind a secret_ref, so the IR
     # carries no secret and rotation never bumps a hash (secrets.py). Present transitively (via the
     # MCP/DBOS stacks); declared now that we depend on it directly. A real KMS is the deferred upgrade.
     "cryptography>=42",
@@ -47,10 +47,11 @@ packages = ["src/theygent_control_plane"]
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-xdist>=3",
     "httpx>=0.27",
     "ruff>=0.5",
     "ty>=0.0.1a1",
-    # §6: the fast suite runs against a REAL ephemeral Postgres (never SQLite), through
+    # The fast suite runs against a REAL ephemeral Postgres (never SQLite), through
     # real Alembic migrations. Needs Docker locally; skips clean when absent.
     "testcontainers[postgresql]>=4",
 ]

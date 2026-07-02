@@ -1,7 +1,7 @@
-// Auto-layout for a view-less IR (M15 §2.1 / §8.6). An imported or LLM-generated graph is a
+// Auto-layout for a view-less IR. An imported or LLM-generated graph is a
 // valid, runnable IR with no `view` block — it must still render. We lay it out by longest-path
 // layering: each node's column is one past its deepest predecessor, rows stack within a column.
-// This is layout ONLY — it produces a `view`, never touches hashed content (decision §1.4).
+// This is layout ONLY — it produces a `view`, never touches hashed content.
 
 import type { Edge as IREdge, Node as IRNode } from "@theygent/ir-types";
 import type { XYPosition } from "@xyflow/react";

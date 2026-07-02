@@ -1,19 +1,19 @@
-"""``ToolRegistry`` + the two M6 built-in tools (m6.md §3.1).
+"""``ToolRegistry`` + the two built-in tools.
 
-The registry is the M6 tool fork made concrete: a name → async-callable map, populated **in
+The registry is the tool fork made concrete: a name → async-callable map, populated **in
 code**. The walker resolves a ``tool`` node's ``config.tool`` to a callable here and invokes it
 with templated ``args``. The control-plane checks membership *up front* (before a ``Run`` is
 created → 400 ``tool_not_found``), mirroring how the engine-name binding is rejected before a Run
-in M5 — so an unknown tool never reaches the walker.
+— so an unknown tool never reaches the walker.
 
-M6 ships exactly two tools, just enough to prove the surface and write a real demo:
+Two built-in tools ship, just enough to prove the surface and write a real demo:
   * ``echo``       — return the input unchanged. Network-free; proves dispatch + arg templating.
   * ``http_fetch`` — an outbound HTTP GET. Real I/O and real failure modes. A non-200 is a normal
                      return value (bound to ``ok``); only a transport failure (timeout, bad host)
                      raises → the walker binds it to the node's ``err`` handle.
 
 `file_read`/`code_exec`/etc. are deferred — each is its own design surface (sandboxing, path/exec
-safety). They are additive against this registry whenever genuinely needed (§7).
+safety). They are additive against this registry whenever genuinely needed.
 """
 
 from __future__ import annotations
@@ -30,14 +30,14 @@ ToolFn = Callable[..., Awaitable[Any]]
 
 class ToolNotFound(KeyError):
     """A ``tool`` node named a tool not in the registry. The control-plane maps this to a 400
-    ``tool_not_found`` at up-front validation — no ``Run`` is created (m6.md §5)."""
+    ``tool_not_found`` at up-front validation — no ``Run`` is created."""
 
 
 class ToolRegistry:
-    """A name → async-callable map. Built-in for M6 (no runtime registration API — §3.1).
+    """A name → async-callable map. Built-in tools only (no runtime registration API).
 
-    M21: a builtin may carry an OpenAI function ``(description, parameters)`` schema so it is
-    **model-callable** in an llm tool loop. Self-description is the invariant (m21.md §6 Q2): a
+    A builtin may carry an OpenAI function ``(description, parameters)`` schema so it is
+    **model-callable** in an llm tool loop. Self-description is the invariant: a
     builtin without a schema can still be wired as a ``tool`` node, but the up-front check rejects
     it from an llm's ``tools`` (a model needs the description to decide the call)."""
 
@@ -52,8 +52,8 @@ class ToolRegistry:
         description: str | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> Callable[[ToolFn], ToolFn]:
-        """Decorator: register ``fn`` under ``name``. Reused by MCP in M7 (different transport, same
-        contract). ``description`` + ``parameters`` (M21) make the tool model-callable — supply BOTH
+        """Decorator: register ``fn`` under ``name``. Reused by MCP (different transport, same
+        contract). ``description`` + ``parameters`` make the tool model-callable — supply BOTH
         to self-describe (the model reads the description to decide how to call it)."""
 
         def deco(fn: ToolFn) -> ToolFn:
@@ -126,7 +126,7 @@ async def echo(*, value: Any = None) -> Any:
 async def http_fetch(*, url: str, timeout_s: float = 10.0) -> dict[str, Any]:
     """HTTP GET ``url`` and return ``{status, body, headers}``. A non-200 is a *return value*,
     not an error (no ``raise_for_status``) — only a transport failure (timeout, DNS, refused)
-    raises, and the walker binds that to the node's ``err`` handle (m6.md §3.1/§4). ``timeout_s``
+    raises, and the walker binds that to the node's ``err`` handle. ``timeout_s``
     is the per-request timeout forwarded to httpx (named ``_s`` to keep it a leaf-level knob, not
     a caller-cancellation handle — ASYNC109)."""
 

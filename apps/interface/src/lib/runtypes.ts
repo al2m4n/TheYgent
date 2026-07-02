@@ -58,7 +58,7 @@ export interface ThreadDetail {
   messages: ThreadMessage[];
 }
 
-// ── control-plane observability /runs/{id}/trace + /io + /io-policy (M17, snake_case) ──
+// ── control-plane observability /runs/{id}/trace + /io + /io-policy (snake_case) ──
 // The run waterfall reads theygent's OWN span store (never an external trace backend). A span is a
 // run-root, a node, or a phase (queue.wait / model.generate). node_id == the React Flow node id (so
 // the canvas overlay is a free join later). executor_id/worker_host = which worker handled the span.

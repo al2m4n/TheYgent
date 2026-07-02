@@ -1,22 +1,22 @@
 """The durable runtime — DBOS lifecycle, the durable queue, the re-pointed ``fire()`` seam, and the
-DBOS-native dynamic schedules that replace M12's in-process dispatcher (M13 §4/§5, decisions D2/D3).
+DBOS-native dynamic schedules that replace the earlier in-process dispatcher.
 
-DBOS is a **process-global singleton** (one ``DBOS()`` + ``DBOS.launch()`` per process, D2), so this
+DBOS is a **process-global singleton** (one ``DBOS()`` + ``DBOS.launch()`` per process), so this
 object is the single owner of that lifecycle. It installs the process-local resources the steps in
-``compiler.py`` read, runs the DBOS system-schema migration (``dbos`` schema, kept out of Alembic —
-D5), launches DBOS, and exposes:
+``compiler.py`` read, runs the DBOS system-schema migration (``dbos`` schema, kept out of Alembic),
+launches DBOS, and exposes:
 
-* ``fire(trigger, input)`` — the re-pointed M12 seam: enqueue ``theygent_run`` on the durable queue
+* ``fire(trigger, input)`` — the re-pointed fire seam: enqueue ``theygent_run`` on the durable queue
   and await its terminal result (HTTP-invoke + webhook converge here unchanged).
 * schedule CRUD — ``upsert_schedule`` / ``pause_schedule`` / ``delete_schedule`` over DBOS dynamic
   schedules, keyed ``trigger-<id>``; theygent's ``trigger`` table stays the source of truth.
 * ``reconcile_schedules`` — boot reconciliation: create missing schedules for enabled
-  schedule-triggers, drop orphans. This replaces M12's rehydrate-on-boot and lifts the
-  single-dispatcher constraint (DBOS schedules dedupe across instances).
+  schedule-triggers, drop orphans. This replaces the earlier in-process rehydrate-on-boot
+  and lifts the single-dispatcher constraint (DBOS schedules dedupe across instances).
 
 Two topologies, one codebase: in the desktop sidecar DBOS launches **in-process** with the API; in
 the server / air-gapped topology a separate ``/apps/worker`` process launches the same runtime
-against the shared Postgres (m13-dbos.md §5). The Queue + workflow registration are identical.
+against the shared Postgres. The Queue + workflow registration are identical.
 """
 
 from __future__ import annotations
@@ -49,9 +49,9 @@ from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 
 logger = logging.getLogger("theygent.control_plane.durable")
 
-# The one durable queue every fired run flows onto (M13 §5). Concurrency is bounded by Postgres and
-# ample at theygent scale; ``None`` = unlimited (the thin-M13 default — a concurrency cap is the
-# deferred tuning, §5). Created at import so it is registered before ``DBOS.launch()``.
+# The one durable queue every fired run flows onto. Concurrency is bounded by Postgres and
+# ample at theygent scale; ``None`` = unlimited (a concurrency cap is the deferred tuning).
+# Created at import so it is registered before ``DBOS.launch()``.
 RUN_QUEUE = Queue("theygent")
 
 _SCHEDULE_PREFIX = "trigger-"
@@ -105,7 +105,7 @@ class DurableRuntime:
         self._store = store
         self._sessionmaker = sessionmaker
         self.bus = bus or DeltaBus()
-        # M17: the observability wrapper. In the desktop sidecar the control-plane passes its own
+        # Observability wrapper. In the desktop sidecar the control-plane passes its own
         # Telemetry (so durable + interactive spans share one live bus); the standalone worker
         # builds one with its OWN bus — including the opt-in OTLP sink, so an exporter endpoint
         # configured on the worker exports durable-run spans exactly as the API process would.
@@ -128,9 +128,9 @@ class DurableRuntime:
                 sessionmaker=sessionmaker,
                 bus=self.bus,
                 telemetry=telemetry,
-                tool_auth=tool_auth,  # M19 §1.1: durable steps resolve connection auth too
-                gates=gates,  # M19 §2.8: durable gate steps use the same backend
-                artifacts=artifacts,  # M19 §2.2: durable audio steps use the same store
+                tool_auth=tool_auth,  # durable steps resolve connection auth too
+                gates=gates,  # durable gate steps use the same backend
+                artifacts=artifacts,  # durable audio steps use the same store
             )
         )
         self._launched = False
@@ -144,7 +144,7 @@ class DurableRuntime:
         """Construct + launch the embedded DBOS instance (idempotent within this object). Runs the
         DBOS system migration first so a fresh deployment/test needs no separate ``dbos migrate``
         step. ``DBOS.launch()`` also recovers any workflows this executor left pending — the
-        crash-resume mechanism (§7)."""
+        crash-resume mechanism."""
         if self._launched:
             return
         self.migrate()
@@ -169,7 +169,7 @@ class DurableRuntime:
         if self._owns_telemetry and getattr(self.telemetry, "otlp", None) is not None:
             self.telemetry.otlp.shutdown()
 
-    # ── the re-pointed fire() seam (M13 §4) ──────────────────────────────────────
+    # ── the re-pointed fire() seam ──────────────────────────────────────────────
 
     async def enqueue_run(
         self,
@@ -180,14 +180,14 @@ class DurableRuntime:
         trigger_id: str | None = None,
     ) -> Any:
         """Enqueue ``theygent_run`` on the durable queue, returning the DBOS workflow handle (whose
-        id IS the run id). The control-plane awaits the handle (the M12 result-or-handle contract)
+        id IS the run id). The control-plane awaits the handle (the result-or-handle contract)
         or returns the run id for polling."""
         return await RUN_QUEUE.enqueue_async(
             theygent_run, agent_ref, input_value, thread_id, trigger_id
         )
 
     async def resume(self, run_id: str, input_value: Any, *, node_id: str | None = None) -> None:
-        """Deliver the awaited input to a ``waiting`` ``human`` run (M14 §1.1) — the durable side of
+        """Deliver the awaited input to a ``waiting`` ``human`` run — the durable side of
         ``POST /runs/{id}/resume``. Maps to ``DBOS.send`` to the workflow whose id IS the run id, on
         the topic the node recvs on; the checkpointed workflow resumes from the recv, even across a
         worker restart. DBOS buffers the send per topic, so delivering before the node reaches recv
@@ -221,14 +221,14 @@ class DurableRuntime:
             raise WorkflowGoneError(str(exc)) from exc
 
     async def fire(self, trigger: Trigger, input_value: Any) -> dict[str, Any]:
-        """The durable replacement for M12's ``fire`` closure (m13-dbos.md §4): enqueue the pinned
-        agent's ``theygent_run`` and await its terminal result. A run whose bound inference plane is
-        unreachable ends ``failed`` cleanly INSIDE the workflow (§1.4) — never a hang."""
+        """Enqueue the pinned agent's ``theygent_run`` and await its terminal result. A run whose
+        bound inference plane is unreachable ends ``failed`` cleanly INSIDE the workflow — never a
+        hang."""
         agent_ref = {
             "agent_id": trigger.agent_id,
             "version": trigger.version,
             "content_hash": trigger.content_hash,
-            # M17 §2: stamp the enqueue instant so the workflow can emit the `queue.wait` phase span
+            # Stamp the enqueue instant so the workflow can emit the `queue.wait` phase span
             # (enqueue → worker pickup). A workflow ARG (captured once, stable across DBOS replay).
             "enqueued_ns": now_ns(),
         }
@@ -236,7 +236,7 @@ class DurableRuntime:
         result = await handle.get_result()
         return result
 
-    # ── DBOS dynamic schedules (M13 §4) ──────────────────────────────────────────
+    # ── DBOS dynamic schedules ────────────────────────────────────────────────────
 
     async def upsert_schedule(self, trigger: Trigger) -> None:
         """Ensure an ENABLED ``schedule`` trigger has a live DBOS schedule that matches the trigger
@@ -293,10 +293,10 @@ class DurableRuntime:
             logger.info("durable.schedule_deleted", extra={"trigger_id": trigger_id})
 
     async def reconcile_schedules(self, enabled_schedule_triggers: list[Trigger]) -> None:
-        """Boot reconciliation (M13 §4): make DBOS schedules match the enabled schedule-triggers.
+        """Boot reconciliation: make DBOS schedules match the enabled schedule-triggers.
         Create/resume one per enabled trigger; delete any ``trigger-*`` DBOS schedule with no
         matching enabled trigger (a trigger deleted/disabled while this process was down). Replaces
-        M12's in-process rehydrate-on-boot and is multi-instance-safe (DBOS dedupes)."""
+        the earlier in-process rehydrate-on-boot and is multi-instance-safe (DBOS dedupes)."""
         desired = {t.id for t in enabled_schedule_triggers}
         for trigger in enabled_schedule_triggers:
             await self.upsert_schedule(trigger)

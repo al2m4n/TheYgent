@@ -1,23 +1,23 @@
-"""mcp server registry table (M9 §2.3)
+"""mcp server registry table
 
 Revision ID: 0004_mcp_server
 Revises: 0003_run_output
 Create Date: 2026-06-22
 
-Persist the control-plane's MCP server registrations so they survive a restart (finding F6.1) —
-before M9 they lived only in the in-memory ``McpManager`` and were lost on every restart, an
-asymmetry with runs/threads that already persist. This is the clean M4 win: a real table, an
-Alembic migration, domain/ORM split (the manager's ``McpServerConfig`` stays the domain shape).
+Persist the control-plane's MCP server registrations so they survive a restart — previously they
+lived only in the in-memory ``McpManager`` and were lost on every restart, an asymmetry with
+runs/threads that already persist. A real table, an Alembic migration, domain/ORM split (the
+manager's ``McpServerConfig`` stays the domain shape).
 
 This is the CONTROL-PLANE registry (its own trust domain → its own Postgres). The INFERENCE-plane
-model registry is deliberately NOT here — it persists locally to the inference plane (M9 §2.3 / the
-plane boundary, theygent-stack.md §10). Do not add a model table to the control-plane DB.
+model registry is deliberately NOT here — it persists locally to the inference plane (the plane
+boundary). Do not add a model table to the control-plane DB.
 
 ``env`` carries the user's secrets/paths that the registration must round-trip to respawn the
 server after a restart, so it is stored here (this control-plane's own store — distinct from
-"transiting theygent cloud telemetry", which §10 forbids); it is never *logged* with its values
-(``_mcp_view`` lists keys only). The live process handle is never persisted — only the
-registration; connections re-establish lazily on next use (m7.md §3.2). Hand-written/reversible.
+"transiting theygent cloud telemetry", which the plane boundary forbids); it is never *logged*
+with its values (``_mcp_view`` lists keys only). The live process handle is never persisted — only
+the registration; connections re-establish lazily on next use. Hand-written/reversible.
 """
 
 from __future__ import annotations

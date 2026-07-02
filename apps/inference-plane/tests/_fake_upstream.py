@@ -4,7 +4,7 @@ It boots a *real* in-process OpenAI-compatible server (uvicorn on an ephemeral
 port) returning deterministic completions and genuine SSE. So the manager really
 spawns something, really tracks a port, the LiteLLM gateway really proxies over
 HTTP, and SSE really streams — only the thing answering on the port is fake.
-This is the injected ``EngineLauncher`` for the fast suite (plan §"Test strategy").
+This is the injected ``EngineLauncher`` for the fast suite.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from theygent_ir import Capabilities, ManagedBinding
 FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 
-# Deterministic non-chat outputs (M18 fast suite): the embeddings vector, the STT transcript, and
+# Deterministic non-chat outputs (fast suite): the embeddings vector, the STT transcript, and
 # the TTS audio body the fake upstream returns so the audio/embeddings endpoints prove end-to-end.
 FAKE_EMBEDDING = [0.1, 0.2, 0.3]
 FAKE_TRANSCRIPT = "the quick brown fox"

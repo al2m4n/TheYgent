@@ -20,7 +20,7 @@ import type { ViewBlock } from "../src/adapter/types";
 import { sameHashedContent, viewStrippedContent } from "../src/lib/canonical";
 import { nastyGraph, sampleGraph, sampleGraphNoView } from "./fixtures";
 
-// M22 capability wiring: sampleGraph + an `echo` tool node + a `tool`-role `tools` port on the llm.
+// Capability wiring: sampleGraph + an `echo` tool node + a `tool`-role `tools` port on the llm.
 // `capabilityBase` has no tool edge yet (for connect() tests); `capabilityWired` adds the edge.
 function capabilityBase() {
   const ir = sampleGraph();
@@ -55,18 +55,18 @@ function capabilityWired() {
     channel: "tool",
     condition: null,
   });
-  // M22: ir.tools is the DERIVED registry (keyed by node id) — a saved capability graph carries it,
+  // ir.tools is the DERIVED registry (keyed by node id) — a saved capability graph carries it,
   // so the load→save round-trip is identity (reactFlowToIr re-derives the same).
   ir.tools = { n_echo: { kind: "builtin", ref: "echo" } };
   return ir;
 }
 
-describe("adapter round-trip (the headline — §4)", () => {
+describe("adapter round-trip (the headline)", () => {
   it("IR → React Flow → IR is identity on view-stripped content", () => {
     const ir = sampleGraph();
     const back = reactFlowToIr(irToReactFlow(ir), ir);
     // Canonical-equal on the content the server would hash (view + contentHash excluded). This is
-    // the frontend analogue of M13's walker/compiler parity — the seam is lossless.
+    // the frontend analogue of the walker/compiler parity check — the seam is lossless.
     expect(viewStrippedContent(back)).toEqual(viewStrippedContent(ir));
     expect(sameHashedContent(back, ir)).toBe(true);
   });
@@ -110,7 +110,7 @@ describe("adapter round-trip (the headline — §4)", () => {
   });
 });
 
-describe("missing view → auto-layout (§4)", () => {
+describe("missing view → auto-layout", () => {
   it("a view-less IR loads, lays out, and round-trips to valid IR", () => {
     const ir = sampleGraphNoView();
     const rf = irToReactFlow(ir);
@@ -135,7 +135,7 @@ describe("missing view → auto-layout (§4)", () => {
   });
 });
 
-describe("view isolation (§4, decision §1.4)", () => {
+describe("view isolation", () => {
   it("dragging a node changes view only — would-be contentHash is unchanged", () => {
     const ir = sampleGraph();
     const dragged = setNodePositions(ir, { n_llm: { x: 999, y: 777 } });
@@ -147,7 +147,7 @@ describe("view isolation (§4, decision §1.4)", () => {
   });
 });
 
-describe("node icon override (a `view`-only display field, §1.4)", () => {
+describe("node icon override (a `view`-only display field)", () => {
   it("setNodeIcon is layout-only — would-be contentHash is unchanged", () => {
     const ir = sampleGraph();
     const next = setNodeIcon(ir, "n_llm", "bot");
@@ -187,7 +187,7 @@ describe("node icon override (a `view`-only display field, §1.4)", () => {
   });
 });
 
-describe("no React Flow shape leaks into node data (§0 / Do-NOT)", () => {
+describe("no React Flow shape leaks into node data", () => {
   it("RF node data carries only label/type/ports — never kind/models/contentHash", () => {
     const rf = irToReactFlow(sampleGraph());
     for (const n of rf.nodes) {
@@ -199,14 +199,14 @@ describe("no React Flow shape leaks into node data (§0 / Do-NOT)", () => {
   });
 });
 
-describe("canvas edits produce valid IR (§4)", () => {
+describe("canvas edits produce valid IR", () => {
   it("addNode creates a node with the registry kind, default config, declared ports", () => {
     const ir = sampleGraph();
     const next = addNode(ir, "tool", { x: 200, y: 300 });
     const added = next.nodes?.find((n) => n.type === "tool" && n.id !== "n_in");
     expect(added).toBeDefined();
     expect(added?.kind).toBe("activity");
-    // ok/err (the M6 contract) + the M22 `use` capability handle.
+    // ok/err ports + the `use` capability handle.
     expect(added?.ports?.out?.map((p) => p.id)).toEqual(["out", "err", "use"]);
     expect(added?.ports?.out?.find((p) => p.id === "use")?.role).toBe("tool");
     expect(added?.config).toHaveProperty("tool"); // default config from the per-type schema
@@ -274,7 +274,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(r.error).toMatch(/already fed|ambiguous/);
   });
 
-  it("M22: connect wires a tool node's `use` handle into the llm tools port as a channel:tool edge", () => {
+  it("connect wires a tool node's `use` handle into the llm tools port as a channel:tool edge", () => {
     const r = connect(capabilityBase(), {
       source: "n_echo",
       sourceHandle: "use",
@@ -287,7 +287,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(e?.targetHandle).toBe("tools");
   });
 
-  it("M22: rejects a data handle wired into a tools port (role mismatch)", () => {
+  it("rejects a data handle wired into a tools port (role mismatch)", () => {
     // n_in's `out` is a data handle; the llm `tools` port is role tool → like-to-like rejects it.
     const r = connect(capabilityBase(), {
       source: "n_in",
@@ -299,7 +299,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(r.error).toMatch(/cannot connect a data handle to a tool handle/);
   });
 
-  it("M22: allows several tool capabilities into one llm tools port (no dedup)", () => {
+  it("allows several tool capabilities into one llm tools port (no dedup)", () => {
     let ir = capabilityBase();
     ir.nodes?.push({
       id: "n_echo2",
@@ -332,7 +332,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(r2.error).toBeUndefined(); // a tools port takes many capabilities (not deduped like data)
   });
 
-  it("M22: round-trips a capability graph (tool edge + tools port) identically", () => {
+  it("round-trips a capability graph (tool edge + tools port) identically", () => {
     const ir = capabilityWired();
     const back = reactFlowToIr(irToReactFlow(ir), ir);
     expect(sameHashedContent(back, ir)).toBe(true);
@@ -345,7 +345,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect(toolsPort?.role).toBe("tool");
   });
 
-  it("M22 D1: toolKindOf derives the kind from config (builtin / rest / mcp)", () => {
+  it("toolKindOf derives the kind from config (builtin / rest / mcp)", () => {
     const ir = capabilityBase();
     const echo = ir.nodes?.find((n) => n.id === "n_echo");
     if (!echo) throw new Error("fixture");
@@ -357,7 +357,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     );
   });
 
-  it("M22 D1: setToolKind builtin→rest seeds a url placeholder, keeps the tool type", () => {
+  it("setToolKind builtin→rest seeds a url placeholder, keeps the tool type", () => {
     const next = setToolKind(capabilityBase(), "n_echo", "rest");
     const n = next.nodes?.find((x) => x.id === "n_echo");
     expect(n?.type).toBe("tool");
@@ -368,7 +368,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect((n?.config as Record<string, unknown>).description).toBe("echo the value back");
   });
 
-  it("M22 D1: setToolKind builtin→mcp swaps to the mcp_tool type and re-derives ir.tools", () => {
+  it("setToolKind builtin→mcp swaps to the mcp_tool type and re-derives ir.tools", () => {
     const wired = (() => {
       // wire the capability edge, then derive ir.tools the way the Editor's applyIr does.
       const r = connect(capabilityBase(), {
@@ -391,7 +391,7 @@ describe("canvas edits produce valid IR (§4)", () => {
     expect((next.tools?.n_echo as { kind?: string }).kind).toBe("mcp");
   });
 
-  it("M22 D1: setToolKind is a no-op when the kind is unchanged", () => {
+  it("setToolKind is a no-op when the kind is unchanged", () => {
     const ir = capabilityBase();
     expect(setToolKind(ir, "n_echo", "builtin")).toBe(ir);
   });

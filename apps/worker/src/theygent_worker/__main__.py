@@ -1,8 +1,8 @@
 """Run the durable worker: ``python -m theygent_worker`` / ``theygent-worker``.
 
 Reads ``DATABASE_URL`` (shared with the control-plane; DBOS state goes in the ``dbos`` schema) and
-``THEYGENT_INFERENCE_PLANE_BASE_URL`` (the gateway data-plane root). One deploy-time note
-(m13-dbos.md §3): the DBOS system schema is migrated automatically on launch
+``THEYGENT_INFERENCE_PLANE_BASE_URL`` (the gateway data-plane root). One deploy-time note:
+the DBOS system schema is migrated automatically on launch
 (``run_dbos_database_migrations``), so there is no separate ``dbos migrate`` step to remember —
 but it is a real, idempotent migration, not a running service.
 """

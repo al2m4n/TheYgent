@@ -1,11 +1,11 @@
-"""Fast suite for the agent registry (m11.md §6) — save → version → invoke-by-reference, over a
+"""Fast suite for the agent registry — save → version → invoke-by-reference, over a
 real (fake-model) inference plane and a REAL ephemeral Postgres applied through REAL Alembic
-migrations (M4 §0/§6). No SQLite, no create_all.
+migrations. No SQLite, no create_all.
 
-M11's thesis: an agent becomes a saved, named, immutable, content-addressed thing you invoke by
+The agent registry makes an agent a saved, named, immutable, content-addressed thing you invoke by
 reference instead of re-pasting the whole IR every run. So these prove: it persists + survives a
-restart; the registry's hash IS the walker's hash (§1.1); the hash is view-stripped + key-order
-stable (§1.2); versions are immutable; an invoke-by-reference run is behaviourally identical to
+restart; the registry's hash IS the walker's hash; the hash is view-stripped + key-order
+stable; versions are immutable; an invoke-by-reference run is behaviourally identical to
 /graphs/runs and the Run row carries the agent's coordinate; pinned invokes run exactly that
 content; and thread memory is unchanged through /agents/*.
 """
@@ -113,10 +113,10 @@ def test_get_stored_version_returns_ir(client: TestClient) -> None:
     body = resp.json()
     assert body["version"] == "0.1.0"
     assert body["content_hash"].startswith("sha256:")
-    # The stored IR is the canonical, view-stripped §8.2 document, self-describing (hash set).
+    # The stored IR is the canonical, view-stripped document, self-describing (hash set).
     assert body["ir"]["id"] == ir["id"]
     assert body["ir"]["contentHash"] == body["content_hash"]
-    assert "view" not in body["ir"]  # view is stripped from the hashed document (§1.2)
+    assert "view" not in body["ir"]  # view is stripped from the hashed document
 
 
 def test_get_unknown_version_404(client: TestClient) -> None:
@@ -132,7 +132,7 @@ def test_get_unknown_version_404(client: TestClient) -> None:
 
 def test_persist_and_survive_restart(fake_inference: FakeInference, pg_url: str) -> None:
     # Create an agent + version through one app; a SECOND app on the same DB still lists it with the
-    # same content + hash — the M11 §0 promise (an agent is a durable object, not a paste-in).
+    # same content + hash — the registry promise (an agent is a durable object, not a paste-in).
     ir = _agent_ir()
     with _second_app(fake_inference, pg_url) as a:
         created = a.post("/agents", json={"ir": ir, "name": "durable"}).json()
@@ -148,11 +148,11 @@ def test_persist_and_survive_restart(fake_inference: FakeInference, pg_url: str)
         assert again["ir"] == stored_ir  # byte-identical content across the restart
 
 
-# ── hash agreement + determinism (§1.1 / §1.2) ──────────────────────────────────
+# ── hash agreement + determinism ─────────────────────────────────────────────────
 
 
 def test_registry_hash_equals_the_walker_function(client: TestClient) -> None:
-    # The §1.1 invariant: the registry's stored content_hash == the IR package's content_hash for
+    # The registry's stored content_hash == the IR package's content_hash for
     # the same IR — asserted against the ONE function directly, not a re-implementation. If these
     # ever disagree it's a bug, not config (the walker and registry must agree byte-for-byte).
     ir = _agent_ir()
@@ -161,8 +161,8 @@ def test_registry_hash_equals_the_walker_function(client: TestClient) -> None:
 
 
 def test_stored_ir_rehash_is_a_fixpoint(client: TestClient) -> None:
-    # The pinning soundness guarantee (M11 §1.1 / M12's premise): the registry stores the CANONICAL,
-    # default-filled, view-stripped IR (decision D2), so reloading the stored ir and re-hashing it
+    # The pinning soundness guarantee: the registry stores the CANONICAL,
+    # default-filled, view-stripped IR, so reloading the stored ir and re-hashing it
     # reproduces the stored content_hash byte-for-byte. If this drifted, every hash-pinned deploy
     # (which re-resolves the stored ir on each fire) would silently fail to reproduce its pin.
     ir = _agent_ir()
@@ -181,9 +181,9 @@ def test_stored_ir_rehash_is_a_fixpoint(client: TestClient) -> None:
 
 
 def test_hash_ignores_key_order_and_view_idempotent_republish(client: TestClient) -> None:
-    # The same IR with a reordered/spaced shape AND an added view block is the SAME version (§1.2):
+    # The same IR with a reordered/spaced shape AND an added view block is the SAME version:
     # re-publishing it under the same coordinate is idempotent (200), never a conflict, never a new
-    # version, same hash. Dragging a node must not mint a version (§8.0).
+    # version, same hash. Dragging a node must not mint a version.
     ir = _agent_ir()
     h1 = client.post("/agents", json={"ir": ir}).json()["versions"][0]["content_hash"]
 
@@ -206,13 +206,13 @@ def test_real_content_change_is_a_new_version_with_new_hash(client: TestClient) 
     resp = client.post(f"/agents/{ir['id']}/versions", json={"ir": changed})
     assert resp.status_code == 201
     detail = resp.json()
-    # Two versions, newest first (ordered by seq, not time — M4 §3), different hashes.
+    # Two versions, newest first (ordered by seq, not time), different hashes.
     assert [v["version"] for v in detail["versions"]] == ["0.2.0", "0.1.0"]
     assert [v["seq"] for v in detail["versions"]] == [2, 1]
     assert detail["versions"][0]["content_hash"] != h1
 
 
-# ── immutability guard (§1.2) ───────────────────────────────────────────────────
+# ── immutability guard ───────────────────────────────────────────────────────────
 
 
 def test_immutability_guard_rejects_different_content_under_existing_version(
@@ -230,7 +230,7 @@ def test_add_version_id_mismatch_rejected(client: TestClient) -> None:
     ir = _agent_ir()
     client.post("/agents", json={"ir": ir})
     other = _agent_ir(version="0.2.0")
-    other["id"] = "agt_someone_else"  # IR carries a different §8.2 id than the URL
+    other["id"] = "agt_someone_else"  # IR carries a different id than the URL
     resp = client.post(f"/agents/{ir['id']}/versions", json={"ir": other})
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "agent_id_mismatch"
@@ -243,7 +243,7 @@ def test_add_version_to_unknown_agent_404(client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "agent_not_found"
 
 
-# ── invoke-by-reference (§3/§6) ─────────────────────────────────────────────────
+# ── invoke-by-reference ──────────────────────────────────────────────────────────
 
 
 def test_invoke_by_reference_same_sse_shape_and_run_coordinate(
@@ -305,9 +305,9 @@ def test_invoke_unknown_pinned_version_404(client: TestClient) -> None:
 
 
 def test_invoke_unknown_pinned_content_hash_404(client: TestClient) -> None:
-    # A dangling hash pin (a typo'd / stale contentHash) is a clean 404 — NOT a 500 (M12's premise:
-    # triggers pin and re-resolve, so a stale pin must fail honestly, never hang/crash). Distinct
-    # code path from version-pinning (get_version_by_hash), so tested distinctly (M11 review #2).
+    # A dangling hash pin (a typo'd / stale contentHash) is a clean 404 — NOT a 500: triggers pin
+    # and re-resolve, so a stale pin must fail honestly, never hang/crash. Distinct
+    # code path from version-pinning (get_version_by_hash), so tested distinctly.
     ir = _agent_ir()
     client.post("/agents", json={"ir": ir})
     resp = client.post(
@@ -318,7 +318,7 @@ def test_invoke_unknown_pinned_content_hash_404(client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "agent_version_not_found"
 
 
-# ── pinned invoke runs EXACTLY that content (§6) ────────────────────────────────
+# ── pinned invoke runs EXACTLY that content ──────────────────────────────────────
 
 
 def test_pinned_version_runs_that_content_even_when_newer_exists(
@@ -364,10 +364,10 @@ def test_pinned_content_hash_runs_that_content(
 def test_latest_is_highest_seq_not_highest_semver(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # "latest" = most recently PUBLISHED (highest seq), NOT highest semver (M4 §3: order by the
+    # "latest" = most recently PUBLISHED (highest seq), NOT highest semver (order by the
     # explicit seq column, never by a parsed version/timestamp). So a backport published after a
     # higher semver becomes latest. Recorded + tested because the cockpit's default invoke uses
-    # latest (M11 review #4). M12 mandates pinning, so this only governs the convenience default.
+    # latest. Trigger-based deploys mandate pinning, so this only governs the convenience default.
     ir = _agent_ir(version="0.3.0", prompt="HIGH_SEMVER: $in")
     client.post("/agents", json={"ir": ir})
     backport = _agent_ir(version="0.2.5", prompt="BACKPORT: $in")  # published AFTER 0.3.0 → seq 2
@@ -383,7 +383,7 @@ def test_latest_is_highest_seq_not_highest_semver(
 
 def test_exact_identical_republish_is_idempotent_200(client: TestClient) -> None:
     # A CI/redeploy resubmitting an UNCHANGED agent (byte-identical id+version+content) is an
-    # idempotent 200, not a 409 — so unattended redeploys don't error on a no-op (M11 review #6).
+    # idempotent 200, not a 409 — so unattended redeploys don't error on a no-op.
     ir = _agent_ir()
     client.post("/agents", json={"ir": ir})
     resp = client.post(f"/agents/{ir['id']}/versions", json={"ir": copy.deepcopy(ir)})
@@ -391,7 +391,7 @@ def test_exact_identical_republish_is_idempotent_200(client: TestClient) -> None
     assert len(resp.json()["versions"]) == 1
 
 
-# ── thread memory unchanged through /agents/* (§6) ──────────────────────────────
+# ── thread memory unchanged through /agents/* ────────────────────────────────────
 
 
 def test_thread_memory_replays_through_agent_invoke(
@@ -411,7 +411,7 @@ def test_thread_memory_replays_through_agent_invoke(
 
     assert ask("first")["status"] == "completed"
     assert ask("second")["status"] == "completed"
-    # Turn 2 replays turn 1 (M4 thread memory), verified through the /agents/* path.
+    # Turn 2 replays turn 1 (thread memory), verified through the /agents/* path.
     assert fake_inference.captured["messages"] == [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": FULL_MESSAGE},
@@ -420,7 +420,8 @@ def test_thread_memory_replays_through_agent_invoke(
 
 
 def test_existing_run_surfaces_unchanged(client: TestClient) -> None:
-    # M11 is purely additive (§3/§7): /graphs/runs still works and is untouched by the registry.
+    # The agent registry is purely additive: /graphs/runs still works and is untouched
+    # by the registry.
     resp = client.post("/graphs/runs", json={"ir": trivial_ir(), "input": "x", "stream": False})
     assert resp.status_code == 200
     assert resp.json()["status"] == "completed"

@@ -1,4 +1,4 @@
-"""Registration payload builders (§9.1.3), camelCase over the wire."""
+"""Registration payload builders, camelCase over the wire."""
 
 from __future__ import annotations
 

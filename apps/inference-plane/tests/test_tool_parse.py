@@ -1,4 +1,4 @@
-"""MLX tool-call normalization (the M22 follow-up): the engine returns Llama's text tool call as
+"""MLX tool-call normalization: the engine returns Llama's text tool call as
 content; `tool_parse` rewrites it into the OpenAI `tool_calls` shape the control plane expects.
 
 Covers the OBSERVED bench output verbatim, the false-positive gate (name must be offered), the

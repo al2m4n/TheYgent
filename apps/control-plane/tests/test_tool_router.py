@@ -1,10 +1,10 @@
-"""Fast suite for the M6 node types — ``tool`` and ``router`` (m6.md §5).
+"""Fast suite for the ``tool`` and ``router`` node types.
 
-The milestone where a graph stops being a wrapped prompt and becomes an agent that *does
-something*. Everything real except the model: the walker dispatches the two new handlers, a
+These are the node types where a graph stops being a wrapped prompt and becomes an agent that
+*does something*. Everything real except the model: the walker dispatches the two new handlers, a
 built-in tool makes a genuine outbound HTTP call to a threaded local server, and a router
 branches on an upstream decision with the un-taken branch provably skipped (asserted via the
-structured-log seam). Real Postgres via testcontainers (M4 conventions).
+structured-log seam). Real Postgres via testcontainers.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _post(client: TestClient, ir: dict, *, input_: str = "go", stream: bool = Fa
 
 
 def _skipped_nodes(caplog: pytest.LogCaptureFixture, run_id: str) -> set[str]:
-    """Node ids logged with skipped=True for this run (the M6 §4 skip seam)."""
+    """Node ids logged with skipped=True for this run (the skip seam)."""
     return {
         str(getattr(r, "node_id", ""))
         for r in caplog.records
@@ -77,7 +77,7 @@ def test_tool_raises_binds_err_branch_and_completes(
 ) -> None:
     # A transport failure (connection refused) RAISES inside the tool → the err handle is bound
     # with the message and the run COMPLETES (a tool error is a structured output, not a run
-    # failure, m6.md §4). Downstream err edges run; downstream ok edges are skipped.
+    # failure). Downstream err edges run; downstream ok edges are skipped.
     with caplog.at_level(logging.INFO, logger="theygent.control_plane.walker"):
         body = _post(client, tool_http_ir("http://127.0.0.1:1")).json()
     assert body["status"] == "completed"
@@ -87,7 +87,7 @@ def test_tool_raises_binds_err_branch_and_completes(
 
 
 def test_tool_not_found_rejected_at_validation(client: TestClient) -> None:
-    # An unknown tool is caught up front → 400, no Run created (m6.md §5) — never a runtime miss.
+    # An unknown tool is caught up front → 400, no Run created — never a runtime miss.
     doc = tool_echo_ir()
     doc["nodes"][1]["config"]["tool"] = "nope"
     resp = _post(client, doc)
@@ -98,7 +98,7 @@ def test_tool_not_found_rejected_at_validation(client: TestClient) -> None:
 
 # ── $in.<port> / $in.<port>.<path> value references (shared tool-arg + router-select resolver) ──
 # The load-bearing invariant: an undeclared port or a missing path ERRORS clearly, it never
-# silently returns None that then surprises a downstream node. Port-first (M10 §1.2). Pinned at the
+# silently returns None that then surprises a downstream node. Port-first addressing. Pinned at the
 # unit level here and end-to-end below.
 
 
@@ -160,7 +160,7 @@ def test_router_selects_no_branch(client: TestClient, caplog: pytest.LogCaptureF
 
 
 def test_router_miss_fails(client: TestClient) -> None:
-    # A handle the router doesn't declare → run failed, clear error, no fallback guessing (§3.2).
+    # A handle the router doesn't declare → run failed, clear error, no fallback guessing.
     resp = _post(client, router_ir({"handle": "maybe", "payload": 1}))
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "router_error"
@@ -168,7 +168,7 @@ def test_router_miss_fails(client: TestClient) -> None:
 
 
 def test_router_no_handle_field_fails(client: TestClient) -> None:
-    # Upstream output is missing `handle` → run failed, clear error (§3.2).
+    # Upstream output is missing `handle` → run failed, clear error.
     resp = _post(client, router_ir({"payload": 1}))
     assert resp.status_code == 422
     assert resp.json()["error"]["code"] == "router_error"
@@ -193,7 +193,7 @@ def test_tool_missing_arg_ref_binds_err_branch(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     # A tool arg that references a missing path is an unresolved-input failure: it binds the err
-    # handle with the clear message and the run continues (§4) — the err branch runs, the ok
+    # handle with the clear message and the run continues — the err branch runs, the ok
     # branch is skipped. The downstream node never receives a surprise None.
     doc = tool_ok_err_ir(
         "echo", {"value": "$in.in.missing"}
@@ -205,13 +205,13 @@ def test_tool_missing_arg_ref_binds_err_branch(
     assert "n_ok" in _skipped_nodes(caplog, body["runId"])  # ok branch skipped, not fed None
 
 
-# ── the combined agent shape (the demo, m6.md §6) ─────────────────────────────
+# ── the combined agent shape ──────────────────────────────────────────────────
 
 
 def test_combined_agent_graph(pg_url: str) -> None:
     # input → llm → router → {tool → out, out}. The fake makes the llm's routing decision
     # deterministic; the router takes "yes"; the tool extracts the payload. The shape that
-    # motivates M6 — an agent, not a wrapped prompt.
+    # motivates these node types — an agent, not a wrapped prompt.
     decision = '{"handle": "yes", "payload": {"city": "Prague"}}'
     with FakeInference(response=decision) as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
@@ -247,7 +247,7 @@ def test_combined_agent_streams_llm_decision(pg_url: str) -> None:
 
 
 def test_logical_id_invariant_holds_with_tool(client: TestClient) -> None:
-    # Extending M5: an engine name in the model binding is still rejected up front, even on a
+    # An engine name in the model binding is still rejected up front, even on a
     # graph that also has tool/router nodes.
     doc = agent_ir()
     doc["models"]["default"]["model"] = "mlx"

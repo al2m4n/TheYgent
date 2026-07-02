@@ -1,14 +1,14 @@
-"""Fast suite for the M13 durable runtime (m13-dbos.md §7) — DBOS embedded, against a REAL
+"""Fast suite for the durable runtime — DBOS embedded, against a REAL
 ephemeral Postgres (Alembic ``public`` + DBOS ``dbos`` schema). No SQLite, no create_all.
 
-The milestone's thesis: a run survives a crash and resumes from the last completed step, and M12
+Thesis: a run survives a crash and resumes from the last completed step, and cron
 schedules become DBOS-native durable schedules. So these prove: walker/compiler PARITY (the IR seam
 is untouched); KILL-AND-RESUME with no duplicated side effects (the headline) + the determinism
 guard (a journaled activity is not re-executed on replay); schedules run via DBOS, survive a
-restart, and a disabled trigger has no live schedule; a webhook fires durably; an M11 saved agent
+restart, and a disabled trigger has no live schedule; a webhook fires durably; a saved agent
 runs unchanged; and the two migration chains coexist + round-trip.
 
-DBOS is a process-global singleton (decisions D2): each test launches + destroys it and starts from
+DBOS is a process-global singleton: each test launches + destroys it and starts from
 a freshly migrated ``dbos`` schema (``reset_dbos_schema``), with an autouse teardown that
 force-destroys DBOS so one failing test can't wedge the next.
 """
@@ -50,7 +50,7 @@ TOKEN = "durable-token"
 @pytest.fixture(autouse=True)
 def _ensure_dbos_destroyed() -> Iterator[None]:
     # DBOS is process-global; guarantee a clean slate after every durable test (even on failure) so
-    # a leftover launched instance can't break the next test's launch (D2).
+    # a leftover launched instance can't break the next test's launch.
     yield
     with contextlib.suppress(Exception):
         from dbos import DBOS
@@ -115,13 +115,13 @@ def _build_runtime(pg_url: str, fake_url: str, agents: AgentStore, triggers: Tri
 
 async def test_durable_run_matches_the_walker(pg_url: str) -> None:
     # The same saved agent produces the same final output + Run record through the durable
-    # theygent_run as through the M5 walker (/graphs/runs) — proof the compiler re-targets lowering
-    # ONLY (m13.md §0 the one rule; m13-dbos.md §7 parity).
+    # theygent_run as through the interactive walker (/graphs/runs) — proof the compiler re-targets
+    # lowering ONLY (the one rule: the IR seam is untouched; parity is structural).
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
     ir["id"] = "agt_parity"
     with FakeInference() as fake:
-        # interactive baseline (non-durable, M5 walker)
+        # interactive baseline (non-durable, interactive walker)
         app = create_app(
             inference_base_url=fake.v1_url, database_url=pg_url, start_dispatcher=False
         )
@@ -168,7 +168,7 @@ async def test_durable_run_matches_the_walker(pg_url: str) -> None:
 
 
 async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
-    # M21: an llm with tools runs its bounded tool loop on the DURABLE runtime — each model
+    # An llm with tools runs its bounded tool loop on the DURABLE runtime — each model
     # turn is a journaled `_llm_step`, each tool call a journaled step (`_durable_tool_call`).
     # The scripted fake calls `echo` once, then answers; the durable run completes with the
     # post-tool answer. Same primitives as the interactive loop, here through theygent_run.
@@ -203,11 +203,11 @@ async def test_durable_tool_loop_runs_to_a_final_answer(pg_url: str) -> None:
             await engine.dispose()
 
 
-async def test_m22_durable_wired_capability_tool_then_answers(pg_url: str) -> None:
-    # M22 parity: a tool node wired to the llm's `tools` port (NO config.tools) is callable on the
+async def test_durable_wired_capability_tool_then_answers(pg_url: str) -> None:
+    # A tool node wired to the llm's `tools` port (NO config.tools) is callable on the
     # DURABLE runtime too — the model calls it by NODE id, `_durable_tool_call` resolves the binding
-    # from the node's inline config and journals each step. Same primitives as the interactive M22
-    # path (test_m22_tool_wiring.py), here through theygent_run.
+    # from the node's inline config and journals each step. Same primitives as the interactive
+    # wired-tool path (test_tool_wiring.py), here through theygent_run.
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
     ir["id"] = "agt_m22_capability"
@@ -262,11 +262,12 @@ async def test_m22_durable_wired_capability_tool_then_answers(pg_url: str) -> No
 
 
 async def test_durable_multimodal_content_survives_the_journal(pg_url: str) -> None:
-    # M20 cross-plane follow-up on the durable path: the rendered ``messages`` are a DBOS step
-    # argument, so a multimodal content (text + image_url) is serialized into the journal and handed
-    # to the gateway from there. Prove the image block survives that round-trip unchanged AND that
-    # the image enters from the run input via ``$in`` inside the image part — a vision agent on a
-    # durable graph. (The interactive parity for the same shape lives in test_vision_content.py.)
+    # Durable-path multimodal: the rendered ``messages`` are a DBOS step argument, so
+    # multimodal content (text + image_url) is serialized into the journal and handed to the
+    # gateway from there. Prove the image block survives that round-trip unchanged AND that
+    # the image enters from the run input via ``$in`` inside the image part — a vision agent
+    # on a durable graph. (The interactive parity for the same shape lives in
+    # test_vision_content.py.)
     await reset_dbos_schema(pg_url)
     image = "https://example.com/cat.png"
     ir = vision_llm_ir("Describe the image.", "$in")
@@ -309,8 +310,8 @@ async def test_kill_and_resume_completed_step_runs_exactly_once(pg_url: str) -> 
     # Start a 2-activity graph; freeze the worker mid-``n_b`` (after ``n_a`` COMPLETED + journaled);
     # CRASH (DBOS.destroy); restart → DBOS recovers the pending workflow and resumes at ``n_b``,
     # NOT from scratch. ``n_a`` (the COMPLETED, journaled step) is replayed from the journal — its
-    # executor is **exactly-once**, NOT re-invoked (so §6/D7 — its tokens are not re-streamed). The
-    # at-least-once guarantee for the INTERRUPTED step is proven separately below (D9).
+    # executor is **exactly-once**, NOT re-invoked (its tokens are not re-streamed — journaled
+    # replay). The at-least-once guarantee for the INTERRUPTED step is proven separately below.
     await reset_dbos_schema(pg_url)
     ir = _two_step_ir("agt_resume")
     responses = {"GO": "OUT1", "OUT1": "FINAL"}
@@ -362,7 +363,7 @@ async def test_kill_and_resume_completed_step_runs_exactly_once(pg_url: str) -> 
 def _sideeffect_ir(agent_id: str) -> dict:
     """input → tool(_durable_sideeffect, {value: $in}) → output. A single activity whose body has a
     non-idempotent OBSERVABLE side effect (a counter increment), used to prove the at-least-once
-    guarantee for an interrupted step (D9)."""
+    guarantee for an interrupted step."""
     ir = _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -383,7 +384,7 @@ def _sideeffect_ir(agent_id: str) -> dict:
 
 
 async def test_interrupted_step_is_at_least_once(pg_url: str) -> None:
-    # The HONEST guarantee (D9): a COMPLETED step is exactly-once (proven above), but the step that
+    # The HONEST guarantee: a COMPLETED step is exactly-once (proven above), but the step that
     # was IN-FLIGHT at the crash RE-EXECUTES on resume — at-least-once. A non-idempotent side effect
     # therefore repeats. This is the contract the `human` node inherits; state it and test it, don't
     # paper over it. The side-effecting tool increments a counter (the effect), then its first call
@@ -420,7 +421,7 @@ async def test_interrupted_step_is_at_least_once(pg_url: str) -> None:
             assert res["status"] == "completed"
             # The interrupted step re-executed → the NON-IDEMPOTENT effect repeated. At-least-once,
             # by design — exactly-once is only for journaled (completed) steps.
-            assert side_effect_count() == 2, "interrupted step should re-execute on resume (D9)"
+            assert side_effect_count() == 2, "interrupted step should re-execute on resume"
         finally:
             rt2.shutdown()
             await gw.aclose()
@@ -428,15 +429,15 @@ async def test_interrupted_step_is_at_least_once(pg_url: str) -> None:
             await engine.dispose()
 
 
-# ── transient-failure retry (the M1 503 regression guard) ────────────────────────
+# ── transient-failure retry (regression guard) ───────────────────────────────────
 
 
 async def test_transient_503_is_retried_not_failed(pg_url: str) -> None:
     # The durable gateway turns provider-client retry OFF so DBOS owns retry (no double-retry). That
     # only holds if the steps actually retry — else a single transient 503 fails the whole run with
-    # no retry at any layer, re-introducing the M1 scar M12's gateway retry covered. Inject ONE 503,
-    # then success: the run must COMPLETE (the step retried), not fail. (max_attempts/interval are
-    # the sane §2 defaults; tuning is deferred.)
+    # no retry at any layer (the double-retry hazard). Inject ONE 503, then success: the run must
+    # COMPLETE (the step retried), not fail. (max_attempts/interval are the sane defaults; tuning
+    # is deferred.)
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
     ir["id"] = "agt_retry"
@@ -465,9 +466,9 @@ async def test_transient_503_is_retried_not_failed(pg_url: str) -> None:
 
 
 async def test_failed_durable_run_stamps_completed_at(pg_url: str) -> None:
-    # A failed run's duration must be exact too, else failed-run duration stays as lossy as before
-    # (M12 §9). An engine-name binding fails fast in the workflow (no retry) → the FAILED terminal
-    # transition stamps completed_at (only a reconcile-swept zombie stays NULL — unknown end time).
+    # A failed run's duration must be exact too, else failed-run duration stays lossy. An
+    # engine-name binding fails fast in the workflow (no retry) → the FAILED terminal transition
+    # stamps completed_at (only a reconcile-swept zombie stays NULL — unknown end time).
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
     ir["id"] = "agt_failed"
@@ -722,7 +723,7 @@ async def test_webhook_fires_durably_with_lineage(pg_url: str) -> None:
 
 @pytest.mark.parametrize("_", [0])
 def test_alembic_and_dbos_schemas_coexist_and_roundtrip(_: int) -> None:
-    # Alembic owns `public`; DBOS owns `dbos`; they never touch each other (D5). On its OWN
+    # Alembic owns `public`; DBOS owns `dbos`; they never touch each other. On its OWN
     # throwaway PG (a downgrade-to-base would wipe `public` the session DB shares): upgrade head +
     # dbos migrate coexist; alembic down→base leaves `dbos` intact; re-upgrade head is clean.
     try:

@@ -1,12 +1,12 @@
-"""The M21 real-engine gate (m21.md Phase 5) — autonomous tool-calling against a LIVE inference
+"""Real-engine gate for autonomous tool-calling against a LIVE inference
 plane + a tool-calling-capable engine.
 
-The fast suite (``test_m21_tool_calling.py``) proves the loop end-to-end with a scripted fake. This
+The fast suite (``test_tool_calling.py``) proves the loop end-to-end with a scripted fake. This
 env-gated test is the actual "supported" gate: a real model, offered a tool, DECIDES to call it, the
 walker runs it, feeds the result back, and the model answers — proven on the real surface, not a
 fake (per [[prove-real-path-before-abstracting]]).
 
-Engine support is the precondition, and it is engine-specific (m21.md §1): **llama.cpp is PROVEN**;
+Engine support is the precondition, and it is engine-specific: **llama.cpp is PROVEN**;
 mlx_lm.server is unproven/approximate (point THEYGENT_INFERENCE_PLANE_BASE_URL at a llama.cpp plane
 and set THEYGENT_LOGICAL_MODEL to a tool-calling GGUF). Skipped by default
 (``-m 'not integration'``);
@@ -16,7 +16,7 @@ skips clean without prerequisites. Run::
     THEYGENT_INFERENCE_PLANE_BASE_URL=http://127.0.0.1:8081/v1 \
     THEYGENT_LOGICAL_MODEL=qwen2.5-7b-instruct \
         uv run --package theygent-control-plane pytest -m integration \
-        apps/control-plane/tests/test_integration_m21.py
+        apps/control-plane/tests/test_integration_tool_calling.py
 """
 
 from __future__ import annotations

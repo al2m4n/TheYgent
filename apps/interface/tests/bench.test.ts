@@ -1,8 +1,8 @@
-// M18 bench — pure-logic + §10-guard tests (m18.md §4 frontend).
+// Bench — pure-logic + data-plane-isolation tests.
 //
 // Covered: benchmark math from a synthetic timed stream; capability-routed panel selection;
 // schema-driven + capability-narrowed param forms; apply-preset writes LITERAL values + the preset
-// NAME never lands in the IR (§1.7, the key guard); detection-overlay parsing; and the §10 guard —
+// NAME never lands in the IR (the key guard); detection-overlay parsing; and the data-plane guard —
 // the model bench posts data-plane payloads to the INFERENCE base URL, NEVER a control-plane route.
 
 import type { IRDocument } from "@theygent/ir-types";
@@ -43,7 +43,7 @@ describe("computeChatMetrics", () => {
   });
 });
 
-// ── capability-routed panel selection (the §1.2 seam) ────────────────────────
+// ── capability-routed panel selection ────────────────────────────────────────
 
 describe("panelsFor (data-driven, no hardcoded modality switch)", () => {
   it("routes a chat+vision model to the chat panel only (vision rides chat)", () => {
@@ -89,7 +89,7 @@ describe("paramsForModality", () => {
   });
 });
 
-// ── apply-preset → literal values, NO preset name in the IR (§1.7) ───────────
+// ── apply-preset → literal values, NO preset name in the IR ──────────────────
 
 const AGENT_IR = {
   schemaVersion: "1",
@@ -101,7 +101,7 @@ const AGENT_IR = {
   edges: [],
 } as unknown as IRDocument;
 
-describe("applyPresetToBinding (the §1.7 guard)", () => {
+describe("applyPresetToBinding (the preset-name guard)", () => {
   it("copies LITERAL values into models[binding].params and never writes the preset name", () => {
     const next = applyPresetToBinding(AGENT_IR, "fast", { temperature: 0.0, top_p: 1 });
     const models = next.models as Record<string, { params: Record<string, unknown> }>;
@@ -152,13 +152,13 @@ describe("parseDetections", () => {
   });
 });
 
-// ── tool tester: the throwaway input→mcp_tool→output graph (§2.6) ─────────────
+// ── tool tester: the throwaway input→mcp_tool→output graph ───────────────────
 
-describe("buildToolGraph (the §2.6 throwaway one-node graph)", () => {
+describe("buildToolGraph (the throwaway one-node graph)", () => {
   it("composes a valid input → mcp_tool → output IR wired with data edges", () => {
     const ir = buildToolGraph({ server: "yolo", tool: "detect", argNames: ["image"] });
 
-    // Envelope present (the §8.2 required fields) so `/graphs/runs` accepts it inline.
+    // Envelope present (required fields: id, name, version, schemaVersion) so `/graphs/runs` accepts it inline.
     expect(ir.id).toBeTruthy();
     expect(ir.name).toBeTruthy();
     expect(ir.version).toBeTruthy();
@@ -172,7 +172,7 @@ describe("buildToolGraph (the §2.6 throwaway one-node graph)", () => {
       ["output", "boundary"],
     ]);
 
-    // The mcp_tool node carries {server, tool, args} with args templated from $in.in.<name> (§8.5).
+    // The mcp_tool node carries {server, tool, args} with args templated from $in.in.<name>.
     const toolNode = nodes.find((n) => n.type === "mcp_tool");
     expect(toolNode?.config).toEqual({
       server: "yolo",
@@ -218,9 +218,9 @@ describe("buildToolGraph (the §2.6 throwaway one-node graph)", () => {
   });
 });
 
-// ── §10 guard — data-plane payloads go to the inference URL, never control-plane ─
+// ── data-plane isolation guard — payloads go to the inference URL, never control-plane ─
 
-describe("§10 guard: model bench data-plane → inference base URL only", () => {
+describe("data-plane isolation guard: model bench data-plane → inference base URL only", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   function fakeFetch(calls: string[]) {

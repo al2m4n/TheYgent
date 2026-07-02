@@ -22,7 +22,7 @@
     },
     "Edge": {
       "additionalProperties": false,
-      "description": "A directed connection (\u00a78.3). ``channel: data`` passes a value along the edge;\n``channel: control`` is pure sequencing. ``condition`` is reserved for router-driven\nedges (the first ``orchestration`` node, deferred \u2014 M5 \u00a77).",
+      "description": "A directed connection. ``channel: data`` passes a value along the edge;\n``channel: control`` is pure sequencing. ``condition`` is reserved for router-driven\nedges.",
       "properties": {
         "channel": {
           "default": "data",
@@ -79,7 +79,7 @@
     },
     "HttpTool": {
       "additionalProperties": false,
-      "description": "An http/REST/GraphQL tool binding (M19 \u00a72.3) \u2014 the workhorse + the substrate for action tools\n(\u00a72.5) and crawler tools (\u00a71.4). ``connection`` is the id of an ``http_auth`` connection (M19\n\u00a71.1) whose secret the handler injects SERVER-SIDE at step time \u2014 never inline in the IR. The\noptional ``template`` names a provider request shape (e.g. ``slack.chat.postMessage``) for the\nsmall built-in action set; everything else is the raw http tool config on the node (\u00a72.3).",
+      "description": "An http/REST/GraphQL tool binding \u2014 the workhorse + the substrate for action tools\nand crawler tools. ``connection`` is the id of an ``http_auth`` connection whose secret the\nhandler injects SERVER-SIDE at step time \u2014 never inline in the IR. The optional ``template``\nnames a provider request shape (e.g. ``slack.chat.postMessage``) for the small built-in action\nset; everything else is the raw http tool config on the node.",
       "properties": {
         "bodyTemplate": {
           "default": null,
@@ -208,7 +208,7 @@
     },
     "McpTool": {
       "additionalProperties": false,
-      "description": "An MCP tool binding (M7 + M19 \u00a72.4). ``tool`` is the named tool the server exposes; the\nserver is reached EITHER by the M7 ``server`` name (a registered ``mcp_server``) OR \u2014 M19 \u2014 by a\n``connection`` id (an ``mcp_server`` connection, stdio or http, auth via its secret_ref).\nExactly one of ``server`` / ``connection`` is set (validated below); no secret in the IR.",
+      "description": "An MCP tool binding. ``tool`` is the named tool the server exposes; the server is reached\nEITHER by the ``server`` name (a registered ``mcp_server``) OR by a ``connection`` id (an\n``mcp_server`` connection, stdio or http, auth via its secret_ref). Exactly one of\n``server`` / ``connection`` is set (validated below); no secret in the IR.",
       "properties": {
         "connection": {
           "anyOf": [
@@ -253,7 +253,7 @@
     },
     "ModelBinding": {
       "additionalProperties": false,
-      "description": "A logical model the graph's nodes reference by key (\u00a78.4) \u2014 the sovereignty dial.\n\nNodes never hardcode a provider; they name a key in ``IRDocument.models`` and the\n``binding`` resolves at runtime through the L0 gateway. ``binding`` names only the engines\ntheygent manages (``mlx``/``vllm``/``llamacpp``) plus the catch-all ``openai-compatible``;\n``source`` (where the *weights* come from) is orthogonal and never an engine.\n\n``model`` is the id forwarded to the inference seam. M5 has no registry/lifecycle manager\n(M5 \u00a77), so the walker forwards ``model`` as the logical id the inference plane already\nknows (the \u00a79.1.1 logical-id invariant still holds \u2014 an engine name here is rejected at\nthe seam). ``source`` is optional: it answers a lifecycle question (fetch the weights from\nwhere?) that only matters once theygent manages the engine, which M5 does not \u2014 so the\ntrivial M5 graph omits it, while a \u00a78.4 document that includes it still validates.",
+      "description": "A logical model the graph's nodes reference by key \u2014 the sovereignty dial.\n\nNodes never hardcode a provider; they name a key in ``IRDocument.models`` and the\n``binding`` resolves at runtime through the L0 gateway. ``binding`` names only the engines\ntheygent manages (``mlx``/``vllm``/``llamacpp``) plus the catch-all ``openai-compatible``;\n``source`` (where the *weights* come from) is orthogonal and never an engine.\n\n``model`` is the id forwarded to the inference seam. The walker forwards ``model`` as the\nlogical id the inference plane already knows (the logical-id invariant holds \u2014 an engine\nname here is rejected at the seam). ``source`` is optional: it answers a lifecycle question\n(fetch the weights from where?) that only matters once theygent manages the engine.",
       "properties": {
         "binding": {
           "enum": [
@@ -301,7 +301,7 @@
     },
     "Node": {
       "additionalProperties": false,
-      "description": "One graph node (\u00a78.3). ``id`` is stable \u2014 it is what an OTel span binds to later\n(M5 stamps it on per-node logs, the attach-point). ``config`` is ``type``-specific and\nvalidated against a per-``type`` schema in ``validate_graph`` \u2014 Pydantic at the boundary,\nnot a free-form dict the walker trusts blindly.",
+      "description": "One graph node. ``id`` is stable \u2014 it is what an OTel span binds to later\n(stamped on per-node logs as the attach-point). ``config`` is ``type``-specific and\nvalidated against a per-``type`` schema in ``validate_graph`` \u2014 Pydantic at the boundary,\nnot a free-form dict the walker trusts blindly.",
       "properties": {
         "config": {
           "additionalProperties": true,
@@ -351,7 +351,7 @@
     },
     "Port": {
       "additionalProperties": false,
-      "description": "A declared (not inferred) connection point, so the compiler can type-check edges\n(\u00a78.3). ``type`` is advisory in M5 (``any``/``error``); real port typing lands with the\nnode types that need it.\n\n``required`` is meaningful for **in**-ports (M10 \u00a73): a required in-port must be fed by a\n``data`` edge or the graph fails validation; ``required: false`` declares an in-port that may\nbe left unfed and resolves to ``null`` at runtime. The default is required, so an unfed input\nis a loud validation error rather than a silent ``None`` \u2014 the multi-input analogue of M9's\nno-silent-pass-through rule. (Ignored on out-ports.)\n\n``role`` (M19 \u00a72.10) is the channel a handle carries: ``data`` (the default \u2014 threads a value)\nor ``control`` (pure ordering: \"run after this passes\", no value). The editor renders the two\ndistinctly and only allows data\u2192data / control\u2192control connections; an edge's ``channel`` is\nDERIVED from the handles it joins, not a separate toggle. The walker/compiler dispatch by edge\n``channel`` exactly as before \u2014 ``role`` is the per-handle declaration the channel follows, so a\npre-M19 IR (all ports default ``data``) is unchanged in meaning. This is the ONLY IR-shape\naddition in M19 (\u00a70/\u00a75).",
+      "description": "A declared (not inferred) connection point, so the compiler can type-check edges.\n``type`` is advisory (``any``/``error``); real port typing lands with the node types\nthat need it.\n\n``required`` is meaningful for **in**-ports: a required in-port must be fed by a ``data`` edge\nor the graph fails validation; ``required: false`` declares an in-port that may be left unfed\nand resolves to ``null`` at runtime. The default is required, so an unfed input is a loud\nvalidation error rather than a silent ``None`` \u2014 the multi-input analogue of the\nno-silent-pass-through rule. (Ignored on out-ports.)\n\n``role`` is the channel a handle carries: ``data`` (the default \u2014 threads a value) or\n``control`` (pure ordering: \"run after this passes\", no value). The editor renders the two\ndistinctly and only allows data\u2192data / control\u2192control connections; an edge's ``channel`` is\nDERIVED from the handles it joins, not a separate toggle. The walker/compiler dispatch by edge\n``channel`` exactly as before \u2014 ``role`` is the per-handle declaration the channel follows, so a\nport that omits ``role`` defaults to ``data`` and is unchanged in meaning.",
       "properties": {
         "id": {
           "title": "Id",
@@ -407,7 +407,7 @@
     }
   },
   "additionalProperties": false,
-  "description": "A saved agent \u2014 one JSON document (\u00a78.2). ``id`` + ``version`` is the registry\ncoordinate; ``content_hash`` (computed over the view-stripped graph) gives content-addressed\ndeploys. ``view`` is the React-Flow layer and is **never** hashed (\u00a78.6).",
+  "description": "A saved agent \u2014 one JSON document. ``id`` + ``version`` is the registry coordinate;\n``content_hash`` (computed over the view-stripped graph) gives content-addressed deploys.\n``view`` is the React-Flow layer and is **never** hashed.",
   "properties": {
     "contentHash": {
       "anyOf": [

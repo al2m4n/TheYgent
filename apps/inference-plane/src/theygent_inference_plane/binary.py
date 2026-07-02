@@ -1,6 +1,6 @@
 """Resolve external engine binaries — never build/download/bundle them.
 
-Resolution order (theygent-stack.md §5):
+Resolution order:
   1. explicit path (constructor arg / engine-specific env var)
   2. PATH lookup (shutil.which)
   3. optional ``python -m <module>`` fallback if the module is importable here
@@ -76,7 +76,7 @@ def resolve_engine_command(
 
 
 def resolve_llama_server_binary(explicit: str | None = None) -> str:
-    """Return an absolute path to ``llama-server`` or raise loudly (M1 compatibility)."""
+    """Return an absolute path to ``llama-server`` or raise loudly."""
     return resolve_engine_command(
         exe_name="llama-server",
         env_var=ENV_VAR,

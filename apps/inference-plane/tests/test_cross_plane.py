@@ -1,11 +1,11 @@
-"""Cross-plane composition — the M2 differentiator (brief §2).
+"""Cross-plane composition — the core cross-plane differentiator.
 
 One graph, two planes: a local `mlx` model and a reachable `openai-compatible`
 (hosted) model, both answering through the same `/v1/*` surface via logical ids.
 Neither call site knows which plane it hit — the gateway flattens the difference.
 This hermetic version fakes both sides; the real-MLX version is an @integration test.
 
-Needs no new schema (§8/§11 already spec it): per-node bindings + one OpenAI surface.
+Needs no new schema: per-node bindings + one OpenAI surface already cover it.
 """
 
 from __future__ import annotations
