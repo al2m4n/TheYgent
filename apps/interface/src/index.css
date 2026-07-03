@@ -106,6 +106,13 @@ body {
   max-width: 16px !important;
   max-height: 16px !important;
 }
+/* Our custom toolbar glyphs (undo/redo/tidy) are Lucide STROKE icons. RF's default fills every control
+   svg (`fill: currentColor`), which turns those outlines into solid blobs — restore `fill: none` for
+   them (they carry the `lucide` class). The built-in zoom/fit icons have no class, so they keep RF's
+   fill and are untouched. */
+.react-flow__controls-button svg.lucide {
+  fill: none;
+}
 
 .react-flow__handle {
   width: 9px;

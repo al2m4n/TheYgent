@@ -139,11 +139,11 @@ export function Root() {
   );
 }
 
-// The rail head: brand mark + the collapse/expand control. Expanded shows the full wordmark lockup
-// beside a collapse button; collapsed shows the mark alone — resting on it swaps the mark for the
-// expand control, so the logo doubles as the affordance to reopen the rail. Artwork is theme-aware:
-// a light-on-dark set for the dark theme, a dark-on-light set for the light theme (served from the
-// static logo folder, so the same URL resolves in dev and in the build).
+// The rail head: brand mark + the collapse/expand control. Expanded shows the logo mark beside the
+// "TheYgent" wordmark (real text, so it re-colors with the theme) and a collapse button; collapsed
+// shows the mark alone — resting on it swaps the mark for the expand control, so the logo doubles as
+// the affordance to reopen the rail. The mark artwork is theme-aware: a light-on-dark set for the dark
+// theme, a dark-on-light set for the light theme (served from the static logo folder).
 function Brand({
   collapsed,
   onExpand,
@@ -156,7 +156,6 @@ function Brand({
   const { resolved } = useTheme();
   const dark = resolved === "dark";
   const mark = dark ? "/logo/TheYgent-logo-dark.svg" : "/logo/TheYgent-logo.svg";
-  const lockup = dark ? "/logo/TheYgent-lockup-dark.svg" : "/logo/TheYgent-lockup.svg";
 
   if (collapsed) {
     // The whole head is the expand control: the mark shows at rest and fades out on hover/focus while
@@ -187,10 +186,13 @@ function Brand({
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-800 px-2.5">
-      <Link to="/" aria-label="theygent — home" className="flex min-w-0 items-center">
-        {/* Decorative: the link's aria-label carries the accessible name; empty alt keeps the
-            wordmark from being announced a second time. */}
-        <img src={lockup} alt="" className="h-6 w-auto" />
+      <Link to="/" aria-label="TheYgent — home" className="flex min-w-0 items-center gap-2">
+        {/* The mark is decorative (empty alt) — the link's aria-label + the visible wordmark carry
+            the accessible name. The wordmark is real text, so it re-colors with the theme. */}
+        <img src={mark} alt="" className="h-6 w-auto shrink-0" />
+        <span className="truncate text-[15px] font-semibold tracking-tight text-slate-100">
+          TheYgent
+        </span>
       </Link>
       <button
         type="button"

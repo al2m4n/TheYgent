@@ -3,12 +3,39 @@
 // state stays component useState. The query keys match the ad-hoc keys the canvas routes already use
 // (["agents"], ["agent", id], ["models"]) so invalidation stays consistent across both surfaces.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { api } from "./lib/api";
 
+// Page size for the scroll-paginated lists (runs/threads/agents). The control-plane list endpoints are
+// keyset-paginated: pass the LAST row's `id` as `before` to get the strictly-older next page, and a
+// short page (fewer than PAGE rows) means the end. Endpoints cap `limit` at 200; 50 keeps each scroll
+// fetch snappy.
+const PAGE = 50;
+
+// The keyset cursor is the last loaded row's `id`; `undefined` (a short page) stops pagination.
+function nextByIdCursor<T extends { id: string }>(lastPage: T[]): string | undefined {
+  return lastPage.length === PAGE ? lastPage[lastPage.length - 1].id : undefined;
+}
+
+// Flatten an infinite query's pages into one list, de-duplicated by `id` — so a live refresh that
+// shifts the newest window (e.g. a new run arriving on the 3s poll) can't momentarily double-render a
+// row across two page boundaries.
+export function flattenPages<T extends { id: string }>(data: { pages: T[][] } | undefined): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const page of data?.pages ?? []) {
+    for (const item of page) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        out.push(item);
+      }
+    }
+  }
+  return out;
+}
+
 export const keys = {
-  runs: (limit?: number) => ["runs", limit ?? 50] as const,
   run: (id: string) => ["run", id] as const,
   // NB: keyed "run-trace", NOT "trace" — the bench's TraceWaterfall already caches ["trace", runId]
   // as the FULL {runId,status,spans} envelope, while this surface resolves api.getTrace to a bare
@@ -23,13 +50,39 @@ export const keys = {
   models: () => ["models"] as const,
 };
 
-// Runs list auto-refreshes ~3s while the tab is visible. Query pauses background
-// refetch when the tab is hidden by default (refetchIntervalInBackground stays false).
-export function useRuns(limit = 50) {
-  return useQuery({
-    queryKey: keys.runs(limit),
-    queryFn: () => api.listRuns({ limit }),
+// The Runs list: scroll-paginated (newest first) AND auto-refreshing ~3s while the tab is visible.
+// The 3s poll refetches the loaded pages so live status changes land; keyed under ["runs", …] so any
+// broad ["runs"] invalidation still reaches it. Refetch pauses while the tab is hidden by default.
+export function useRunsInfinite() {
+  return useInfiniteQuery({
+    queryKey: ["runs", "infinite"],
+    queryFn: ({ pageParam }) => api.listRuns({ limit: PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: nextByIdCursor,
     refetchInterval: 3000,
+  });
+}
+
+// The Threads list: scroll-paginated (newest activity first). Keyed under ["threads", …] so a broad
+// ["threads"] invalidation reaches it. (The simple `useThreads` below stays for the composer's picker.)
+export function useThreadsInfinite() {
+  return useInfiniteQuery({
+    queryKey: ["threads", "infinite"],
+    queryFn: ({ pageParam }) => api.listThreads({ limit: PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: nextByIdCursor,
+  });
+}
+
+// The Agents grid: scroll-paginated (newest first). Keyed ["agents", "infinite"] — a DISTINCT key from
+// the ["agents"] array the node inspector's agent picker uses (different shape), yet a broad
+// ["agents"] invalidation (a save adds/updates an agent) still matches it by prefix and refreshes it.
+export function useAgentsInfinite() {
+  return useInfiniteQuery({
+    queryKey: ["agents", "infinite"],
+    queryFn: ({ pageParam }) => api.listAgents({ limit: PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: nextByIdCursor,
   });
 }
 

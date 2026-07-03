@@ -1,21 +1,12 @@
-// The node/edge inspector: edit the selected node's `config` (schema-driven from the
-// per-type JSON Schema) or the selected edge's `channel`/`condition`, with explicit Delete /
-// Duplicate controls. With nothing selected, the graph-level panel shows `models` (read-only) and
-// editable `tools` / `connections` — adding a tool here makes it selectable on every llm node.
+// The node/edge inspector: edit the selected node's `config` (schema-driven from the per-type JSON
+// Schema) or the selected edge's `channel`/`condition`. Delete/duplicate live on the canvas (right-
+// click menu + the Delete key), not here. With nothing selected, the graph-level panel shows `models`
+// (read-only) and editable `tools` / `connections` — adding a tool here makes it selectable on every
+// llm node.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type IRDocument, type Node as IRNode, NODE_TYPES } from "@theygent/ir-types";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-  Diamond,
-  Lock,
-  Plus,
-  Search,
-  X,
-} from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Diamond, Lock, Plus, Search, X } from "lucide-react";
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import {
   type GuardrailCheck,
@@ -24,8 +15,6 @@ import {
   type ToolKind,
   type ViewBlock,
   deleteEdges,
-  deleteNodes,
-  duplicateNode,
   setGuardrailCheck,
   setNodeIcon,
   setToolKind,
@@ -37,6 +26,7 @@ import {
 import { api } from "../lib/api";
 import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
+import { NodeCodeEditor } from "./NodeCodeEditor";
 import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 
 // The full-icon search grid is lazy: its ~1,700-icon set (iconsFull) loads only when a user actually
@@ -83,6 +73,9 @@ function NodePanel({
   onChange: (ir: IRDocument) => void;
   onSelect: (s: Selection) => void;
 }) {
+  // Global per-node view switch, mirroring the whole-graph Visual ⇄ Code: the form ("Wizard") or this
+  // exact node's JSON ("Code"). Defaults to Wizard; kept across node selections (UI-only state).
+  const [view, setView] = useState<"wizard" | "code">("wizard");
   const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
   if (!node) return <GraphPanel ir={ir} />;
 
@@ -95,169 +88,177 @@ function NodePanel({
     onChange(updateNodeConfig(ir, node.id, { ...config, [key]: value }));
   };
 
+  // Commit a whole-node JSON edit (the Code view): replace this node in place, and follow an id
+  // rename so the panel stays on it. A rename that dangles edges surfaces in the graph's validation,
+  // exactly as it would in the whole-graph Code view.
+  const commitNode = (next: IRNode) => {
+    onChange({ ...ir, nodes: (ir.nodes ?? []).map((n) => (n.id === node.id ? next : n)) });
+    if (next?.id && next.id !== node.id) onSelect({ kind: "node", id: next.id });
+  };
+
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Extra left padding keeps this header clear of the panel's collapse chevron, which docks in
           the top-left corner (this panel is right-edge docked, so its control faces the canvas). */}
-      <div className="border-b border-slate-800 py-2.5 pr-3 pl-9">
-        <div className="flex items-center gap-2">
-          <Badge tone={KIND_TONE[node.kind] ?? "slate"}>{node.kind}</Badge>
-          <span className="mono text-xs text-slate-400">{node.type}</span>
+      <div className="shrink-0 border-b border-slate-800 py-2.5 pr-3 pl-9">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Badge tone={KIND_TONE[node.kind] ?? "slate"}>{node.kind}</Badge>
+            <span className="mono truncate text-xs text-slate-400">{node.type}</span>
+          </div>
+          {/* Wizard ⇄ Code, per node — the form, or this exact node's JSON. */}
+          <div className="flex shrink-0 items-center rounded-md border border-slate-700 p-0.5">
+            {(
+              [
+                ["wizard", "Wizard"],
+                ["code", "Code"],
+              ] as const
+            ).map(([m, lbl]) => (
+              <button
+                key={m}
+                type="button"
+                aria-pressed={view === m}
+                onClick={() => setView(m)}
+                className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                  view === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="mono mt-1 text-[11px] text-slate-600">{node.id}</div>
-        <div className="mt-2 flex gap-2">
-          <Button
-            className="!py-1 text-xs"
-            onClick={() => {
-              const { ir: next, newId } = duplicateNode(ir, node.id);
-              onChange(next);
-              onSelect({ kind: "node", id: newId });
-            }}
-          >
-            Duplicate
-          </Button>
-          <Button
-            variant="danger"
-            className="!py-1 text-xs"
-            onClick={() => {
-              onChange(deleteNodes(ir, [node.id]));
-              onSelect(null);
-            }}
-          >
-            Delete
-          </Button>
+      </div>
+
+      {view === "code" ? (
+        <div className="min-h-0 flex-1">
+          <NodeCodeEditor node={node} onCommit={commitNode} />
         </div>
-      </div>
-
-      <div className="space-y-3 p-3">
-        <Field label="Label">
-          <Input
-            value={node.label ?? ""}
-            placeholder={node.id}
-            onChange={(e) => onChange(updateNodeLabel(ir, node.id, e.target.value))}
+      ) : (
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          <LabelIconField
+            ir={ir}
+            nodeId={node.id}
+            nodeType={node.type}
+            nodeLabel={node.label}
+            onChange={onChange}
           />
-        </Field>
 
-        <IconPicker ir={ir} nodeId={node.id} nodeType={node.type} onChange={onChange} />
+          {DURABLE_ONLY.has(node.type) && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200/90">
+              <span className="font-semibold">Durable-only.</span> This runs on the durable runtime
+              — save the agent, then use “Run durably” (requires the server’s durable mode) or
+              deploy it behind a schedule/webhook trigger. The plain interactive Run path can’t
+              execute it.
+            </div>
+          )}
 
-        {DURABLE_ONLY.has(node.type) && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-800 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200/90">
-            <span className="font-semibold">Durable-only.</span> This runs on the durable runtime —
-            save the agent, then use “Run durably” (requires the server’s durable mode) or deploy it
-            behind a schedule/webhook trigger. The plain interactive Run path can’t execute it.
-          </div>
-        )}
-
-        {node.type === "tool" || node.type === "mcp_tool" ? (
-          // tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
-          // kind chooses the binding shape and (for mcp) the underlying node type.
-          <ToolNodePanel ir={ir} node={node} onChange={onChange} />
-        ) : node.type === "guardrail" ? (
-          // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
-          // node's kind, so it's edited through a dedicated panel rather than raw JSON.
-          <GuardrailPanel ir={ir} node={node} onChange={onChange} />
-        ) : Object.keys(properties).length === 0 ? (
-          <p className="text-xs text-slate-600">This node type has no editable config.</p>
-        ) : (
-          Object.entries(properties).map(([key, schema]) => {
-            // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
-            // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
-            if (node.type === "llm" && key === "tools") {
+          {node.type === "tool" || node.type === "mcp_tool" ? (
+            // tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
+            // kind chooses the binding shape and (for mcp) the underlying node type.
+            <ToolNodePanel ir={ir} node={node} onChange={onChange} />
+          ) : node.type === "guardrail" ? (
+            // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
+            // node's kind, so it's edited through a dedicated panel rather than raw JSON.
+            <GuardrailPanel ir={ir} node={node} onChange={onChange} />
+          ) : Object.keys(properties).length === 0 ? (
+            <p className="text-xs text-slate-600">This node type has no editable config.</p>
+          ) : (
+            Object.entries(properties).map(([key, schema]) => {
+              // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
+              // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
+              if (node.type === "llm" && key === "tools") {
+                return (
+                  <LlmToolsPanel
+                    key={`${node.id}:${key}`}
+                    ir={ir}
+                    nodeId={node.id}
+                    onChange={onChange}
+                  />
+                );
+              }
+              if (node.type === "llm" && (key === "toolChoice" || key === "maxToolIterations")) {
+                return null;
+              }
+              // Specialized pickers for reference fields — populated from the live registries instead
+              // of free text, so you pick a real value (and the validator catches a dangling ref).
+              if (node.type === "llm" && key === "model") {
+                return (
+                  <ModelPicker
+                    key={`${node.id}:${key}`}
+                    ir={ir}
+                    nodeId={node.id}
+                    onChange={onChange}
+                  />
+                );
+              }
+              // No-code chat editor: a role dropdown + a plain text box per message (with an insert-$in
+              // helper) instead of raw JSON. Rich (vision) content falls back to a per-message JSON box.
+              if (node.type === "llm" && key === "messages") {
+                return (
+                  <MessagesEditor
+                    key={`${node.id}:${key}`}
+                    value={config.messages}
+                    onChange={(v) => setConfigKey("messages", v)}
+                  />
+                );
+              }
+              if (PINNED_BODY_TYPES.has(node.type) && key === "agent") {
+                return (
+                  <AgentPicker
+                    key={`${node.id}:${key}`}
+                    value={config.agent as string | undefined}
+                    // Picking a different body clears the pin — versions/hashes are body-specific.
+                    onChange={(v) =>
+                      onChange(
+                        updateNodeConfig(ir, node.id, {
+                          ...config,
+                          agent: v,
+                          version: null,
+                          contentHash: null,
+                        }),
+                      )
+                    }
+                  />
+                );
+              }
+              // Pin the body by VERSION via a picker over the chosen agent's versions (sets `version`,
+              // clears `contentHash`). Content-hash pinning stays available via the Code view.
+              if (PINNED_BODY_TYPES.has(node.type) && key === "version") {
+                return (
+                  <BodyVersionPicker
+                    key={`${node.id}:${key}`}
+                    agentId={config.agent as string | undefined}
+                    value={config.version as string | undefined}
+                    onPick={(v) =>
+                      onChange(
+                        updateNodeConfig(ir, node.id, { ...config, version: v, contentHash: null }),
+                      )
+                    }
+                  />
+                );
+              }
+              // `contentHash` is the advanced alternate pin — hidden from the form, editable in the Code view.
+              if (PINNED_BODY_TYPES.has(node.type) && key === "contentHash") {
+                return null;
+              }
               return (
-                <LlmToolsPanel
+                <ConfigField
                   key={`${node.id}:${key}`}
-                  ir={ir}
-                  nodeId={node.id}
-                  onChange={onChange}
+                  name={key}
+                  schema={schema}
+                  required={required.has(key)}
+                  value={config[key]}
+                  onChange={(v) => setConfigKey(key, v)}
                 />
               );
-            }
-            if (node.type === "llm" && (key === "toolChoice" || key === "maxToolIterations")) {
-              return null;
-            }
-            // Specialized pickers for reference fields — populated from the live registries instead
-            // of free text, so you pick a real value (and the validator catches a dangling ref).
-            if (node.type === "llm" && key === "model") {
-              return (
-                <ModelPicker
-                  key={`${node.id}:${key}`}
-                  ir={ir}
-                  nodeId={node.id}
-                  onChange={onChange}
-                />
-              );
-            }
-            // No-code chat editor: a role dropdown + a plain text box per message (with an insert-$in
-            // helper) instead of raw JSON. Rich (vision) content falls back to a per-message JSON box.
-            if (node.type === "llm" && key === "messages") {
-              return (
-                <MessagesEditor
-                  key={`${node.id}:${key}`}
-                  value={config.messages}
-                  onChange={(v) => setConfigKey("messages", v)}
-                />
-              );
-            }
-            if (PINNED_BODY_TYPES.has(node.type) && key === "agent") {
-              return (
-                <AgentPicker
-                  key={`${node.id}:${key}`}
-                  value={config.agent as string | undefined}
-                  // Picking a different body clears the pin — versions/hashes are body-specific.
-                  onChange={(v) =>
-                    onChange(
-                      updateNodeConfig(ir, node.id, {
-                        ...config,
-                        agent: v,
-                        version: null,
-                        contentHash: null,
-                      }),
-                    )
-                  }
-                />
-              );
-            }
-            // Pin the body by VERSION via a picker over the chosen agent's versions (sets `version`,
-            // clears `contentHash`). Content-hash pinning stays available via the Raw config.
-            if (PINNED_BODY_TYPES.has(node.type) && key === "version") {
-              return (
-                <BodyVersionPicker
-                  key={`${node.id}:${key}`}
-                  agentId={config.agent as string | undefined}
-                  value={config.version as string | undefined}
-                  onPick={(v) =>
-                    onChange(
-                      updateNodeConfig(ir, node.id, { ...config, version: v, contentHash: null }),
-                    )
-                  }
-                />
-              );
-            }
-            // `contentHash` is the advanced alternate pin — hidden from the form, editable in Raw config.
-            if (PINNED_BODY_TYPES.has(node.type) && key === "contentHash") {
-              return null;
-            }
-            return (
-              <ConfigField
-                key={`${node.id}:${key}`}
-                name={key}
-                schema={schema}
-                required={required.has(key)}
-                value={config[key]}
-                onChange={(v) => setConfigKey(key, v)}
-              />
-            );
-          })
-        )}
+            })
+          )}
 
-        {node.type === "input" && <TriggerPanel agentId={ir.id} />}
-
-        <RawConfigEditor
-          key={`raw:${node.id}`}
-          value={config}
-          onCommit={(c) => onChange(updateNodeConfig(ir, node.id, c))}
-        />
-      </div>
+          {node.type === "input" && <TriggerPanel agentId={ir.id} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -313,80 +314,114 @@ function TriggerPanel({ agentId }: { agentId: string }) {
   );
 }
 
-// ── icon picker (a `view`-only display change — never hashed) ──────────────────
+// ── label + icon field (the icon is a `view`-only display change — never hashed) ─────────────────
 
-/** Pick a Lucide icon for a node, or reset to its type default. The override (a Lucide icon name)
- * lives in the `view` block, so it round-trips through save/load but never affects logic or version
- * identity. */
-function IconPicker({
+/** The node's label and its icon, edited together on one row: the icon button on the left opens an
+ * inline picker (search the full Lucide set) and the label input fills the rest. The icon override is
+ * a Lucide icon NAME stored in the `view` block, so it round-trips through save/load but never affects
+ * logic or version identity. */
+function LabelIconField({
   ir,
   nodeId,
   nodeType,
+  nodeLabel,
   onChange,
 }: {
   ir: IRDocument;
   nodeId: string;
   nodeType: string;
+  nodeLabel?: string | null;
   onChange: (ir: IRDocument) => void;
 }) {
   const override = (ir.view as ViewBlock | undefined)?.nodes?.[nodeId]?.icon;
   const fallback = defaultIconFor(nodeType);
   const current = override && override.length > 0 ? override : fallback;
-  // The picker is collapsible and COLLAPSED by default — the header shows the current icon so it stays
-  // unobtrusive until you want to change it. `query` searches the full Lucide set. UI-only state.
+  // Clicking the icon opens the picker inline, below the row — no separate "change icon" control.
+  // `query` searches the full Lucide set. UI-only state.
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  // The picker opens from the icon and has no explicit close button, so close it on an outside click
+  // or Escape (clicking the icon itself still toggles it).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   return (
-    <FieldGroup label="Icon">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        title={open ? "Hide icon choices" : "Change icon"}
-        className="flex w-full items-center gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-300 hover:border-slate-500"
-      >
-        <NodeIcon name={current} className="text-slate-300" size={16} />
-        <span className="text-slate-500">Change icon</span>
-        <ChevronRight
-          size={13}
-          aria-hidden
-          className={`ml-auto text-slate-600 transition-transform ${open ? "rotate-90" : ""}`}
-        />
-      </button>
-      {open && (
-        <div className="mt-1.5 space-y-1.5">
-          <div className="relative">
-            <Search
-              size={13}
-              aria-hidden
-              className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 text-slate-600"
-            />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search all icons…"
-              aria-label="Search icons"
-              className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
-            />
-          </div>
-          {/* The grid (and its full-icon set) is lazy — show a tiny placeholder while it loads. */}
-          <Suspense fallback={<p className="mt-1.5 text-[11px] text-slate-600">Loading icons…</p>}>
-            <IconPickerGrid
-              query={query}
-              current={current}
-              onPick={(name) => onChange(setNodeIcon(ir, nodeId, name))}
-            />
-          </Suspense>
+    <FieldGroup label="Label">
+      <div ref={ref}>
+        {/* The icon and the label are ONE control: a single bordered box with the icon as a leading
+            button (its own divider) and the label input filling the rest — so they read as connected,
+            not as two separate fields. Clicking the icon opens the picker; typing edits the label. */}
+        <div className="flex items-stretch overflow-hidden rounded-md border border-slate-700 bg-[var(--c-surface)] transition-colors focus-within:border-blue-500">
           <button
             type="button"
-            onClick={() => onChange(setNodeIcon(ir, nodeId, null))}
-            disabled={!override}
-            className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+            onClick={() => setOpen((o) => !o)}
+            title={open ? "Hide icon choices" : "Change icon"}
+            aria-label="Change icon"
+            aria-expanded={open}
+            className="flex w-9 shrink-0 items-center justify-center border-r border-slate-700 text-slate-300 transition-colors hover:bg-[var(--c-hover)] hover:text-slate-100"
           >
-            Reset to default <NodeIcon name={fallback} size={12} />
+            <NodeIcon name={current} size={16} />
           </button>
+          <input
+            value={nodeLabel ?? ""}
+            placeholder={nodeId}
+            aria-label="Node label"
+            onChange={(e) => onChange(updateNodeLabel(ir, nodeId, e.target.value))}
+            className="min-w-0 flex-1 bg-transparent px-2.5 py-1.5 text-sm text-slate-100 outline-none placeholder:text-slate-600"
+          />
         </div>
-      )}
+        {open && (
+          <div className="mt-1.5 space-y-1.5">
+            <div className="relative">
+              <Search
+                size={13}
+                aria-hidden
+                className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2 text-slate-600"
+              />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search all icons…"
+                aria-label="Search icons"
+                className="w-full rounded-md border border-slate-700 bg-[var(--c-surface)] py-1 pr-2 pl-7 text-xs text-slate-100 outline-none focus:border-blue-500"
+              />
+            </div>
+            {/* The grid (and its full-icon set) is lazy — show a tiny placeholder while it loads. */}
+            <Suspense
+              fallback={<p className="mt-1.5 text-[11px] text-slate-600">Loading icons…</p>}
+            >
+              <IconPickerGrid
+                query={query}
+                current={current}
+                onPick={(name) => onChange(setNodeIcon(ir, nodeId, name))}
+              />
+            </Suspense>
+            <button
+              type="button"
+              onClick={() => onChange(setNodeIcon(ir, nodeId, null))}
+              disabled={!override}
+              className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Reset to default <NodeIcon name={fallback} size={12} />
+            </button>
+          </div>
+        )}
+      </div>
     </FieldGroup>
   );
 }
@@ -768,7 +803,7 @@ function sortSystemFirst<T extends { role: string }>(arr: T[]): T[] {
  * box (with an "insert input ($in)" helper). A turn whose content is rich (a vision text+image list)
  * falls back to a per-turn JSON box so the multimodal path is preserved, not clobbered. Rows carry a
  * stable client-side key (never emitted) so reordering/editing doesn't remount the wrong row; the
- * editor re-syncs if `messages` is changed from elsewhere (the Code view / raw-config escape). */
+ * editor re-syncs if `messages` is changed from elsewhere (the node's Code view). */
 function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unknown) => void }) {
   const idRef = useRef(0);
   const [rows, setRows] = useState<MsgRow[]>(() =>
@@ -804,75 +839,40 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
   };
   const addRow = () => commit([...rows, { key: `m${idRef.current++}`, role: "user", content: "" }]);
 
-  // Wizard ⇄ JSON, mirroring the whole-editor's Visual ⇄ Code toggle: build the chat with role
-  // dropdowns + text boxes, or see/edit the final `messages` array as JSON. Both read `value` and
-  // write via `onChange`, so a JSON edit re-seeds the wizard rows (the re-sync effect above).
-  const [view, setView] = useState<"wizard" | "json">("wizard");
-
+  // The chat builder: a role dropdown + text box per turn. Editing the raw `messages` array as JSON
+  // now lives in the node-level Code view, so there's no per-field JSON toggle here. A rich (vision)
+  // turn still falls back to a per-turn JSON box inside its own row.
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
-          Messages *
-        </span>
-        <div className="flex items-center rounded-md border border-slate-700 p-0.5">
-          {(
-            [
-              ["wizard", "Wizard"],
-              ["json", "JSON"],
-            ] as const
-          ).map(([m, lbl]) => (
-            <button
-              key={m}
-              type="button"
-              aria-pressed={view === m}
-              onClick={() => setView(m)}
-              className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-                view === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {lbl}
-            </button>
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        Messages *
+      </span>
+
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-slate-600">No messages yet.</p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r, i) => (
+            <MessageRow
+              key={r.key}
+              role={r.role}
+              content={r.content}
+              index={i}
+              total={rows.length}
+              onRole={(role) => setRow(i, { role })}
+              onContent={(content) => setRow(i, { content })}
+              onDelete={() => removeRow(i)}
+              onMove={(dir) => moveRow(i, dir)}
+            />
           ))}
         </div>
-      </div>
-
-      {view === "json" ? (
-        <JsonField
-          value={value}
-          onChange={(v) =>
-            onChange(Array.isArray(v) ? sortSystemFirst(v as { role: string }[]) : v)
-          }
-        />
-      ) : (
-        <>
-          {rows.length === 0 ? (
-            <p className="text-[11px] text-slate-600">No messages yet.</p>
-          ) : (
-            <div className="space-y-2">
-              {rows.map((r, i) => (
-                <MessageRow
-                  key={r.key}
-                  role={r.role}
-                  content={r.content}
-                  index={i}
-                  total={rows.length}
-                  onRole={(role) => setRow(i, { role })}
-                  onContent={(content) => setRow(i, { content })}
-                  onDelete={() => removeRow(i)}
-                  onMove={(dir) => moveRow(i, dir)}
-                />
-              ))}
-            </div>
-          )}
-          <Button className="!py-1 text-xs" onClick={addRow}>
-            <Plus size={14} aria-hidden /> Add message
-          </Button>
-          <p className="text-[10px] text-slate-600">
-            Use <span className="mono">$in</span> for this node's input.
-          </p>
-        </>
       )}
+      <Button className="!py-1 text-xs" onClick={addRow}>
+        <Plus size={14} aria-hidden /> Add message
+      </Button>
+      <p className="text-[10px] text-slate-600">
+        Use <span className="mono">$in</span> for this node's input.
+      </p>
     </div>
   );
 }
@@ -1331,7 +1331,7 @@ const TOOL_KINDS: { kind: ToolKind; label: string; hint: string }[] = [
 /** The one editor for tool + mcp_tool nodes. A kind picker (Builtin / REST / MCP) chooses
  * the binding shape; switching kind reseeds the node via `setToolKind` (which, for MCP, swaps the
  * underlying node type). The binding LIVES on the node config; `ir.tools` is the derived registry.
- * Advanced REST fields (headers/body/responseMap/…) stay in the Raw config editor below. */
+ * Advanced REST fields (headers/body/responseMap/…) stay in the node's Code view. */
 function ToolNodePanel({
   ir,
   node,
@@ -1463,7 +1463,7 @@ function ToolNodePanel({
         Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
         handle (top) into an llm's{" "}
         <span className="text-violet-600 dark:text-violet-300">tools</span> port to let the model
-        call it. Advanced REST fields (headers, body, response map…) are in the Raw config below.
+        call it. Advanced REST fields (headers, body, response map…) are in the Code view.
       </p>
     </>
   );
@@ -1550,7 +1550,7 @@ function numOr(v: unknown): string {
 /** The one editor for a `guardrail` node. A check-type picker (rule / model) chooses the backend and
  * — through `setGuardrailCheck` — STAMPS the node's kind (rule ⇒ orchestration, model ⇒ activity),
  * so the author never touches kind directly. Rule kinds get structured spec fields; a model check
- * gets a judge-model picker + prompt + pass-on. Unusual spec keys stay reachable via Raw config. */
+ * gets a judge-model picker + prompt + pass-on. Unusual spec keys stay reachable via the Code view. */
 function GuardrailPanel({
   ir,
   node,
@@ -1707,7 +1707,7 @@ function GuardrailPanel({
       <p className="text-[10px] text-slate-600">
         The <span className="text-slate-300">pass</span> port carries the input through;{" "}
         <span className="text-slate-300">block</span> carries the onBlock payload. Unusual spec keys
-        are editable in the Raw config below.
+        are editable in the Code view.
       </p>
     </>
   );
@@ -1925,40 +1925,6 @@ function GuardrailModelField({
       placeholder="pick a binding or inference model…"
       onChange={pick}
     />
-  );
-}
-
-function RawConfigEditor({
-  value,
-  onCommit,
-}: {
-  value: Record<string, unknown>;
-  onCommit: (c: Record<string, unknown>) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-      className="rounded-md border border-slate-800"
-    >
-      <summary className="cursor-pointer px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
-        Raw config (escape hatch)
-      </summary>
-      <div className="p-2">
-        {open && (
-          <JsonField
-            label="config"
-            value={value}
-            onChange={(v) => {
-              if (v && typeof v === "object" && !Array.isArray(v)) {
-                onCommit(v as Record<string, unknown>);
-              }
-            }}
-          />
-        )}
-      </div>
-    </details>
   );
 }
 

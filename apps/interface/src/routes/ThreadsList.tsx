@@ -3,10 +3,14 @@ import { useMemo, useState } from "react";
 import { FilterBar } from "../components/Filters";
 import { Empty, ErrorBanner, Page, Spinner, Table, Td, Th, linkClass } from "../components/ui";
 import { relativeTime } from "../lib/format";
-import { useThreads } from "../queries";
+import { useInView } from "../lib/useInView";
+import { flattenPages, useThreadsInfinite } from "../queries";
 
 export function ThreadsList() {
-  const { data: threads, isLoading, error } = useThreads();
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useThreadsInfinite();
+  const threads = useMemo(() => flattenPages(data), [data]);
+  const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [q, setQ] = useState("");
 
   const filtered = useMemo(() => {
@@ -73,6 +77,14 @@ export function ThreadsList() {
                 ))}
               </tbody>
             </Table>
+          )}
+
+          {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
+          {hasNextPage && <div ref={loadMoreRef} aria-hidden className="h-px" />}
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-3">
+              <Spinner />
+            </div>
           )}
         </>
       )}
