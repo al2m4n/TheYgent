@@ -441,13 +441,6 @@ export function Editor() {
               </span>
             )}
           </button>
-          <Button
-            onClick={onTidy}
-            disabled={mode === "code"}
-            title="Re-run the auto-layout to tidy positions"
-          >
-            Tidy
-          </Button>
           {savedHash === null && !dirty ? (
             <Badge tone="slate">not saved</Badge>
           ) : dirty ? (
@@ -599,6 +592,7 @@ export function Editor() {
               onRedo={redo}
               canUndo={canUndo}
               canRedo={canRedo}
+              onTidy={onTidy}
             />
           </section>
           {inspectorCollapsed ? (
@@ -663,8 +657,10 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Chevron tucked into a panel's top corner that collapses it to a rail. The arrow points outward
-// (toward the edge it folds into): left on the left panel, right on the right.
+// Chevron tucked into a panel's top INNER corner — the edge nearest the canvas — that collapses it to
+// a rail: top-right on the left panel, top-left on the right panel, so both controls sit along the
+// canvas boundary instead of against the window edges. The arrow points outward, toward the edge the
+// panel folds into.
 function CollapseButton({ side, onClick }: { side: "left" | "right"; onClick: () => void }) {
   const label = side === "left" ? "Collapse palette" : "Collapse inspector";
   return (
@@ -673,15 +669,20 @@ function CollapseButton({ side, onClick }: { side: "left" | "right"; onClick: ()
       onClick={onClick}
       title={label}
       aria-label={label}
-      className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-slate-200"
+      aria-expanded={true}
+      className={`absolute top-2 z-10 flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-slate-200 ${
+        side === "left" ? "right-2" : "left-2"
+      }`}
     >
       {side === "left" ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
     </button>
   );
 }
 
-// A collapsed side panel: a thin vertical rail with an expand chevron (pointing inward, toward the
-// canvas it would reopen over) and a rotated label so the panel stays identifiable while folded.
+// A collapsed side panel: a thin vertical rail that reopens the panel when clicked ANYWHERE — the
+// expand chevron OR the rotated label are one target, so the folded panel's name is a live affordance,
+// not just decoration. The chevron points inward (toward the canvas it reopens over); the label keeps
+// the panel identifiable while folded.
 function CollapsedRail({
   side,
   label,
@@ -694,23 +695,22 @@ function CollapsedRail({
   onExpand: () => void;
 }) {
   return (
-    <div
-      className={`flex w-8 min-h-0 shrink-0 flex-col items-center bg-[var(--c-bg)] ${
+    <button
+      type="button"
+      onClick={onExpand}
+      title={title}
+      aria-label={title}
+      aria-expanded={false}
+      className={`group/rail flex w-8 min-h-0 shrink-0 flex-col items-center bg-[var(--c-bg)] text-slate-400 transition-colors hover:bg-[var(--c-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500 ${
         side === "left" ? "border-r" : "border-l"
       } border-slate-800`}
     >
-      <button
-        type="button"
-        onClick={onExpand}
-        title={title}
-        aria-label={title}
-        className="mt-2 flex h-6 w-6 items-center justify-center rounded text-slate-400 hover:bg-[var(--c-hover)] hover:text-slate-100"
-      >
+      <span className="mt-2 flex h-6 w-6 items-center justify-center group-hover/rail:text-slate-100">
         {side === "left" ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-      </button>
-      <span className="mt-3 select-none text-[10px] uppercase tracking-wide text-slate-600 [writing-mode:vertical-rl]">
+      </span>
+      <span className="mt-3 select-none text-[10px] uppercase tracking-wide text-slate-600 [writing-mode:vertical-rl] group-hover/rail:text-slate-300">
         {label}
       </span>
-    </div>
+    </button>
   );
 }

@@ -97,41 +97,12 @@ export function Root() {
           effectiveCollapsed ? "w-14" : "w-56"
         }`}
       >
-        {/* Brand + (when expanded) the collapse toggle. */}
-        <div className="flex h-11 shrink-0 items-center border-b border-slate-800 px-2.5">
-          <Link
-            to="/"
-            className="flex min-w-0 items-center gap-2 text-sm font-semibold text-slate-100"
-            aria-label="theygent — home"
-          >
-            <span className="shrink-0 text-base text-blue-600 dark:text-blue-400">◆</span>
-            {!effectiveCollapsed && <span className="truncate">theygent</span>}
-          </Link>
-          {!effectiveCollapsed && (
-            <button
-              type="button"
-              onClick={() => setRailCollapsed(true)}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-              className="ml-auto rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200"
-            >
-              <PanelLeftClose size={16} />
-            </button>
-          )}
-        </div>
-
-        {/* When collapsed, the toggle becomes a full-width expand affordance under the brand. */}
-        {effectiveCollapsed && (
-          <button
-            type="button"
-            onClick={() => setRailCollapsed(false)}
-            aria-label="Expand sidebar"
-            title="Expand sidebar"
-            className="flex h-9 shrink-0 items-center justify-center text-slate-500 transition-colors hover:bg-slate-800/60 hover:text-slate-200"
-          >
-            <PanelLeftOpen size={16} />
-          </button>
-        )}
+        {/* Rail head: brand + the collapse/expand control. */}
+        <Brand
+          collapsed={effectiveCollapsed}
+          onExpand={() => setRailCollapsed(false)}
+          onCollapse={() => setRailCollapsed(true)}
+        />
 
         {/* Primary navigation. */}
         <nav className="flex-1 space-y-1 px-2 py-2">
@@ -164,6 +135,73 @@ export function Root() {
       {/* The one central place for messages + live download progress, bottom-right, above every
           page and persistent across navigation. */}
       <NotificationCenter />
+    </div>
+  );
+}
+
+// The rail head: brand mark + the collapse/expand control. Expanded shows the full wordmark lockup
+// beside a collapse button; collapsed shows the mark alone — resting on it swaps the mark for the
+// expand control, so the logo doubles as the affordance to reopen the rail. Artwork is theme-aware:
+// a light-on-dark set for the dark theme, a dark-on-light set for the light theme (served from the
+// static logo folder, so the same URL resolves in dev and in the build).
+function Brand({
+  collapsed,
+  onExpand,
+  onCollapse,
+}: {
+  collapsed: boolean;
+  onExpand: () => void;
+  onCollapse: () => void;
+}) {
+  const { resolved } = useTheme();
+  const dark = resolved === "dark";
+  const mark = dark ? "/logo/TheYgent-logo-dark.svg" : "/logo/TheYgent-logo.svg";
+  const lockup = dark ? "/logo/TheYgent-lockup-dark.svg" : "/logo/TheYgent-lockup.svg";
+
+  if (collapsed) {
+    // The whole head is the expand control: the mark shows at rest and fades out on hover/focus while
+    // the expand glyph fades in — one target, so there's no click ambiguity between logo and button.
+    return (
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-label="Expand sidebar"
+        aria-expanded={false}
+        title="Expand sidebar"
+        className="group/brand relative flex h-11 w-full shrink-0 items-center justify-center border-b border-slate-800 transition-colors hover:bg-slate-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+      >
+        {/* Decorative: the button's aria-label already names the control, so the mark is hidden from
+            the a11y tree (empty alt) to avoid a duplicate announcement. */}
+        <img
+          src={mark}
+          alt=""
+          className="h-7 w-auto transition-opacity group-hover/brand:opacity-0 group-focus-visible/brand:opacity-0"
+        />
+        <PanelLeftOpen
+          size={17}
+          className="absolute text-slate-400 opacity-0 transition-opacity group-hover/brand:opacity-100 group-focus-visible/brand:opacity-100"
+        />
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-800 px-2.5">
+      <Link to="/" aria-label="theygent — home" className="flex min-w-0 items-center">
+        {/* Decorative: the link's aria-label carries the accessible name; empty alt keeps the
+            wordmark from being announced a second time. */}
+        <img src={lockup} alt="" className="h-6 w-auto" />
+      </Link>
+      <button
+        type="button"
+        onClick={onCollapse}
+        aria-label="Collapse sidebar"
+        aria-expanded={true}
+        title="Collapse sidebar"
+        className="ml-auto rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+      >
+        <PanelLeftClose size={16} />
+      </button>
     </div>
   );
 }

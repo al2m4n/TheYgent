@@ -7,6 +7,9 @@ import { defineConfig } from "vite";
 // the control-plane directly; the control-plane CORS allows both dev origins.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Serve `static/` at the site root (brand artwork, favicons) — referenced by literal path
+  // (e.g. `/logo/…`) rather than imported, so the same URL resolves in dev and in the build.
+  publicDir: "static",
   server: {
     // Defaults to :5174 (alongside the cockpit on :5173). A PORT override lets a second instance
     // run on a free port (e.g. a preview server beside an already-running `pnpm dev`).

@@ -97,7 +97,9 @@ function NodePanel({
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <div className="border-b border-slate-800 px-3 py-2.5">
+      {/* Extra left padding keeps this header clear of the panel's collapse chevron, which docks in
+          the top-left corner (this panel is right-edge docked, so its control faces the canvas). */}
+      <div className="border-b border-slate-800 py-2.5 pr-3 pl-9">
         <div className="flex items-center gap-2">
           <Badge tone={KIND_TONE[node.kind] ?? "slate"}>{node.kind}</Badge>
           <span className="mono text-xs text-slate-400">{node.type}</span>
@@ -408,7 +410,7 @@ function EdgePanel({
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
-      <div className="border-b border-slate-800 px-3 py-2.5">
+      <div className="border-b border-slate-800 py-2.5 pr-3 pl-9">
         <span className="text-xs font-medium text-slate-300">Edge</span>
         <div className="mono mt-1 text-[11px] text-slate-600">{edge.id}</div>
         <div className="mt-2">
@@ -1966,7 +1968,8 @@ function GraphPanel({ ir }: { ir: IRDocument }) {
   const models = Object.entries(ir.models ?? {});
   return (
     <div className="flex h-full flex-col overflow-y-auto p-3 text-sm">
-      <p className="mb-3 text-xs text-slate-600">
+      {/* Start below the collapse chevron docked in the panel's top-left corner. */}
+      <p className="mb-3 pt-6 text-xs text-slate-600">
         Select a node or edge to edit it. Model bindings and tools are derived from the canvas
         (added as you place + wire nodes); connections are managed below.
       </p>

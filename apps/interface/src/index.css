@@ -91,9 +91,20 @@ body {
 .react-flow__controls-button {
   background-color: var(--c-elev) !important;
   border-bottom-color: var(--c-hover) !important;
+  /* Roomier buttons so the larger glyphs (below) sit with breathing room rather than edge-to-edge. */
+  width: 26px;
+  height: 26px;
 }
 .react-flow__controls-button:hover {
   background-color: var(--c-hover) !important;
+}
+/* Render the toolbar glyphs at the node-icon size (16px) instead of RF's small default — the default
+   shrinks the undo/redo/tidy icons enough to read as ambiguous smudges. */
+.react-flow__controls-button svg {
+  width: 16px !important;
+  height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
 }
 
 .react-flow__handle {
