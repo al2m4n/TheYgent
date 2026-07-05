@@ -1,6 +1,6 @@
 """L0 gateway — the OpenAI-compatible dispatch built on LiteLLM.
 
-LiteLLM is the routing/fallback/cost/cache layer (theygent-stack.md §7/§9); this
+LiteLLM is the routing/fallback/cost/cache layer; this
 module is the thin adapter that points it at a resolved ``Upstream`` and reshapes
 streaming chunks into SSE. It is engine-agnostic: it never sees `mlx`/`vllm`/
 `llamacpp` — only an upstream URL produced by the manager (managed) or the
@@ -56,7 +56,7 @@ class Gateway:
             **params,
         )
         result = _to_dict(resp)
-        # MLX-chat tool-call normalization (M22 follow-up): mlx_lm.server returns Llama's text tool
+        # MLX-chat tool-call normalization: mlx_lm.server returns Llama's text tool
         # call as content, not structured tool_calls — rewrite it so the (engine-agnostic) control
         # plane sees the OpenAI shape. Gated to the MLX path + a tools-bearing request; a no-match
         # leaves the response byte-identical (see tool_parse).
@@ -89,7 +89,7 @@ class Gateway:
             yield f"data: {json.dumps(_to_dict(chunk))}\n\n"
         yield "data: [DONE]\n\n"
 
-    # ── M18: embeddings + audio (same engine-agnostic dispatch as chat) ──────
+    # ── Embeddings + audio (same engine-agnostic dispatch as chat) ──────────
     # These are OpenAI data-plane shapes the gateway forwards to the resolved upstream exactly like
     # chat: it never sees `mlx`/`vllm`/`llamacpp`, only the upstream URL the manager produced. The
     # `openai/` prefix makes LiteLLM append the right path (`/embeddings`, `/audio/*`) to api_base.

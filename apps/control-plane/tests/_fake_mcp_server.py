@@ -1,4 +1,4 @@
-"""A real, minimal MCP server for the fast suite (m7.md §8) — a genuine stdio subprocess speaking
+"""A real, minimal MCP server for the fast suite — a genuine stdio subprocess speaking
 the JSON-RPC protocol, everything real except the *content*. Same posture as ``_fake_inference``
 and ``_http``: spawn a real process so the ``StdioMcpClient`` actually does the protocol handshake
 across real pipes, not a mock.
@@ -35,4 +35,4 @@ def pid() -> str:
 
 
 if __name__ == "__main__":
-    server.run()  # stdio transport (the M7 default)
+    server.run()  # stdio transport (the default)

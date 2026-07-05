@@ -1,16 +1,16 @@
 # @theygent/ir-types
 
-Generated TypeScript IR types + node-type registry — the FE/BE IR lockstep seam (M15 §1.3).
+Generated TypeScript IR types + node-type registry — the FE/BE IR lockstep seam.
 
 **The one rule: nothing here is hand-written.** The IR types are generated from `packages/ir` (the
 Pydantic source of truth). A second, drifting TS definition of the IR is exactly the corruption the
-milestone guards against.
+drift guard exists to prevent.
 
 ## What's in `src/`
 
 | File | Source | What |
 |------|--------|------|
-| `ir.schema.json` | `IRDocument.model_json_schema()` | the §8.2 envelope JSON Schema |
+| `ir.schema.json` | `IRDocument.model_json_schema()` | the IR document envelope JSON Schema |
 | `ir.d.ts` | `json-schema-to-typescript` over `ir.schema.json` | the IR TS interfaces (`IRDocument`, `Node`, `Edge`, `Port`, …) |
 | `node-types.json` | `NODE_TYPE_KIND` + the per-type config models | the node-type registry: per executable `type` → `kind`, `configSchema`, `defaultConfig`, default `ports` |
 | `index.ts` | hand-written re-export layer (the only authored file) | re-exports the IR types + typed `NODE_TYPES` / `NODE_TYPE_LIST` / `kindForType` |

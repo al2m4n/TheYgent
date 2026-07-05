@@ -1,14 +1,14 @@
-"""graph run fields on run (M5 §4)
+"""graph run fields on run
 
 Revision ID: 0002_graph_run
 Revises: 0001_initial
 Create Date: 2026-06-18
 
-A deliberate, additive contract extension (m5.md §3.4): three nullable columns on ``run`` so a
-``/graphs/runs`` run records the IR's registry coordinate (``graph_id`` + ``graph_version`` —
-§8.2) and its content-addressed identity (``content_hash``). NULL for a non-graph ``/runs`` run,
-so the M3/M4 path is untouched. Recorded now, not yet gated on (§3.3) — correct when the
-registry consumes it. Hand-written and fully reversible (the §6 round-trip test still holds).
+A deliberate, additive contract extension: three nullable columns on ``run`` so a
+``/graphs/runs`` run records the IR's registry coordinate (``graph_id`` + ``graph_version``)
+and its content-addressed identity (``content_hash``). NULL for a non-graph ``/runs`` run,
+so the earlier plain-run path is untouched. Recorded now, not yet gated on — correct when the
+registry consumes it. Hand-written and fully reversible (the round-trip test still holds).
 """
 
 from __future__ import annotations

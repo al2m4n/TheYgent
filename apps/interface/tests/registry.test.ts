@@ -1,16 +1,16 @@
-// The node-type registry is the generated bridge to packages/ir (§2.2). These assertions document
+// The node-type registry is the generated bridge to packages/ir. These assertions document
 // what the palette derives and catch an accidental hand-edit of the generated JSON. The CI
 // type-drift guard (regenerate + git diff) is the real lockstep check; this is the in-suite sanity.
 
 import { NODE_TYPES, NODE_TYPE_LIST, kindForType } from "@theygent/ir-types";
 
 describe("node-type registry (derived from packages/ir)", () => {
-  it("includes the built types and the M14 additive-lowering types", () => {
+  it("includes the built types and the additive-lowering types", () => {
     for (const t of ["input", "output", "llm", "tool", "mcp_tool", "router"]) {
       expect(NODE_TYPES[t], `missing built type ${t}`).toBeDefined();
     }
     for (const t of ["human", "subgraph", "loop", "map"]) {
-      expect(NODE_TYPES[t], `missing M14 type ${t}`).toBeDefined();
+      expect(NODE_TYPES[t], `missing lowering type ${t}`).toBeDefined();
     }
   });
 
@@ -25,7 +25,7 @@ describe("node-type registry (derived from packages/ir)", () => {
   it("declares default ports per type (tool carries the ok/err contract)", () => {
     expect(NODE_TYPES.input.ports.out?.map((p) => p.id)).toEqual(["out"]);
     expect(NODE_TYPES.output.ports.in?.map((p) => p.id)).toEqual(["in"]);
-    // ok/err (the M6 contract) + the M22 `use` capability handle (role "tool").
+    // ok/err (the tool ok/err contract) + the `use` capability handle (role "tool").
     expect(NODE_TYPES.tool.ports.out?.map((p) => p.id)).toEqual(["out", "err", "use"]);
     expect(NODE_TYPES.llm.ports.in?.find((p) => p.id === "tools")?.role).toBe("tool");
   });

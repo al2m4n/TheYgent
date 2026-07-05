@@ -1,4 +1,4 @@
-"""The in-process delta bus — streaming ↔ durability, resolved (M13 §6, D7).
+"""The in-process delta bus — streaming ↔ durability, resolved (D7).
 
 DBOS journals **step results**, not tokens. So live token streaming is a **non-durable
 side-channel** over the durable spine: the ``llm`` step streams tokens to THIS bus *as a side
@@ -6,10 +6,10 @@ effect* during execution, while its return value (the final assembled output) is
 journaled. The load-bearing consequence: **on crash + resume, the completed ``llm`` step is
 replayed from the journal, not re-executed** — so its body (and this ``publish``) does not run
 again, tokens are not regenerated, and nothing is re-streamed. A reconnecting cockpit renders from
-the **persisted ``Run`` output** (M9 §2.2), never from an expected token re-stream.
+the **persisted ``Run`` output**, never from an expected token re-stream.
 
 The bus is process-local (in-process topology — the desktop sidecar where DBOS runs embedded in the
-API; m13-dbos.md §5). The durable ``fire()`` path is non-streaming, so for triggers there is simply
+API). The durable ``fire()`` path is non-streaming, so for triggers there is simply
 no subscriber and ``publish`` is a cheap no-op; the bus exists so a future durable *streaming* entry
 (or an in-process worker) can observe live deltas without weakening the durability guarantee.
 """

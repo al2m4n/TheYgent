@@ -2,7 +2,7 @@
 //
 // An icon is NEVER part of the IR's hashed content: a *default* is derived here from the node `type`
 // (exactly parallel to how `kind` colour is derived in NodeView), and a user *override* lives in the
-// `view` block, which the server strips before hashing (decision §1.4). So changing a node's icon is
+// `view` block, which the server strips before hashing. So changing a node's icon is
 // a pure layout change, like dragging. The stored token (in `view.nodes[id].icon`, and the values of
 // `DEFAULT_NODE_ICONS`) is a Lucide **icon name** (kebab-case, the icon's identity on lucide.dev) —
 // `ICON_REGISTRY` maps that name to the React component. Storing a name (not a component) keeps the
@@ -116,7 +116,7 @@ export const DEFAULT_NODE_ICONS: Record<string, string> = {
   loop: "repeat",
   map: "boxes",
   subgraph: "workflow",
-  // M19 palette
+  // palette node types
   transcribe: "mic",
   speak: "volume-2",
   guardrail: "shield-check",
@@ -125,7 +125,7 @@ export const DEFAULT_NODE_ICONS: Record<string, string> = {
   transform: "replace",
 };
 
-/** Shown for any node `type` without a dedicated default (e.g. a future M-something node). */
+/** Shown for any node `type` without a dedicated default (e.g. a future node type not yet registered). */
 export const FALLBACK_ICON = "settings";
 
 /** The default icon name for a node `type`, derived (never stored on the IR). */

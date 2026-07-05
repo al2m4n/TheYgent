@@ -1,4 +1,4 @@
-// M16 — the Registries page (installed + add) and the Browse hub screen (RTL over a mocked plane).
+// Tests for the Registries page (installed + add) and the Browse hub screen (RTL over a mocked plane).
 //
 // The Registries page opens on installed models with an Add flow; Browse is the separate hub
 // surface (search → quant variants with a fit badge → install with live progress). The inference

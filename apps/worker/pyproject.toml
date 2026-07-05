@@ -1,11 +1,11 @@
 [project]
 name = "theygent-worker"
 version = "0.1.0"
-description = "theygent durable worker — runs compiled IR workflows on DBOS (M13, §8 process type 2)"
+description = "theygent durable worker — runs compiled IR workflows on DBOS (process type 2: the durable runtime)"
 requires-python = ">=3.12"
 dependencies = [
     # The worker IS the durable runtime standing up: it imports the control-plane's durable package
-    # (the §8.7 in-workflow lowering + the DBOS runtime) and its stores, and the IR. It reaches
+    # (the in-workflow lowering + the DBOS runtime) and its stores, and the IR. It reaches
     # inference only over the gateway HTTP seam (the plane boundary holds — it never imports an
     # engine). DBOS comes transitively via the control-plane, but is declared here too since the
     # worker process owns the DBOS lifecycle.

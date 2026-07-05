@@ -1,13 +1,13 @@
-"""M18 bench store fast suite (M4 discipline — real testcontainers Postgres, real Alembic schema).
+"""Bench store fast suite — real testcontainers Postgres, real Alembic schema.
 
-The load-bearing guards (m18.md §4 control-plane):
-* **Pinning (§1.6):** a model ``bench_run`` records logical_id+model_ref+binding + a params digest;
+The load-bearing guards:
+* **Pinning:** a model ``bench_run`` records logical_id+model_ref+binding + a params digest;
   two runs differing only in ``temperature`` are TWO distinct results. An agent run records
   agent_id+version+contentHash.
-* **Metrics-only default (§1.6 / §10):** with capture off, no raw output is persisted — only metrics
+* **Metrics-only default:** with capture off, no raw output is persisted — only metrics
   + digests. Capture-on stores a LOCAL reference (``capture_ref``), never a blob.
-* **Compare (§2.4):** GET /bench/compare aligns two results' metrics + an outputs-match flag.
-* **Preset round-trip (§1.7):** save / list / delete; a preset stores literal values + a modality,
+* **Compare:** GET /bench/compare aligns two results' metrics + an outputs-match flag.
+* **Preset round-trip:** save / list / delete; a preset stores literal values + a modality,
   never a run/agent link.
 """
 
@@ -55,7 +55,7 @@ def test_runs_differing_only_in_temperature_are_distinct(client: TestClient) -> 
 
     a = record(0.2)
     b = record(0.9)
-    # Different params → different digests → two distinct benchmarks (§1.6 — the tuning point).
+    # Different params → different digests → two distinct benchmarks (the tuning point).
     assert a["params_digest"] != b["params_digest"]
     assert a["id"] != b["id"]
 
@@ -249,7 +249,7 @@ def test_suite_runs_link_by_suite_and_case(client: TestClient) -> None:
     assert len(by_case) == 1
 
 
-# ── presets (§1.7) ───────────────────────────────────────────────────────────
+# ── presets ──────────────────────────────────────────────────────────────────
 
 
 def test_preset_round_trip(client: TestClient) -> None:
@@ -264,7 +264,7 @@ def test_preset_round_trip(client: TestClient) -> None:
     )
     assert create.status_code == 201
     preset = create.json()
-    # A preset stores literal VALUES + a modality — no run/agent link (§1.7).
+    # A preset stores literal VALUES + a modality — no run/agent link.
     assert preset["params"]["temperature"] == 0.0
     assert preset["modality"] == "chat"
     assert "run_id" not in preset and "agent_id" not in preset
@@ -284,7 +284,7 @@ def test_delete_unknown_preset_is_404(client: TestClient) -> None:
     assert r.json()["error"]["code"] == "preset_not_found"
 
 
-# ── listing shape (M8 §2) ────────────────────────────────────────────────────
+# ── listing shape ────────────────────────────────────────────────────────────
 
 
 def test_bench_runs_list_newest_first(client: TestClient) -> None:

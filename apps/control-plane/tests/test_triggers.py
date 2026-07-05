@@ -1,8 +1,8 @@
-"""Fast suite for the trigger / deploy layer (m12.md §5) — invoke, schedule, webhook over a real
-(fake-model) inference plane and a REAL ephemeral Postgres applied through REAL Alembic migrations
-(M4 §0/§6). No SQLite, no create_all.
+"""Fast suite for the trigger / deploy layer — invoke, schedule, webhook over a real
+(fake-model) inference plane and a REAL ephemeral Postgres applied through REAL Alembic migrations.
+No SQLite, no create_all.
 
-M12's thesis: a saved agent (M11) gets stable, non-interactive entry points so it runs unattended —
+The trigger layer gives a saved agent stable, non-interactive entry points so it runs unattended —
 the minimum viable "deploy". So these prove: a token-authed invoke runs the agent and a missing/bad
 token is 401; a schedule fires the PINNED version through the dispatcher tick and a disabled one
 does not; schedules persist + rehydrate across a restart; a hash pin runs that content after a newer
@@ -63,7 +63,7 @@ def _save_agent(client: TestClient, ir: dict | None = None) -> str:
     return resp.json()["id"]
 
 
-# ── HTTP trigger: token-authed invoke (§3.1) ─────────────────────────────────────
+# ── HTTP trigger: token-authed invoke ────────────────────────────────────────────
 
 
 def test_invoke_with_token_runs_agent(authed_client: TestClient) -> None:
@@ -75,10 +75,10 @@ def test_invoke_with_token_runs_agent(authed_client: TestClient) -> None:
     body = resp.json()
     assert body["status"] == "completed"
     assert body["output"] == FULL_MESSAGE
-    # The awaited result carries a run handle correlatable via GET /runs/{id} (§3.1).
+    # The awaited result carries a run handle correlatable via GET /runs/{id}.
     got = authed_client.get(f"/runs/{body['runId']}").json()
     assert got["status"] == "completed"
-    # An invoke is unattended but NOT trigger-fired — trigger_id stays NULL (lineage §2).
+    # An invoke is unattended but NOT trigger-fired — trigger_id stays NULL.
     assert got["trigger_id"] is None
 
 
@@ -112,7 +112,7 @@ def test_invoke_unknown_agent_404_after_auth(authed_client: TestClient) -> None:
 def test_invoke_deny_by_default_when_no_token_configured(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
-    # An unattended invoke surface with NO token configured is CLOSED (deny-by-default §1.3): even a
+    # An unattended invoke surface with NO token configured is CLOSED (deny-by-default): even a
     # request bearing some token is 401, because no token can match an unset one.
     app = create_app(
         inference_base_url=fake_inference.v1_url, database_url=pg_url, start_dispatcher=False
@@ -125,12 +125,12 @@ def test_invoke_deny_by_default_when_no_token_configured(
         assert resp.status_code == 401
 
 
-# ── Trigger CRUD + validation (§3) ───────────────────────────────────────────────
+# ── Trigger CRUD + validation ─────────────────────────────────────────────────────
 
 
 def test_create_trigger_requires_exactly_one_pin(authed_client: TestClient) -> None:
     agent_id = _save_agent(authed_client)
-    # No pin → 400 (an unattended deploy must pin an immutable artifact, §1.1).
+    # No pin → 400 (an unattended deploy must pin an immutable artifact).
     no_pin = authed_client.post(
         "/triggers",
         json={"agent_id": agent_id, "kind": "schedule", "config": {"cron": "* * * * *"}},
@@ -177,8 +177,8 @@ def test_create_webhook_requires_secret(authed_client: TestClient) -> None:
 
 
 def test_create_trigger_dangling_pin_404(authed_client: TestClient) -> None:
-    # Registering a deploy of a nonexistent version is a clean 404 at create time (§1.1) — never a
-    # surprise at fire time, the M11 honest-pin discipline carried into M12.
+    # Registering a deploy of a nonexistent version is a clean 404 at create time — never a
+    # surprise at fire time; a dangling pin must fail honestly at registration, not at fire time.
     agent_id = _save_agent(authed_client)
     resp = authed_client.post(
         "/triggers",
@@ -208,7 +208,7 @@ def test_create_trigger_unknown_agent_404(authed_client: TestClient) -> None:
 
 
 def test_webhook_secret_redacted_everywhere(authed_client: TestClient) -> None:
-    # A webhook signing secret is the user's credential (§1.3 / §10): list its presence, never echo
+    # A webhook signing secret is the user's credential: list its presence, never echo
     # its value — mirrors how _mcp_view lists env keys without values.
     agent_id = _save_agent(authed_client)
     created = authed_client.post(
@@ -256,7 +256,7 @@ def test_get_unknown_trigger_404(authed_client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "trigger_not_found"
 
 
-# ── Webhook trigger: signature-authed inbound (§3.3) ─────────────────────────────
+# ── Webhook trigger: signature-authed inbound ────────────────────────────────────
 
 
 def _sign(secret: str, raw: bytes) -> str:
@@ -292,11 +292,11 @@ def test_webhook_valid_signature_fires_with_payload_as_input(
     assert resp.status_code == 202, resp.text  # accepted + fired
     body = resp.json()
     assert body["status"] == "completed"
-    # The payload mapped mechanically to the agent's input — drilled to the `text` field (§3.3).
+    # The payload mapped mechanically to the agent's input — drilled to the `text` field.
     assert fake_inference.captured["messages"] == [
         {"role": "user", "content": "hello from webhook"}
     ]
-    # The run carries trigger lineage (§2) — it was webhook-fired, not interactive.
+    # The run carries trigger lineage — it was webhook-fired, not interactive.
     assert authed_client.get(f"/runs/{body['runId']}").json()["trigger_id"] == tid
 
 
@@ -339,7 +339,7 @@ def test_webhook_disabled_rejected(authed_client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "trigger_disabled"
 
 
-# ── Run lineage (§2) ─────────────────────────────────────────────────────────────
+# ── Run lineage ───────────────────────────────────────────────────────────────────
 
 
 def test_interactive_run_has_null_trigger_id(authed_client: TestClient) -> None:
@@ -351,9 +351,9 @@ def test_interactive_run_has_null_trigger_id(authed_client: TestClient) -> None:
     assert authed_client.get(f"/runs/{resp.json()['runId']}").json()["trigger_id"] is None
 
 
-# ── Schedule trigger: the dispatcher tick (§3) ───────────────────────────────────
+# ── Schedule trigger: the dispatcher tick ────────────────────────────────────────
 # Async tests drive the lifespan in-loop (so the async engine + dispatcher live in the test's loop)
-# and call dispatcher.tick directly — deterministic, no wall-clock waiting (m12.md §5).
+# and call dispatcher.tick directly — deterministic, no wall-clock waiting.
 
 
 def _app(fake_url: str, pg_url: str, *, token: str = TOKEN):
@@ -427,8 +427,8 @@ async def test_schedule_persists_and_fires_across_restart(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
     # Register the schedule through one app, then "restart" (a fresh app on the SAME Postgres) and
-    # tick — the dispatcher re-reads it from the DB (rehydration is free, §3) and fires it. The same
-    # F6.1 lesson M9 closed for the MCP registry, verified for schedules.
+    # tick — the dispatcher re-reads it from the DB (rehydration is free) and fires it. The same
+    # lesson learned for the MCP registry applies here: schedules persist and rehydrate for free.
     app1 = _app(fake_inference.v1_url, pg_url)
     async with app1.router.lifespan_context(app1):
         async with httpx.AsyncClient(
@@ -451,7 +451,7 @@ async def test_hash_pinned_schedule_runs_that_content_after_newer_publishes(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
     # Pin a schedule to a contentHash, publish a NEWER version, then fire: it runs the pinned
-    # content (immutability through the deploy path — §3.2). Distinct path from version pinning.
+    # content (immutability through the deploy path). Distinct path from version pinning.
     app = _app(fake_inference.v1_url, pg_url)
     ir_a = _agent_ir(version="0.1.0", prompt="VERSION_A: $in")
     hash_a = content_hash(parse_document(ir_a))
@@ -478,7 +478,7 @@ async def test_schedule_does_not_double_fire_on_immediate_retick(
     # No double-fire WITHIN one instance (the dispatcher's serial-tick guarantee): a fire stamps
     # last_fired_at, an immediate re-tick at the SAME instant sees the advanced cursor and is no
     # longer due. (Cross-instance double-fire is a recorded known constraint — dispatcher.py — that
-    # M13's native durable schedules resolve; M12 runs one dispatcher instance.)
+    # the durable runtime's native schedules resolve; this dispatcher runs on exactly one instance.)
     app = _app(fake_inference.v1_url, pg_url)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
@@ -494,9 +494,9 @@ async def test_schedule_does_not_double_fire_on_immediate_retick(
 async def test_completed_at_stamped_for_evidence_gate(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
-    # The M12 §9 evidence gate (m13.md §1.2): a fired run carries a real completed_at — duration is
-    # exact (completed_at - created_at) and run intervals yield system-wide concurrency. An
-    # interactive completed run gets it too; the value is >= created_at.
+    # A fired run carries a real completed_at — duration is exact (completed_at - created_at) and
+    # run intervals yield system-wide concurrency. An interactive completed run gets it too;
+    # the value is >= created_at.
     app = _app(fake_inference.v1_url, pg_url)
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
@@ -511,7 +511,7 @@ async def test_completed_at_stamped_for_evidence_gate(
 
 
 async def test_schedule_fire_against_unreachable_inference_fails_honestly(pg_url: str) -> None:
-    # A fired run whose bound inference plane is unreachable ends `failed` cleanly — no hang (§1.4).
+    # A fired run whose bound inference plane is unreachable ends `failed` cleanly — no hang.
     # The control-plane never resolves egress; it surfaces the failure honestly via the run path.
     app = _app("http://127.0.0.1:1/v1", pg_url)  # a dead inference port
     async with app.router.lifespan_context(app):
@@ -524,4 +524,4 @@ async def test_schedule_fire_against_unreachable_inference_fails_honestly(pg_url
             runs = (await ac.get("/runs")).json()["runs"]
             mine = [r for r in runs if r["trigger_id"] == tid]
             assert len(mine) == 1
-            assert mine[0]["status"] == "failed"  # honest failure, recorded — not retried (§4)
+            assert mine[0]["status"] == "failed"  # honest failure, recorded — not retried

@@ -1,8 +1,8 @@
-"""GatewayClient — the transport-only OpenAI-compatible client (M3 §3.3).
+"""GatewayClient — the transport-only OpenAI-compatible client.
 
 Wraps the official async ``openai`` SDK pointed at the inference plane's ``/v1/*``
-data plane. The SDK is deliberate: it speaks the exact OpenAI shape the §9.1 seam
-promises, so using it from the control-plane *is* the end-to-end proof that the seam
+data plane. The SDK is deliberate: it speaks the exact OpenAI shape the inference-plane
+seam promises, so using it from the control-plane *is* the end-to-end proof that the seam
 is OpenAI-compatible (and we get streaming + types for free).
 
 Invariants this module holds:
@@ -39,8 +39,8 @@ def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
 
 
 def _tool_kwargs(tools: list[dict[str, Any]] | None, tool_choice: Any) -> dict[str, Any]:
-    """The OpenAI function-calling kwargs, forwarded to ``create`` only when set (M21) — so a
-    tools-less call is byte-identical to pre-M21."""
+    """The OpenAI function-calling kwargs, forwarded to ``create`` only when set — so a
+    tools-less call is byte-identical to a call without tools."""
     out: dict[str, Any] = {}
     if tools:
         out["tools"] = tools
@@ -54,7 +54,7 @@ class GatewayClient:
 
     ``base_url`` must include the ``/v1`` suffix (the data-plane root), e.g.
     ``http://127.0.0.1:8081/v1``. ``api_key`` is a placeholder by default — the
-    inference plane resolves any real upstream credential locally (§10); the
+    inference plane resolves any real upstream credential locally; the
     control-plane never holds one.
     """
 
@@ -67,9 +67,9 @@ class GatewayClient:
         max_retries: int | None = None,
     ) -> None:
         # ``max_retries`` defaults to the OpenAI SDK's own (None → SDK default). The **durable**
-        # runtime (M13 §2) passes ``0`` so the SDK does NOT silently retry a failed inference call —
+        # runtime passes ``0`` so the SDK does NOT silently retry a failed inference call —
         # DBOS owns retry on the durable path, and a provider-side retry on top of a DBOS step retry
-        # is the double-retry hazard the milestone explicitly forbids.
+        # is a double-retry hazard.
         kwargs: dict[str, Any] = {"base_url": base_url, "api_key": api_key, "timeout": timeout}
         if max_retries is not None:
             kwargs["max_retries"] = max_retries
@@ -92,11 +92,11 @@ class GatewayClient:
         non-200 raises now (before iteration). The caller iterates the returned stream;
         a mid-stream failure raises during iteration.
 
-        ``tools``/``tool_choice`` (M21) carry the OpenAI function-calling protocol verbatim —
+        ``tools``/``tool_choice`` carry the OpenAI function-calling protocol verbatim —
         a NAMED transport-seam extension (not buried in ``params``) so the function-calling
         contract is explicit and type-checked. The inference plane forwards them to the engine
         (no inference-side change); a model that ignores them simply streams content. Forwarded
-        only when set, so a tools-less call is byte-identical to pre-M21.
+        only when set, so a tools-less call is byte-identical to a call without tools.
 
         ``include_usage`` requests token accounting on the stream via the OpenAI
         ``stream_options`` field: the server appends a final chunk carrying ``usage``
@@ -128,7 +128,7 @@ class GatewayClient:
         tool_choice: Any = None,
     ) -> ChatCompletion:
         """Non-streaming completion — the whole answer in one object. ``tools``/``tool_choice``
-        (M21) carry the OpenAI function-calling protocol; see :meth:`open_stream`."""
+        carry the OpenAI function-calling protocol; see :meth:`open_stream`."""
         return await self._client.chat.completions.create(  # ty: ignore[no-matching-overload]
             model=model,
             messages=messages,  # type: ignore[arg-type]
@@ -146,7 +146,7 @@ class GatewayClient:
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
     ) -> Any:
-        """Embeddings (M18) — one-or-many inputs → vectors. ``model`` is a logical id; transport
+        """Embeddings — one-or-many inputs → vectors. ``model`` is a logical id; transport
         only (no normalization). Errors surface at this ``await``, like ``complete``."""
         return await self._client.embeddings.create(
             model=model,
@@ -163,7 +163,7 @@ class GatewayClient:
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
     ) -> Any:
-        """Speech-to-text (M18 §1.1). ``file`` is the OpenAI ``FileTypes`` (a ``(filename, bytes,
+        """Speech-to-text. ``file`` is the OpenAI ``FileTypes`` (a ``(filename, bytes,
         content_type)`` tuple or a file-like) — the SDK owns the multipart encoding. ``model`` is a
         logical id; transport only."""
         return await self._client.audio.transcriptions.create(
@@ -182,7 +182,7 @@ class GatewayClient:
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
     ) -> bytes:
-        """Text-to-speech (M18 §1.1) → audio bytes. ``model`` is a logical id; ``response_format`` /
+        """Text-to-speech → audio bytes. ``model`` is a logical id; ``response_format`` /
         ``speed`` ride in ``params``. Returns the whole audio body (the binary response content)."""
         response = await self._client.audio.speech.create(
             model=model,

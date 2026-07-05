@@ -1,7 +1,7 @@
 """The trivial 3-node IR document (input -> llm -> output) the graph fast suite drives.
 
-This is the m5.md §4 envelope, inline. Helpers return a fresh deep copy each call so a test
-can mutate one (a bad enum, a cycle, an engine-name binding) without disturbing another.
+This is the trivial IR document envelope, inline. Helpers return a fresh deep copy each call so
+a test can mutate one (a bad enum, a cycle, an engine-name binding) without disturbing another.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def trivial_ir() -> dict[str, Any]:
     return copy.deepcopy(_TRIVIAL)
 
 
-# ── M6 graph builders (tool + router) ────────────────────────────────────────
+# ── graph builders (tool + router) ───────────────────────────────────────────
 # Compact constructors so each test reads as a graph shape, not a wall of JSON.
 
 _DEFAULT_MODEL = {"default": {"binding": "mlx", "model": "triage-fast", "params": {}}}
@@ -128,7 +128,7 @@ def _doc(nodes: list[dict], edges: list[dict], *, models: dict | None = None) ->
 
 
 def tool_echo_ir() -> dict[str, Any]:
-    """input → tool(echo, {value: $in}) → output. Proves dispatch + arg templating (m6.md §5)."""
+    """input → tool(echo, {value: $in}) → output. Proves dispatch + arg templating."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -148,7 +148,7 @@ def tool_echo_ir() -> dict[str, Any]:
 
 def tool_ok_err_ir(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     """input → tool(<tool>, <args>) → {ok: n_ok, err: n_err}. The ok/err split is the tool
-    contract (m6.md §4): a result binds ok; a raised exception (transport failure, an
+    contract: a result binds ok; a raised exception (transport failure, an
     unresolvable ``$in`` arg ref) binds err and the run continues."""
     return _doc(
         [
@@ -179,7 +179,7 @@ def tool_http_ir(url: str) -> dict[str, Any]:
 
 def mcp_tool_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
     """input → mcp_tool(<server>, <tool>, <args>) → output. The single-ok-path MCP graph
-    (m7.md §8) — same IR shape as a local tool, only the node type differs."""
+    Same IR shape as a local tool, only the node type differs."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -199,7 +199,7 @@ def mcp_tool_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def mcp_tool_ok_err_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
     """input → mcp_tool(<server>, <tool>, <args>) → {ok: n_ok, err: n_err}. For asserting the
-    err branch on a tool-level error / transport failure (m7.md §8)."""
+    err branch on a tool-level error / transport failure."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -225,8 +225,8 @@ def mcp_tool_ok_err_ir(server: str, tool: str, args: dict[str, Any]) -> dict[str
 def router_ir(decision: Any) -> dict[str, Any]:
     """input → tool(echo, {value: <decision>}) → router(select $in.in.handle) → {yes: out_yes,
     no: out_no}. echo emits the literal decision object (network-free); the router branches on
-    its ``handle`` (m6.md §5). ``decision`` is e.g. {"handle": "yes", "payload": 42}. The select is
-    port-addressed (M10): ``$in.in.handle`` = default in-port ``in`` → drill ``handle``."""
+    its ``handle``. ``decision`` is e.g. {"handle": "yes", "payload": 42}. The select is
+    port-addressed: ``$in.in.handle`` = default in-port ``in`` → drill ``handle``."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -260,7 +260,7 @@ def router_ir(decision: Any) -> dict[str, Any]:
 
 def llm_ir(content: str) -> dict[str, Any]:
     """input → llm(<content>) → output. The llm's in-port carries the raw run input string, so
-    ``content`` exercises the unified ``$in`` template against a string value (m9.md §1)."""
+    ``content`` exercises the unified ``$in`` template against a string value."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -283,8 +283,8 @@ _VISION_MODEL = {"vision": {"binding": "mlx", "model": "qwen2-vl-vision", "param
 
 
 def vision_llm_ir(text: str, image_url: str, *, detail: str | None = None) -> dict[str, Any]:
-    """input → llm(MULTIMODAL content: [text, image_url]) → output — the M20 cross-plane follow-up
-    headline: a graph drives a vision model. The llm is bound to a vision logical model; ``text``
+    """input → llm(MULTIMODAL content: [text, image_url]) → output — a graph drives a vision model.
+    The llm is bound to a vision logical model; ``text``
     and ``image_url`` each exercise the unified ``$in`` template INSIDE a content part, so an image
     enters from the run input (``image_url="$in"``) rather than being hardcoded — the thing a string
     ``content`` could never express. The image block must survive IR serialize + the real gateway
@@ -317,7 +317,7 @@ def vision_llm_ir(text: str, image_url: str, *, detail: str | None = None) -> di
 def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
     """input → tool(echo, {value: <value>}) → llm(<content>) → output. echo emits the literal
     object ``value`` (network-free), so the llm's default in-port ``in`` is an OBJECT and
-    ``content`` can drill into it with ``$in.in.field`` (M10: port-addressed, field-aware)."""
+    ``content`` can drill into it with ``$in.in.field`` (port-addressed, field-aware)."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -349,11 +349,12 @@ def llm_over_object_ir(content: str, value: Any) -> dict[str, Any]:
 
 
 def two_input_llm_ir(content: str, file_value: Any, question_value: Any) -> dict[str, Any]:
-    """The F2.1 headline (m10.md §0): input fans out to two echo tools emitting ``file_value`` and
-    ``question_value`` (network-free); BOTH feed one ``llm`` node on DISTINCT in-ports ``file`` and
-    ``question``; ``content`` composes ``$in.file`` AND ``$in.question`` in one prompt — the thing
-    no M9 graph could express. Each echo's own in-port is fed by ``n_in`` (so its required in-port
-    is connected); its literal arg makes the two upstream values distinct and deterministic."""
+    """input fans out to two echo tools emitting ``file_value`` and
+    ``question_value`` (network-free); BOTH feed one ``llm`` node on DISTINCT in-ports ``file``
+    and ``question``; ``content`` composes ``$in.file`` AND ``$in.question`` in one prompt — the
+    thing a single-input graph could never express. Each echo's own in-port is fed by ``n_in``
+    (so its required in-port is connected); its literal arg makes the two upstream values distinct
+    and deterministic."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -397,7 +398,7 @@ def two_input_llm_ir(content: str, file_value: Any, question_value: Any) -> dict
 def output_multi_inport_ir() -> dict[str, Any]:
     """input fans out to two echo tools → an OUTPUT node declaring TWO in-ports [a, b]. A
     single-value consumer with >1 in-port is ambiguous — *which* value is the run output? — so the
-    walker rejects it LOUDLY rather than silently picking one (m10.md §1.3, the #2 seam). Validation
+    walker rejects it LOUDLY rather than silently picking one. Validation
     PASSES (each port fed exactly once); the ambiguity is a walk-time error, not a wiring error."""
     return _doc(
         [
@@ -432,7 +433,7 @@ def output_multi_inport_ir() -> dict[str, Any]:
 def router_multi_inport_ir(decision: Any) -> dict[str, Any]:
     """input fans out to two echo tools → a ROUTER declaring TWO in-ports [a, b]. A router forwards
     a single value along its chosen branch, so >1 in-port is ambiguous → loud walk-time error
-    (m10.md §1.3). ``select`` reads ``$in.a.handle`` (which resolves fine over the port map), then
+    ``select`` reads ``$in.a.handle`` (which resolves fine over the port map), then
     the forward rejects the multi-port shape — proving the addressing/forward split."""
     return _doc(
         [
@@ -478,7 +479,7 @@ def router_multi_inport_ir(decision: Any) -> dict[str, Any]:
 def tool_unhandled_err_ir(tool: str, args: dict[str, Any]) -> dict[str, Any]:
     """input → tool(<tool>) → output, with the tool's ``err`` handle wired NOWHERE. When the tool
     errors, its ``ok`` edge to ``output`` is dead and nothing reaches the output boundary — the
-    m9.md §2.4 "empty output from an upstream error" case (no green run masquerading as success)."""
+    The "empty output from an upstream error" case (no green run masquerading as success)."""
     return _doc(
         [
             _node("n_in", "input", "boundary", outs=["out"]),
@@ -497,7 +498,7 @@ def tool_unhandled_err_ir(tool: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def agent_ir() -> dict[str, Any]:
-    """The motivating agent shape (m6.md §6): input → llm → router → {yes: tool→out, no: out}.
+    """The motivating agent shape: input → llm → router → {yes: tool→out, no: out}.
     The llm emits a routing decision (deterministic via the fake's ``response``); the router
     branches on it; on "yes" a tool runs against the payload."""
     return _doc(

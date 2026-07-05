@@ -1,13 +1,12 @@
-"""The ``Run`` domain entity (M3 §3.4) — the API/logic shape, free of storage coupling.
+"""The ``Run`` domain entity — the API/logic shape, free of storage coupling.
 
-M3 modelled ``Run`` as a clean Pydantic entity that maps 1:1 to a future table; M4 makes
-that table real. ``Run`` stays the **domain** shape and is *not* the ORM row (§1.3): it is
-mapped to/from ``RunRow`` in ``store.py``. The M3 wire contract is unchanged — ``thread_id``
-is the one additive field (optional; ``None`` = a one-shot run, exactly M3's behavior).
+``Run`` is a clean Pydantic entity that maps 1:1 to a table. ``Run`` stays the **domain**
+shape and is *not* the ORM row: it is mapped to/from ``RunRow`` in ``store.py``.
+``thread_id`` is the one additive field (optional; ``None`` = a one-shot run).
 
-The in-memory ``RunRegistry`` is gone: persistence now lives in the Postgres-backed
+The earlier in-memory run registry is gone: persistence now lives in the Postgres-backed
 ``RunStore`` (``store.py``), so runs survive a restart and are shared state across
-horizontally-scaled control-plane instances (§5/§8).
+horizontally-scaled control-plane instances.
 """
 
 from __future__ import annotations
@@ -18,10 +17,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from ulid import ULID
 
-# M14 §1.1: ``waiting`` is the additive durable-wait status — a run paused at a ``human`` node,
-# checkpointed on ``DBOS.recv``. It is NOT ``failed`` and is deliberately EXCLUDED from M9's
+# ``waiting`` is the additive durable-wait status — a run paused at a ``human`` node,
+# checkpointed on ``DBOS.recv``. It is NOT ``failed`` and is deliberately EXCLUDED from the
 # reconciliation sweep (which touches only ``created``/``streaming``), so a run can wait
-# indefinitely across a worker restart without being reconciled to ``failed`` (m14.md §1.1 / §4).
+# indefinitely across a worker restart without being reconciled to ``failed``.
 RunStatus = Literal["created", "streaming", "waiting", "completed", "failed"]
 
 
@@ -34,7 +33,7 @@ def new_ulid() -> str:
 
 
 def new_connection_id() -> str:
-    """A fresh connection id (``con_<ulid>``, M19 §1.1) — the stable logical reference the IR's
+    """A fresh connection id (``con_<ulid>``) — the stable logical reference the IR's
     ``tools`` block points at. The ``con_`` prefix makes the id recognizable in IR/config/logs."""
     return f"con_{ULID()}"
 
@@ -42,15 +41,13 @@ def new_connection_id() -> str:
 class Run(BaseModel):
     """A single request, from creation to a terminal status.
 
-    ``model`` is the **logical** model id forwarded to inference (never an engine name —
-    §3.2). ``thread_id`` is ``None`` for a one-shot run. The status lifecycle is
+    ``model`` is the **logical** model id forwarded to inference (never an engine name).
+    ``thread_id`` is ``None`` for a one-shot run. The status lifecycle is
     ``created`` -> ``streaming`` -> ``completed`` | ``failed``.
 
-    M5 adds three nullable graph fields — a *deliberate* contract extension (m5.md §3.4 /
-    §8 step 4), the second after M4's ``thread_id``. They are ``None`` for a non-graph
-    ``/runs`` run and populated for a ``/graphs/runs`` run: ``graph_id`` + ``graph_version``
-    are the IR's registry coordinate (§8.2), ``content_hash`` its content-addressed identity.
-    Recorded now (not gated on yet — §3.3) so the field is correct when the registry consumes it.
+    Three nullable graph fields are populated for a ``/graphs/runs`` run and ``None`` for a
+    plain ``/runs`` run: ``graph_id`` + ``graph_version`` are the IR's registry coordinate,
+    ``content_hash`` its content-addressed identity.
     """
 
     id: str = Field(default_factory=new_ulid)
@@ -60,30 +57,29 @@ class Run(BaseModel):
     graph_id: str | None = None
     graph_version: str | None = None
     content_hash: str | None = None
-    # M12 §2: which trigger fired this run (None = interactive). A deliberate, additive contract
-    # extension — the third after M4's thread_id and M5's graph fields — giving an unattended run
+    # Which trigger fired this run (None = interactive) — giving an unattended run
     # lineage back to the schedule/webhook that fired it.
     trigger_id: str | None = None
-    # M9 §2.2: the run's final output, persisted on success so GET /runs/{id} can return it for an
+    # The run's final output, persisted on success so GET /runs/{id} can return it for an
     # un-threaded run too (not only the live SSE stream). None until a terminal output is reached.
     output: str | None = None
-    # M14 §1.1: when a run is ``waiting`` at a ``human`` node, the id of that node — the "run
-    # bookkeeping" the waiting status needs. ``POST /runs/{id}/resume`` reads it to validate the
-    # awaited input against the node's declared schema and to deliver it. NULL when not waiting.
+    # When a run is ``waiting`` at a ``human`` node, the id of that node — the bookkeeping
+    # the waiting status needs. ``POST /runs/{id}/resume`` reads it to validate the awaited
+    # input against the node's declared schema and to deliver it. NULL when not waiting.
     awaiting_node: str | None = None
     created_at: datetime = Field(default_factory=now)
     updated_at: datetime = Field(default_factory=now)
-    # M12 §9 evidence gate: the real terminal-completion instant (None until a real-time terminal
-    # transition; stays None for a reconcile-swept zombie). duration = completed_at - created_at;
-    # run intervals give system-wide concurrency (m13.md §1.2).
+    # The real terminal-completion instant (None until a real-time terminal transition; stays
+    # None for a reconcile-swept zombie). duration = completed_at - created_at; run intervals
+    # give system-wide concurrency.
     completed_at: datetime | None = None
     error: str | None = None
 
 
-# ── Read models for the cockpit list views (M8 §1.1/§1.3) ────────────────────
+# ── Read models for the cockpit list views ────────────────────────────────────
 # Read-only projections the list endpoints return; like ``Run`` they are domain shapes the
-# store maps rows onto (§1.3), never ORM rows. They add no write path — the cockpit only
-# reads existing persisted state (M8 §2).
+# store maps rows onto, never ORM rows. They add no write path — the cockpit only
+# reads existing persisted state.
 
 
 class ThreadSummary(BaseModel):
@@ -115,20 +111,20 @@ class ThreadDetail(BaseModel):
     messages: list[ThreadMessage] = Field(default_factory=list)
 
 
-# ── Agent registry domain entities (M11 §2/§3) ───────────────────────────────
-# Like ``Run``, these are domain shapes the store maps rows onto (§1.3) — never ORM rows. The
-# registry stores the canonical §8.2 IR document; it invents no "agent format" (M11 §0/§7). The
-# IR is the source of truth for ``id`` (the §8.2 agent id) and ``version`` (semver), so a stored
-# agent and the Run it produces agree byte-for-byte on ``graph_id``/``graph_version``/``hash``
-# (§1.1). ``AgentVersion`` is the lean per-version metadata (no IR payload — it lists fast);
+# ── Agent registry domain entities ───────────────────────────────────────────
+# Like ``Run``, these are domain shapes the store maps rows onto — never ORM rows. The
+# registry stores the canonical IR document; it invents no "agent format". The IR is the
+# source of truth for ``id`` (the agent id) and ``version`` (semver), so a stored agent and
+# the Run it produces agree byte-for-byte on ``graph_id``/``graph_version``/``hash``.
+# ``AgentVersion`` is the lean per-version metadata (no IR payload — it lists fast);
 # ``StoredVersion`` carries the full IR + view, returned for a single version and used to resolve
 # an invoke-by-reference run.
 
 
 class AgentVersion(BaseModel):
     """One immutable version's metadata — no IR payload (the list/detail views show coordinates,
-    not the document). ``content_hash`` is the §8.2 content-addressed key; ``seq`` is the
-    monotonic-per-agent ordering (M4 §3), newest first in the listings."""
+    not the document). ``content_hash`` is the content-addressed key; ``seq`` is the
+    monotonic-per-agent ordering, newest first in the listings."""
 
     version: str
     content_hash: str
@@ -137,9 +133,9 @@ class AgentVersion(BaseModel):
 
 
 class AgentSummary(BaseModel):
-    """One row of the agents list (M8 §2 list shape) — newest agent first. Carries the latest
-    version coordinate + a count so the cockpit row reads "name, latest version, hash, count"
-    without a second call (client-side composition; no aggregating endpoint — M11 §5)."""
+    """One row of the agents list — newest agent first. Carries the latest version coordinate
+    + a count so the cockpit row reads "name, latest version, hash, count" without a second
+    call (client-side composition; no aggregating endpoint)."""
 
     id: str
     name: str
@@ -151,7 +147,7 @@ class AgentSummary(BaseModel):
 
 
 class AgentDetail(BaseModel):
-    """An agent and its versions, newest first (GET /agents/{id} — M11 §3)."""
+    """An agent and its versions, newest first (GET /agents/{id})."""
 
     id: str
     name: str
@@ -162,8 +158,8 @@ class AgentDetail(BaseModel):
 
 class StoredVersion(BaseModel):
     """A resolved version with its full IR (+ view) — returned by GET /agents/{id}/versions/{ver}
-    and the value an invoke-by-reference run resolves to before walking it (M11 §3/§5). The ``ir``
-    the canonical, view-stripped §8.2 document; ``view`` is the stored-but-never-hashed layout."""
+    and the value an invoke-by-reference run resolves to before walking it. The ``ir`` is the
+    canonical, view-stripped document; ``view`` is the stored-but-never-hashed layout."""
 
     agent_id: str
     version: str
@@ -174,19 +170,19 @@ class StoredVersion(BaseModel):
     view: dict[str, Any] | None = None
 
 
-# ── Trigger domain entity (M12 §1.2/§2) — the deploy primitive ───────────────────
+# ── Trigger domain entity — the deploy primitive ──────────────────────────────
 # The frozen trigger *contract*: what fires which saved, pinned agent, on what condition. Like
-# ``Run``/``Agent*`` it is a domain shape the store maps ``TriggerRow`` onto (§1.3), never the ORM
-# row. The dispatcher that reads it and fires runs is a reversible in-process detail (M13 swaps it
-# for the durable worker) — this shape is the hard-to-reverse seam it must not reshape.
+# ``Run``/``Agent*`` it is a domain shape the store maps ``TriggerRow`` onto, never the ORM
+# row. The dispatcher that reads it and fires runs is a reversible in-process detail — this
+# shape is the hard-to-reverse seam it must not reshape.
 
 TriggerKind = Literal["http", "schedule", "webhook"]
 
 
 class Trigger(BaseModel):
-    """A persisted, non-interactive entry point for a saved agent (M12 §1.2). A trigger always pins
-    (§1.1): exactly one of ``version`` / ``content_hash`` — an unattended deploy runs an immutable
-    artifact. ``kind`` is the firing mechanism; ``config`` carries the kind-specific knobs (a cron
+    """A persisted, non-interactive entry point for a saved agent. A trigger always pins exactly
+    one of ``version`` / ``content_hash`` — an unattended deploy runs an immutable artifact.
+    ``kind`` is the firing mechanism; ``config`` carries the kind-specific knobs (a cron
     expression, a webhook signing secret, an optional input template). ``last_fired_at`` is
     dispatcher bookkeeping, not part of the frozen contract."""
 
@@ -202,8 +198,8 @@ class Trigger(BaseModel):
     updated_at: datetime = Field(default_factory=now)
 
     def public_dump(self) -> dict[str, Any]:
-        """The wire shape, with the webhook ``secret`` redacted (§1.3 / §10 sovereignty: a signing
-        secret is the user's credential — list its presence, never echo its value, mirroring how
+        """The wire shape, with the webhook ``secret`` redacted (sovereignty: a signing secret is
+        the user's credential — list its presence, never echo its value, mirroring how
         ``_mcp_view`` lists ``env`` keys without values)."""
         data = self.model_dump(mode="json")
         config = dict(data.get("config") or {})
@@ -213,12 +209,10 @@ class Trigger(BaseModel):
         return data
 
 
-# ── Connection domain entity (M19 §1.1) — the tool/MCP auth seam ──────────────────────────────────
+# ── Connection domain entity — the tool/MCP auth seam ────────────────────────────────────────────
 # A connection is a server-side auth + config binding the IR references by id from its ``tools``
-# block.
-# Like ``Run``/``Trigger`` it is a domain shape the store maps ``ConnectionRow`` onto (§1.3), not
-# the
-# ORM row. The secret material lives behind ``secret_ref`` in the encrypted ``secret`` table
+# block. Like ``Run``/``Trigger`` it is a domain shape the store maps ``ConnectionRow`` onto, not
+# the ORM row. The secret material lives behind ``secret_ref`` in the encrypted ``secret`` table
 # (``secrets.py``) — never in ``config`` and never on the wire. ``config`` is NON-SECRET only.
 
 ConnectionKind = Literal["http_auth", "mcp_server"]
@@ -232,11 +226,12 @@ _SECRETISH_CONFIG_KEYS = frozenset(
 
 
 class Connection(BaseModel):
-    """A persisted tool/MCP auth + config binding (M19 §1.1). ``kind`` selects the shape:
-    ``http_auth`` (an http tool's base url / static headers / auth scheme) or ``mcp_server`` (an MCP
-    server by stdio or HTTP). ``config`` carries ONLY non-secret material; the secret material is
-    encrypted behind ``secret_ref`` (``secrets.py``). The IR references this by ``id``; rotating the
-    secret keeps every agent's ``contentHash`` stable (the id is hashed content, not the secret)."""
+    """A persisted tool/MCP auth + config binding. ``kind`` selects the shape: ``http_auth``
+    (an http tool's base url / static headers / auth scheme) or ``mcp_server`` (an MCP server
+    by stdio or HTTP). ``config`` carries ONLY non-secret material; the secret material is
+    encrypted behind ``secret_ref`` (``secrets.py``). The IR references this by ``id``; rotating
+    the secret keeps every agent's ``contentHash`` stable (the id is hashed content, not the
+    secret)."""
 
     id: str = Field(default_factory=new_connection_id)
     name: str
@@ -248,8 +243,8 @@ class Connection(BaseModel):
     updated_at: datetime = Field(default_factory=now)
 
     def public_dump(self) -> dict[str, Any]:
-        """The wire shape (M19 §1.1 / §10 redaction): the ``secret_ref`` is internal plumbing and
-        the secret itself is never stored here, so the wire exposes only whether a secret is SET
+        """The wire shape (redaction): the ``secret_ref`` is internal plumbing and the secret
+        itself is never stored here, so the wire exposes only whether a secret is SET
         (``hasSecret``), never the ref or value — mirroring how ``Trigger.public_dump`` redacts to
         ``***`` and ``_mcp_view`` lists env keys without values. Any secret-ish key wrongly nested
         in ``config`` is also redacted defensively (secrets belong behind ``secret_ref``)."""
@@ -264,21 +259,21 @@ class Connection(BaseModel):
         return data
 
 
-# ── Bench domain entities (M18 §1.6/§1.7) — the deferred test/benchmark layer ─────────────────────
-# Like Run/Agent*/Trigger these are domain shapes the store maps the ``bench_*`` rows onto (§1.3),
-# never the ORM rows. A benchmark is honest only if pinned to exactly what ran (§1.6); a preset is a
-# literal param snippet, never a live reference (§1.7). The bench adds NO execution path — these
-# record what the bench produced (model tests hit the inference data plane in the user's domain
-# directly; agent tests reuse M11 invoke), so nothing inference-shaped lives in these entities.
+# ── Bench domain entities — the deferred test/benchmark layer ────────────────────────────────────
+# Like Run/Agent*/Trigger these are domain shapes the store maps the ``bench_*`` rows onto,
+# never the ORM rows. A benchmark is honest only if pinned to exactly what ran; a preset is a
+# literal param snippet, never a live reference. The bench adds NO execution path — these record
+# what the bench produced (model tests hit the inference data plane in the user's domain directly;
+# agent tests reuse the agent invoke path), so nothing inference-shaped lives in these entities.
 
 BenchTargetKind = Literal["model", "agent"]
 AssertionKind = Literal["exact", "contains", "regex", "json-path-equals", "llm-judge"]
 
 
 class BenchCase(BaseModel):
-    """One golden case (M18 §2.5): an authored ``input``, an optional ``expected``, and the
-    ``assertion`` to score it by. ``assertion_config`` carries the kind-specific knob (regex / json
-    path / llm-judge rubric + model)."""
+    """One golden case: an authored ``input``, an optional ``expected``, and the ``assertion``
+    to score it by. ``assertion_config`` carries the kind-specific knob (regex / json path /
+    llm-judge rubric + model)."""
 
     id: str = Field(default_factory=new_ulid)
     input: Any = None
@@ -290,7 +285,7 @@ class BenchCase(BaseModel):
 
 
 class BenchSuite(BaseModel):
-    """A saved suite of golden cases pinned to one target (M18 §2.5). A model suite sets
+    """A saved suite of golden cases pinned to one target. A model suite sets
     ``logical_id``/``binding``; an agent suite sets ``agent_id`` + a version/contentHash pin."""
 
     id: str = Field(default_factory=new_ulid)
@@ -308,11 +303,11 @@ class BenchSuite(BaseModel):
 
 
 class BenchRun(BaseModel):
-    """One recorded benchmark result (M18 §1.6/§2.4) — metrics pinned to exactly what ran. A MODEL
-    pin sets ``logical_id`` + ``model_ref`` + ``binding`` + ``params_digest``; an AGENT pin sets
+    """One recorded benchmark result — metrics pinned to exactly what ran. A MODEL pin sets
+    ``logical_id`` + ``model_ref`` + ``binding`` + ``params_digest``; an AGENT pin sets
     ``agent_id`` + ``version`` + ``content_hash``. ``metrics`` is the numbers; ``output_digest``
-    is a content identity for the compare diff WITHOUT the raw output; ``capture_ref`` is the opt-in
-    LOCAL reference to raw I/O (never a blob — §1.6 / §10)."""
+    is a content identity for the compare diff WITHOUT the raw output; ``capture_ref`` is the
+    opt-in LOCAL reference to raw I/O (never a blob — user-controlled storage only)."""
 
     id: str = Field(default_factory=new_ulid)
     target_kind: BenchTargetKind
@@ -338,9 +333,10 @@ class BenchRun(BaseModel):
 
 
 class BenchPreset(BaseModel):
-    """A named, modality-scoped, LITERAL param set (M18 §1.7) — values only, no link to a run or
-    agent. "Apply preset" copies these literals into ``models[binding].params`` client-side
-    (the IR stores the *values*, never the preset name — the contentHash-drift trap §1.7)."""
+    """A named, modality-scoped, LITERAL param set — values only, no link to a run or agent.
+    "Apply preset" copies these literals into ``models[binding].params`` client-side (the IR
+    stores the *values*, never the preset name — storing a name instead of values would cause
+    contentHash drift when a preset changes)."""
 
     id: str = Field(default_factory=new_ulid)
     name: str

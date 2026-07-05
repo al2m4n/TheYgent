@@ -1,8 +1,8 @@
-// The adapter's React-Flow-facing types (M15 §0/§8.6). This file and `index.ts` are the ONLY
+// The adapter's React-Flow-facing types. This file and `index.ts` are the ONLY
 // modules that know React Flow's node/edge shape — nothing here escapes into app state, API
 // calls, or persistence (the one rule). Crucially, a React-Flow node's `data` carries ONLY what
 // the canvas renders — label, the node `type`, and its ports — and NEVER `kind`, `models`, or
-// `contentHash` (M15 §1 / Do-NOT). `kind` is looked up from the registry on save; `models`/
+// `contentHash` (the one rule). `kind` is looked up from the registry on save; `models`/
 // `tools`/`contentHash` are graph-level/server-owned and live on the IR document, not on a node.
 
 import type { XYPosition } from "@xyflow/react";
@@ -18,18 +18,18 @@ export interface TheygentNodeData extends Record<string, unknown> {
   /** Optional user-chosen icon override (an emoji). PRESENT ONLY when the user picked one — the
    * type's default icon is derived in NodeView, not carried here. This is the single allowed
    * display-only addition to node data: it is sourced from and round-tripped to the `view` block
-   * (never hashed, §1.4), so it never affects logic or version identity — unlike `kind`/`models`/
+   * (never hashed), so it never affects logic or version identity — unlike `kind`/`models`/
    * `contentHash`, which must never appear on a node (the one rule). */
   icon?: string;
 }
 
 export interface PortView {
   id: string;
-  /** Advisory port type (§8.3 — `any`/`error`/…); rendered/round-tripped, not yet enforced. */
+  /** Advisory port type (`any`/`error`/…); rendered/round-tripped, not yet enforced. */
   type: string;
   required: boolean;
-  /** The channel the handle carries: `data` (default — threads a value), `control` (pure ordering,
-   * M19 §2.10), or `tool` (M22 — a capability wire: the llm's `tools` port and a tool node's
+  /** The channel the handle carries: `data` (default — threads a value), `control` (pure ordering),
+   * or `tool` (a capability wire: the llm's `tools` port and a tool node's
    * out-handle). The canvas renders the three distinctly and only allows same-role connections; the
    * edge `channel` is DERIVED from the handles it joins. Round-tripped to the IR `Port.role`. */
   role: "data" | "control" | "tool";
@@ -44,9 +44,9 @@ export interface TheygentEdgeData extends Record<string, unknown> {
 /** The current canvas selection — a node or an edge, or nothing. Drives the inspector panel. */
 export type Selection = { kind: "node" | "edge"; id: string } | null;
 
-// ── the `view` block (§8.6) — layout, NEVER hashed ───────────────────────────
+// ── the `view` block — layout, NEVER hashed ───────────────────────────
 // Positions/zoom/collapsed live ONLY here. A pure layout change leaves the view-stripped IR (and
-// thus the server-computed contentHash) untouched (decision §1.4). The shape is the adapter's own
+// thus the server-computed contentHash) untouched. The shape is the adapter's own
 // convention; the server treats `view` as opaque and strips it before hashing.
 
 export interface NodeView {

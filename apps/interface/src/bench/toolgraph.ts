@@ -1,12 +1,12 @@
-// The tool / MCP tester's THROWAWAY graph (M18 §2.6) — test a single tool the way you'd test a model.
+// The tool / MCP tester's THROWAWAY graph — test a single tool the way you'd test a model.
 //
 // A tool is not a data-plane model, so it does NOT run through the data plane: it runs through the
-// agent/run path (§1.5). The implementation is a one-node graph `input → mcp_tool → output` composed
+// agent/run path. The implementation is a one-node graph `input → mcp_tool → output` composed
 // inline and run via the existing `/graphs/runs` (`api.runGraph`). This adds **no new execution path
-// and no new backend** — it is the agent bench pointed at a single tool (§2.6 the one rule; do NOT
+// and no new backend** — it is the agent bench pointed at a single tool (do NOT
 // add an `/admin/mcp/.../invoke` endpoint). The graph is ephemeral: it is never saved to the registry.
 //
-// The tool's args are templated from the run input with the M10 named-port grammar the walker already
+// The tool's args are templated from the run input with the named-port grammar the walker already
 // speaks: `$in.in.<name>` selects field `<name>` of the value on the `mcp_tool` node's default `in`
 // port (the input boundary feeds the whole input object there). So an input `{ image: "data:…" }`
 // with `argNames: ["image"]` resolves the tool's `image` arg to that data URL at run time.
@@ -29,7 +29,7 @@ export interface ToolGraphSpec {
  * handle (walker `_success_handles`), which the `output` boundary consumes as the run output.
  */
 export function buildToolGraph({ server, tool, argNames }: ToolGraphSpec): IRDocument {
-  // Each declared arg pulls one field off the input object via the §8.5 port-addressed token.
+  // Each declared arg pulls one field off the input object via the port-addressed token.
   const args: Record<string, string> = {};
   for (const name of argNames) args[name] = `$in.in.${name}`;
 

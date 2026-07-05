@@ -1,9 +1,9 @@
-"""Fast suite for M7 — the ``mcp_tool`` node + the MCP server lifecycle (m7.md §8).
+"""Fast suite for the ``mcp_tool`` node + the MCP server lifecycle.
 
 Most of the surface runs against a *real* fake MCP server (``_fake_mcp_server.py``): a genuine
-stdio subprocess speaking JSON-RPC, everything real except the content (the M1/M3 pattern). The
+stdio subprocess speaking JSON-RPC, everything real except the content. The
 ``StdioMcpClient`` does the real protocol handshake; the ``McpManager`` does real lazy-connect,
-reuse, and reconnect. Real Postgres via testcontainers (M4 conventions).
+reuse, and reconnect. Real Postgres via testcontainers.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def test_warm_close_delete_lifecycle(client: TestClient) -> None:
 
 
 def test_env_values_not_echoed(client: TestClient) -> None:
-    # Sovereignty (§10): env keys may be listed, values never returned.
+    # Sovereignty: env keys may be listed, values never returned.
     body = {
         "transport": "stdio",
         "command": sys.executable,
@@ -110,7 +110,7 @@ def test_lazy_connect_then_reuse(client: TestClient) -> None:
     assert first["status"] == "completed"
     assert _connected(client)  # first invocation connected
     second = _run(client, mcp_tool_ir("fake", "pid", {}))
-    # Same pid => the connection (subprocess) was reused, not re-spawned (m7.md §8 singleflight).
+    # Same pid => the connection (subprocess) was reused, not re-spawned (singleflight).
     assert second["output"] == first["output"]
 
 
@@ -149,7 +149,7 @@ def test_tool_not_in_list_binds_err_when_not_connected(
 
 
 def test_mcp_tool_error_binds_err(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:
-    # The server reports a tool-level error (isError) -> bind err, run continues (m7.md §8).
+    # The server reports a tool-level error (isError) -> bind err, run continues.
     _register(client)
     with caplog.at_level(logging.INFO, logger="theygent.control_plane.walker"):
         body = _run(client, mcp_tool_ok_err_ir("fake", "boom", {}))
@@ -162,7 +162,7 @@ def test_mcp_tool_error_binds_err(client: TestClient, caplog: pytest.LogCaptureF
 
 
 def test_arg_templating_through_mcp(client: TestClient) -> None:
-    # $in.<port>.<field> reference resolution proved through the mcp_tool path (m7.md §8 / M10).
+    # $in.<port>.<field> reference resolution proved through the mcp_tool path.
     _register(client)
     body = _run(
         client,
@@ -174,8 +174,8 @@ def test_arg_templating_through_mcp(client: TestClient) -> None:
 
 
 def test_transport_failure_reconnects(client: TestClient) -> None:
-    # The server process dies between calls; the next invocation reconnects and completes
-    # (m7.md §8). Proven by the pid changing — a fresh subprocess was spawned.
+    # The server process dies between calls; the next invocation reconnects and completes.
+    # Proven by the pid changing — a fresh subprocess was spawned.
     _register(client)
     first = _run(client, mcp_tool_ir("fake", "pid", {}))
     assert first["status"] == "completed"
@@ -189,7 +189,7 @@ def test_connect_failure_binds_actionable_err(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     # A server that can't be (re)connected (bad command) -> after the reconnect-retry, bind err
-    # cleanly, no hang, run continues (m7.md §8 "if not, binds err cleanly"). This is the same code
+    # cleanly, no hang, run continues. This is the same code
     # path a post-retry transport failure takes, so it's where we assert the payload is ACTIONABLE:
     # an empty string or a raw OS blob would pass "err bound" but leave the agent unable to act.
     _register(client, name="bad", command="theygent-no-such-binary-zzz")
@@ -204,7 +204,7 @@ def test_connect_failure_binds_actionable_err(
 
 
 def test_readyz_ready_with_unconnected_server(client: TestClient) -> None:
-    # §7 policy: a registered-but-unconnected MCP server does NOT make the control-plane not-ready.
+    # A registered-but-unconnected MCP server does NOT make the control-plane not-ready.
     _register(client)
     resp = client.get("/readyz")
     assert resp.status_code == 200
@@ -213,12 +213,12 @@ def test_readyz_ready_with_unconnected_server(client: TestClient) -> None:
     assert any(s["name"] == "fake" and not s["connected"] for s in body["mcp"]["servers"])
 
 
-# ── M9 §2.3: registry persists across restart (finding F6.1) ───────────────────
+# ── registry persistence across restart ───────────────────────────────────────
 
 
 def test_mcp_registration_persists_across_restart(fake_inference, pg_url: str) -> None:
-    # Before M9 the McpManager was in-memory: every restart lost the registration. Now it persists
-    # to Postgres and rehydrates on startup (connections stay lazy — only registration survives).
+    # The McpManager persists registrations to Postgres and rehydrates on startup
+    # (connections stay lazy — only registration survives).
     from theygent_control_plane.app import create_app
 
     app1 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)

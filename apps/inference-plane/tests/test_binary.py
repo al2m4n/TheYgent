@@ -1,4 +1,4 @@
-"""Binary resolution — env -> PATH -> fail loudly (plan §"Binary resolution")."""
+"""Binary resolution — env -> PATH -> fail loudly."""
 
 from __future__ import annotations
 

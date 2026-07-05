@@ -1,6 +1,6 @@
-"""The durable runtime (M13) — DBOS-backed resume + native durable schedules.
+"""The durable runtime — DBOS-backed resume + native durable schedules.
 
-The ONE place the ``dbos`` import lives (decisions D4): ``walker.py``, the node handlers, and the IR
+The ONE place the ``dbos`` import lives: ``walker.py``, the node handlers, and the IR
 stay runtime-agnostic; this package wraps the runtime-agnostic activity executors as ``@DBOS.step``
 and lowers the IR to the single registered ``theygent_run`` workflow. Importing this package applies
 the DBOS decorators (registering the workflows/steps); a process activates them with

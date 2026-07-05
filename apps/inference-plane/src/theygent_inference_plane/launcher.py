@@ -1,6 +1,6 @@
 """The EngineLauncher seam + the managed engines (llama.cpp, MLX, vLLM).
 
-This is the load-bearing seam (M1 plan §"EngineLauncher protocol"): every managed
+This is the load-bearing seam (the ``EngineLauncher`` protocol): every managed
 engine implements the *same* ``EngineLauncher`` protocol, so the fast suite is
 everything-real-except-the-weights via a fake, and the ``EngineManager`` stays
 engine-agnostic. Adding MLX (engine #2) and vLLM (#3) required **zero EngineManager
@@ -23,8 +23,9 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import IO, Protocol, runtime_checkable
 
 import httpx
 from theygent_ir import Capabilities, ManagedBinding
@@ -86,23 +87,55 @@ async def _health_ok(base_url: str) -> bool:
         return False
 
 
+def _output_tail(log: IO[bytes], *, limit: int = 2000) -> str:
+    """Best-effort tail of a dead/terminated child's captured output, for the crash message.
+    Only safe to call once the child is gone (parent and child share the file offset)."""
+    try:
+        log.seek(0)
+        data = log.read()
+    except OSError:
+        return ""
+    if not data:
+        return ""
+    text = data.decode("utf-8", "replace").strip()
+    return f"\n--- engine output (tail) ---\n{text[-limit:]}" if text else ""
+
+
 async def _spawn_openai_server(
     cmd: list[str], base_url: str, *, startup_timeout: float
 ) -> subprocess.Popen[bytes]:
-    """Spawn an OpenAI-compatible server subprocess and wait until it is healthy."""
-    proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + startup_timeout
-    while loop.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(f"engine exited early (code {proc.returncode}): {cmd[0]}")
-        if await _health_ok(base_url):
-            return proc
-        await asyncio.sleep(0.25)
-    proc.terminate()
-    raise TimeoutError(f"engine {cmd[0]} did not become ready within {startup_timeout}s")
+    """Spawn an OpenAI-compatible server subprocess and wait until it is healthy.
+
+    stdout+stderr go to an anonymous temp file rather than being discarded: when the engine
+    crashes at startup (a missing Metal/CUDA runtime, an unresolvable model, bad flags) its
+    traceback is the only thing that says *why*, so we fold the tail into the raised error. A
+    temp file (not a PIPE) is used deliberately — a long-lived server whose output nobody drains
+    would eventually block on a full pipe buffer. The parent's handle is dropped once startup
+    resolves; the child keeps its own fd and the file is reclaimed when the engine exits.
+    """
+    log = tempfile.TemporaryFile()
+    try:
+        proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
+            cmd, stdout=log, stderr=subprocess.STDOUT
+        )
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + startup_timeout
+        while loop.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"engine exited early (code {proc.returncode}): {cmd[0]}{_output_tail(log)}"
+                )
+            if await _health_ok(base_url):
+                return proc
+            await asyncio.sleep(0.25)
+        proc.terminate()
+        raise TimeoutError(
+            f"engine {cmd[0]} did not become ready within {startup_timeout}s{_output_tail(log)}"
+        )
+    finally:
+        # Drop the parent's copy of the fd. On success the child keeps its own dup and logs into
+        # the (now-anonymous) file for its lifetime; on failure we've already read the tail above.
+        log.close()
 
 
 class _SubprocessHandle:
@@ -140,7 +173,7 @@ class _SubprocessHandle:
             self._proc.wait(timeout=5)
 
 
-# ── llama.cpp (managed, proven in M1) ───────────────────────────────────
+# ── llama.cpp (managed, proven) ─────────────────────────────────────────
 
 
 class LlamaCppHandle(_SubprocessHandle):
@@ -204,7 +237,7 @@ class LlamaCppLauncher:
         else:  # local-path | url
             cmd += ["-m", binding.model]
         if binding.modality == "embeddings":
-            # llama.cpp is the "one binary, many modalities via flags" engine (M20 §1): the SAME
+            # llama.cpp is the "one binary, many modalities via flags" engine: the SAME
             # llama-server serves /v1/embeddings once embeddings mode is on. Pooling must not be
             # `none` for the OpenAI endpoint (it returns one vector per input) → `mean`.
             cmd += ["--embeddings", "--pooling", "mean"]
@@ -246,10 +279,11 @@ def _fetch_hf_config(model: str) -> str | None:
 
 
 # ── reasoning ("thinking") detection from the chat template ─────────────────
-# The pure detector lives in ``capabilities.py`` — shared with the M16 catalog, which runs the SAME
-# heuristic against Hugging Face metadata at browse time (no download). Re-exported here under the
-# module-private names the probe and tests already use, so the probe's honest *local* signal (no
-# network, no model-name guessing) and the catalog's browse-time hint can never drift apart.
+# The pure detector lives in ``capabilities.py`` — shared with the HF catalog browser, which runs
+# the SAME heuristic against Hugging Face metadata at browse time (no download). Re-exported here
+# under the module-private names the probe and tests already use, so the probe's honest *local*
+# signal (no network, no model-name guessing) and the catalog's browse-time hint can never drift
+# apart.
 _REASONING_MARKERS = REASONING_MARKERS
 _template_implies_reasoning = template_implies_reasoning
 
@@ -400,9 +434,9 @@ class MlxLauncher:
 # ── MLX vision (managed — the `mlx` engine, `vision` modality) ───────────
 # A DIFFERENT program from mlx_lm.server: mlx-vlm ships its own OpenAI-compatible server for
 # vision-language models, served on /v1/chat/completions with image_url content parts (vision is a
-# sub-capability of chat — M18 §1.3). Same EngineLauncher protocol + spawn lifecycle as mlx_lm; the
+# sub-capability of chat). Same EngineLauncher protocol + spawn lifecycle as mlx_lm; the
 # manager dispatches to it purely by the (engine, modality) key and never learns there are two MLX
-# servers (M20 §1 — zero EngineManager caller changes).
+# servers (zero EngineManager caller changes).
 
 
 class MlxVlmHandle(_SubprocessHandle):
@@ -431,8 +465,9 @@ class MlxVlmLauncher:
     """Spawns ``mlx_vlm.server`` for an Apple-Silicon VLM — the MLX ``vision`` modality.
 
     UNPROVEN until its env-gated integration test runs green here (mlx-vlm is not installed by
-    default); "written + type-checks" is not "works" (the M1 lesson). Same protocol/lifecycle shape
-    as ``MlxLauncher`` — the manager cannot tell them apart.
+    default); "written + type-checks" is not "works" — a lesson learned from the first engine
+    integration. Same protocol/lifecycle shape as ``MlxLauncher`` — the manager cannot tell them
+    apart.
     """
 
     ENV_VAR = "THEYGENT_MLX_VLM_BIN"
@@ -506,13 +541,13 @@ class ManagedLauncherSet:
     the non-chat modalities) dropped in without touching the manager. ``launch(binding)`` keeps its
     exact signature; the key is private to this set.
 
-    M20: the dispatch key grew from the engine alone to ``(engine, modality)`` so one engine can
+    The dispatch key spans ``(engine, modality)`` so one engine can
     serve several modalities by *different programs* (``mlx``: ``mlx_lm.server`` chat vs
     ``mlx_vlm.server`` vision) or the *same binary with different flags* (``llamacpp``:
     ``llama-server``, ``+ --embeddings``). A bare-string key (``"llamacpp"``) is normalized to
     ``(engine, "chat")``, so a chat-only set (and the fast-suite stubs) construct unchanged.
 
-    **Fail-closed dispatch (M19 "reject, don't serve wrong").** Lookup is on the EXACT
+    **Fail-closed dispatch (reject, don't serve wrong).** Lookup is on the EXACT
     ``(engine, modality)`` key — there is NO fallback to the chat launcher. An ``(mlx, embeddings)``
     binding when no ``(mlx, embeddings)`` launcher is registered is *rejected* (503), never silently
     spawned on ``mlx_lm.server`` (where an embeddings request would get a wrong, chat shape with no
@@ -532,7 +567,7 @@ class ManagedLauncherSet:
         }
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
-        # EXACT (engine, modality) — no chat fallback (fail-closed; M19 reject-don't-serve-wrong).
+        # EXACT (engine, modality) — no chat fallback (fail-closed: reject, don't serve wrong).
         launcher = self._by_key.get((binding.binding, binding.modality))
         if launcher is None:
             raise EngineUnavailableError(

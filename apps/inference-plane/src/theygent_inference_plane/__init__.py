@@ -1,6 +1,6 @@
-"""theygent inference plane (Milestone 1: llama.cpp only).
+"""theygent inference plane (llama.cpp only).
 
-Two HTTP surfaces, never conflated (theygent-stack-9.1.md §9.1.0):
+Two HTTP surfaces, never conflated:
   * data plane  /v1/*    — OpenAI-compatible; the `model` field is a LOGICAL id
   * management plane /admin/* — theygent-native registry / lifecycle / cache
 

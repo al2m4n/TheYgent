@@ -1,4 +1,4 @@
-"""Core observability unit tests (M17) — the wrapper + stores against real PG, no walker yet.
+"""Core observability unit tests — the wrapper + stores against real PG, no walker yet.
 
 These prove the seam mechanics in isolation (the walker/API tests build on them): a node span +
 node_io land, capture policy gates payloads, the cap truncates, worker attribution is stamped, and
@@ -149,7 +149,7 @@ async def test_over_cap_payload_truncates(pg_url: str) -> None:
 
 
 async def test_reemit_is_idempotent_first_writer_wins(pg_url: str) -> None:
-    # The resume property in miniature (§4): re-running the wrapper with the SAME run/node id from a
+    # The resume property in miniature: re-running the wrapper with the SAME run/node id from a
     # different "worker" must NOT overwrite the row written by the worker that first completed it.
     engine, sm = await _make(pg_url)
     try:

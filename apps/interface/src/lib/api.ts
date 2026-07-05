@@ -1,9 +1,9 @@
-// The ONE module that talks HTTP (mirrors the cockpit's M8 §3.3 discipline). It owns the base
-// URL, the auth-header seam, and JSON error shaping. Every view calls through here — never
-// `fetch` directly — so the later real-auth milestone is a one-file change.
+// The ONE module that talks HTTP. It owns the base URL, the auth-header seam, and JSON error
+// shaping. Every view calls through here — never `fetch` directly — so the real-auth swap is a
+// one-file change.
 //
-// M15 consumes ONLY M11's registry endpoints (load/save an agent). It adds ZERO backend routes
-// (M15 §3): if a needed endpoint were missing we'd flag it, not work around it client-side.
+// This module consumes ONLY the registry endpoints (load/save an agent). It adds ZERO backend
+// routes: if a needed endpoint were missing we'd flag it, not work around it client-side.
 
 import type { IRDocument } from "@theygent/ir-types";
 import type {
@@ -75,7 +75,7 @@ async function request<T>(base: string, path: string, init: RequestInit = {}): P
   return (await res.json()) as T;
 }
 
-// ── M11 registry wire shapes (snake_case — the run surface convention) ───────
+// ── registry wire shapes (snake_case — the run surface convention) ───────────
 // These are the registry's read/write envelopes, NOT the IR. The IR itself is always a typed
 // `IRDocument` from @theygent/ir-types; these carry it plus version metadata.
 
@@ -110,9 +110,9 @@ export interface StoredVersion {
   content_hash: string;
   seq: number;
   created_at: string;
-  // The stored IR is the canonical, view-stripped §8.2 document with `contentHash` stamped; the
-  // layout lives in the separate `view` block (M11 §1.2). We re-attach `view` onto the IR before
-  // handing it to the adapter (see lib/agent.ts).
+  // The stored IR is the canonical, view-stripped document with `contentHash` stamped; the
+  // layout lives in the separate `view` block. We re-attach `view` onto the IR before handing
+  // it to the adapter (see lib/agent.ts).
   ir: IRDocument;
   view: Record<string, unknown> | null;
 }
@@ -134,8 +134,8 @@ export interface McpServerSummary {
   connected: boolean;
 }
 
-// The PUT /admin/mcp/servers/{name} body (M7 §3.2) — a stdio server definition. `env` carries the
-// user's secrets/paths into the spawned subprocess; it stays in the user's trust domain.
+// The PUT /admin/mcp/servers/{name} body — a stdio server definition. `env` carries the user's
+// secrets/paths into the spawned subprocess; it stays in the user's trust domain.
 export interface McpServerConfig {
   transport: "stdio";
   command: string;
@@ -150,7 +150,7 @@ export interface McpToolDescriptor {
   inputSchema?: Record<string, unknown> | null;
 }
 
-// ── M19 connection resource (the tool/MCP auth seam — §1.1) ──────────────────
+// ── connection resource (the tool/MCP auth seam) ─────────────────────────────
 // A server-side auth + config binding the IR references by id from its `tools` block. The wire shape
 // is `public_dump`: NON-SECRET `config` only, plus `hasSecret` (never the secret or its ref). The
 // `secret` is WRITE-ONLY on create/patch — it is encrypted server-side and NEVER returned.
@@ -175,7 +175,7 @@ export interface CreateConnectionBody {
   enabled?: boolean;
 }
 
-// ── M12 trigger (the deploy primitive — surfaced on the input node, §1.5) ────
+// ── trigger (the deploy primitive — surfaced on the input node) ──────────────
 export type TriggerKind = "http" | "schedule" | "webhook";
 
 export interface TriggerRecord {
@@ -203,7 +203,7 @@ export interface Capabilities {
   structuredOutput?: boolean;
   vision?: boolean;
   reasoning?: boolean;
-  // M18 §1.2: the modality descriptor the bench routes tester panels on. Frozen vocabulary
+  // The modality descriptor the bench routes tester panels on. Frozen vocabulary:
   // chat | vision | embeddings | audio.transcription | audio.speech.
   modalities?: string[];
   approximate?: boolean;
@@ -216,10 +216,10 @@ export interface Credential {
   hasValue: boolean;
 }
 
-// ── M16 catalog (discovery + install) wire shapes — NOT IR, just /admin/* shapes ─
+// ── catalog (discovery + install) wire shapes — NOT IR, just /admin/* shapes ──
 // These mirror the inference plane's normalized CatalogProvider types. They are catalog metadata,
-// never the agent IR (the IR stays a typed @theygent/ir-types IRDocument), so M15's "no hand-written
-// IR types" rule is untouched.
+// never the agent IR (the IR stays a typed @theygent/ir-types IRDocument), so the rule against
+// hand-written IR types is untouched.
 export type Fit = "fits" | "tight" | "too-large" | "unknown";
 
 export interface CatalogVariant {
@@ -277,11 +277,11 @@ export interface DownloadJob {
   error: string | null;
 }
 
-// ── M18 observability trace span (snake_case — the run waterfall; M17 §3) ────
-// `name == node_id` for node spans is the canvas-overlay join (M17 §1.6 / M18 §2.3).
-// The full M17 span: `parent_span_id` makes the run → node → phase TREE explicit (the rich
-// waterfall builds hierarchy from it), `status`/`error` colour the bar, `attributes` carry the
-// scalar GenAI/tool metadata (never payloads — those come from `/nodes/{id}/io`).
+// ── observability trace span (snake_case — the run waterfall) ────────────────
+// `name == node_id` for node spans is the canvas-overlay join key.
+// `parent_span_id` makes the run → node → phase TREE explicit (the rich waterfall builds
+// hierarchy from it), `status`/`error` colour the bar, `attributes` carry the scalar GenAI/tool
+// metadata (never payloads — those come from `/nodes/{id}/io`).
 export interface TraceSpan {
   id: string;
   span_id?: string;
@@ -303,7 +303,7 @@ export interface TraceSpan {
   bytes_out?: number | null;
 }
 
-// ── Per-node I/O (the per-step CONTEXT behind a waterfall row; M17 §5) ───────
+// ── Per-node I/O (the per-step CONTEXT behind a waterfall row) ───────────────
 // The gated payloads a node received + sent. `inputs`/`outputs` are null when capture is off /
 // metadata-only / not permitted — `reason` + `capture_level` say which (never an error/500). Raw
 // payloads stay in the user's plane; a hosted topology defaults to metadata-only (sovereignty).
@@ -319,8 +319,8 @@ export interface RunNodeIo {
   reason: string | null;
 }
 
-// ── M18 bench store wire shapes (snake_case — control-plane convention) ──────
-// Metrics + digests only; raw payloads never cross into these (§1.6 / §10).
+// ── bench store wire shapes (snake_case — control-plane convention) ──────────
+// Metrics + digests only; raw payloads never cross into these.
 export type BenchTargetKind = "model" | "agent";
 
 export interface BenchRunInput {
@@ -432,7 +432,7 @@ export const api = {
   getThread: (id: string) =>
     request<ThreadDetail>(CONTROL_PLANE_URL, `/threads/${encodeURIComponent(id)}`),
 
-  // ── control-plane observability (M17 — the run waterfall) ──────────────────
+  // ── control-plane observability (the run waterfall) ──────────────────────────
   // The waterfall payload: the run's span tree (timing + status + worker attribution + edge sizes).
   // NO payloads — those are the lazy /io call below. (The bench has its own getRunTrace/getRunIo that
   // return the {runId,status,spans} envelope; this run-detail surface consumes the span list + the
@@ -483,8 +483,8 @@ export const api = {
       `/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`,
     ),
 
-  // Create a new agent + its first version. The id/version come FROM the IR (M11 §1.1). The body
-  // is `{ ir }` where `ir` carries its `view` block; the server strips `view`, hashes, persists.
+  // Create a new agent + its first version. The id/version come FROM the IR. The body is `{ ir }`
+  // where `ir` carries its `view` block; the server strips `view`, hashes, persists.
   createAgent: (body: { ir: IRDocument; name?: string }) =>
     request<AgentDetail>(CONTROL_PLANE_URL, "/agents", {
       method: "POST",
@@ -498,8 +498,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  // Agent bench: invoke a saved, PINNED agent via the M11 run path (the interactive, non-durable
-  // path). Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
+  // Agent bench: invoke a saved, PINNED agent via the interactive, non-durable run path.
+  // Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
   runAgent: (
     id: string,
     body: { input?: unknown; version?: string; content_hash?: string; stream?: boolean },
@@ -533,11 +533,11 @@ export const api = {
       { method: "POST", body: JSON.stringify({ input }) },
     ),
 
-  // M18 §2.6 tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the
-  // EXISTING /graphs/runs path — which already accepts inline IR (M5 §1). This adds NO new backend
-  // and NO new execution path: it is the agent/run path pointed at a single tool (§2.6), NOT an
-  // /admin/mcp/.../invoke endpoint. Non-stream by default → terminal result; the tool's structured
-  // output comes back JSON-serialized in `output` (app.py `_coerce_output`). Mirrors `runAgent`.
+  // Tool/MCP tester: run an INLINE one-node graph (input → mcp_tool → output) through the
+  // existing /graphs/runs path — which already accepts inline IR. This adds NO new backend and NO
+  // new execution path: it is the standard agent/run path pointed at a single tool, NOT a
+  // dedicated /admin/mcp/.../invoke endpoint. Non-stream by default → terminal result; the tool's
+  // structured output comes back JSON-serialized in `output` (app.py `_coerce_output`). Mirrors `runAgent`.
   runGraph: (body: { ir: IRDocument; input?: unknown; stream?: boolean }) =>
     request<{ runId: string; status: string; output?: string; error?: string }>(
       CONTROL_PLANE_URL,
@@ -545,8 +545,8 @@ export const api = {
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
     ),
 
-  // M18 agent bench trace (observability §1.5). Degrades: if observability hasn't landed this 404s
-  // and the bench falls back to persisted output. Spans are the per-node waterfall; `name == node.id`
+  // Agent bench trace (observability). Degrades: if observability isn't available this 404s and
+  // the bench falls back to persisted output. Spans are the per-node waterfall; `name == node.id`
   // is the canvas-overlay join.
   getRunTrace: (runId: string) =>
     request<{ runId: string; status: string; spans: TraceSpan[] }>(
@@ -554,9 +554,9 @@ export const api = {
       `/runs/${encodeURIComponent(runId)}/trace`,
     ),
 
-  // The per-step context behind a waterfall row: the input a node received + the output it sent
-  // (M17 §5). Gated by the agent's capture policy — null payloads + a `reason` when off/metadata,
-  // never an error. Lazy: fetched only when a node row is clicked.
+  // The per-step context behind a waterfall row: the input a node received + the output it sent.
+  // Gated by the agent's capture policy — null payloads + a `reason` when off/metadata, never an
+  // error. Lazy: fetched only when a node row is clicked.
   getRunIo: (runId: string, nodeId: string) =>
     request<RunNodeIo>(
       CONTROL_PLANE_URL,
@@ -568,7 +568,7 @@ export const api = {
   listModels: () =>
     request<{ models: ModelView[] }>(INFERENCE_URL, "/admin/models").then((r) => r.models),
 
-  // ── control plane: M19 connections (the tool/MCP auth seam) ────────────────
+  // ── control plane: connections (the tool/MCP auth seam) ─────────────────────
   // The secret is write-only (create/patch); the wire never returns it (only `hasSecret`).
   listConnections: () =>
     request<{ connections: ConnectionRecord[] }>(CONTROL_PLANE_URL, "/connections").then(
@@ -595,7 +595,7 @@ export const api = {
       method: "DELETE",
     }),
 
-  // ── control plane: M12 triggers (surfaced on the input node, §1.5) ─────────
+  // ── control plane: triggers (surfaced on the input node) ─────────────────────
   listTriggers: () =>
     request<{ triggers: TriggerRecord[] }>(CONTROL_PLANE_URL, "/triggers").then((r) => r.triggers),
 
@@ -606,7 +606,7 @@ export const api = {
     ),
 
   // ── control plane: MCP server registry (the MCP page — define/manage servers) ─
-  // Register or update a stdio MCP server (M7 §3.2). `env` stays in the user's trust domain.
+  // Register or update a stdio MCP server. `env` stays in the user's trust domain.
   putMcpServer: (name: string, cfg: McpServerConfig) =>
     request<McpServerSummary>(CONTROL_PLANE_URL, `/admin/mcp/servers/${encodeURIComponent(name)}`, {
       method: "PUT",
@@ -640,8 +640,8 @@ export const api = {
     ),
 
   // ── inference plane: model + engine registry (the "Installed" tab) ─────────
-  // Reuses the cockpit's M8 surface verbatim (no new routes for these): register / lifecycle /
-  // capabilities all on the user-controlled inference plane, called directly.
+  // Register / lifecycle / capabilities all on the user-controlled inference plane, called
+  // directly (no new routes added here).
   getEngines: () => request<EnginesView>(INFERENCE_URL, "/admin/engines"),
 
   getModelCapabilities: (logicalId: string) =>
@@ -690,7 +690,7 @@ export const api = {
       method: "POST",
     }),
 
-  // ── inference plane: M16 catalog (the "Discover" tab) ──────────────────────
+  // ── inference plane: catalog (the "Discover" tab) ───────────────────────────
   // Discovery + install live in the inference plane (the user's trust domain). Install downloads
   // weights HERE and registers them locally — theygent never sees the bytes (the sovereignty promise).
   searchCatalogModels: (
@@ -743,9 +743,9 @@ export const api = {
       { method: "POST" },
     ),
 
-  // ── control plane: M18 bench store (metrics + digests; snake_case wire) ─────
+  // ── control plane: bench store (metrics + digests; snake_case wire) ─────────
   // Persists what the bench PRODUCED — never raw data-plane payloads (those go straight to the
-  // inference plane, §10). All under the control-plane base URL.
+  // inference plane). All under the control-plane base URL.
   recordBenchRun: (body: BenchRunInput) =>
     request<BenchRunRecord>(CONTROL_PLANE_URL, "/bench/runs", {
       method: "POST",
@@ -827,10 +827,10 @@ export interface StreamHandle {
 /**
  * POST a run (or graph run) and stream its SSE body. Returns immediately with an event iterator so
  * the caller drives the UI. A pre-stream error (non-2xx) is thrown before the first event, exactly
- * as the backend surfaces 503/404/400 before the 200 SSE (M3/M5).
+ * as the backend surfaces 503/404/400 before the 200 SSE body.
  */
 export async function streamRun(
-  // /runs, /graphs/runs, or M11's /agents/{id}/runs (invoke-by-reference) — all share the SSE shape.
+  // /runs, /graphs/runs, or /agents/{id}/runs (invoke-by-reference) — all share the SSE shape.
   path: string,
   body: unknown,
 ): Promise<StreamHandle> {
@@ -847,7 +847,7 @@ export async function streamRun(
 }
 
 /**
- * GET an SSE stream (M17: the live trace waterfall `/runs/{id}/trace/stream`). Same frame parser as
+ * GET an SSE stream (the live trace waterfall `/runs/{id}/trace/stream`). Same frame parser as
  * `streamRun`, but a GET — the run executes elsewhere; this only observes its span open/close events.
  */
 export async function streamGet(path: string): Promise<StreamHandle> {

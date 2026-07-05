@@ -1,14 +1,14 @@
-"""``RunStore`` — Postgres-backed run persistence + thread memory (M4 §4/§5).
+"""``RunStore`` — Postgres-backed run persistence + thread memory.
 
-Replaces M3's in-memory ``RunRegistry``. Every method takes an ``AsyncSession`` handed in
-by the caller, who owns the transaction boundary (§1.2): the read path uses a request
+Replaces the earlier in-memory ``RunRegistry``. Every method takes an ``AsyncSession`` handed in
+by the caller, who owns the transaction boundary: the read path uses a request
 session; the run-execution path opens a transaction per logical operation (so the
 post-stream pair-write is atomic on its own). Nothing here commits — the caller does.
 
-Domain/persistence split (§1.3): callers see the Pydantic ``Run`` and plain message
+Domain/persistence split: callers see the Pydantic ``Run`` and plain message
 tuples; ``RunRow``/``MessageRow``/``ThreadRow`` never leak out.
 
-Thread memory is **mechanical, not smart** (§4): store the turns, replay them verbatim.
+Thread memory is **mechanical, not smart**: store the turns, replay them verbatim.
 No summarization, no token-budget truncation, no vector retrieval — full replay only.
 """
 
@@ -62,15 +62,15 @@ from theygent_control_plane.run import (
 
 
 def params_digest(params: dict[str, Any] | None) -> str:
-    """A deterministic identity for a param set (M18 §1.6) — two bench runs differing only in
+    """A deterministic identity for a param set — two bench runs differing only in
     ``temperature`` get different digests, so they are distinct results. Canonical JSON (sorted
-    no whitespace), the same discipline as the IR ``content_hash`` fixpoint (M11 §1.1)."""
+    no whitespace), the same discipline as the IR ``content_hash`` fixpoint."""
     canonical = json.dumps(params or {}, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def output_digest(output: str | None) -> str | None:
-    """A cheap content identity for the compare diff WITHOUT storing the raw output (§1.6 / §10).
+    """A cheap content identity for the compare diff WITHOUT storing the raw output.
     ``None`` output → ``None`` digest (an empty/absent result is not a content)."""
     if output is None:
         return None
@@ -78,7 +78,7 @@ def output_digest(output: str | None) -> str | None:
 
 
 def _to_run(row: RunRow) -> Run:
-    """Map a persistence row to the detached domain entity (§1.3)."""
+    """Map a persistence row to the detached domain entity."""
     return Run(
         id=row.id,
         thread_id=row.thread_id,
@@ -98,8 +98,9 @@ def _to_run(row: RunRow) -> Run:
     )
 
 
-# Terminal statuses get a real-time completion timestamp stamped (M12 §9 evidence gate). The
-# startup reconcile sweep deliberately does NOT use this path — a zombie's true end time is unknown.
+# Terminal statuses get a real-time completion timestamp stamped (evidence gate for duration/cost).
+# The startup reconcile sweep deliberately does NOT use this path — a zombie's true end time is
+# unknown.
 _TERMINAL_STATUSES = ("completed", "failed")
 
 
@@ -119,8 +120,8 @@ class RunStore:
         trigger_id: str | None = None,
     ) -> Run:
         # Graph fields default to None so the /runs path is unchanged; /graphs/runs passes them
-        # (the IR's id/version/contentHash — M5 §4). trigger_id defaults to None so every
-        # interactive path is unchanged; a schedule-/webhook-fired run passes it (M12 §2).
+        # (the IR's id/version/contentHash). trigger_id defaults to None so every
+        # interactive path is unchanged; a schedule-/webhook-fired run passes it.
         run = Run(
             model=model,
             thread_id=thread_id,
@@ -160,7 +161,7 @@ class RunStore:
         content_hash: str | None = None,
         trigger_id: str | None = None,
     ) -> Run:
-        """Idempotently create a run row with a CALLER-CHOSEN id (M13). The durable workflow uses
+        """Idempotently create a run row with a CALLER-CHOSEN id. The durable workflow uses
         its own ``DBOS.workflow_id`` as the run id so a resumed run reuses the same row and
         ``GET /runs/{id}`` correlates across a crash/resume. A DBOS step may re-execute if the
         process dies after the row commits but before the step result is journaled (at-least-once),
@@ -200,12 +201,11 @@ class RunStore:
     async def list_runs(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[Run]:
-        """Recent runs, newest first (M8 §1.1) — the cockpit home page.
+        """Recent runs, newest first — the cockpit home page.
 
         Keyset pagination on ``(created_at, id)`` DESC: ``before`` is a run id cursor; rows
         strictly older than that run are returned. A read-only list over already-persisted
-        rows — it adds no contract, it surfaces one (M8 §2). An unknown ``before`` id is
-        ignored (treated as no cursor), never an error.
+        rows. An unknown ``before`` id is ignored (treated as no cursor), never an error.
         """
         stmt = select(RunRow).order_by(RunRow.created_at.desc(), RunRow.id.desc()).limit(limit)
         if before is not None:
@@ -220,7 +220,7 @@ class RunStore:
     async def list_threads(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[ThreadSummary]:
-        """Recent threads, newest-activity first (M8 §1.3).
+        """Recent threads, newest-activity first.
 
         Each summary carries the message count, last-activity instant, and the first user
         message preview (always ``position == 0`` — turns are appended as user/assistant
@@ -276,7 +276,7 @@ class RunStore:
         ]
 
     async def get_thread(self, session: AsyncSession, thread_id: str) -> ThreadDetail | None:
-        """A thread and its messages in ``position`` order (M8 §1.3 thread detail)."""
+        """A thread and its messages in ``position`` order."""
         thread = await session.get(ThreadRow, thread_id)
         if thread is None:
             return None
@@ -325,31 +325,31 @@ class RunStore:
             raise KeyError(run_id)
         row.status = status
         row.error = error
-        # M14 §1.1: any non-waiting transition clears the waiting-node breadcrumb — a run is only
+        # Any non-waiting transition clears the waiting-node breadcrumb — a run is only
         # paused at a human node WHILE waiting; leaving the wait (resuming or terminalizing) clears
         # it so a completed/failed run never carries a stale awaiting_node.
         row.awaiting_node = None
-        # M9 §2.2: persist the final output on completion. Only written when provided (an empty
+        # Persist the final output on completion. Only written when provided (an empty
         # string IS a real terminal output and is stored; None means "don't touch", so a `streaming`
         # or `failed` transition leaves it NULL).
         if output is not None:
             row.output = output
         ts = now()
         row.updated_at = ts
-        # M12 §9 evidence gate: stamp the real completion instant on a real-time terminal transition
-        # so duration (completed_at - created_at) and run-interval concurrency are exact. A
-        # non-terminal transition (`streaming`) leaves it NULL; the reconcile sweep uses its own
-        # bulk path and never reaches here, so a swept zombie stays NULL (honest unknown end time).
+        # Stamp the real completion instant on a real-time terminal transition so duration
+        # (completed_at - created_at) and run-interval concurrency are exact. A non-terminal
+        # transition (`streaming`) leaves it NULL; the reconcile sweep uses its own bulk path
+        # and never reaches here, so a swept zombie stays NULL (honest unknown end time).
         if status in _TERMINAL_STATUSES:
             row.completed_at = ts
         await session.flush()
         return _to_run(row)
 
     async def mark_waiting(self, session: AsyncSession, run_id: str, node_id: str) -> Run:
-        """Pause a run at a ``human`` node (M14 §1.1): set status ``waiting`` and record which node
+        """Pause a run at a ``human`` node: set status ``waiting`` and record which node
         it is paused at, so ``POST /runs/{id}/resume`` can find the node (its schema + the delivery
         target). Idempotent (a recovered durable step re-marking the same wait is a no-op write). A
-        ``waiting`` run is excluded from M9's reconcile sweep, so it survives a restart while
+        ``waiting`` run is excluded from the reconcile sweep, so it survives a restart while
         paused — the whole point of the durable wait. Does NOT stamp ``completed_at`` (not done)."""
         row = await session.get(RunRow, run_id)
         if row is None:  # pragma: no cover - the run is always created first
@@ -372,30 +372,31 @@ class RunStore:
             update(RunRow)
             .where(RunRow.id == run_id, RunRow.status.in_(("created", "streaming")))
             # A client-disconnect terminalization is a real-time terminal transition, so stamp
-            # completed_at (M12 §9) — unlike the startup reconcile sweep, this IS the run's end.
+            # This is a real-time terminal transition, so stamp completed_at — unlike the startup
+            # reconcile sweep, this IS the run's end.
             .values(status="failed", error=reason, updated_at=ts, completed_at=ts)
         )
         return bool(cast("CursorResult[Any]", result).rowcount)
 
     async def reconcile_orphaned_runs(self, session: AsyncSession) -> int:
-        """Sweep runs left non-terminal by a control-plane crash to a terminal ``failed`` state
-        (M9 §2.1 / finding F5.2). The in-process M5 walker can't resume an in-flight run, but a
-        zombie stuck at ``streaming``/``created`` forever — ``error`` null, ``updated_at`` frozen —
-        is unacceptable: it lies about being alive. This is the cheap honest mitigation (not
-        resume-after-crash — that's the durable-runtime fork, §4). A distinct reason string keeps
+        """Sweep runs left non-terminal by a control-plane crash to a terminal ``failed`` state.
+        The in-process walker can't resume an in-flight run, but a zombie stuck at
+        ``streaming``/``created`` forever — ``error`` null, ``updated_at`` frozen — is
+        unacceptable: it lies about being alive. This is the cheap honest mitigation (not
+        resume-after-crash — that's the durable-runtime fork). A distinct reason string keeps
         an interrupted run distinguishable from a real inference failure. Returns the count swept.
 
         Run once at startup, before serving requests. Bulk UPDATE (no per-row domain mapping): the
-        caller owns the transaction (§1.2), exactly like every other store method.
+        caller owns the transaction, exactly like every other store method.
 
-        Deliberately does NOT set ``completed_at`` (M12 §9): a zombie's real end time is unknown
+        Deliberately does NOT set ``completed_at``: a zombie's real end time is unknown
         (it died with the prior process), so ``now()`` here would be reconcile-time garbage that
         skews the duration/cost evidence. A ``failed`` run with NULL ``completed_at`` reads honestly
         as "crashed, end time unknown", distinct from a run that failed in real time."""
-        # The sweep is a WHITELIST of in-flight statuses, so M14's ``waiting`` is excluded for free
-        # AND explicitly (m14.md §1.1 / §4 the Do-NOT): a run paused at a ``human`` node is durably
-        # checkpointed on DBOS.recv and may wait for days across restarts — reconciling it to
-        # ``failed`` would defeat the durable wait. ``waiting`` is intentionally NOT in this set.
+        # The sweep is a WHITELIST of in-flight statuses, so ``waiting`` is excluded for free
+        # AND explicitly: a run paused at a ``human`` node is durably checkpointed and may wait for
+        # days across restarts — reconciling it to ``failed`` would defeat the durable wait.
+        # ``waiting`` is intentionally NOT in this set.
         #
         # Durable runs are excluded the same way: their workflow engine recovers and resumes them
         # after a crash (that is the point of durability), and in the split API/worker topology a
@@ -417,7 +418,7 @@ class RunStore:
         return cast("CursorResult[Any]", result).rowcount or 0
 
     async def ensure_thread(self, session: AsyncSession, thread_id: str) -> None:
-        """Idempotently create the thread row (existing or new — §4). ON CONFLICT DO
+        """Idempotently create the thread row (existing or new). ON CONFLICT DO
         NOTHING so a follow-up run in an existing thread is a no-op, not a PK violation."""
         ts = now()
         await session.execute(
@@ -430,7 +431,7 @@ class RunStore:
         self, session: AsyncSession, thread_id: str
     ) -> list[dict[str, str]]:
         """Prior turns ordered by ``position`` (the ordering key, never a timestamp), as
-        OpenAI-shaped ``{role, content}`` dicts ready to prepend to the new input (§4)."""
+        OpenAI-shaped ``{role, content}`` dicts ready to prepend to the new input."""
         rows = (
             await session.execute(
                 select(MessageRow.role, MessageRow.content)
@@ -451,10 +452,10 @@ class RunStore:
     ) -> None:
         """Append the user+assistant pair at the next two positions.
 
-        Called inside the caller's single success transaction (§4), alongside the run's
+        Called inside the caller's single success transaction, alongside the run's
         ``completed`` update — so the pair and the run state land together or not at all.
         The thread row is locked first (FOR UPDATE) so concurrent runs in the same thread
-        can't pick the same ``position`` (the control-plane scales horizontally — §8)."""
+        can't pick the same ``position`` (the control-plane scales horizontally)."""
         await session.execute(
             select(ThreadRow.id).where(ThreadRow.id == thread_id).with_for_update()
         )
@@ -497,7 +498,7 @@ class RunStore:
 
 
 def _to_mcp_config(row: McpServerRow) -> McpServerConfig:
-    """Map a persistence row to the manager's domain config (§1.3) — both transports round-trip
+    """Map a persistence row to the manager's domain config — both transports round-trip
     (an http registration rehydrates with its url/headers, never as a broken stdio one)."""
     transport = "http" if row.transport == "http" else "stdio"
     return McpServerConfig(
@@ -512,18 +513,19 @@ def _to_mcp_config(row: McpServerRow) -> McpServerConfig:
 
 
 class McpStore:
-    """Postgres persistence for MCP server registrations (M9 §2.3 / F6.1).
+    """Postgres persistence for MCP server registrations.
 
-    Same M4 discipline as ``RunStore``: stateless ops over a caller-provided session, domain/ORM
-    split (the manager's ``McpServerConfig`` is the domain shape; ``McpServerRow`` never leaks out).
+    Stateless ops over a caller-provided session, domain/ORM split (the manager's
+    ``McpServerConfig`` is the domain shape; ``McpServerRow`` never leaks out).
     Persists the *registration* only — the live connection/process handle is the manager's, lazy
     and never stored. Distinct from the inference-plane model registry, which persists locally to
-    the inference plane, never here (the plane boundary — theygent-stack.md §10)."""
+    the inference plane, never here (the plane boundary: only the control-plane's own registrations
+    go to Postgres)."""
 
     async def upsert_server(
         self, session: AsyncSession, name: str, config: McpServerConfig
     ) -> None:
-        """Insert or replace a registration (PUT is idempotent — m7.md §3.2)."""
+        """Insert or replace a registration (PUT is idempotent)."""
         ts = now()
         values = {
             "name": name,
@@ -559,17 +561,17 @@ class McpStore:
         await session.execute(delete(McpServerRow).where(McpServerRow.name == name))
 
     async def list_servers(self, session: AsyncSession) -> list[tuple[str, McpServerConfig]]:
-        """Every persisted registration, for rehydration on startup (m7.md §3.2 — connections stay
+        """Every persisted registration, for rehydration on startup (connections stay
         lazy; this restores the *registry*, not the live connections)."""
         rows = (await session.execute(select(McpServerRow))).scalars().all()
         return [(row.name, _to_mcp_config(row)) for row in rows]
 
 
 class VersionConflict(Exception):
-    """Publishing *different* content under an existing ``(agent_id,version)`` (M11 §1.2).
-    Versions are immutable: a deployed/triggered (M12) version must never silently drift, so a
+    """Publishing *different* content under an existing ``(agent_id,version)``.
+    Versions are immutable: a deployed/triggered version must never silently drift, so a
     re-publish under the same coordinate with a different ``content_hash`` is rejected — bump the
-    version (§8.2). Re-publishing *identical* content is idempotent (no conflict)."""
+    version. Re-publishing *identical* content is idempotent (no conflict)."""
 
     def __init__(self, agent_id: str, version: str, existing_hash: str, new_hash: str) -> None:
         super().__init__(
@@ -593,15 +595,14 @@ def _stored_version(row: AgentVersionRow) -> StoredVersion:
 
 
 class AgentStore:
-    """Postgres persistence for the agent registry (M11) — the first big consumer of the M4
-    conventions after run/thread/message. Same discipline (M4 §1.2/§1.3): stateless ops over a
-    caller-provided session (the caller owns the transaction boundary), domain entities out
+    """Postgres persistence for the agent registry. Stateless ops over a caller-provided session
+    (the caller owns the transaction boundary), domain entities out
     (``AgentDetail``/``AgentSummary``/``AgentVersion``/``StoredVersion``), ORM rows never leak.
 
-    The registry stores the canonical, view-stripped §8.2 IR document — it invents no "agent format"
-    (M11 §0/§7). The ``content_hash`` it stores is the *walker's* hash for the same IR (computed by
-    the one ``theygent_ir.content_hash`` function — §1.1), so a graph the walker ran and an agent
-    the registry stored can never disagree. Versions are immutable (§1.2): the ``(agent,version)``
+    The registry stores the canonical, view-stripped IR document — it invents no "agent format".
+    The ``content_hash`` it stores is the *walker's* hash for the same IR (computed by
+    the one ``theygent_ir.content_hash`` function), so a graph the walker ran and an agent
+    the registry stored can never disagree. Versions are immutable: the ``(agent,version)``
     UNIQUE index is the guard, and ``add_version`` rejects a same-coordinate, different-content
     publish loudly (``VersionConflict``)."""
 
@@ -609,8 +610,8 @@ class AgentStore:
         return await session.get(AgentRow, agent_id)
 
     async def create_agent(self, session: AsyncSession, *, agent_id: str, name: str) -> None:
-        """Create the stable agent identity row (§2). The agent ``id`` is the IR document's own §8.2
-        ``id`` (§1.1) — the IR carries its identity; the registry persists it under that key. Caller
+        """Create the stable agent identity row. The agent ``id`` is the IR document's own
+        ``id`` — the IR carries its identity; the registry persists it under that key. Caller
         has already checked the id is free (→ 409 in the endpoint); the PK is the safety net."""
         ts = now()
         session.add(AgentRow(id=agent_id, name=name, created_at=ts, updated_at=ts))
@@ -629,12 +630,12 @@ class AgentStore:
         """Append an immutable version, returning ``(version_meta, created)``. ``created`` is False
         when the identical content already exists under this ``(agent_id, version)`` — a re-publish
         of the same bytes is idempotent (no conflict, no new row). Publishing *different* content
-        under an existing coordinate raises :class:`VersionConflict` (§1.2 immutability).
+        under an existing coordinate raises :class:`VersionConflict` (immutability guard).
 
         The agent row is locked FOR UPDATE first (like ``append_turn`` locks the thread row) so
         concurrent publishes can't pick the same ``seq`` or both insert the same version — the
-        control-plane scales horizontally (§1.1). ``seq`` is ``max(seq) + 1`` per agent, the
-        monotonic ordering key (M4 §3), starting at 1."""
+        control-plane scales horizontally. ``seq`` is ``max(seq) + 1`` per agent, the
+        monotonic ordering key, starting at 1."""
         # Serialize against concurrent publishes to this agent (seq allocation + the existence
         # check must be atomic — the UNIQUE index is the loud last-resort guard).
         await session.execute(select(AgentRow.id).where(AgentRow.id == agent_id).with_for_update())
@@ -692,9 +693,9 @@ class AgentStore:
     async def list_agents(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[AgentSummary]:
-        """Saved agents, newest first (M8 §2 list shape) — the cockpit Agents page. Each row carries
+        """Saved agents, newest first — the cockpit Agents page. Each row carries
         the latest version coordinate (highest ``seq``) + a version count, composed in one query so
-        the cockpit needs no second call (no aggregating endpoint — M11 §5). Keyset pagination on
+        the cockpit needs no second call. Keyset pagination on
         ``(created_at, id)`` DESC, mirroring ``list_runs``; an unknown ``before`` id is ignored."""
         agg = (
             select(
@@ -742,7 +743,7 @@ class AgentStore:
         ]
 
     async def get_agent_detail(self, session: AsyncSession, agent_id: str) -> AgentDetail | None:
-        """An agent and its versions, newest first by ``seq`` (M11 §3, GET /agents/{id})."""
+        """An agent and its versions, newest first by ``seq`` (GET /agents/{id})."""
         agent = await session.get(AgentRow, agent_id)
         if agent is None:
             return None
@@ -777,7 +778,7 @@ class AgentStore:
         self, session: AsyncSession, agent_id: str, version: str
     ) -> StoredVersion | None:
         """The stored IR (+ view) for one ``(agent_id, version)`` — GET /agents/{id}/versions/{v}
-        and the pinned ``version`` invoke (M11 §3)."""
+        and the pinned ``version`` invoke."""
         row = (
             await session.execute(
                 select(AgentVersionRow).where(
@@ -790,7 +791,7 @@ class AgentStore:
     async def get_version_by_hash(
         self, session: AsyncSession, agent_id: str, content_hash: str
     ) -> StoredVersion | None:
-        """The stored IR for a content-addressed (pinned-by-hash) invoke (M11 §3). ``content_hash``
+        """The stored IR for a content-addressed (pinned-by-hash) invoke. ``content_hash``
         is indexed but not unique — two versions can share identical content (same hash); the
         highest-``seq`` match is returned deterministically. Scoped to ``agent_id`` so a hash only
         resolves within its agent."""
@@ -808,8 +809,8 @@ class AgentStore:
         return _stored_version(row) if row is not None else None
 
     async def latest_version(self, session: AsyncSession, agent_id: str) -> StoredVersion | None:
-        """The latest published version (highest ``seq`` — M4 §3 ordering), the default an
-        unpinned invoke resolves to (M11 §3). ``None`` if the agent has no versions."""
+        """The latest published version (highest ``seq`` — the monotonic ordering key), the default
+        an unpinned invoke resolves to. ``None`` if the agent has no versions."""
         row = (
             await session.execute(
                 select(AgentVersionRow)
@@ -837,12 +838,11 @@ def _to_trigger(row: TriggerRow) -> Trigger:
 
 
 class TriggerStore:
-    """Postgres persistence for the trigger registry (M12 §2) — the deploy primitive's durable seam.
+    """Postgres persistence for the trigger registry — the deploy primitive's durable seam.
 
-    Same M4 discipline (§1.2/§1.3): stateless ops over a caller-provided session, domain ``Trigger``
-    out, ``TriggerRow`` never leaks. Persisting the *definition* (not just the dispatcher state) is
-    the exact F6.1 lesson M9 taught for the MCP/model registries — a schedule lost on restart is
-    unacceptable. The dispatcher rehydrates by simply re-reading these rows each tick (M12 §3), so a
+    Stateless ops over a caller-provided session, domain ``Trigger`` out, ``TriggerRow`` never
+    leaks. Persisting the *definition* (not just the dispatcher state) means a schedule is never
+    lost on restart. The dispatcher rehydrates by simply re-reading these rows each tick, so a
     fresh control-plane instance picks up every persisted schedule with no in-memory restore."""
 
     async def create(
@@ -888,7 +888,7 @@ class TriggerStore:
     async def list_triggers(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[Trigger]:
-        """Triggers, newest first (M8 §2 list shape). Keyset pagination on ``(created_at, id)``
+        """Triggers, newest first. Keyset pagination on ``(created_at, id)``
         DESC, mirroring ``list_runs``/``list_agents``; an unknown ``before`` id is ignored."""
         stmt = (
             select(TriggerRow)
@@ -912,9 +912,9 @@ class TriggerStore:
         enabled: bool | None = None,
         config: dict[str, Any] | None = None,
     ) -> Trigger | None:
-        """Enable/disable and/or edit config (PATCH — M12 §3). The pin and kind are immutable here:
+        """Enable/disable and/or edit config (PATCH). The pin and kind are immutable here:
         editing them would change *which immutable artifact* an unattended deploy runs, so a re-pin
-        is a new trigger, not a mutation (the §1.1 immutability discipline, applied to triggers)."""
+        is a new trigger, not a mutation (the immutability discipline, applied to triggers)."""
         row = await session.get(TriggerRow, trigger_id)
         if row is None:
             return None
@@ -931,7 +931,7 @@ class TriggerStore:
         return bool(cast("CursorResult[Any]", result).rowcount)
 
     async def list_enabled_schedules(self, session: AsyncSession) -> list[Trigger]:
-        """Every enabled ``schedule`` trigger — what the dispatcher scans each tick (M12 §3). Read
+        """Every enabled ``schedule`` trigger — what the dispatcher scans each tick. Read
         fresh per tick (no in-memory cache), so a new instance after a restart sees them all and a
         disabled trigger drops out immediately."""
         rows = (
@@ -948,7 +948,7 @@ class TriggerStore:
         return [_to_trigger(row) for row in rows]
 
     async def mark_fired(self, session: AsyncSession, trigger_id: str, fired_at: Any) -> None:
-        """Stamp ``last_fired_at`` after a schedule fires (M12 §3). The dispatcher computes the next
+        """Stamp ``last_fired_at`` after a schedule fires. The dispatcher computes the next
         due instant from this, so persisting it makes a restart resume cleanly — neither
         double-firing within a window nor backfilling a long downtime."""
         await session.execute(
@@ -958,7 +958,7 @@ class TriggerStore:
         )
 
 
-# ── Connection store (M19 §1.1) — the tool/MCP auth seam ─────────────────────────────────────────
+# ── Connection store — the tool/MCP auth seam ────────────────────────────────────────────────────
 
 
 def _to_connection(row: ConnectionRow) -> Connection:
@@ -975,14 +975,13 @@ def _to_connection(row: ConnectionRow) -> Connection:
 
 
 class ConnectionStore:
-    """Postgres persistence for the connection registry (M19 §1.1) — the tool/MCP auth seam.
+    """Postgres persistence for the connection registry — the tool/MCP auth seam.
 
-    Same M4 discipline (§1.2/§1.3): stateless ops over a caller-provided session, domain
-    ``Connection`` out, ``ConnectionRow`` never leaks. The row stores NON-SECRET config + a
-    ``secret_ref``; the secret material itself lives in the ``secret`` table (``SecretStore``),
-    written/rotated/deleted by the route alongside the connection in the SAME transaction. This
-    store knows nothing about encryption — it only persists the ref (the seam: connection = config
-    + a pointer, never the secret)."""
+    Stateless ops over a caller-provided session, domain ``Connection`` out, ``ConnectionRow``
+    never leaks. The row stores NON-SECRET config + a ``secret_ref``; the secret material itself
+    lives in the ``secret`` table (``SecretStore``), written/rotated/deleted by the route
+    alongside the connection in the SAME transaction. This store knows nothing about encryption —
+    it only persists the ref (the seam: connection = config + a pointer, never the secret)."""
 
     async def create(
         self,
@@ -1019,7 +1018,7 @@ class ConnectionStore:
     async def list_connections(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[Connection]:
-        """Connections, newest first (M8 §2 list shape). Keyset pagination on ``(created_at, id)``
+        """Connections, newest first. Keyset pagination on ``(created_at, id)``
         DESC, mirroring ``list_triggers``/``list_agents``; an unknown ``before`` id is ignored."""
         stmt = (
             select(ConnectionRow)
@@ -1049,8 +1048,9 @@ class ConnectionStore:
     ) -> Connection | None:
         """Edit non-secret config / name / enabled, and optionally re-point ``secret_ref`` (a secret
         rotation keeps the SAME ref, so ``set_secret_ref`` is only used when clearing/attaching a
-        secret, not on rotation — the M19 §1.1 hash-stability guarantee). ``kind`` is immutable (a
-        different kind is a different connection)."""
+        secret, not on rotation — rotating a secret keeps the same ref so every agent's
+        ``content_hash`` is stable). ``kind`` is immutable (a different kind is a different
+        connection)."""
         row = await session.get(ConnectionRow, connection_id)
         if row is None:
             return None
@@ -1079,7 +1079,7 @@ class ConnectionStore:
         return conn
 
 
-# ── Bench store (M18 §1.6/§1.7) ──────────────────────────────────────────────────────────────────
+# ── Bench store ──────────────────────────────────────────────────────────────────────────────────
 
 
 def _to_bench_case(row: BenchCaseRow) -> BenchCase:
@@ -1150,9 +1150,9 @@ def _to_bench_preset(row: BenchPresetRow) -> BenchPreset:
 
 
 class BenchStore:
-    """Postgres persistence for the bench store (M18 §1.6/§1.7). Same M4 discipline as the other
-    stores: stateless ops over a caller-provided session, domain shapes out, ORM rows never leak.
-    Metrics + digests only by default; raw payloads are NEVER journaled here (§1.6 / §10) — capture
+    """Postgres persistence for the bench store. Stateless ops over a caller-provided session,
+    domain shapes out, ORM rows never leak.
+    Metrics + digests only by default; raw payloads are NEVER journaled here — capture
     is opt-in and a LOCAL reference (``capture_ref``), never a blob in the hot table."""
 
     # ── suites + cases ───────────────────────────────────────────────────
@@ -1212,7 +1212,7 @@ class BenchStore:
     async def list_suites(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[BenchSuite]:
-        """Suites newest-first (M8 §2 keyset pagination), without their cases (the list view shows
+        """Suites newest-first (keyset pagination), without their cases (the list view shows
         coordinates; GET one suite to load its cases)."""
         stmt = (
             select(BenchSuiteRow)
@@ -1232,7 +1232,7 @@ class BenchStore:
     # ── results ──────────────────────────────────────────────────────────
     async def record_run(self, session: AsyncSession, run: BenchRun) -> BenchRun:
         """Record one result. The caller has already set ``params_digest`` / ``output_digest`` (via
-        the module helpers) and decided whether ``capture_ref`` is set (opt-in, local — §1.6)."""
+        the module helpers) and decided whether ``capture_ref`` is set (opt-in, local)."""
         session.add(
             BenchRunRow(
                 id=run.id,
@@ -1276,8 +1276,8 @@ class BenchStore:
         suite_id: str | None = None,
         case_id: str | None = None,
     ) -> list[BenchRun]:
-        """Results newest-first (M8 §2), optionally filtered by target/suite/case so a regression
-        across versions or a per-case history is one query (§2.5)."""
+        """Results newest-first, optionally filtered by target/suite/case so a regression
+        across versions or a per-case history is one query."""
         stmt = (
             select(BenchRunRow)
             .order_by(BenchRunRow.created_at.desc(), BenchRunRow.id.desc())

@@ -1,4 +1,4 @@
-"""Opt-in integration: real llama-server + a tiny GGUF (plan §"opt-in integration").
+"""Opt-in integration: real llama-server + a tiny GGUF.
 
 Skipped by default (``-m 'not integration'``) and skipped cleanly when the
 prerequisites are absent. Run with::

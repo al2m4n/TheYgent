@@ -1,7 +1,7 @@
 """Fixtures for the fast suite: control-plane against a real (fake-model) inference plane
-AND a REAL ephemeral Postgres applied through REAL Alembic migrations (M4 §0/§6).
+AND a REAL ephemeral Postgres applied through REAL Alembic migrations.
 
-The one M4 rule: never SQLite, never metadata.create_all, never a fake DB. A single
+The rule: never SQLite, never metadata.create_all, never a fake DB. A single
 testcontainers Postgres per session, schema applied via ``alembic upgrade head`` (so the
 migration chain itself is exercised), truncated between tests. Skips clean with a clear
 message when Docker/Postgres is unavailable locally; CI always provides Postgres.
@@ -44,15 +44,15 @@ def pg_url() -> Iterator[str]:
     try:
         container = PostgresContainer("postgres:16", driver="asyncpg")
         container.start()
-    except Exception as exc:  # Docker not available locally — skip clean (§6).
+    except Exception as exc:  # Docker not available locally — skip clean.
         pytest.skip(f"Docker/Postgres unavailable: {exc}")
 
     try:
         url = container.get_connection_url()
         command.upgrade(_alembic_config(url), "head")
-        # M13 §3: the DBOS system schema (`dbos`) is migrated alongside Alembic's `public`, against
+        # The DBOS system schema (`dbos`) is migrated alongside Alembic's `public`, against
         # the SAME throwaway Postgres — proving the two schemas coexist and the durable suite gets
-        # checkpoint tables. DBOS owns `dbos`; Alembic never touches it (decisions D5). Idempotent,
+        # checkpoint tables. DBOS owns `dbos`; Alembic never touches it. Idempotent,
         # so a DurableRuntime.launch() re-running it in a test is a no-op.
         from theygent_control_plane.durable import run_dbos_migrations
 

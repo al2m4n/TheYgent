@@ -1,9 +1,9 @@
 """theygent gateway-client — the shared, transport-only inference-plane seam.
 
-A thin async OpenAI-compatible client (M3 §3.3): ``baseUrl`` + a *logical* model id +
+A thin async OpenAI-compatible client: ``baseUrl`` + a *logical* model id +
 messages/params -> streamed chunks. It is **stateless and transport-only** — no run
 logic, no business logic, no model registry. The control-plane (now) and the durable
-worker (later) both reuse it. It is "just an OpenAI client with a baseUrl" (§9.1.0):
+worker (later) both reuse it. It is "just an OpenAI client with a baseUrl":
 talking to the inference plane's OpenAI-compatible ``/v1/*`` data plane validates the
 OpenAI-compat claim end to end.
 """

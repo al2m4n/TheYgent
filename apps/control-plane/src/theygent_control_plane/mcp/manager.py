@@ -1,18 +1,18 @@
-"""``McpManager`` — the named-MCP-server registry + connection lifecycle (m7.md §3.2).
+"""``McpManager`` — the named-MCP-server registry + connection lifecycle.
 
-Same *shape* as M1's ``EngineManager`` (named registry, lazy-connect on first use, reuse the
+Same *shape* as the ``EngineManager`` (named registry, lazy-connect on first use, reuse the
 connection, capability cache on connect), deliberately scaled down: MCP server processes are cheap
 (npm / small Python), engines are heavy (multi-GB / GPU). So **no idle-timeout teardown, no
-priority arbitration, no memory-pressure eviction** — the M1 ``EvictionPolicy`` seam is NOT applied
+priority arbitration, no memory-pressure eviction** — the ``EvictionPolicy`` seam is NOT applied
 here (different domain, different cost model). Connections live for the control-plane process
 lifetime; the only failure handling is **one reconnect-retry on a transport failure**, then bind
 ``err``.
 
-This is NOT unified with the M6 ``ToolRegistry``: in-process callables and external subprocesses
+This is NOT unified with the ``ToolRegistry``: in-process callables and external subprocesses
 have genuinely different lifecycle concerns. They only converge at the walker's ``tool`` /
 ``mcp_tool`` handlers (both call something with args and bind ok/err).
 
-Sovereignty (§10): servers run in the user's trust domain; the manager spawns them locally and the
+Sovereignty: servers run in the user's trust domain; the manager spawns them locally and the
 registration's ``env`` (secrets/paths) is passed straight into the subprocess — never logged with
 values, never resolved in theygent cloud.
 """
@@ -44,7 +44,7 @@ ClientFactory = Callable[[McpServerConfig], McpClient]
 
 
 def _default_factory(config: McpServerConfig) -> McpClient:
-    """Build the transport-appropriate client (M19 §2.4): ``http`` → ``HttpMcpClient`` (url + the
+    """Build the transport-appropriate client: ``http`` → ``HttpMcpClient`` (url + the
     server-side-built auth headers), else ``StdioMcpClient`` (the local subprocess)."""
     if config.transport == "http":
         return HttpMcpClient(url=config.url or "", headers=config.headers)
@@ -55,7 +55,7 @@ def _default_factory(config: McpServerConfig) -> McpClient:
 
 class McpServerNotFound(KeyError):
     """A graph referenced an MCP server name that isn't registered. The control-plane maps this to
-    400 ``mcp_server_not_found`` at IR validation — no Run created (m7.md §4)."""
+    400 ``mcp_server_not_found`` at IR validation — no Run created."""
 
 
 class McpManager:
@@ -71,7 +71,7 @@ class McpManager:
     # ── registration (no I/O — connection is lazy) ────────────────────────────
 
     async def register(self, name: str, config: McpServerConfig) -> None:
-        """Register/replace a server. Does NOT connect (lazy — m7.md §3.2). If a connection for
+        """Register/replace a server. Does NOT connect (lazy). If a connection for
         this name already exists, it's dropped so the next call reconnects with the new config.
         Serialized on the per-name lock so a replace never interleaves with an in-flight lazy
         connect (which would otherwise cache a client built from the OLD config)."""
@@ -98,7 +98,7 @@ class McpManager:
 
     def cached_tools(self, name: str) -> list[McpToolDescriptor] | None:
         """The capability list cached at connect, or ``None`` if the server isn't connected yet.
-        IR validation checks ``config.tool`` against this only when it's available (m7.md §4)."""
+        IR validation checks ``config.tool`` against this only when it's available."""
         return self._tools.get(name)
 
     def states(self) -> list[dict[str, Any]]:
@@ -117,8 +117,7 @@ class McpManager:
         existing = self._clients.get(name)
         if existing is not None:
             return existing
-        # Single-flight: concurrent first-calls for the same server connect once, not N times
-        # (the M1 singleflight discipline).
+        # Single-flight: concurrent first-calls for the same server connect once, not N times.
         async with self._locks.setdefault(name, asyncio.Lock()):
             existing = self._clients.get(name)
             if existing is not None:
@@ -147,7 +146,7 @@ class McpManager:
                 logger.warning("mcp.close_failed", extra={"server": name})
 
     async def warm(self, name: str) -> None:
-        """Eager-connect now instead of on first call (``:warm`` — m7.md §3.2)."""
+        """Eager-connect now instead of on first call (``:warm``)."""
         await self._ensure_connected(name)
 
     async def close(self, name: str) -> None:
@@ -161,8 +160,8 @@ class McpManager:
         return list(self._tools.get(name, []))
 
     async def call_tool(self, name: str, tool: str, args: dict[str, Any]) -> McpResult:
-        """Invoke ``tool`` on server ``name`` with one reconnect-retry on transport failure
-        (m7.md §3.2). A tool-level error comes back as ``McpResult(is_error=True)`` (not a raise);
+        """Invoke ``tool`` on server ``name`` with one reconnect-retry on transport failure.
+        A tool-level error comes back as ``McpResult(is_error=True)`` (not a raise);
         an unknown tool raises :class:`McpToolNotFound`; a dead/unreachable connection raises
         :class:`McpConnectionError` after the retry — the walker binds ``err`` in every case."""
         last: McpConnectionError | None = None
@@ -197,7 +196,7 @@ class McpManager:
     async def call_connection_tool(
         self, name: str, config: McpServerConfig, tool: str, args: dict[str, Any]
     ) -> McpResult:
-        """Invoke ``tool`` on a CONNECTION-BACKED MCP server (M19 §2.4), keyed by ``name`` (the
+        """Invoke ``tool`` on a CONNECTION-BACKED MCP server, keyed by ``name`` (the
         connection id) using the server-side-built ``config`` (transport + auth already resolved —
         the secret never reached the IR). Registers the config only when it CHANGED, so a live
         connection is reused across calls (a rotated secret / edited url re-registers + reconnects);

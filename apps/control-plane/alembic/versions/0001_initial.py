@@ -1,13 +1,13 @@
-"""initial: thread, run, message (M4 §3)
+"""initial: thread, run, message
 
 Revision ID: 0001_initial
 Revises:
 Create Date: 2026-06-17
 
-The control-plane's first tables. ULID string ids throughout (consistency with the M3
+The control-plane's first tables. ULID string ids throughout (consistency with the earlier
 Run.id). Ordering keys off explicit columns (message.position), never timestamps —
-clock skew across horizontally-scaled instances makes those unreliable (§3). Hand-written
-and fully reversible; the §6 round-trip test exercises upgrade head -> downgrade base.
+clock skew across horizontally-scaled instances makes those unreliable. Hand-written
+and fully reversible; the round-trip test exercises upgrade head -> downgrade base.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ def upgrade() -> None:
     op.create_table(
         "run",
         sa.Column("id", sa.String(), primary_key=True),
-        # NULL = one-shot run, no thread/memory (M3 behavior preserved — §3).
+        # NULL = one-shot run, no thread/memory.
         sa.Column("thread_id", sa.String(), sa.ForeignKey("thread.id"), nullable=True),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("model", sa.String(), nullable=False),
@@ -49,7 +49,7 @@ def upgrade() -> None:
     op.create_table(
         "message",
         sa.Column("id", sa.String(), primary_key=True),
-        # Denormalized thread_id for direct ordered thread reads (§3).
+        # Denormalized thread_id for direct ordered thread reads.
         sa.Column("thread_id", sa.String(), sa.ForeignKey("thread.id"), nullable=False),
         sa.Column("run_id", sa.String(), sa.ForeignKey("run.id"), nullable=False),
         sa.Column("role", sa.String(), nullable=False),

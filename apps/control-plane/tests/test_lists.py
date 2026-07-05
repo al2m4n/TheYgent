@@ -1,8 +1,8 @@
-"""Read-only list endpoints for the cockpit (M8 §1.1/§1.3/§2).
+"""Read-only list endpoints for the cockpit.
 
 The one sanctioned cockpit-driven backend addition: thin, paginated, newest-first lists over
 already-persisted runs and threads, plus a thread-detail read. They add NO write path and NO
-aggregation/summary endpoint (§6) — they only surface state the run path already persists.
+aggregation/summary endpoint — they only surface state the run path already persists.
 Proven against the same real Postgres + real Alembic schema as the rest of the fast suite.
 """
 
@@ -74,7 +74,7 @@ def test_list_threads_summary(client: TestClient) -> None:
 
 
 def test_list_threads_excludes_one_shot_runs(client: TestClient) -> None:
-    # A run with no thread_id never creates a thread row (M4 §4) — it must not appear here.
+    # A run with no thread_id never creates a thread row — it must not appear here.
     _run(client)
     assert client.get("/threads").json()["threads"] == []
 
@@ -104,13 +104,13 @@ def test_thread_detail_unknown_404(client: TestClient) -> None:
 
 
 def test_cors_dev_origin_allowed(client: TestClient) -> None:
-    # The cockpit SPA (Vite dev origin) must be allowed (M8 §3.3/§6).
+    # The cockpit SPA (Vite dev origin) must be allowed.
     resp = client.get("/runs", headers={"Origin": "http://localhost:5173"})
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
 
 
 def test_cors_interface_dev_origin_allowed(client: TestClient) -> None:
-    # The M15 visual interface SPA runs on its own Vite dev origin (:5174) and also calls the
+    # The visual interface SPA runs on its own Vite dev origin (:5174) and also calls the
     # control-plane directly (load/save agents) — its origin must be allowed too.
     resp = client.get("/runs", headers={"Origin": "http://localhost:5174"})
     assert resp.headers.get("access-control-allow-origin") == "http://localhost:5174"

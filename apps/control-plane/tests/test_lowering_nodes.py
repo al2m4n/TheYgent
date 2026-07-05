@@ -1,11 +1,12 @@
-"""Fast suite for M14 — the additive-lowering tier (``human`` · ``subgraph`` · ``loop`` · ``map``),
-m14.md §3. DBOS embedded, against a REAL ephemeral Postgres (Alembic ``public`` + DBOS ``dbos``).
+"""Fast suite for the additive-lowering tier (``human`` · ``subgraph`` · ``loop`` · ``map``),
+run with DBOS embedded, against a REAL ephemeral Postgres (Alembic ``public`` + DBOS ``dbos``).
 
-The milestone's thesis: four node types that need NO new subsystem — each is a new handler + a new
-lowering onto a DBOS primitive M13 already built (recv/send, child workflows, durable queue). So
-these prove, per type, the headline DURABLE behavior the IR was designed for:
+These four node types need NO new subsystem — each is a new handler + a new lowering onto a DBOS
+primitive already built (recv/send, child workflows, durable queue). So these prove, per type, the
+headline DURABLE behavior the IR was designed for:
 
-* ``human``   — a run pauses at a durable wait (status ``waiting``, NOT swept by M9), survives a
+* ``human``   — a run pauses at a durable wait (status ``waiting``, NOT swept by the reconcile
+                sweep), survives a
                 worker crash, and resumes from the checkpoint when input is delivered.
 * ``subgraph``— an agent runs another SAVED, PINNED agent as a child workflow; the pin is immutable
                 (runs the pinned content even after the child publishes a newer version);
@@ -16,8 +17,8 @@ these prove, per type, the headline DURABLE behavior the IR was designed for:
                 vs ``collect`` behave per config.
 
 Plus: saved agents using the new types round-trip through the registry unchanged (``contentHash``
-stable). DBOS is process-global (decisions D2): each test resets the ``dbos`` schema and an autouse
-teardown force-destroys DBOS so one failure can't wedge the next.
+stable). DBOS is process-global: each test resets the ``dbos`` schema and an autouse teardown
+force-destroys DBOS so one failure can't wedge the next.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from theygent_control_plane.app import create_app
 from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 from theygent_ir import GraphValidationError, content_hash, parse_document, validate_graph
 
-TOKEN = "m14-token"
+TOKEN = "test-token"
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +120,7 @@ def _llm_body(agent_id: str, prompt: str = "$in") -> dict:
 
 
 def _human_ir(agent_id: str, **config) -> dict:
-    """input → human → output. The human's awaited input becomes the run output (m14.md §1.1).
+    """input → human → output. The human's awaited input becomes the run output.
     ``config`` overrides the node config (timeout/on_timeout/default/inputSchema)."""
     cfg = {"prompt": "ok?", **config}
     ir = _doc(
@@ -135,7 +136,7 @@ def _human_ir(agent_id: str, **config) -> dict:
 
 
 def _subgraph_ir(agent_id: str, child_id: str, *, content_hash_pin=None, version=None, max_depth=8):
-    """input → subgraph(child, pin) → output (m14.md §1.2)."""
+    """input → subgraph(child, pin) → output."""
     cfg: dict = {"agent": child_id, "maxDepth": max_depth}
     if content_hash_pin is not None:
         cfg["contentHash"] = content_hash_pin
@@ -154,7 +155,7 @@ def _subgraph_ir(agent_id: str, child_id: str, *, content_hash_pin=None, version
 
 
 def _loop_ir(agent_id: str, body_id: str, *, version: str, max_iterations: int, condition=None):
-    """input → loop(body, pin, maxIterations[, condition]) → output (m14.md §1.3)."""
+    """input → loop(body, pin, maxIterations[, condition]) → output."""
     cfg: dict = {"agent": body_id, "version": version, "maxIterations": max_iterations}
     if condition is not None:
         cfg["condition"] = condition
@@ -171,7 +172,7 @@ def _loop_ir(agent_id: str, body_id: str, *, version: str, max_iterations: int, 
 
 
 def _map_ir(agent_id: str, body_id: str, *, version: str, on_error="fail_fast", concurrency=None):
-    """input → map(body, pin, onError, concurrency) → output (m14.md §1.4)."""
+    """input → map(body, pin, onError, concurrency) → output."""
     cfg: dict = {"agent": body_id, "version": version, "onError": on_error}
     if concurrency is not None:
         cfg["concurrency"] = concurrency
@@ -231,13 +232,13 @@ async def test_human_waits_survives_crash_and_resumes(pg_url: str) -> None:
         run = await _wait_status(sm, wid, "waiting")
         assert run.awaiting_node == "n_h"
 
-        # A `waiting` run is NOT swept by M9's reconciliation sweep (m14.md §1.1) — the whole point
+        # A `waiting` run is NOT swept by the reconciliation sweep — the whole point
         # of the durable wait. Run the sweep explicitly and assert the wait survives untouched.
         async with sm() as s, s.begin():
             await RunStore().reconcile_orphaned_runs(s)
         async with sm() as s:
             still = await RunStore().get_run(s, wid)
-        assert still.status == "waiting", "the M9 sweep must not touch a waiting run"
+        assert still.status == "waiting", "the reconcile sweep must not touch a waiting run"
 
         rt.shutdown()  # CRASH: destroy DBOS while the workflow is parked at recv
 
@@ -265,7 +266,7 @@ async def test_human_waits_survives_crash_and_resumes(pg_url: str) -> None:
 
 
 async def test_subgraph_runs_pinned_child_even_after_newer_version(pg_url: str) -> None:
-    # The pin is frozen into the parent IR (m14.md §1.2): the parent runs the PINNED child content
+    # The pin is frozen into the parent IR: the parent runs the PINNED child content
     # even after the child agent publishes a newer (latest) version. Distinct per-version prompts +
     # a prompt-keyed fake make "which version actually ran" observable.
     await reset_dbos_schema(pg_url)
@@ -301,7 +302,7 @@ async def test_subgraph_runs_pinned_child_even_after_newer_version(pg_url: str) 
 
 
 async def test_subgraph_max_depth_exceeded_fails_honestly(pg_url: str) -> None:
-    # maxDepth bounds composition (m14.md §1.2). With maxDepth=0 the parent may spawn NO child, so
+    # maxDepth bounds composition. With maxDepth=0 the parent may spawn NO child, so
     # the guard trips at the top and the run fails honestly with a named reason — never a hang.
     await reset_dbos_schema(pg_url)
     child = _llm_body("agt_d_child")
@@ -331,7 +332,7 @@ async def test_subgraph_max_depth_exceeded_fails_honestly(pg_url: str) -> None:
 
 
 async def test_subgraph_child_resumes_after_crash(pg_url: str) -> None:
-    # A crash mid-child resumes the child and the parent collects its result (m14.md §3). Block the
+    # A crash mid-child resumes the child and the parent collects its result. Block the
     # child's llm; crash; restart → DBOS recovers BOTH parent and child workflow (deterministic
     # child id), the child's interrupted step re-runs, the parent awaits and completes.
     await reset_dbos_schema(pg_url)
@@ -382,7 +383,7 @@ async def test_loop_runs_to_max_iterations_and_resumes_without_rerun(pg_url: str
     # A 3-iteration loop feeds each output into the next input. Block iteration 1's body; crash
     # after iteration 0 completed (journaled); restart → iteration 0 does NOT re-run (its child
     # replays from the journal), iterations 1+2 run. The chained outputs prove ordering; the call
-    # counts prove the exactly-once-for-completed guarantee at the loop granularity (m14.md §3).
+    # counts prove the exactly-once-for-completed guarantee at the loop granularity.
     await reset_dbos_schema(pg_url)
     body = _llm_body("agt_loop_body")  # prompt "$in"
     bid, bver = None, "0.1.0"
@@ -429,7 +430,7 @@ async def test_loop_runs_to_max_iterations_and_resumes_without_rerun(pg_url: str
 
 
 async def test_loop_condition_stops_early(pg_url: str) -> None:
-    # A condition over the iteration output stops the loop BEFORE maxIterations (m14.md §1.3). The
+    # A condition over the iteration output stops the loop BEFORE maxIterations. The
     # body emits an object {"stop": true}; condition "$in.in.stop" resolves truthy after iter 0,
     # so exactly ONE body iteration runs (counted via child run rows) despite maxIterations=5.
     await reset_dbos_schema(pg_url)
@@ -475,7 +476,7 @@ async def test_loop_condition_stops_early(pg_url: str) -> None:
 
 
 def test_unbounded_loop_rejected_at_compile() -> None:
-    # No maxIterations → rejected at validation (compile), never a runtime surprise (m14.md §1.3).
+    # No maxIterations → rejected at validation (compile), never a runtime surprise.
     bad = _loop_ir("agt_unbounded", "agt_body", version="0.1.0", max_iterations=1)
     del bad["nodes"][1]["config"]["maxIterations"]
     with pytest.raises(GraphValidationError):
@@ -503,7 +504,7 @@ def test_non_positive_max_depth_rejected_at_compile() -> None:
 
 async def test_map_fans_out_and_resumes_only_incomplete_branches(pg_url: str) -> None:
     # Fan out over 3 elements; block "b"; crash after "a" and "c" complete; restart → only the
-    # incomplete branch ("b") re-runs, results join in element order (m14.md §1.4 / §3).
+    # incomplete branch ("b") re-runs, results join in element order.
     await reset_dbos_schema(pg_url)
     body = _llm_body("agt_map_body")  # prompt "$in"
     responses = {"a": "RA", "b": "RB", "c": "RC"}
@@ -516,20 +517,34 @@ async def test_map_fans_out_and_resumes_only_incomplete_branches(pg_url: str) ->
         maid, mver = await save_agent(sm, agents, mp)
         rt, gw = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
         rt.launch()
+        from dbos import DBOS
+
         handle = await rt.enqueue_run(
             {"agent_id": maid, "version": mver, "content_hash": None}, ["a", "b", "c"]
         )
         wid = handle.workflow_id
+
+        async def _child_journaled(index: int) -> bool:
+            # fake.calls only proves the HTTP request landed, not that DBOS durably journaled the
+            # step outcome — under xdist's added CPU/IO contention that gap can outlive this poll
+            # loop, so branch "a"/"c" would legitimately (per the at-least-once guarantee) re-run
+            # on resume. Poll the child workflow's OWN persisted status instead — the true signal.
+            status = await DBOS.get_workflow_status_async(f"{wid}-map-n_map-{index}")
+            return status is not None and status.status == "SUCCESS"
+
         for _ in range(1000):
-            if fake.blocked_entered.is_set() and fake.calls.get("a") and fake.calls.get("c"):
+            if (
+                fake.blocked_entered.is_set()
+                and await _child_journaled(0)
+                and await _child_journaled(2)
+            ):
                 break
             await _sleep()
         assert fake.blocked_entered.is_set()
+        assert await _child_journaled(0) and await _child_journaled(2)  # a, c durably journaled
         assert fake.calls.get("a") == 1 and fake.calls.get("c") == 1  # a, c completed once
 
-        rt.shutdown()  # CRASH after a + c done, mid-b
-
-        from dbos import DBOS
+        rt.shutdown()  # CRASH after a + c are durably journaled, mid-b
 
         rt2, gw2 = _build_runtime(pg_url, fake.v1_url, agents, TriggerStore(), sm)
         rt2.launch()
@@ -551,7 +566,7 @@ async def test_map_fans_out_and_resumes_only_incomplete_branches(pg_url: str) ->
 
 async def test_map_fail_fast_vs_collect(pg_url: str) -> None:
     # An element fails when its object selects an undeclared router handle. fail_fast → map fails;
-    # collect → the map completes, gathering successes + per-element errors (m14.md §1.4).
+    # collect → the map completes, gathering successes + per-element errors.
     await reset_dbos_schema(pg_url)
     body = _router_body("agt_mf_body")
     elements = [{"handle": "ok"}, {"handle": "nope"}]  # element 1 selects a handle the body lacks
@@ -595,7 +610,7 @@ async def test_map_fail_fast_vs_collect(pg_url: str) -> None:
             await engine.dispose()
 
 
-# ── observability: loop/map emit a span per iteration/branch (m14.md §2) ─────────
+# ── observability: loop/map emit a span per iteration/branch ─────────────────────
 
 
 class _BranchCapture:
@@ -631,9 +646,9 @@ class _BranchCapture:
 
 
 async def test_loop_and_map_emit_per_branch_spans(pg_url: str) -> None:
-    # §2: each loop iteration and each map branch emits a span named ``<node_id>#<i>`` so a trace
-    # reads against the drawn graph. (The real OTLP exporter remains the deferred M13 milestone;
-    # this asserts the attach-point seam M5/M13 established, and each branch is also a DBOS span.)
+    # Each loop iteration and each map branch emits a span named ``<node_id>#<i>`` so a trace
+    # reads against the drawn graph. (The real OTLP exporter is deferred; this asserts the
+    # attach-point seam and that each branch is also a DBOS span.)
     await reset_dbos_schema(pg_url)
     body = _llm_body("agt_span_body")  # prompt "$in"
     responses = {"a": "RA", "b": "RB", "c": "RC", "GO": "L1", "L1": "L2"}
@@ -672,7 +687,7 @@ async def test_loop_and_map_emit_per_branch_spans(pg_url: str) -> None:
 
 
 async def test_orchestration_control_does_no_io_and_replay_reruns_nothing(pg_url: str) -> None:
-    # §3 determinism guard: the loop/map control path (fan-out, counter, condition, join) does NO
+    # Determinism guard: the loop/map control path (fan-out, counter, condition, join) does NO
     # I/O — all inference lives in CHILD workflows — so the parent map workflow has zero activity
     # steps. And a journaled result is not re-executed on replay: re-retrieving the completed
     # workflow runs no further inference. (This is the invariant the whole orchestration kind rests
@@ -712,7 +727,7 @@ async def test_orchestration_control_does_no_io_and_replay_reruns_nothing(pg_url
             await engine.dispose()
 
 
-# ── human timeout: honest fail OR declared default (m14.md §1.1) ─────────────────
+# ── human timeout: honest fail OR declared default ───────────────────────────────
 
 
 async def test_human_timeout_fails_or_takes_default(pg_url: str) -> None:
@@ -779,13 +794,13 @@ async def test_subgraph_mutual_recursion_bounded_by_max_depth(pg_url: str) -> No
             await engine.dispose()
 
 
-# ── subgraph: parent→child data mapping via M10 named ports (m14.md §1.2) ────────
+# ── subgraph: parent→child data mapping via named ports ──────────────────────────
 
 
 async def test_subgraph_multi_port_input_mapping(pg_url: str) -> None:
     # A subgraph node with TWO in-ports maps to the child as a {port: value} object the child drills
-    # with $in.in.<port> — the M10 named-port mapping at the composition seam (m14.md §1.2), built
-    # AND tested (not deferred). echo tools feed distinct values into ports a and b.
+    # with $in.in.<port> — the named-port mapping at the composition seam, built AND tested (not
+    # deferred). echo tools feed distinct values into ports a and b.
     await reset_dbos_schema(pg_url)
     child = _llm_body("agt_mp_child", prompt="$in.in.a-$in.in.b")
     _, child_hash, _ = canonical_ir(child)
@@ -905,7 +920,7 @@ async def test_resume_guards_unknown_and_non_waiting(pg_url: str) -> None:
 
 
 async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
-    # §1.1: the resume payload is validated against the human node's declared input schema. The
+    # The resume payload is validated against the human node's declared input schema. The
     # agent declares inputSchema.required=["approve"]; a waiting run pointed at that node rejects a
     # payload missing the key with a loud 422 (before any DBOS.send), and accepts one carrying it.
     await reset_dbos_schema(pg_url)
@@ -1165,7 +1180,7 @@ async def test_new_types_roundtrip_through_registry_with_stable_hash(
     pg_url: str, ir_dict: dict
 ) -> None:
     # A saved agent using a new node type stores + reloads unchanged, and its contentHash is stable
-    # across save/load — the IR shape (and the hashing rule) is untouched (m14.md §0 the one rule).
+    # across save/load — the IR shape (and the hashing rule) is untouched by the new node types.
     engine = db.create_engine(pg_url)
     sm = db.create_sessionmaker(engine)
     agents = AgentStore()
@@ -1175,7 +1190,7 @@ async def test_new_types_roundtrip_through_registry_with_stable_hash(
         async with sm() as s:
             stored = await agents.get_version_by_hash(s, doc.id, chash)
         assert stored is not None
-        # Re-hashing the stored, view-stripped IR yields the same hash (the M11 §1.1 fixpoint holds
+        # Re-hashing the stored, view-stripped IR yields the same hash (the registry fixpoint holds
         # for the new node types — they are view-stripped graph content, covered unchanged).
         assert content_hash(parse_document(stored.ir)) == chash
     finally:

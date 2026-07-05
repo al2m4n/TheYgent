@@ -26,6 +26,8 @@ import {
 import { fromStoredVersion } from "../lib/agent";
 import { type AgentDetail, type AgentSummary, api } from "../lib/api";
 import { relativeTime } from "../lib/format";
+import { useInView } from "../lib/useInView";
+import { flattenPages, useAgentsInfinite } from "../queries";
 
 type Sort = "modified" | "created" | "name" | "versions";
 
@@ -37,14 +39,10 @@ const SORT_LABEL: Record<Sort, string> = {
 };
 
 export function Home() {
-  const {
-    data: agents,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ["agents"],
-    queryFn: () => api.listAgents({ limit: 100 }),
-  });
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useAgentsInfinite();
+  const agents = useMemo(() => flattenPages(data), [data]);
+  const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [benchAgentId, setBenchAgentId] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("modified");
@@ -90,7 +88,7 @@ export function Home() {
         error={error && `Could not reach the control plane: ${(error as Error).message}`}
       />
 
-      {agents && agents.length === 0 && (
+      {!isLoading && !error && agents.length === 0 && (
         <Empty>
           <p>No saved agents yet.</p>
           <p className="mt-1 text-xs text-slate-600">
@@ -106,7 +104,7 @@ export function Home() {
         </Empty>
       )}
 
-      {agents && agents.length > 0 && (
+      {agents.length > 0 && (
         <>
           <FilterBar
             search={q}
@@ -140,6 +138,14 @@ export function Home() {
               {shown.map((a) => (
                 <AgentCard key={a.id} agent={a} onBench={() => setBenchAgentId(a.id)} />
               ))}
+            </div>
+          )}
+
+          {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
+          {hasNextPage && <div ref={loadMoreRef} aria-hidden className="h-px" />}
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-3">
+              <Spinner />
             </div>
           )}
         </>

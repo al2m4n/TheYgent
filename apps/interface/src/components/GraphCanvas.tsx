@@ -28,7 +28,7 @@ import {
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
-import { CircleHelp, Redo2, Undo2 } from "lucide-react";
+import { CircleHelp, Redo2, Undo2, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Selection,
@@ -70,6 +70,9 @@ interface Props {
   onRedo?: () => void;
   canUndo?: boolean;
   canRedo?: boolean;
+  // "Tidy" (re-run auto-layout) lives on the canvas toolbar with the view controls it belongs beside,
+  // not in the top chrome. Absent ⇒ no button (e.g. the read-only bench preview). Owned by the editor.
+  onTidy?: () => void;
 }
 
 type Menu = { x: number; y: number; kind: "node" | "edge"; id: string } | null;
@@ -119,6 +122,7 @@ function GraphCanvasInner({
   onRedo,
   canUndo,
   canRedo,
+  onTidy,
 }: Props) {
   const { screenToFlowPosition, fitView } = useReactFlow();
   const { resolved } = useTheme();
@@ -386,13 +390,18 @@ function GraphCanvasInner({
           // body colour → invisible on the white default button). slate-300 inverts via the theme
           // ramp, so icons stay legible in both themes.
           <Controls className="!bg-[var(--c-elev)] !text-slate-300" showInteractive={false}>
+            {onTidy && (
+              <ControlButton onClick={() => onTidy()} title="Tidy layout — auto-arrange the nodes">
+                <Wand2 size={15} />
+              </ControlButton>
+            )}
             {(onUndo || onRedo) && (
               <>
                 <ControlButton onClick={() => onUndo?.()} disabled={!canUndo} title="Undo">
-                  <Undo2 size={14} />
+                  <Undo2 size={16} />
                 </ControlButton>
                 <ControlButton onClick={() => onRedo?.()} disabled={!canRedo} title="Redo">
-                  <Redo2 size={14} />
+                  <Redo2 size={16} />
                 </ControlButton>
               </>
             )}

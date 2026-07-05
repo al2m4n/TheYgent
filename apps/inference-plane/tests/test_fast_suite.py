@@ -1,4 +1,4 @@
-"""The fast suite — everything real except the model weights (plan §"Verification").
+"""The fast suite — everything real except the model weights.
 
 Walks the loop: register -> /v1/chat/completions -> lazy spawn -> streamed
 completion -> evict frees -> re-spawn. The FakeUpstreamLauncher is a real
@@ -107,7 +107,7 @@ def test_evict_frees_then_respawns(
     assert launcher.launch_count == 2
 
 
-# 6. Capabilities before inference — the compiler depends on this (§9.1.2).
+# 6. Capabilities before inference — the compiler depends on this.
 def test_capabilities_without_completion(client: TestClient) -> None:
     client.put("/admin/models/triage-fast", json=managed_payload())
     r = client.get("/admin/models/triage-fast/capabilities")

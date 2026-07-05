@@ -30,13 +30,13 @@ repos:
         types_or: [python, pyi]
         require_serial: true
 
-      # ── Python: ty type-check — NON-BLOCKING, mirrors the CI §6 hedge (ty runs with
+      # ── Python: ty type-check — NON-BLOCKING, mirrors the CI hedge (ty runs with
       # continue-on-error while it's in preview). The `|| true` keeps it advisory; `verbose: true`
       # is what actually surfaces the findings — pre-commit suppresses ALL output of a passing
       # hook, so without it the `|| true` would discard every diagnostic unseen. Drop the
       # `|| true` to make it a hard gate later. ──
       - id: ty
-        name: ty type-check (non-blocking — CI §6 hedge)
+        name: ty type-check (non-blocking — CI hedge)
         entry: bash -c 'uv run --frozen ty check apps/inference-plane apps/control-plane apps/worker packages/ir packages/gateway-client || true'
         language: system
         types_or: [python, pyi]
@@ -54,7 +54,7 @@ repos:
         pass_filenames: false
         require_serial: true
 
-      # ── TS: tsc --noEmit — the REAL type gate (Biome is not a type checker; stack doc §6).
+      # ── TS: tsc --noEmit — the REAL type gate (Biome is not a type checker).
       # Also fires on packages/ir-types changes: the interface consumes those generated types,
       # so a type change there must type-check against the app before it lands. ──
       - id: tsc-interface

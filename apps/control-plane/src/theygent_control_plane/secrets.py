@@ -1,17 +1,17 @@
-"""Encrypted-at-rest secret storage — the M19 §1.1 ``secret_ref`` indirection.
+"""Encrypted-at-rest secret storage — the ``secret_ref`` indirection.
 
 A ``connection`` (``ConnectionRow`` / ``run.Connection``) references a ``secret_ref``; the raw
 secret material (api key, bearer token, OAuth client secret, basic password, MCP auth) is stored
 **encrypted** in the ``secret`` table — Fernet (AES-128-CBC + HMAC-SHA256) — and decrypted only
 server-side, inside the durable step that calls the tool/MCP. The plaintext NEVER reaches the IR,
-the canvas, a span, the journal, or any wire response (the §10 posture, the M19 #1 rule).
+the canvas, a span, the journal, or any wire response (server-side-only resolution posture).
 
 This is the **minimal honest indirection**, not a production KMS: the key is a process-level env
 secret (``THEYGENT_SECRET_KEY``), not a per-tenant envelope key. The hard-to-reverse half is the
 *shape* — secrets behind a ``secret_ref``, never inline in the IR — which a real vault slots behind
 unchanged. Migrating the at-rest mechanism (env Fernet key → KMS/HSM/Vault) is a swap of THIS
 module's internals; the ``secret_ref`` contract the rest of the system depends on does not move.
-Recorded as the deferred upgrade in ``theygent-stack.md`` (secrets section).
+Migrating the at-rest mechanism (env Fernet key → KMS/HSM/Vault) is recorded as a deferred upgrade.
 
 Key rotation rides on ``MultiFernet``: ``THEYGENT_SECRET_KEY`` may be a comma-separated list — the
 FIRST key encrypts new/rotated material, ALL keys can decrypt, so an operator rotates by prepending
@@ -52,7 +52,7 @@ class SecretDecryptError(RuntimeError):
 
 
 class SecretStore:
-    """Postgres-backed encrypted secret storage (M4 discipline: stateless ops, caller owns the
+    """Postgres-backed encrypted secret storage (stateless ops, caller owns the
     session/transaction). The plaintext is encrypted on the way in and decrypted only at resolve
     time; the row stores a Fernet token, never the raw value. Construct via :meth:`from_keys` so the
     key material is resolved once at app startup."""
@@ -92,7 +92,7 @@ class SecretStore:
     async def set(self, session: AsyncSession, secret_ref: str, plaintext: str) -> None:
         """Rotate the material behind an existing ``secret_ref`` (re-encrypts with the primary key).
         Keeps the SAME ref so every connection — and every agent's ``contentHash`` — is unaffected
-        by the rotation (the M19 §1.1 stability guarantee). Creates the row if absent."""
+        by the rotation. Creates the row if absent."""
         row = await session.get(SecretRow, secret_ref)
         token = self._fernet.encrypt(plaintext.encode("utf-8")).decode("ascii")
         if row is None:
@@ -105,7 +105,7 @@ class SecretStore:
 
     async def resolve(self, session: AsyncSession, secret_ref: str | None) -> str | None:
         """Decrypt the secret behind ``secret_ref`` — the ONLY place plaintext exists, called inside
-        the step that uses it (the §10 server-side resolution). ``None`` ref → ``None`` (an
+        the step that uses it (server-side resolution only). ``None`` ref → ``None`` (an
         auth-less connection). A missing row → ``None`` (the connection lost its secret). A decrypt
         failure raises :class:`SecretDecryptError` so the caller binds an honest ``err``."""
         if secret_ref is None:

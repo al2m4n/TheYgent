@@ -1,4 +1,4 @@
-"""M20 fast suite — the (engine, modality) launcher dispatch + per-(engine,modality) readiness.
+"""Fast suite — the (engine, modality) launcher dispatch + per-(engine,modality) readiness.
 
 The load-bearing seam: ``ManagedLauncherSet`` grew its key from the engine alone to
 ``(engine, modality)`` so one engine can serve several modalities (mlx: ``mlx_lm.server`` chat vs
@@ -74,7 +74,7 @@ def test_dispatch_picks_the_modality_specific_launcher() -> None:
 
 
 def test_unregistered_non_chat_modality_is_rejected_not_served_by_chat() -> None:
-    # Fail-closed (M19 reject-don't-serve-wrong): an (engine, embeddings) binding with NO embeddings
+    # Fail-closed (reject-don't-serve-wrong): an (engine, embeddings) binding with NO embeddings
     # launcher must be REJECTED, never spawned on the chat launcher (where an embeddings request
     # would silently get a chat-shaped answer). The chat launcher is NOT touched.
     chat = _RecordingLauncher()
@@ -85,7 +85,7 @@ def test_unregistered_non_chat_modality_is_rejected_not_served_by_chat() -> None
 
 
 def test_bare_string_key_normalizes_to_chat() -> None:
-    # Back-compat: a chat-only set built with bare engine keys (the M2 shape, still used by the
+    # Back-compat: a chat-only set built with bare engine keys (the earlier shape, still used by the
     # /readyz stubs) routes a default (chat) binding unchanged.
     chat = _RecordingLauncher()
     s = ManagedLauncherSet({"mlx": chat})
@@ -159,7 +159,10 @@ def test_vision_binding_round_trips_and_reports_modalities() -> None:
         assert r.status_code == 200
         assert r.json()["binding"]["modality"] == "vision"
         caps = c.get("/admin/models/vlm/capabilities").json()
-        assert caps["modalities"] == ["chat", "vision"]  # vision rides chat (M18 §1.3)
+        assert caps["modalities"] == [
+            "chat",
+            "vision",
+        ]  # vision rides chat (vision model also supports chat)
 
 
 def test_embeddings_binding_round_trips() -> None:

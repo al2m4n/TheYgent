@@ -1,7 +1,7 @@
 // A stable structural projection of an IR with the non-hashed fields stripped.
 //
 // THIS IS NOT A contentHash CANONICALIZER. The frontend NEVER computes the hash or canonicalizes
-// for version identity — that lives in exactly one place, the Pydantic IR package (M15 §1.2; a
+// for version identity — that lives in exactly one place, the Pydantic IR package (a
 // second JS canonicalizer would drift from Python and silently corrupt version identity). This is
 // only a test/UX helper: it lets us ASSERT "the content the server WOULD hash is unchanged"
 // (round-trip identity, view isolation) without ever producing a hash. It mirrors the server's

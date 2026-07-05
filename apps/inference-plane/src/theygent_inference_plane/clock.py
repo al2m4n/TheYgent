@@ -1,8 +1,7 @@
 """Injectable clock seam.
 
 Idle eviction and LRU ordering read time through this, so tests advance a
-``ManualClock`` deterministically instead of calling ``time.sleep`` (plan §
-"Keep injected clock and resource-probe seams").
+``ManualClock`` deterministically instead of calling ``time.sleep``.
 """
 
 from __future__ import annotations

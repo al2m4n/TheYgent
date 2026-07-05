@@ -1,4 +1,4 @@
-"""A real, threaded local HTTP server for the ``http_fetch`` tool test (m6.md §5).
+"""A real, threaded local HTTP server for the ``http_fetch`` tool test.
 
 Same posture as ``_fake_inference`` (everything real, ephemeral port) but plainer: a fixed
 body + status on GET, so the tool makes a genuine outbound HTTP call across a real socket

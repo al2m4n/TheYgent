@@ -1,23 +1,23 @@
-"""The §8.7 compiler, in DBOS terms — the **in-workflow lowering** of an IR to a durable run
-(M13 §1/§2, decisions D3/D4).
+"""The durable compiler — the **in-workflow lowering** of an IR to a durable run.
 
-There is exactly ONE registered workflow, ``theygent_run`` — never one per agent (D3). DBOS recovers
+There is exactly ONE registered workflow, ``theygent_run`` — never one per agent. DBOS recovers
 crashed workflows by **name-based lookup** against workflows registered before ``DBOS.launch()``, so
 a per-agent dynamic workflow would be unrecoverable. ``theygent_run`` resolves the **immutable**,
-content-pinned IR (M11/M12) and then **walks it deterministically**, dispatching by ``kind``:
+content-pinned IR and then **walks it deterministically**, dispatching by ``kind``:
 
 * ``activity`` (``llm``/``tool``/``mcp_tool``) → a ``@DBOS.step`` whose body is the runtime-agnostic
   executor from ``walker.py`` (``execute_llm``/``execute_tool``/``execute_mcp_tool``). The step is
   the checkpoint: on resume a COMPLETED activity replays from the journal and is **not** re-executed
-  (the headline — no duplicated side effects; §7).
+  (the headline — no duplicated side effects).
 * ``orchestration`` (``router``) → inline **deterministic** logic in the workflow. No I/O here — the
-  determinism guard (§8.1). Replay re-derives the same branch from the same journaled step results.
+  determinism guard. Replay re-derives the same branch from the same journaled step results.
 * ``boundary`` (``input``/``output``) → the workflow's argument / return value.
 
-The deterministic traversal REUSES the exact helpers the M5 walker uses (``topological_order``,
-``_is_skipped``, ``_collect_in_ports``, ``_resolve_ref``, edge-liveness, ``finalize_empty_reason``),
+The deterministic traversal REUSES the exact helpers the interactive walker uses
+(``topological_order``, ``_is_skipped``, ``_collect_in_ports``, ``_resolve_ref``,
+edge-liveness, ``finalize_empty_reason``),
 so walker/compiler parity is structural, not coincidental (guarded by the parity test). The ``dbos``
-import lives only in this package — never in ``walker.py``, a node handler, or the IR (D4).
+import lives only in this package — never in ``walker.py``, a node handler, or the IR.
 """
 
 from __future__ import annotations
@@ -120,15 +120,15 @@ from theygent_control_plane.durable.bus import DeltaBus  # isort: skip
 
 logger = logging.getLogger("theygent.control_plane.durable")
 
-# M14 §1.4: the durable queue map fan-out enqueues per-element child workflows on. Separate from the
+# The durable queue map fan-out enqueues per-element child workflows on. Separate from the
 # top-level RUN_QUEUE so a wide fan-out never starves top-level fires. Created at import so it is
 # registered before ``DBOS.launch()`` (same discipline as RUN_QUEUE). Concurrency is bounded per-map
 # at the application layer (a semaphore around enqueue+await in ``_map_fanout``) rather than at the
 # queue, because a DBOS queue's concurrency is fixed at construction while ``map.concurrency`` is
-# per-node config; the thin-M14 bound is "how many branches in flight at once".
+# per-node config — "how many branches in flight at once".
 MAP_QUEUE = Queue("theygent_map")
 
-# M14 §1.1: the topic prefix the ``human`` node recvs on and ``POST /runs/{id}/resume`` sends to.
+# The topic prefix the ``human`` node recvs on and ``POST /runs/{id}/resume`` sends to.
 # The topic is per-NODE (``human:<node_id>``): DBOS buffers sends per topic FIFO, so with one shared
 # topic a duplicate resume (double-clicked Approve, client retry) would buffer a second message that
 # silently satisfied the run's NEXT human gate with a stale payload. Per-node topics make a stray
@@ -149,25 +149,25 @@ _FOREVER_SECONDS = 100 * 365 * 24 * 3600
 
 
 class SubgraphDepthError(RuntimeError):
-    """A ``subgraph``/``loop``/``map`` body would expand past its ``maxDepth`` (m14.md §1.2). The
+    """A ``subgraph``/``loop``/``map`` body would expand past its ``maxDepth``. The
     depth bound prevents unbounded / mutually-recursive composition; exceeding it fails the run
     honestly rather than recursing forever."""
 
 
 class LoopError(RuntimeError):
-    """A ``loop`` could not complete (m14.md §1.3): a body iteration failed, or its ``condition``
+    """A ``loop`` could not complete: a body iteration failed, or its ``condition``
     referenced a field absent from the iteration output. Fails the run honestly, with a clear
     reason."""
 
 
 class MapError(RuntimeError):
-    """A ``map`` could not complete (m14.md §1.4): its input is not a list, or — under the
+    """A ``map`` could not complete: its input is not a list, or — under the
     ``fail_fast`` policy — an element failed. Fails the run honestly with a clear reason."""
 
 
 class HumanTimeout(RuntimeError):
     """A ``human`` wait exceeded its ``timeout`` and the node's ``on_timeout`` policy is ``fail``
-    (m14.md §1.1). Fails the run honestly (M9) rather than hanging or fabricating an input."""
+    Fails the run honestly rather than hanging or fabricating an input."""
 
 
 # Gateway client is imported lazily for typing only via the resources holder below.
@@ -175,7 +175,7 @@ class HumanTimeout(RuntimeError):
 
 @dataclass
 class DurableResources:
-    """The process-local resources the durable steps reach (M13 D2/D6). DBOS workflows/steps are
+    """The process-local resources the durable steps reach. DBOS workflows/steps are
     module-level functions, so they cannot take an app instance as an argument; instead the runtime
     sets this singleton at launch and the steps read it. Only serializable *data* flows through the
     workflow→step boundary (DBOS checkpoints it); these are the non-serializable *resources*
@@ -188,18 +188,18 @@ class DurableResources:
     triggers: TriggerStore
     sessionmaker: async_sessionmaker[AsyncSession]
     bus: DeltaBus
-    # M17: the capture wrapper resource (same object the interactive walker uses, so spans/node_io
-    # land identically under both runtimes — the §1.5 one-wrapper rule). May be None in a degraded
+    # The capture wrapper resource (same object the interactive walker uses, so spans/node_io
+    # land identically under both runtimes — one wrapper, both paths). May be None in a degraded
     # setup; the durable walk guards on it (telemetry never fails the run it observes).
     telemetry: Any = None  # observability.Telemetry
-    # M19 §1.1: the connection resolver an http tool / connection-backed mcp_tool resolves auth
-    # through, server-side INSIDE the step. The SAME resolver the interactive walker uses (secret
-    # resolution is identical on both runtimes; never in the IR/span/journal). May be None.
+    # The connection resolver an http tool / connection-backed mcp_tool resolves auth through,
+    # server-side INSIDE the step. The SAME resolver the interactive walker uses (secret resolution
+    # is identical on both runtimes; never in the IR/span/journal). May be None.
     tool_auth: Any = None  # walker.ConnectionResolver
-    # M19 §2.8: the gate backend (ratelimit counter + quota usage-read) — the SAME one the
+    # The gate backend (ratelimit counter + quota usage-read) — the SAME one the
     # interactive walker uses, so gates behave identically on both runtimes. May be None.
     gates: Any = None  # gates.GateBackend
-    # M19 §2.2: the artifact store transcribe/speak resolve audio references through. May be None.
+    # The artifact store transcribe/speak resolve audio references through. May be None.
     artifacts: Any = None  # artifacts.LocalArtifactStore
 
 
@@ -230,33 +230,32 @@ def _coerce_output(value: Any) -> str:
 
 @contextlib.asynccontextmanager
 async def _null_acm() -> AsyncIterator[None]:
-    """A no-op async CM yielding ``None`` — used when no :class:`RunTrace` is wired (M17)."""
+    """A no-op async CM yielding ``None`` — used when no :class:`RunTrace` is wired."""
     yield None
 
 
 def _durable_node_span(run_trace: Any, node: Node) -> Any:
-    """The node-span CM for the durable walk (M17 §4) — the SAME wrapper the interactive walker
-    uses,
+    """The node-span CM for the durable walk — the SAME wrapper the interactive walker uses,
     so a durable run's waterfall is identical in shape. A no-op when telemetry is unwired."""
     if run_trace is not None:
         return run_trace.node_span(node)
     return _null_acm()
 
 
-# ── activity steps (the §8.7 durable activities — runtime-agnostic bodies wrapped) ──
-# Retries are ON with sensible defaults (m13-dbos.md §2): a transient inference/DB failure retries
-# via DBOS — which is why the durable gateway turns provider-client retry OFF (DBOS owns
-# retry, no double-retry). This REPLACES the M12 gateway-level retry the durable path removed;
-# without it a single transient 503 fails the whole run with no retry at any layer. Tuning the
-# counts/intervals per-activity is the deferred §5 work; the win on top is RESUME-after-crash.
+# ── activity steps (durable activities — runtime-agnostic bodies wrapped) ──
+# Retries are ON with sensible defaults: a transient inference/DB failure retries via DBOS — which
+# is why the durable gateway turns provider-client retry OFF (DBOS owns retry, no double-retry).
+# This replaces the earlier gateway-level retry the durable path removed; without it a single
+# transient 503 fails the whole run with no retry at any layer. Tuning per-activity counts/intervals
+# is deferred; the win on top of retry is RESUME-after-crash.
 #
-# **The guarantee is honest (decision D9):** a COMPLETED (journaled) step replays exactly once and
-# is never re-executed. An INTERRUPTED step (process died mid-execution) or a RETRIED step is
+# **The guarantee is honest:** a COMPLETED (journaled) step replays exactly once and is never
+# re-executed. An INTERRUPTED step (process died mid-execution) or a RETRIED step is
 # **at-least-once** — its body runs again. So an activity with a non-idempotent external side effect
-# can repeat it (the §8 Do-NOT "don't make activities non-idempotent" is the contract, not the
-# enforcement). llm/tool/mcp reads are safe to repeat; a side-effecting tool must be idempotent (the
-# human node inherits this). retries_allowed=True is sound here only because these bodies are
-# read-shaped; a future write-shaped activity must opt into idempotency keys, not inherit this.
+# can repeat it ("don't make activities non-idempotent" is the contract, not the enforcement).
+# llm/tool/mcp reads are safe to repeat; a side-effecting tool must be idempotent (the human node
+# inherits this). retries_allowed=True is sound here only because these bodies are read-shaped; a
+# future write-shaped activity must opt into idempotency keys, not inherit this.
 _RETRY = {"retries_allowed": True, "max_attempts": 3, "interval_seconds": 1.0, "backoff_rate": 2.0}
 
 
@@ -271,9 +270,9 @@ async def _llm_step(
     tool_choice: Any = None,
 ) -> dict[str, Any]:
     """ONE ``llm`` model turn as a durable step. Streams tokens to the in-process bus as a side
-    effect (§6 — non-durable), returns the assembled answer + any ``tool_calls`` (the journaled
+    effect (non-durable), returns the assembled answer + any ``tool_calls`` (the journaled
     values). On replay this body does NOT run, so tokens are not regenerated/re-streamed and the
-    tool calls are re-derived from the journal, not re-requested (D7; M21 — each turn is one step so
+    tool calls are re-derived from the journal, not re-requested (each turn is one step so
     the tool loop's progress is durable)."""
     res = _res()
     bus = res.bus
@@ -309,7 +308,7 @@ async def _llm_step(
 async def _tool_step(
     run_id: str, node_id: str, tool_name: str, args: dict[str, Any]
 ) -> dict[str, Any]:
-    # The built-in tool registry is process-wide and stateless (m6.md §3) — the durable step uses
+    # The built-in tool registry is process-wide and stateless — the durable step uses
     # the same DEFAULT_REGISTRY the interactive walker does.
     out = await execute_tool(DEFAULT_REGISTRY, tool_name, args)
     return {"ok": out.ok, "value": out.value}
@@ -327,9 +326,9 @@ async def _mcp_step(
 async def _mcp_conn_step(
     run_id: str, node_id: str, connection_id: str, tool: str, args: dict[str, Any]
 ) -> dict[str, Any]:
-    """A CONNECTION-BACKED mcp_tool as a durable step (M19 §2.4): resolve the connection (auth)
-    HERE, inside the step (server-side — §1.1), build the transport config, then call. The secret
-    never journals; a completed step replays from the journal."""
+    """A CONNECTION-BACKED mcp_tool as a durable step: resolve the connection (auth) HERE, inside
+    the step (server-side), build the transport config, then call. The secret never journals; a
+    completed step replays from the journal."""
     res = _res()
     try:
         conn = await res.tool_auth(connection_id) if res.tool_auth is not None else None
@@ -355,11 +354,11 @@ async def _http_step(
     idempotency_key: str | None,
     timeout_s: float | None,
 ) -> dict[str, Any]:
-    """The http-tool activity as a durable step (M19 §2.3). The connection is resolved + the secret
-    decrypted HERE, inside the step (server-side — §1.1), then the call runs. The request is built
-    deterministically in the workflow body and passed in, so step args stay serializable +
-    replay-stable. A completed step replays from the journal (no duplicated POST); the
-    ``idempotency_key`` covers the crash-after-send window (§2.5)."""
+    """The http-tool activity as a durable step. The connection is resolved + the secret decrypted
+    HERE, inside the step (server-side), then the call runs. The request is built deterministically
+    in the workflow body and passed in, so step args stay serializable + replay-stable. A completed
+    step replays from the journal (no duplicated POST); the ``idempotency_key`` covers the
+    crash-after-send window."""
     resolver = _res().tool_auth
     try:
         conn = await resolver(connection_id) if resolver is not None else None
@@ -381,12 +380,12 @@ async def _http_step(
 async def _durable_tool_call(
     ir: IRDocument, call: _ToolCall, run_id: str, node_id: str, iteration: int
 ) -> ActivityOutcome:
-    """Dispatch ONE model-emitted tool call to its EXISTING durable step (M21), so each call is
-    independently journaled — a crash mid-loop resumes at the first incomplete step (D9), completed
+    """Dispatch ONE model-emitted tool call to its EXISTING durable step, so each call is
+    independently journaled — a crash mid-loop resumes at the first incomplete step, completed
     calls replay from the journal. Mirrors the interactive ``execute_tool_call`` but via @DBOS.step
     bodies. Plain helper (not itself a step): it composes steps inside the workflow body."""
-    # M22: an ir.tools key (M21) OR a tool/mcp_tool NODE id wired as a capability (binding from the
-    # node's inline config — D3/D6). Same dispatch below either way; legacy keys tried first.
+    # Dispatch: an ir.tools key OR a tool/mcp_tool NODE id wired as a capability (binding from the
+    # node's inline config). Same dispatch below either way; legacy keys tried first.
     binding = ir.tools.get(call.name) or _capability_binding(ir, call.name)
     if binding is None:
         if call.name in DEFAULT_REGISTRY:  # a directly-registered builtin
@@ -424,7 +423,7 @@ async def _durable_tool_call(
         )
         try:
             hc = build_http_call(binding, cfg, ports, node_id=node_id, run_id=run_id)
-        except Exception as exc:  # template error → structured err (m6 §4)
+        except Exception as exc:  # template error → structured err
             return ActivityOutcome(ok=False, value=f"http tool {call.name!r}: {exc}")
         o = await _http_step(
             run_id,
@@ -499,9 +498,9 @@ async def _guardrail_model_step(
 
 @DBOS.step(**_RETRY)
 async def _ratelimit_step(scope: str, limit: int, window_seconds: int) -> bool:
-    """The ``ratelimit`` gate as a durable step (M19 §2.8) — the counter hit is I/O. Returns
-    True=allow. (A repeated step on resume re-counts a hit; a gate is a soft policy, not a financial
-    side effect, so at-least-once is acceptable here — the §1.6 lean-seam posture.)"""
+    """The ``ratelimit`` gate as a durable step — the counter hit is I/O. Returns True=allow.
+    (A repeated step on resume re-counts a hit; a gate is a soft policy, not a financial
+    side effect, so at-least-once is acceptable here.)"""
     return await execute_ratelimit(
         _res().gates, scope=scope, limit=limit, window_seconds=window_seconds
     )
@@ -509,7 +508,7 @@ async def _ratelimit_step(scope: str, limit: int, window_seconds: int) -> bool:
 
 @DBOS.step(**_RETRY)
 async def _quota_step(agent_id: str | None, budget_tokens: int, window_seconds: int) -> bool:
-    """The ``quota`` gate as a durable step (M19 §2.8/§1.6) — reads accumulated span token usage.
+    """The ``quota`` gate as a durable step — reads accumulated span token usage.
     Returns True=allow."""
     return await execute_quota(
         _res().gates, agent_id=agent_id, budget_tokens=budget_tokens, window_seconds=window_seconds
@@ -520,8 +519,8 @@ async def _quota_step(agent_id: str | None, budget_tokens: int, window_seconds: 
 async def _transcribe_step(
     run_id: str, node_id: str, model_id: str, params: dict[str, Any], audio_ref: Any
 ) -> dict[str, Any]:
-    """The ``transcribe`` activity as a durable step (M19 §2.2): audio-ref → text. The audio bytes
-    go to the inference base URL, never a control-plane route (§10). Returns the ok/err outcome."""
+    """The ``transcribe`` activity as a durable step: audio-ref → text. The audio bytes go to the
+    inference base URL, never a control-plane route. Returns the ok/err outcome."""
     res = _res()
     out = await execute_transcribe(
         res.gateway,
@@ -538,7 +537,7 @@ async def _transcribe_step(
 async def _speak_step(
     run_id: str, node_id: str, model_id: str, params: dict[str, Any], text: str
 ) -> dict[str, Any]:
-    """The ``speak`` activity as a durable step (M19 §2.2): text → audio REFERENCE (the bytes are an
+    """The ``speak`` activity as a durable step: text → audio REFERENCE (the bytes are an
     artifact, not journaled — so a resumed run replays the ref, not the audio)."""
     res = _res()
     out = await execute_speak(
@@ -557,10 +556,10 @@ async def _speak_step(
 
 @DBOS.step(**_RETRY)
 async def _resolve_ir_step(agent_ref: dict[str, Any]) -> dict[str, Any] | None:
-    """Resolve the trigger's *pinned, saved* agent to its canonical IR (M11/M12 §1.1): pinned
+    """Resolve the trigger's *pinned, saved* agent to its canonical IR: pinned
     ``content_hash`` > pinned ``version`` > latest. Returns the stored canonical IR dict, or
     ``None`` for a dangling pin / unknown agent (the workflow fails the run honestly). Never inline
-    IR — a trigger always references a saved agent by reference (D3)."""
+    IR — a trigger always references a saved agent by reference."""
     res = _res()
     agent_id = agent_ref["agent_id"]
     version = agent_ref.get("version")
@@ -606,7 +605,7 @@ async def _complete_run_step(
 ) -> None:
     """Terminalize the Run (idempotent: setting the same terminal values twice is a no-op). The
     durable ``fire()`` path is un-threaded (thread_id None), so there is no thread turn to append —
-    completion is just the status/output/error write (M9 §2.2 persists the output)."""
+    completion is just the status/output/error write (the output is persisted on the run row)."""
     res = _res()
     async with res.sessionmaker() as session, session.begin():
         await res.store.set_status(session, run_id, status, output=output, error=error)  # type: ignore[arg-type]
@@ -635,10 +634,10 @@ async def _fail_run(run_id: str, run_trace: Any, reason: str) -> dict[str, Any]:
 
 @DBOS.step(**_RETRY)
 async def _mark_waiting_step(run_id: str, node_id: str) -> None:
-    """Pause the Run at a ``human`` node (M14 §1.1): status → ``waiting`` + record the node, so the
-    run is excluded from M9's sweep while paused and ``POST /runs/{id}/resume`` can find the node.
-    Idempotent (the recovered workflow re-marks the same wait — a no-op write before the recv
-    replays its buffered value)."""
+    """Pause the Run at a ``human`` node: status → ``waiting`` + record the node, so the
+    run is excluded from the reconcile sweep while paused and ``POST /runs/{id}/resume`` can find
+    the node. Idempotent (the recovered workflow re-marks the same wait — a no-op write before the
+    recv replays its buffered value)."""
     res = _res()
     async with res.sessionmaker() as session, session.begin():
         await res.store.mark_waiting(session, run_id, node_id)
@@ -658,11 +657,10 @@ async def _set_running_step(run_id: str) -> None:
 
 
 def _node_input(ports: _PortInputs, node: Node) -> Any:
-    """The value to feed a ``subgraph``/``loop``/``map`` body run (M14 §1.2 data mapping via M10
-    named ports). One in-port → that port's value verbatim (a single-input child gets the raw
-    value); several in-ports → the ``{port: value}`` object (the child's input boundary receives it
-    and drills with ``$in.in.<port>``); no in-port → ``None``. The M10 mapping at the composition
-    seam."""
+    """The value to feed a ``subgraph``/``loop``/``map`` body run (data mapping via named ports).
+    One in-port → that port's value verbatim (a single-input child gets the raw value); several
+    in-ports → the ``{port: value}`` object (the child's input boundary receives it and drills with
+    ``$in.in.<port>``); no in-port → ``None``."""
     declared = node.ports.in_
     if not declared:
         return None
@@ -672,11 +670,10 @@ def _node_input(ports: _PortInputs, node: Node) -> Any:
 
 
 def _child_ref(config: Any, depth: int) -> dict[str, Any]:
-    """Build the pinned child ``agent_ref`` for a composed body, carrying the nesting ``depth`` (M14
-    §1.2). Depth rides INSIDE the opaque ``agent_ref`` dict so the frozen ``theygent_run`` signature
-    is untouched (m14.md §0 / §4 the Do-NOT) — ``_resolve_ir_step`` ignores it, the depth guard
-    reads it. ``config`` is a Subgraph/Loop/MapConfig — all share ``agent``/``version``/
-    ``content_hash``."""
+    """Build the pinned child ``agent_ref`` for a composed body, carrying the nesting ``depth``.
+    Depth rides INSIDE the opaque ``agent_ref`` dict so the frozen ``theygent_run`` signature is
+    untouched — ``_resolve_ir_step`` ignores it, the depth guard reads it. ``config`` is a
+    Subgraph/Loop/MapConfig — all share ``agent``/``version``/``content_hash``."""
     return {
         "agent_id": config.agent,
         "version": config.version,
@@ -686,11 +683,10 @@ def _child_ref(config: Any, depth: int) -> dict[str, Any]:
 
 
 def _eval_loop_condition(condition: str, value: Any, node_id: str) -> bool:
-    """Evaluate a ``loop`` stop-condition over the iteration output (M14 §1.3). Reuses the router's
-    ``$in`` resolver (m14.md §1.3 "reuse the router expression evaluator") against a one-port map
-    binding the output to ``in`` — so ``$in.in.<field>`` drills into it exactly as everywhere else.
-    Truthy → stop the loop. A field absent from a present output is a loud :class:`LoopError` (the
-    M9/M10 no-silent-nonsense rule), never a silent ``False``."""
+    """Evaluate a ``loop`` stop-condition over the iteration output. Reuses the router's ``$in``
+    resolver against a one-port map binding the output to ``in`` — so ``$in.in.<field>`` drills
+    into it exactly as everywhere else. Truthy → stop the loop. A field absent from a present
+    output is a loud :class:`LoopError` (no-silent-nonsense rule), never a silent ``False``."""
     ports = _PortInputs(values={"in": value}, declared=frozenset({"in"}))
     try:
         resolved = _resolve_ref(condition, ports, node_id)
@@ -711,7 +707,7 @@ async def _map_fanout(
     run_trace: Any = None,
 ) -> list[dict[str, Any]]:
     """Fan out one ``theygent_run`` child per element on the durable queue and await all, preserving
-    element order (M14 §1.4). Each element's child has a DETERMINISTIC workflow id
+    element order. Each element's child has a DETERMINISTIC workflow id
     (``<run>-map-<node>-<i>``), so on resume a completed branch dedups (replays from the journal)
     and
     only the incomplete branches re-run — the headline durable-fan-out property. ``concurrency`` (if
@@ -754,25 +750,24 @@ async def _durable_walk(
     ir_dict: dict[str, Any] | None = None,
 ) -> tuple[Any, bool, str | None]:
     """Walk a validated IR deterministically, awaiting an activity step per ``activity`` node and
-    running ``orchestration``/``boundary`` inline (M13 §2). This mirrors ``walker.walk`` exactly —
-    same traversal order, same edge-liveness/skip logic, same value threading — but the I/O lives in
+    running ``orchestration``/``boundary`` inline. This mirrors ``walker.walk`` exactly — same
+    traversal order, same edge-liveness/skip logic, same value threading — but the I/O lives in
     journaled steps so the run resumes from the last completed activity. Returns
     ``(output, output_produced, empty_reason)``. The thread-memory replay is empty on the durable
     ``fire()`` path (un-threaded); prior messages are threaded in by the caller if ever needed.
 
-    M14 adds the four additive-lowering types (m14.md §1), each a new branch here, classified by its
-    existing ``kind`` — NOT a new subsystem: ``human`` (boundary) → ``DBOS.recv`` durable wait;
-    ``subgraph`` (boundary) → a ``theygent_run`` child workflow; ``loop`` (orchestration) → bounded
-    inline repetition over child workflows, deterministic control; ``map`` (orchestration) → durable
+    The four additive-lowering types are each a new branch here, classified by the existing ``kind``
+    — NOT a new subsystem: ``human`` (boundary) → ``DBOS.recv`` durable wait; ``subgraph``
+    (boundary) → a ``theygent_run`` child workflow; ``loop`` (orchestration) → bounded inline
+    repetition over child workflows, deterministic control; ``map`` (orchestration) → durable
     fan-out/join over the queue. ``depth`` is the composition nesting level (0 at the top), guarded
     against ``maxDepth`` before any child is spawned.
 
-    M17: ``run_trace`` (a :class:`~observability.RunTrace`) wraps each node in the SAME span wrapper
-    the interactive walker uses (§1.5), so a durable run's waterfall is identical in shape — and
-    each
-    node span is stamped with the DBOS worker that ran it (worker attribution), so a crash-resumed
-    run visibly hops workers (first-writer-wins on the deterministic span id keeps the pre-crash
-    rows). A no-op when telemetry is unwired."""
+    ``run_trace`` (a :class:`~observability.RunTrace`) wraps each node in the SAME span wrapper
+    the interactive walker uses, so a durable run's waterfall is identical in shape — each node span
+    is stamped with the DBOS worker that ran it (worker attribution), so a crash-resumed run visibly
+    hops workers (first-writer-wins on the deterministic span id keeps the pre-crash rows). A no-op
+    when telemetry is unwired."""
 
     values: dict[tuple[str, str], Any] = {}
     skipped: set[str] = set()
@@ -781,8 +776,8 @@ async def _durable_walk(
     output: Any = None
     output_produced = False
 
-    # M22 (parity with the interactive walker): a capability tool node (source of a `tool` edge) is
-    # not run as a step — the model calls it lazily inside the llm loop. Skip it in the topo walk.
+    # A capability tool node (source of a `tool` edge) is not run as a step — the model calls it
+    # lazily inside the llm loop. Skip it in the topo walk.
     capability_nodes = {e.source for e in ir.edges if e.channel == "tool"}
 
     for node in topological_order(ir):
@@ -817,8 +812,7 @@ async def _durable_walk(
                     output = _single_in_value(ports, node)
                     output_produced = True
                 elif node.type == "human":
-                    # M14 §1.1: a durable wait. Persist `waiting`, then `DBOS.recv` — the workflow
-                    # is
+                    # A durable wait. Persist `waiting`, then `DBOS.recv` — the workflow is
                     # checkpointed here and survives a worker crash. `POST /runs/{id}/resume` → send
                     # delivers the input and the workflow resumes from the checkpoint. The awaited
                     # input binds the node's success handle(s) (the response flows downstream).
@@ -841,13 +835,11 @@ async def _durable_walk(
                     for handle in live_handles[node.id]:
                         values[(node.id, handle)] = received
                 elif node.type == "subgraph":
-                    # M14 §1.2: an agent calls a SAVED, PINNED agent as an independently durable
-                    # child
+                    # Subgraph: runs a SAVED, PINNED agent as an independently durable child
                     # workflow. The pin is frozen into the parent IR; the depth guard prevents
-                    # unbounded recursion. The parent's in-port value (M10 mapping) is the child's
-                    # run
-                    # input; the child's output binds the node's ok handle (a failed child binds
-                    # err).
+                    # unbounded recursion. The parent's in-port value (named-port mapping) is the
+                    # child's run input; the child's output binds the node's ok handle (a failed
+                    # child binds err).
                     config = SubgraphConfig.model_validate(node.config)
                     if depth + 1 > config.max_depth:
                         raise SubgraphDepthError(
@@ -881,16 +873,14 @@ async def _durable_walk(
                     config = LlmConfig.model_validate(node.config)
                     model_id, params = resolve_model(ir, config)
                     messages = _render_messages(node, config, ports)
-                    # M21 — the same bounded tool loop the interactive walker runs, but each model
-                    # turn is a journaled `_llm_step` and each tool call its existing journaled step
+                    # The same bounded tool loop the interactive walker runs, but each model turn is
+                    # a journaled `_llm_step` and each tool call its existing journaled step
                     # (`_durable_tool_call`), so a crash mid-loop resumes at the first incomplete
-                    # step
-                    # (D9). With no tools this is exactly one `_llm_step` — byte-identical to
-                    # pre-M21.
-                    # M22 (parity with the walker): union the legacy ir.tools keys (config.tools)
-                    # with the capability nodes wired to this llm's `tools` port. Capability schemas
-                    # name the function by NODE id; both dispatch through _durable_tool_call. Built
-                    # inside a journaled step — MCP schema lookup is I/O and must replay stably.
+                    # step. With no tools this is exactly one `_llm_step`.
+                    # Union the legacy ir.tools keys (config.tools) with the capability nodes wired
+                    # to this llm's `tools` port. Capability schemas name the function by NODE id;
+                    # both dispatch through _durable_tool_call. Built inside a journaled step — MCP
+                    # schema lookup is I/O and must replay stably.
                     cap_nodes = _capability_tool_nodes(ir, node.id)
                     schemas: list[dict[str, Any]] = []
                     if config.tools or cap_nodes:
@@ -905,9 +895,8 @@ async def _durable_walk(
                     has_tools = bool(schemas)
                     tool_schemas = schemas if has_tools else None
                     tool_choice = _to_openai_tool_choice(config.tool_choice) if has_tools else None
-                    # M17 §2: each journaled turn is a `model.generate` phase span (child of the
-                    # node
-                    # span). Carries the GenAI-semconv model/finish scalars.
+                    # Each journaled turn is a `model.generate` phase span (child of the node span).
+                    # Carries the GenAI-semconv model/finish scalars.
                     gen_cm = (
                         scope.child_phase("model.generate") if scope is not None else _null_acm()
                     )
@@ -993,16 +982,16 @@ async def _durable_walk(
                         values[(node.id, handle)] = final_output
                 elif node.type == "tool":
                     config = ToolConfig.model_validate(node.config)
-                    # M19 §2.3: route http-vs-builtin. An ``http`` binding → a journaled http step
-                    # (connection auth resolved inside the step); else the M6 builtin step. Both go
-                    # through the ok/err contract.
+                    # Route http-vs-builtin. An ``http`` binding → a journaled http step (connection
+                    # auth resolved inside the step); else the builtin step. Both go through the
+                    # ok/err contract.
                     http_binding = is_http_tool(ir, config.tool)
                     if isinstance(http_binding, HttpTool):
                         try:
                             call = build_http_call(
                                 http_binding, config, ports, node_id=node.id, run_id=run_id
                             )
-                        except Exception as exc:  # template error → structured err (m6 §4)
+                        except Exception as exc:  # template error → structured err
                             outcome = ActivityOutcome(
                                 ok=False, value=f"http tool {config.tool!r}: {exc}"
                             )
@@ -1040,7 +1029,7 @@ async def _durable_walk(
                             args = {
                                 k: _resolve_ref(v, ports, node.id) for k, v in config.args.items()
                             }
-                        except Exception as exc:  # an unresolvable arg ref is a structured err (§4)
+                        except Exception as exc:  # an unresolvable arg ref is a structured err
                             outcome = ActivityOutcome(ok=False, value=str(exc))
                         else:
                             step_out = await _tool_step(run_id, node.id, builtin_name, args)
@@ -1057,7 +1046,7 @@ async def _durable_walk(
                             ok=False, value=f"mcp {target!r} tool {tool!r} failed: {exc}"
                         )
                     else:
-                        # M19 §2.4: connection-backed → resolve auth in the step; else M7 server.
+                        # Connection-backed → resolve auth in the step; else registered server name.
                         if config.connection:
                             step_out = await _mcp_conn_step(
                                 run_id, node.id, config.connection, tool, args
@@ -1104,7 +1093,7 @@ async def _durable_walk(
                         values,
                         live_handles,
                     )
-                elif node.type in ("ratelimit", "quota"):  # M19 §2.8: the gate seam
+                elif node.type in ("ratelimit", "quota"):  # gate nodes
                     gate_input = _single_in_value(ports, node)
                     if node.type == "ratelimit":
                         rcfg = RateLimitConfig.model_validate(node.config)
@@ -1120,7 +1109,7 @@ async def _durable_walk(
                             f"token budget exceeded ({qcfg.budget_tokens}/{qcfg.window_seconds}s)"
                         )
                     _bind_gate(node, allowed, gate_input, reason, values, live_handles)
-                elif node.type == "transcribe":  # M19 §2.2 audio-ref → text
+                elif node.type == "transcribe":  # audio-ref → text
                     tcfg = TranscribeConfig.model_validate(node.config)
                     model_id, binding_params = resolve_model_key(ir, tcfg.model)
                     audio_ref = _single_in_value(ports, node)
@@ -1133,7 +1122,7 @@ async def _durable_walk(
                         values,
                         live_handles,
                     )
-                elif node.type == "speak":  # M19 §2.2 text → audio reference
+                elif node.type == "speak":  # text → audio reference
                     scfg = SpeakConfig.model_validate(node.config)
                     model_id, binding_params = resolve_model_key(ir, scfg.model)
                     text_val = _single_in_value(ports, node)
@@ -1150,14 +1139,14 @@ async def _durable_walk(
                         values,
                         live_handles,
                     )
-                else:  # agent / rag / retriever / memory / code — deferred (§7)
+                else:  # agent / rag / retriever / memory / code — deferred
                     raise NotImplementedError(
                         f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
                     )
 
             elif node.kind == "orchestration":
                 if node.type == "router":
-                    # Inline, deterministic — NO I/O (determinism guard §8.1). Mirrors _walk_router.
+                    # Inline, deterministic — NO I/O (determinism guard). Mirrors _walk_router.
                     config = RouterConfig.model_validate(node.config)
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
                     try:
@@ -1173,7 +1162,7 @@ async def _durable_walk(
                     live_handles[node.id] = {selected}
                     values[(node.id, selected)] = _single_in_value(ports, node)
                 elif node.type == "transform":
-                    # M19 §2.9: deterministic JSON-template reshape, inline (no I/O). Same body as
+                    # Deterministic JSON-template reshape, inline (no I/O). Same body as
                     # the interactive walker (execute_transform), so durable parity holds.
                     config = TransformConfig.model_validate(node.config)
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
@@ -1182,9 +1171,8 @@ async def _durable_walk(
                     for handle_id in live_handles[node.id]:
                         values[(node.id, handle_id)] = value
                 elif node.type == "guardrail":  # RULE guardrail (orchestration; model⇒step above)
-                    # Deterministic predicate over journaled input — NO I/O (the §1.2 determinism
-                    # guard; a model guardrail is the activity branch above). Mirrors
-                    # _walk_guardrail_rule.
+                    # Deterministic predicate over journaled input — NO I/O (determinism guard; a
+                    # model guardrail is the activity branch above). Mirrors _walk_guardrail_rule.
                     config = GuardrailConfig.model_validate(node.config)
                     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
                     # A branch-local name: rebinding `input_value` here would corrupt the RUN
@@ -1195,14 +1183,12 @@ async def _durable_walk(
                     passed = evaluate_guardrail_rule(config.check.rule, gr_input)
                     _bind_guardrail(node, passed, gr_input, config.on_block, values, live_handles)
                 elif node.type == "loop":
-                    # M14 §1.3: bounded, deterministic repetition. Each iteration runs the pinned
-                    # body
+                    # Loop: bounded, deterministic repetition. Each iteration runs the pinned body
                     # agent as a child workflow (deterministic id → a completed iteration replays
-                    # from
-                    # the journal on resume, never re-runs); the previous output feeds the next
-                    # input.
-                    # The control (counter, condition over journaled output) does NO I/O — the §8.1
-                    # determinism guard. maxIterations caps it; an optional condition stops early.
+                    # from the journal on resume, never re-runs); the previous output feeds the next
+                    # input. The control (counter, condition over journaled output) does NO I/O —
+                    # the determinism guard. maxIterations caps it; an optional condition
+                    # stops early.
                     config = LoopConfig.model_validate(node.config)
                     if depth + 1 > config.max_depth:
                         raise SubgraphDepthError(
@@ -1243,8 +1229,9 @@ async def _durable_walk(
                     for handle_id in live_handles[node.id]:
                         values[(node.id, handle_id)] = current
                 elif node.type == "map":
-                    # M14 §1.4: durable fan-out/join. One child workflow per element on the durable
-                    # queue; a crash mid-fan-out resumes only the incomplete branches (deterministic
+                    # Map: durable fan-out/join. One child workflow per element on the
+                    # durable queue;
+                    # a crash mid-fan-out resumes only the incomplete branches (deterministic
                     # per-element ids). Partial-failure policy is config: fail_fast vs collect.
                     config = MapConfig.model_validate(node.config)
                     if depth + 1 > config.max_depth:
@@ -1296,8 +1283,8 @@ async def _durable_walk(
                         "is not implemented yet"
                     )
 
-            # M17: record what the node received + emitted and its ok/err status (the durable
-            # node_io capture, governed by the run's effective policy — §4).
+            # Record what the node received + emitted and its ok/err status (the durable
+            # node_io capture, governed by the run's effective policy).
             if scope is not None:
                 scope.set_io(
                     inputs=io_inputs,
@@ -1318,8 +1305,8 @@ async def _durable_walk(
 
 
 def _log_node(run_id: str, node: Any, *, skipped: bool) -> None:
-    # The OTel attach-point seam (M3 §5 / M5 / m13-dbos.md §2): a structured per-node record keyed
-    # by run_id. DBOS also emits a span per step; wiring an OTLP exporter is the deferred milestone.
+    # OTel attach-point seam: a structured per-node record keyed by run_id. DBOS also emits a span
+    # per step; wiring an OTLP exporter is deferred.
     logger.info(
         "durable.node",
         extra={
@@ -1333,12 +1320,11 @@ def _log_node(run_id: str, node: Any, *, skipped: bool) -> None:
 
 
 def _log_branch(run_id: str, node_id: str, kind: str, index: int) -> None:
-    # M14 §2: loop/map emit a span PER iteration/branch so a trace reads against the drawn graph.
-    # Same attach-point fidelity as `_log_node` (the seam M5/M13 established) — a structured record
-    # keyed by run_id + node_id + index, with the per-branch span NAME stamped as `<node_id>#<i>`.
-    # Each iteration/branch is ALSO a DBOS child workflow, so DBOS's own tracer emits a workflow
-    # span per branch natively; wiring an OTLP exporter onto both remains the deferred milestone
-    # (M13 deferred it). The `#<i>` suffix is what makes the trace legible against the graph node.
+    # Loop/map emit a span PER iteration/branch so a trace reads against the drawn graph.
+    # A structured record keyed by run_id + node_id + index, with the per-branch span NAME stamped
+    # as `<node_id>#<i>`. Each iteration/branch is ALSO a DBOS child workflow, so DBOS's own tracer
+    # emits a workflow span per branch natively; wiring an OTLP exporter onto both is deferred.
+    # The `#<i>` suffix is what makes the trace legible against the graph node.
     logger.info(
         "durable.branch",
         extra={
@@ -1351,7 +1337,7 @@ def _log_branch(run_id: str, node_id: str, kind: str, index: int) -> None:
     )
 
 
-# ── the one registered durable workflow (D3) ────────────────────────────────────────
+# ── the one registered durable workflow ─────────────────────────────────────────────
 
 
 @DBOS.workflow(name="theygent_run")
@@ -1361,23 +1347,23 @@ async def theygent_run(
     thread_id: str | None,
     trigger_id: str | None,
 ) -> dict[str, Any]:
-    """The single generic durable workflow (D3). Resolve the pinned saved agent's **immutable** IR,
+    """The single generic durable workflow. Resolve the pinned saved agent's **immutable** IR,
     create the Run (id == this workflow's id), walk it durably, persist the terminal outcome. Every
-    trigger kind converges here via the re-pointed ``fire()`` seam (M13 §4). Returns the same
-    non-stream result dict the M12 ``fire`` returned, so the contract above is unchanged.
+    trigger kind converges here via the re-pointed ``fire()`` seam. Returns the same non-stream
+    result dict ``fire`` returns, so the contract above is unchanged.
 
     ``thread_id`` is accepted for shape-parity with the interactive run path but is ``None`` on the
     durable ``fire()`` route (thread memory is an interactive-cockpit concern); a future durable
     threaded entry threads prior messages in through a step without reshaping this signature."""
 
     run_id = DBOS.workflow_id  # stable across resume — the run row is keyed by it
-    # M14 §1.2: the composition nesting depth rides inside the opaque agent_ref dict (the frozen
-    # signature is untouched). 0 at the top; a subgraph/loop/map child is spawned with depth+1.
+    # Composition nesting depth rides inside the opaque agent_ref dict (the frozen signature is
+    # untouched). 0 at the top; a subgraph/loop/map child is spawned with depth+1.
     depth = int(agent_ref.get("depth", 0)) if isinstance(agent_ref, dict) else 0
     ir_dict = await _resolve_ir_step(agent_ref)
     if ir_dict is None:
-        # A dangling pin should be caught at trigger-create time (M12 §1.1); if it somehow reaches
-        # here, fail honestly rather than hang. No run row exists yet — record one so it is visible.
+        # A dangling pin should be caught at trigger-create time; if it somehow reaches here, fail
+        # honestly rather than hang. No run row exists yet — record one so it is visible.
         reason = f"agent {agent_ref.get('agent_id')!r} pin did not resolve"
         await _create_run_step(run_id, "", agent_ref.get("agent_id"), None, None, trigger_id)
         await _complete_run_step(run_id, "failed", None, reason)
@@ -1396,10 +1382,10 @@ async def theygent_run(
 
     await _create_run_step(run_id, model, ir.id, ir.version, chash, trigger_id)
 
-    # M17: open the run's observability trace. Worker attribution = ``DBOS.executor_id`` (the worker
+    # Open the run's observability trace. Worker attribution = ``DBOS.executor_id`` (the worker
     # executing this workflow — ``local`` single-worker, a distinct id per distributed worker; on a
     # crash + resume the resuming worker's id stamps the spans IT completes, so the waterfall hops
-    # workers). The effective capture level is resolved once per run (§4). All best-effort —
+    # workers). The effective capture level is resolved once per run. All best-effort —
     # telemetry never fails the run it observes.
     run_trace = await _begin_run_trace(run_id, ir, agent_ref)
 
@@ -1415,7 +1401,7 @@ async def theygent_run(
         return await _fail_run(run_id, run_trace, str(exc))
     except NotImplementedError as exc:
         return await _fail_run(run_id, run_trace, str(exc))
-    except Exception as exc:  # inference died mid-walk / unreachable plane: fail cleanly (§1.4)
+    except Exception as exc:  # inference died mid-walk / unreachable plane: fail cleanly
         return await _fail_run(run_id, run_trace, str(exc))
 
     out_str = _coerce_output(output)
@@ -1426,12 +1412,10 @@ async def theygent_run(
 
 
 async def _begin_run_trace(run_id: str, ir: IRDocument, agent_ref: dict[str, Any]) -> Any:
-    """Open the M17 run trace for a durable run (worker attribution + queue.wait). Best-effort: any
+    """Open the run trace for a durable run (worker attribution + queue.wait). Best-effort: any
     telemetry failure returns ``None`` and the walk proceeds untraced — observability never fails
-    the
-    run. ``agent_ref['enqueued_ns']`` (stamped at enqueue) lets us emit the ``queue.wait`` phase
-    span
-    (enqueue → this worker's pickup — often the biggest gap on the durable path, §2)."""
+    the run. ``agent_ref['enqueued_ns']`` (stamped at enqueue) lets us emit the ``queue.wait``
+    phase span (enqueue → this worker's pickup — often the biggest gap on the durable path)."""
     tel = _res().telemetry
     if tel is None:
         return None
@@ -1453,12 +1437,12 @@ async def _finish_run_trace(run_trace: Any, status: str, error: str | None) -> N
             await run_trace.finish(status=status, error=error)
 
 
-# ── the scheduled-fire workflow (M13 §4 — schedules → DBOS dynamic schedules) ────────
-# theygent's ``trigger`` table stays the source of truth (the frozen M12 contract); a DBOS dynamic
-# schedule per enabled schedule-trigger calls THIS one generic scheduled workflow with the trigger
-# id as ``context``. It re-reads the trigger (so a config/pin edit between firings is honoured),
-# checks it is still enabled (the schedule may be mid-pause), and fires ``theygent_run`` as a child
-# workflow. DBOS schedules dedupe across instances — lifting the M12 single-dispatcher constraint.
+# ── the scheduled-fire workflow (schedules → DBOS dynamic schedules) ────────────────
+# theygent's ``trigger`` table stays the source of truth; a DBOS dynamic schedule per enabled
+# schedule-trigger calls THIS one generic scheduled workflow with the trigger id as ``context``.
+# It re-reads the trigger (so a config/pin edit between firings is honoured), checks it is still
+# enabled (the schedule may be mid-pause), and fires ``theygent_run`` as a child workflow. DBOS
+# schedules dedupe across instances — lifting the single-dispatcher constraint.
 
 
 @DBOS.step(**_RETRY)
@@ -1490,10 +1474,10 @@ async def _mark_fired_step(trigger_id: str, fired_at: datetime) -> None:
 
 @DBOS.workflow(name="theygent_scheduled_fire")
 async def theygent_scheduled_fire(scheduled_time: datetime, context: Any) -> None:
-    """The one generic scheduled workflow DBOS dynamic schedules drive (M13 §4). ``context`` is the
-    trigger id. Re-resolve the trigger (it stays the source of truth); if it vanished or was
-    disabled, no-op (a boot-reconcile or pause may lag a beat). Otherwise fire ``theygent_run`` as a
-    child workflow with the trigger's pin + ``config.input``."""
+    """The one generic scheduled workflow DBOS dynamic schedules drive. ``context`` is the trigger
+    id. Re-resolve the trigger (it stays the source of truth); if it vanished or was disabled, no-op
+    (a boot-reconcile or pause may lag a beat). Otherwise fire ``theygent_run`` as a child workflow
+    with the trigger's pin + ``config.input``."""
     trigger_id = str(context)
     trig = await _load_trigger_step(trigger_id)
     if trig is None or not trig["enabled"]:

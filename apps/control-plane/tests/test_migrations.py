@@ -1,4 +1,4 @@
-"""Migration chain round-trip (M4 §6) — catch broken/un-reversible migrations early.
+"""Migration chain round-trip — catch broken/un-reversible migrations early.
 
 ``alembic upgrade head`` then ``downgrade base`` must round-trip cleanly. Run against a
 dedicated scratch database on the same Postgres server so the shared session schema is
@@ -69,7 +69,7 @@ async def _tables(url: str) -> set[str]:
 
 
 async def _run_columns(url: str) -> set[str]:
-    """The columns on the ``run`` table — to assert the M12-added columns (``trigger_id``,
+    """The columns on the ``run`` table — to assert the trigger-related columns (``trigger_id``,
     ``completed_at``) round-trip at the COLUMN level, not just the table level (a column add/drop is
     invisible to ``_tables``, so the round-trip could silently regress without this)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))
@@ -115,8 +115,9 @@ def test_migration_round_trip(pg_url: str) -> None:
             "connection",
             "gate_counter",
         }  # built
-        # Column-level proof for the M12-added run columns (a column add/drop is invisible to the
-        # table-set check above, so the round-trip could silently regress without this).
+        # Column-level proof for the trigger-related run columns (a column add/drop is
+        # invisible to the table-set check above, so the round-trip could silently regress
+        # without this).
         assert {"trigger_id", "completed_at", "awaiting_node"} <= asyncio.run(_run_columns(scratch))
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
@@ -151,8 +152,7 @@ def test_migration_round_trip(pg_url: str) -> None:
 
 def test_trigger_migration_single_step_down_up(pg_url: str) -> None:
     # Exercise 0006's OWN downgrade in isolation (downgrade -1 from head), not only as a step inside
-    # `downgrade base`: the `trigger` table and both new `run` columns must drop cleanly and re-add.
-    # This is the M12 §5 "migration chain round-trips incl. trigger + run.trigger_id" check, made
+    # `downgrade base`: the `trigger` table and both new `run` columns must drop cleanly and re-add,
     # explicit at the column level so a regression in 0006 alone is caught.
     scratch = _scratch_url(pg_url)
     asyncio.run(_recreate_scratch(pg_url))
@@ -163,8 +163,8 @@ def test_trigger_migration_single_step_down_up(pg_url: str) -> None:
         command.upgrade(cfg, "head")
         assert "trigger" in asyncio.run(_tables(scratch))
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))
-        # Peel off any migrations stacked above 0006 (M14's 0007 adds run.awaiting_node) so the `-1`
-        # step below still isolates 0006 itself — the M12 §5 single-revision round-trip stays exact.
+        # Peel off any migrations stacked above 0006 (0007 adds run.awaiting_node) so the `-1`
+        # step below still isolates 0006 itself — the single-revision round-trip stays exact.
         command.downgrade(cfg, "0006_trigger")
         assert "awaiting_node" not in asyncio.run(_run_columns(scratch))
         # One step back: 0006 down. trigger table gone; the two run columns gone; run itself stays.

@@ -179,7 +179,7 @@ cython_debug/
 *.mlx
 models/
 
-# Node / pnpm (TS apps — M8 cockpit)
+# Node / pnpm (TS apps)
 node_modules/
 .pnpm-store/
 

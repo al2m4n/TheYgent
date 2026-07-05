@@ -1,4 +1,4 @@
-"""M19 §2.6 / §1.2 — the guardrail node (rule⇒orchestration · model⇒activity).
+"""The guardrail node (rule⇒orchestration · model⇒activity).
 
 A guardrail short-circuits before downstream work: ``pass`` carries the input through, ``block``
 carries the onBlock payload. The kind follows the backend (a rule check is deterministic + inline; a

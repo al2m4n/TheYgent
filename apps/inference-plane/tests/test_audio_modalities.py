@@ -1,13 +1,13 @@
-"""M18 fast suite — the modality descriptor + the embeddings/audio data-plane endpoints.
+"""Fast suite — the modality descriptor + the embeddings/audio data-plane endpoints.
 
 Everything real except the model weights: the FakeUpstreamLauncher boots a real in-process
 OpenAI-compatible server that now also serves ``/v1/embeddings`` + ``/v1/audio/*``, so LiteLLM
 really proxies these and the endpoints prove end-to-end. The load-bearing guards:
 
-* ``capabilities`` reports the frozen §1.2 ``modalities`` vocabulary; an unknown key/value rejected.
+* ``capabilities`` reports the frozen ``modalities`` vocabulary; an unknown key/value rejected.
 * ``vision`` is a derived sub-capability of ``chat`` (not its own modality endpoint).
 * the logical-id invariant holds on the NEW endpoints too — an engine name is ``model_not_found``,
-  never rewritten onto the wire (§9.1.1 / M3 §3.2 negative test, extended to audio/embeddings).
+  never rewritten onto the wire (negative test for embeddings/audio, matching the chat invariant).
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def test_modalities_default_is_chat() -> None:
 
 
 def test_vision_is_a_sub_capability_of_chat() -> None:
-    # vision is derived from the vision flag, NOT its own endpoint (§1.3).
+    # vision is derived from the vision flag, NOT its own endpoint.
     assert Capabilities(vision=True).modalities == ["chat", "vision"]
 
 
@@ -40,7 +40,7 @@ def test_non_chat_modalities_declared_explicitly_are_preserved() -> None:
 
 
 def test_unknown_modality_value_is_rejected() -> None:
-    # The frozen vocabulary is a Literal — a typo / out-of-vocab key fails loudly (§4 guard).
+    # The frozen vocabulary is a Literal — a typo / out-of-vocab key fails loudly.
     with pytest.raises(ValidationError):
         Capabilities(modalities=["video"])  # ty: ignore[invalid-argument-type]
 

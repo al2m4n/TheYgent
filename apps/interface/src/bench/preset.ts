@@ -1,18 +1,18 @@
-// Apply a tuned param preset to a real agent's binding (M18 §1.7 / §2.7) — the tune→ship loop.
+// Apply a tuned param preset to a real agent's binding — the tune→ship loop.
 //
-// The load-bearing rule (§1.7, the contentHash-drift trap): a preset is an authoring-time snippet of
+// The load-bearing rule (the contentHash-drift trap): a preset is an authoring-time snippet of
 // LITERAL values. "Apply preset" COPIES those values into the target binding's `models[binding].params`
 // — the IR from then on carries the *values*, and the preset NAME appears NOWHERE in the hashed
 // content. We must NOT write a preset *reference* (e.g. `paramsPreset: "fast"`) into the IR — a live
 // reference would let a deployed agent silently change when the preset changes, destroying the
-// contentHash immutability promise. And the frontend NEVER hashes (M15 §1.2): we write literal params,
-// save through M11, and the server strips `view` + computes the new `contentHash`.
+// contentHash immutability promise. And the frontend NEVER hashes: we write literal params,
+// save, and the server strips `view` + computes the new `contentHash`.
 
 import type { IRDocument } from "@theygent/ir-types";
 
 /**
  * Return a new IRDocument with `presetParams` copied (as literal values) into `models[bindingKey].params`.
- * Pure + immutable — the editor saves the result through M11 (the server hashes). Throws if the binding
+ * Pure + immutable — the editor saves the result through the agent registry (the server hashes). Throws if the binding
  * does not exist (a typo'd binding must fail loudly, never silently create one).
  */
 export function applyPresetToBinding(

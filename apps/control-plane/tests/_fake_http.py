@@ -1,4 +1,4 @@
-"""A tiny real HTTP server for the M19 http-tool tests (m19.md §2.3).
+"""A tiny real HTTP server for the http-tool tests.
 
 Like ``FakeInference``, this is a REAL server on an ephemeral port (the codebase tests against real
 servers, never mocks — [[prefer-what-real-servers-return]]). It records each request (method, path,

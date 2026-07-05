@@ -1,21 +1,20 @@
-"""M16 — discovery & install: the ``CatalogProvider`` seam + the Hugging Face model adapter.
+"""Discovery & install: the ``CatalogProvider`` seam + the Hugging Face model adapter.
 
-This is the load-bearing module of M16 (``docs/private/m16-discovery.md`` §1.1/§2): one interface,
-normalized types, many pluggable providers. The HTTP routes and the install flow speak the
-**normalized** ``CatalogEntry`` / ``CatalogVariant`` / ``InstallPlan`` shapes *only* — never a
-provider's raw response. Adding a source later (the MCP registry → ``mcp_tools``; Apify → ``tools``)
-is a new class implementing ``CatalogProvider`` + a category in the taxonomy; it touches neither the
-renderer nor the install flow. If "add another category" ever requires editing this module's core,
-the seam has eroded.
+One interface, normalized types, many pluggable providers. The HTTP routes and the install flow
+speak the **normalized** ``CatalogEntry`` / ``CatalogVariant`` / ``InstallPlan`` shapes *only* —
+never a provider's raw response. Adding a source later (the MCP registry → ``mcp_tools``; Apify →
+``tools``) is a new class implementing ``CatalogProvider`` + a category in the taxonomy; it touches
+neither the renderer nor the install flow. If "add another category" ever requires editing this
+module's core, the seam has eroded.
 
-**Plane rule (M16 §1.2).** This lives in the *inference plane* — the user's machine, their trust
-domain. Listing reads a provider API; install **downloads weights here** and registers them in the
+**Plane rule.** This lives in the *inference plane* — the user's machine, their trust domain.
+Listing reads a provider API; install **downloads weights here** and registers them in the
 inference-plane-local registry. Nothing crosses into the control plane. This module imports
 no SQLAlchemy / asyncpg / control-plane code (asserted by ``tests/test_catalog_plane.py``).
 
 The Hugging Face adapter (the only one shipped now) filters listings by the engines the user
-has ready (never surface a model that can't run here — M16 §6) and surfaces quant variants sized
-against this machine's RAM with a fit badge (M16 §3.1).
+has ready (never surface a model that can't run here) and surfaces quant variants sized against
+this machine's RAM with a fit badge.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from theygent_inference_plane.capabilities import (
     template_implies_tools,
 )
 
-# The managed engines an entry can be installed for (the binding enum, §8.4). ``openai-compatible``
+# The managed engines an entry can be installed for (the binding enum). ``openai-compatible``
 # is a reachable passthrough — never installed — so it is not an install target.
 EngineName = Literal["mlx", "llamacpp", "vllm"]
 Sort = Literal["trending", "downloads", "likes"]
@@ -48,7 +47,7 @@ Fit = Literal["fits", "tight", "too-large", "unknown"]
 #: not-ready engine never reaches the filter anyway. Adding an engine library is a one-line change.
 ENGINE_LIBRARY: dict[str, str] = {"mlx": "mlx", "llamacpp": "gguf"}
 
-#: HF ``pipeline_tag`` → the theygent ``modality`` the model serves (M20). A model's modality is a
+#: HF ``pipeline_tag`` → the theygent ``modality`` the model serves. A model's modality is a
 #: property of the *model* (its task), not of the engine — so install derives it from the repo's
 #: pipeline_tag and registers the binding with it, which is what makes the manager spawn the right
 #: server (``mlx`` vision → ``mlx_vlm.server``; ``llamacpp`` embeddings → ``llama-server
@@ -108,7 +107,7 @@ class CatalogVariant(_Wire):
     id: str  # gguf filename for llamacpp; "" for a whole MLX repo (engine-unique within an entry)
     label: str  # "Q4_K_M", "4bit", ...
     engine: EngineName
-    #: The modality this model serves (M20), derived from the repo's HF pipeline_tag. Defaults to
+    #: The modality this model serves, derived from the repo's HF pipeline_tag. Defaults to
     #: ``chat`` so a text-generation repo is unchanged; install records it on the binding.
     modality: Modality = "chat"
     filename: str | None = None  # the specific file to fetch (gguf); None ⇒ snapshot the repo
@@ -156,19 +155,19 @@ class CatalogEntry(_Wire):
 
 class InstallPlan(_Wire):
     """What an install will do — computed by the provider, executed by the downloader. The provider
-    never performs a side effect (M16 §1.1); it returns this plan and the downloader applies it."""
+    never performs a side effect; it returns this plan and the downloader applies it."""
 
     logical_id: str
     engine: EngineName
     repo: str
-    #: The modality the installed model serves (M20) — recorded on the registered binding so the
+    #: The modality the installed model serves — recorded on the registered binding so the
     #: manager spawns the right server. Derived from the repo's pipeline_tag by ``install_plan``.
     modality: Modality = "chat"
     filename: str | None = None  # specific gguf for llamacpp; None ⇒ whole repo (mlx)
     total_bytes: int | None = None  # for the progress denominator
 
 
-# The ``list`` method name (the seam, M16 §2) shadows the builtin inside the class body, so route
+# The ``list`` method name (the provider seam) shadows the builtin inside the class body, so route
 # the return type through a module-level alias where ``list`` is unambiguously the builtin.
 EntryList = list[CatalogEntry]
 
@@ -517,7 +516,7 @@ class HuggingFaceProvider:
         siblings = list(getattr(info, "siblings", None) or [])
         ram = self._ram()
         requested = set(q.engines) if q.engines else set(ENGINE_LIBRARY)
-        # The modality is the model's, not the engine's (M20) — all variants of this repo share it.
+        # The modality is the model's, not the engine's — all variants of this repo share it.
         modality = _modality_for_pipeline(getattr(info, "pipeline_tag", None))
         variants: list[CatalogVariant] = []
 

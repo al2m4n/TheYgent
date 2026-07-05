@@ -1,6 +1,7 @@
-"""M19 §1.1 — the connection/secret seam (the milestone's #1 hard-to-reverse decision).
+"""Tests for the connection/secret seam — the #1 hard-to-reverse decision in the
+connection resource.
 
-Two guards anchor everything M19 hangs on the connection resource:
+Two guards anchor everything that hangs on the connection resource:
 
 * **The secret never reaches the wire or the connection row.** A connection is created with a
   write-only ``secret``; the response (and every read) exposes only ``hasSecret``, never the value
@@ -73,7 +74,7 @@ def test_create_connection_returns_no_secret(client: TestClient, pg_url: str) ->
     assert body["id"].startswith("con_")
     assert body["kind"] == "http_auth"
     assert body["hasSecret"] is True
-    # The secret value and the internal ref are NEVER on the wire (§1.1 / §10).
+    # The secret value and the internal ref are NEVER on the wire.
     serialized = resp.text
     assert "super-secret-token" not in serialized
     assert "secret_ref" not in body

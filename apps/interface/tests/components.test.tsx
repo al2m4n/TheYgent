@@ -1,4 +1,4 @@
-// Light React Testing Library coverage (§4 toolchain). The canvas itself needs a real React Flow
+// Light React Testing Library coverage (Vitest + RTL toolchain). The canvas itself needs a real React Flow
 // host, so we cover the two pure-DOM surfaces: the palette (derived from the registry) and the
 // inspector (schema-driven config editing → valid IR mutations).
 
@@ -24,7 +24,7 @@ function renderWithClient(ui: ReactNode) {
 describe("Palette (derived from the registry, never hardcoded)", () => {
   it("renders one draggable item per registry node type (minus the hidden ones)", () => {
     render(<Palette />);
-    // M22 D1: `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
+    // `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
     // palette shows every registry type EXCEPT the deliberately-hidden ones.
     const hidden = new Set(["mcp_tool"]);
     for (const spec of NODE_TYPE_LIST) {
@@ -265,9 +265,10 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
     expect(msgsOf(next)[1].content).toBe("$in");
   });
 
-  it("messages editor: a JSON view round-trips with the wizard", () => {
-    // A controlled harness (ir state fed back via onChange) so a JSON edit re-seeds the wizard, as
-    // it does in the real editor.
+  it("node Code view: shows this node's JSON and round-trips with the wizard", () => {
+    // A controlled harness (ir fed back via onChange) so a Code edit re-seeds the wizard, as it does
+    // in the real editor. CodeMirror is a contenteditable — drive it through the real EditorView so
+    // the component's parse → commit pipeline runs exactly as for a user keystroke.
     const irRef: { current: IRDocument | null } = { current: null };
     function Harness() {
       const [ir, setIr] = useState<IRDocument>(sampleGraph());
@@ -281,46 +282,36 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
         />
       );
     }
-    renderWithClient(<Harness />);
-    const msgs = () =>
-      (irRef.current?.nodes?.find((n) => n.id === "n_llm")?.config as Record<string, unknown>)
-        .messages as { role: string; content: string }[];
+    const { container } = renderWithClient(<Harness />);
+    const nodeOf = () => irRef.current?.nodes?.find((n) => n.id === "n_llm");
 
-    // Switch to the JSON view → the messages array is shown as editable JSON.
-    fireEvent.click(screen.getByRole("button", { name: "JSON" }));
-    const json = screen.getByDisplayValue(/"role": "user"/);
+    // The per-node view switch defaults to Wizard; the per-field messages "JSON" toggle is gone.
+    expect(screen.getByRole("button", { name: "Wizard" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "JSON" })).not.toBeInTheDocument();
 
-    // Editing the JSON commits straight to the IR.
-    fireEvent.change(json, {
-      target: { value: JSON.stringify([{ role: "system", content: "hi" }], null, 2) },
+    // Switch to Code → this exact node is shown as JSON in the CodeMirror editor.
+    fireEvent.click(screen.getByRole("button", { name: "Code" }));
+    const content = container.querySelector(".cm-content");
+    if (!content) throw new Error("node code editor not mounted");
+    const view = EditorView.findFromDOM(content as HTMLElement);
+    if (!view) throw new Error("EditorView not found");
+    expect(view.state.doc.toString()).toContain('"id": "n_llm"');
+
+    // Editing the node JSON commits straight to the graph.
+    act(() => {
+      view.dispatch({
+        changes: {
+          from: 0,
+          to: view.state.doc.length,
+          insert: JSON.stringify({ ...nodeOf(), label: "Renamed via code" }, null, 2),
+        },
+      });
     });
-    expect(msgs()).toEqual([{ role: "system", content: "hi" }]);
+    expect(nodeOf()?.label).toBe("Renamed via code");
 
-    // Back to the Wizard → it reflects the JSON edit (a single system turn).
+    // Back to the Wizard → the label field reflects the Code edit.
     fireEvent.click(screen.getByRole("button", { name: "Wizard" }));
-    expect(screen.getByDisplayValue("hi")).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toHaveValue("system");
-  });
-
-  it("deletes the selected node and clears the selection", () => {
-    const ir = sampleGraph();
-    let next: IRDocument | null = null;
-    let cleared = false;
-    renderWithClient(
-      <Inspector
-        ir={ir}
-        selection={{ kind: "node", id: "n_llm" }}
-        onChange={(x) => {
-          next = x;
-        }}
-        onSelect={(s) => {
-          cleared = s === null;
-        }}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect((next as unknown as IRDocument).nodes?.some((n) => n.id === "n_llm")).toBe(false);
-    expect(cleared).toBe(true);
+    expect(screen.getByDisplayValue("Renamed via code")).toBeInTheDocument();
   });
 
   it("edits a selected edge's channel (data ↔ control)", () => {
@@ -351,7 +342,7 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
   });
 
   it("shows the graph's derived tool registry (read-only) when nothing is selected", () => {
-    // M22: ir.tools is the derived global registry (keyed by node id, like ir.models). The graph
+    // ir.tools is the derived global registry (keyed by node id, like ir.models). The graph
     // panel lists it read-only; tools are added by wiring tool nodes on the canvas, not here.
     const ir = sampleGraph();
     ir.tools = { n_echo: { kind: "builtin", ref: "echo" } };

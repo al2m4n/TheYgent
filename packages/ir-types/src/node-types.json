@@ -5,7 +5,7 @@
         "$defs": {
           "GuardrailCheck": {
             "additionalProperties": false,
-            "description": "The guardrail's check (m19.md \u00a72.6). ``type`` picks the backend: ``rule`` (deterministic,\n\u21d2orchestration) or ``model`` (a classifier call, \u21d2activity). Exactly the matching sub-config is\nset; the node's ``kind`` follows the backend and is validated against it (\u00a71.2).",
+            "description": "The guardrail's check. ``type`` picks the backend: ``rule`` (deterministic,\n\u21d2orchestration) or ``model`` (a classifier call, \u21d2activity). Exactly the matching sub-config\nis set; the node's ``kind`` follows the backend and is validated against it.",
             "properties": {
               "model": {
                 "anyOf": [
@@ -46,7 +46,7 @@
           },
           "GuardrailModel": {
             "additionalProperties": false,
-            "description": "A model guardrail check backend (m19.md \u00a72.6, ``check.type == \"model\"``) \u2014 an LLM-judge \"is\nthis in scope?\" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model\nguardrail is ``kind: activity`` \u2014 \u00a71.2); ``prompt`` is the judge question; ``pass_on`` is the\nmodel answer that PASSES (default ``\"yes\"``) \u2014 anything else routes to ``block``.",
+            "description": "A model guardrail check backend (``check.type == \"model\"``) \u2014 an LLM-judge \"is this in\nscope?\" classifier. ``model`` names a ``models`` key (a real data-plane call, so a model\nguardrail is ``kind: activity``); ``prompt`` is the judge question; ``pass_on`` is the model\nanswer that PASSES (default ``\"yes\"``) \u2014 anything else routes to ``block``.",
             "properties": {
               "model": {
                 "title": "Model",
@@ -71,7 +71,7 @@
           },
           "GuardrailRule": {
             "additionalProperties": false,
-            "description": "A deterministic guardrail check backend (m19.md \u00a72.6, ``check.type == \"rule\"``). ``kind``\nselects the predicate; ``spec`` carries its knob (the regex, the min/max length, the json\nschema, the allow/deny list, the PII pattern set). Evaluated INLINE over journaled input \u2014 no\nI/O, no latency \u2014 so a rule guardrail is ``kind: orchestration`` (\u00a71.2).",
+            "description": "A deterministic guardrail check backend (``check.type == \"rule\"``). ``kind`` selects the\npredicate; ``spec`` carries its knob (the regex, the min/max length, the json schema, the\nallow/deny list, the PII pattern set). Evaluated INLINE over journaled input \u2014 no I/O, no\nlatency \u2014 so a rule guardrail is ``kind: orchestration``.",
             "properties": {
               "kind": {
                 "enum": [
@@ -99,7 +99,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "``guardrail`` node config (m19.md \u00a72.6) \u2014 a first-class check that short-circuits before\ndownstream work. ``pass`` carries the input through; ``block`` carries the ``on_block`` payload\n(or the violation) \u2014 wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is\nper-instance (\u00a71.2): the editor stamps ``orchestration`` for a rule check, ``activity`` for a\nmodel check, and ``validate_graph`` enforces the match.",
+        "description": "``guardrail`` node config \u2014 a first-class check that short-circuits before downstream work.\n``pass`` carries the input through; ``block`` carries the ``on_block`` payload (or the\nviolation) \u2014 wire it to an ``output`` to refuse BEFORE the expensive node. ``kind`` is\nper-instance: the editor stamps ``orchestration`` for a rule check, ``activity`` for a model\ncheck, and ``validate_graph`` enforces the match.",
         "properties": {
           "check": {
             "$ref": "#/$defs/GuardrailCheck"
@@ -145,7 +145,7 @@
     "human": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``human`` boundary node config (m14.md \u00a71.1) \u2014 a durable wait for external input. The node\nlowers onto ``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while\npaused; ``POST /runs/{id}/resume`` (\u2192 ``DBOS.send``) delivers the awaited input and the workflow\nresumes from the checkpoint. ``prompt`` describes what input is expected (advisory);\n``input_schema`` is the awaited input's declared shape (advisory in M14 \u2014 resume records it,\ndoesn't enforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever)\nbounds the wait; on timeout the node fails honestly (``on_timeout='fail'``, the default \u2192\n``failed`` run, M9) or binds the declared ``default`` (``on_timeout='default'``).",
+        "description": "``human`` boundary node config \u2014 a durable wait for external input. The node lowers onto\n``DBOS.recv``: the run persists as ``waiting`` and survives a worker crash while paused;\n``POST /runs/{id}/resume`` (\u2192 ``DBOS.send``) delivers the awaited input and the workflow\nresumes from the checkpoint. ``prompt`` describes what input is expected (advisory);\n``input_schema`` is the awaited input's declared shape (advisory \u2014 resume records it, doesn't\nenforce a full JSON-Schema validation). ``timeout`` (seconds; ``None`` = wait forever) bounds\nthe wait; on timeout the node fails honestly (``on_timeout='fail'``, the default \u2192 ``failed``\nrun) or binds the declared ``default`` (``on_timeout='default'``).",
         "properties": {
           "default": {
             "default": null,
@@ -229,7 +229,7 @@
     "input": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``input`` boundary node \u2014 the single typed entry (M19 \u00a72.1, made real). ``modality`` declares\nthe payload shape (text by default \u2014 a pre-M19 input is unchanged); ``schema`` is the JSON\nSchema of the expected payload that M12 triggers map their source onto (\u00a71.5). Both are\ndeclarative \u2014 the walker still binds the run input to the out-port; modality/schema drive the\neditor + trigger mapping, not execution.",
+        "description": "``input`` boundary node \u2014 the single typed entry. ``modality`` declares the payload shape\n(text by default); ``schema`` is the JSON Schema of the expected payload that triggers map\ntheir source onto. Both are declarative \u2014 the walker still binds the run input to the out-port;\nmodality/schema drive the editor + trigger mapping, not execution.",
         "properties": {
           "modality": {
             "default": "text",
@@ -432,7 +432,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "``llm`` node config. ``model`` names a key in\n``IRDocument.models``; ``messages`` is the prompt template \u2014 content fields use the ONE\nport-addressed substitution token language shared with ``tool``/``mcp_tool``/``router``\n(\u00a78.5 / m10.md \u00a71.2): ``$in`` is the default in-port ``in``, ``$in.<port>`` selects a named\nin-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An unknown\nport or token fails loudly, never silent literal pass-through. (``$input`` was the M5 spelling,\nrenamed to ``$in`` in M9; M10 made the segment after ``$in.`` a port name \u2014 see m10.md.)\n\nM20 cross-plane follow-up: a message ``content`` may be a list of OpenAI content parts (text +\nimage_url), not only a string, so a graph can drive a vision model (mlx_vlm on\n``/v1/chat/completions``). The ``$in`` grammar applies inside each text part and each image url,\nso an image enters from an in-port (``$in.image``); a plain-string ``content`` is unchanged and\nhashes identically (see ``_Message``).",
+        "description": "``llm`` node config. ``model`` names a key in ``IRDocument.models``; ``messages`` is the\nprompt template \u2014 content fields use the port-addressed substitution token language shared with\n``tool``/``mcp_tool``/``router``: ``$in`` is the default in-port ``in``, ``$in.<port>`` selects\na named in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An\nunknown port or token fails loudly, never silent literal pass-through. (``$input`` was the\noriginal spelling, renamed to ``$in``; the segment after ``$in.`` is a port name.)\n\nA message ``content`` may be a list of OpenAI content parts (text + image_url), not only a\nstring, so a graph can drive a vision model (on ``/v1/chat/completions``). The ``$in`` grammar\napplies inside each text part and each image url, so an image enters from an in-port\n(``$in.image``); a plain-string ``content`` is unchanged and hashes identically (see\n``_Message``).",
         "properties": {
           "maxToolIterations": {
             "default": 8,
@@ -516,7 +516,7 @@
     "loop": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``loop`` orchestration node config (m14.md \u00a71.3) \u2014 bounded, deterministic agentic repetition\n(think\u2192act\u2192observe). Each iteration runs the pinned ``agent`` (a SAVED agent, child workflow);\nthe previous iteration's output feeds the next as input. ``max_iterations`` is **REQUIRED** (no\nunbounded loops \u2014 the termination + determinism guarantee). ``condition`` (optional) is a\n``$in``-reference over the iteration output (the same port-addressed grammar the router uses \u2014\nm14.md \u00a71.3 \"reuse the router expression evaluator\"): the loop **stops early** when it resolves\ntruthy. The loop control is deterministic orchestration with NO I/O \u2014 it reads journaled child\nresults, never calls inference, so a crash mid-loop resumes at the last completed iteration (no\ncompleted iteration re-runs). ``max_depth`` bounds nesting as in ``subgraph``.",
+        "description": "``loop`` orchestration node config \u2014 bounded, deterministic agentic repetition\n(think\u2192act\u2192observe). Each iteration runs the pinned ``agent`` (a SAVED agent, child workflow);\nthe previous iteration's output feeds the next as input. ``max_iterations`` is **REQUIRED** (no\nunbounded loops \u2014 the termination + determinism guarantee). ``condition`` (optional) is a\n``$in``-reference over the iteration output (the same port-addressed grammar the router uses):\nthe loop **stops early** when it resolves truthy. The loop control is deterministic\norchestration with NO I/O \u2014 it reads journaled child results, never calls inference, so a crash\nmid-loop resumes at the last completed iteration (no completed iteration re-runs). ``max_depth``\nbounds nesting as in ``subgraph``.",
         "properties": {
           "agent": {
             "title": "Agent",
@@ -604,7 +604,7 @@
     "map": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``map`` orchestration node config (m14.md \u00a71.4) \u2014 durable fan-out/join over a collection. The\nin-port value must be a list; one task (the pinned ``agent`` run as a child workflow) is\nenqueued on a DBOS durable queue per element, then all results are durably awaited \u2014 so a crash\nmid-fan-out resumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are\nin flight at once (``None`` = unbounded). ``on_error`` is the partial-failure policy:\n``fail_fast`` (default \u2014 any element error fails the map) vs ``collect`` (gather successes +\nper-element errors). ``max_depth`` bounds nesting as in ``subgraph``.",
+        "description": "``map`` orchestration node config \u2014 durable fan-out/join over a collection. The in-port\nvalue must be a list; one task (the pinned ``agent`` run as a child workflow) is enqueued on a\nDBOS durable queue per element, then all results are durably awaited \u2014 so a crash mid-fan-out\nresumes ONLY the incomplete branches. ``concurrency`` bounds how many branches are in flight at\nonce (``None`` = unbounded). ``on_error`` is the partial-failure policy: ``fail_fast`` (default\n\u2014 any element error fails the map) vs ``collect`` (gather successes + per-element errors).\n``max_depth`` bounds nesting as in ``subgraph``.",
         "properties": {
           "agent": {
             "title": "Agent",
@@ -696,7 +696,7 @@
     "mcp_tool": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``mcp_tool`` activity node config (\u00a78.5 / m7.md \u00a72 + M19 \u00a72.4). The server is reached EITHER\nby the M7 ``server`` (the **logical name** of a registered MCP server, resolved by the manager)\nOR \u2014 M19 \u2014 by a ``connection`` id (an ``mcp_server`` connection, stdio or http, whose auth is\nresolved SERVER-SIDE at step time \u2014 the IR carries no secret, \u00a71.1). EXACTLY ONE of\n``server`` / ``connection`` is set (validated below). ``tool`` is the tool that server exposes;\n``args`` is the same ``$in`` / ``$in.a.b`` arg template as M6's ``tool`` \u2014 the IR seam matches a\nlocal tool, only the transport differs.",
+        "description": "``mcp_tool`` activity node config. The server is reached EITHER by the ``server`` name (the\n**logical name** of a registered MCP server, resolved by the manager) OR by a ``connection`` id\n(an ``mcp_server`` connection, stdio or http, whose auth is resolved SERVER-SIDE at step time \u2014\nthe IR carries no secret). EXACTLY ONE of ``server`` / ``connection`` is set (validated below).\n``tool`` is the tool that server exposes; ``args`` is the same ``$in`` / ``$in.a.b`` arg\ntemplate as a ``tool`` node \u2014 the IR seam matches a local tool, only the transport differs.",
         "properties": {
           "args": {
             "additionalProperties": true,
@@ -787,7 +787,7 @@
     "output": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``output`` boundary node \u2014 the run's return value (M19 \u00a72.1, made real). ``modality`` is the\nresult shape (text default); for audio/image it is a REFERENCE to the artifact a ``speak``/tool\nproduced upstream. ``output`` performs NO side effect (\u00a70) \u2014 posting/sending is a tool step.",
+        "description": "``output`` boundary node \u2014 the run's return value. ``modality`` is the result shape (text\ndefault); for audio/image it is a REFERENCE to the artifact a ``speak``/tool produced upstream.\n``output`` performs NO side effect \u2014 posting/sending is a tool step.",
         "properties": {
           "modality": {
             "default": "text",
@@ -837,7 +837,7 @@
     "quota": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``quota`` activity node config (m19.md \u00a72.8/\u00a71.6) \u2014 a token-budget gate that READS\naccumulated usage, never re-meters (\u00a71.6). ``source: \"spans\"`` rolls up the per-node token\ncounts already on M17 spans; denies past ``budget_tokens`` in ``window_seconds`` per key.\nBuilds NO new metering pipeline (the \u00a78 Do-NOT).",
+        "description": "``quota`` activity node config \u2014 a token-budget gate that READS accumulated usage, never\nre-meters. ``source: \"spans\"`` rolls up the per-node token counts already on existing spans;\ndenies past ``budget_tokens`` in ``window_seconds`` per key. Builds NO new metering pipeline.",
         "properties": {
           "budgetTokens": {
             "title": "Budgettokens",
@@ -897,7 +897,7 @@
     "ratelimit": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``ratelimit`` activity node config (m19.md \u00a72.8/\u00a71.6) \u2014 the lean per-key gate seam.\n``key_expr`` resolves the caller key from the M12 token / webhook signature or a ``$in`` field\n(per-USER is the deferred identity work \u2014 \u00a71.6). Denies past ``limit`` requests in\n``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: \"deny\"`` emits the\n``deny`` port (a clean 429-style result); ``policy: \"wait\"`` (a bounded suspend) is NAMED, not\nbuilt in M19 \u2014 start with deny.",
+        "description": "``ratelimit`` activity node config \u2014 the lean per-key gate seam. ``key_expr`` resolves the\ncaller key from a trigger token / webhook signature or a ``$in`` field. Denies past ``limit``\nrequests in ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: \"deny\"``\nemits the ``deny`` port (a clean 429-style result); ``policy: \"wait\"`` (a bounded suspend) is\nNAMED but not yet built \u2014 start with deny.",
         "properties": {
           "keyExpr": {
             "title": "Keyexpr",
@@ -960,7 +960,7 @@
     "router": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``router`` orchestration node config (\u00a78.3 / m6.md \u00a73.2). ``select`` is a ``$in``-reference\nthat must resolve to the **name of one of this node's outgoing handles** \u2014 handle-name routing,\nnot an expression DSL. The walker follows only the edge(s) from the selected handle.",
+        "description": "``router`` orchestration node config. ``select`` is a ``$in``-reference that must resolve\nto the **name of one of this node's outgoing handles** \u2014 handle-name routing, not an expression\nDSL. The walker follows only the edge(s) from the selected handle.",
         "properties": {
           "select": {
             "title": "Select",
@@ -997,7 +997,7 @@
     "speak": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``speak`` activity node config (m19.md \u00a72.2) \u2014 text in \u2192 audio-ref out, mapping 1:1 to\n``POST /v1/audio/speech`` (M18 \u00a71.1). ``model`` names a ``models`` key whose binding advertises\nthe ``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's\nreturn value is a REFERENCE to the produced audio (bytes are an artifact, never journaled \u2014\nm13-dbos.md \u00a76); it feeds an ``output`` (``modality:audio``) or an action ``tool``.",
+        "description": "``speak`` activity node config \u2014 text in \u2192 audio-ref out, mapping 1:1 to\n``POST /v1/audio/speech``. ``model`` names a ``models`` key whose binding advertises the\n``audio.speech`` modality; ``params`` carries ``voice``/``format``/``speed``. The step's\nreturn value is a REFERENCE to the produced audio (bytes are an artifact, never journaled); it\nfeeds an ``output`` (``modality:audio``) or an action ``tool``.",
         "properties": {
           "model": {
             "title": "Model",
@@ -1044,7 +1044,7 @@
     "subgraph": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``subgraph`` boundary node config (m14.md \u00a71.2) \u2014 an agent calls another SAVED agent, run as\na DBOS child workflow (independently durable + resumable). ``agent`` is the child's \u00a78.2 id; the\nnode pins it with EXACTLY ONE of ``version`` / ``content_hash`` (validated in\n``validate_graph``) and the pin is frozen into the parent's contentHash, so composition is\nimmutable. ``max_depth`` bounds recursion (the ``subgraph`` analogue of ``loop``'s\n``max_iterations``): exceeding it fails honestly, preventing unbounded / mutually-recursive\nexpansion. The parent's in-port value is the child's run input (M10 named ports); the child's\noutput binds the node's success handle.",
+        "description": "``subgraph`` boundary node config \u2014 an agent calls another SAVED agent, run as a DBOS child\nworkflow (independently durable + resumable). ``agent`` is the child's IR id; the node pins it\nwith EXACTLY ONE of ``version`` / ``content_hash`` (validated in ``validate_graph``) and the\npin is frozen into the parent's contentHash, so composition is immutable. ``max_depth`` bounds\nrecursion: exceeding it fails honestly, preventing unbounded / mutually-recursive expansion.\nThe parent's in-port value is the child's run input (named ports); the child's output binds\nthe node's success handle.",
         "properties": {
           "agent": {
             "title": "Agent",
@@ -1117,7 +1117,7 @@
     "tool": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``tool`` activity node config (\u00a78.3 / m6.md \u00a72/\u00a73.1 + M19 \u00a72.3). ``tool`` is a logical name:\na key in ``ir.tools`` (an ``http`` connection-backed binding \u2014 M19 \u2014 or an M6 ``builtin``) OR a\ndirectly-registered builtin (``echo``/``http_fetch``). Membership is checked in the control\nplane, not here (``packages/ir`` stays pure).\n\nM6 path (builtin): ``args`` is the arg template \u2014 each value a literal or a ``$in``-reference\n(``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) resolved before the call.\n\nM19 http path (when ``tool`` resolves to an ``http`` binding, \u00a72.3): the request is described by\nthe additive fields below, all optional so a builtin ``tool`` node is byte-identical to M6. The\nconnection (resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE \u2014 auth\nnever appears in the IR or the rendered template. ``url_template``/``headers``/``body_template``\nuse the unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape\nthe step output; ``idempotency_key`` (set for unsafe methods \u2014 \u00a72.5) makes a partial-failure\nre-run a provider no-op.",
+        "description": "``tool`` activity node config. ``tool`` is a logical name: a key in ``ir.tools`` (an ``http``\nconnection-backed binding or a ``builtin``) OR a directly-registered builtin\n(``echo``/``http_fetch``). Membership is checked in the control plane, not here\n(``packages/ir`` stays pure).\n\nBuiltin path: ``args`` is the arg template \u2014 each value a literal or a ``$in``-reference\n(``$in`` = the whole in-port value, ``$in.a.b`` = a path into it) resolved before the call.\n\nHttp path (when ``tool`` resolves to an ``http`` binding): the request is described by the\nadditive fields below, all optional so a builtin ``tool`` node is byte-identical. The connection\n(resolved from ``ir.tools[tool].connection``) injects auth headers SERVER-SIDE \u2014 auth never\nappears in the IR or the rendered template. ``url_template``/``headers``/``body_template`` use\nthe unified ``$in.field`` substitution; ``response_map`` is an optional JSONPath to shape the\nstep output; ``idempotency_key`` (set for unsafe methods) makes a partial-failure re-run a\nprovider no-op.",
         "properties": {
           "args": {
             "additionalProperties": true,
@@ -1287,7 +1287,7 @@
     "transcribe": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``transcribe`` activity node config (m19.md \u00a72.2) \u2014 audio-ref in \u2192 text out, mapping 1:1 to\n``POST /v1/audio/transcriptions`` (M18 \u00a71.1). ``model`` names a key in ``IRDocument.models``\nwhose binding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven \u2014\nan incompatible binding is rejected at run, not silently); ``params`` (language/prompt/\u2026) ride\nthrough to the endpoint. The audio bytes go to the inference base URL in the user's trust\ndomain, never the control plane (\u00a710 / M18 \u00a71.4).",
+        "description": "``transcribe`` activity node config \u2014 audio-ref in \u2192 text out, mapping 1:1 to\n``POST /v1/audio/transcriptions``. ``model`` names a key in ``IRDocument.models`` whose\nbinding's ``capabilities.modalities`` must include ``audio.transcription`` (data-driven \u2014 an\nincompatible binding is rejected at run, not silently); ``params`` (language/prompt/\u2026) ride\nthrough to the endpoint. The audio bytes go to the inference base URL in the user's trust\ndomain, never the control plane.",
         "properties": {
           "model": {
             "title": "Model",
@@ -1334,7 +1334,7 @@
     "transform": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``transform`` orchestration node config (m19.md \u00a72.9) \u2014 a lightweight, deterministic payload\nreshaper (a JSONata/jq-style ``expr``) so a builder maps ``A.out \u2192 B.in`` without a code node.\nNO sandbox, NO I/O \u2014 evaluated inline over journaled input (``kind: orchestration``). This is\nexplicitly NOT the ``code`` type (sandboxed user code; a subsystem; deferred \u2014 M14 \u00a74).",
+        "description": "``transform`` orchestration node config \u2014 a lightweight, deterministic payload reshaper (a\nJSONata/jq-style ``expr``) so a builder maps ``A.out \u2192 B.in`` without a code node. NO sandbox,\nNO I/O \u2014 evaluated inline over journaled input (``kind: orchestration``). This is explicitly NOT\nthe ``code`` type (sandboxed user code; a separate subsystem).",
         "properties": {
           "expr": {
             "title": "Expr",

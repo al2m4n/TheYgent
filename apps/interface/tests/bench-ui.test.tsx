@@ -1,4 +1,4 @@
-// M18 UX restructure — RTL guards for the bench modals + the slider param control + the Modal.
+// RTL guards for the bench modals + the slider param control + the Modal.
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";

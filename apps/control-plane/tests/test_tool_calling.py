@@ -1,11 +1,11 @@
-"""M21 Phase 4 — the autonomous tool-calling loop (interactive walker).
+"""Tests for the autonomous tool-calling loop (interactive walker).
 
 An ``llm`` node with ``tools`` runs a bounded loop: the model emits a ``tool_call``, the walker
-executes it via the EXISTING M6/M7/M19 executors, feeds the ``{role:tool}`` result back, and calls
-the model again until it answers or ``maxToolIterations`` is hit. Driven by the fake upstream's
-``tool_call`` / ``tool_loop`` modes (scripted: tool_call on turn 1, answer once a tool result is in
-the transcript) — so this proves the loop end-to-end without a real engine. The real-engine gate is
-``test_integration_m21.py`` (Phase 5).
+executes it via the existing builtin/http/MCP executors, feeds the ``{role:tool}`` result back, and
+calls the model again until it answers or ``maxToolIterations`` is hit. Driven by the fake
+upstream's ``tool_call`` / ``tool_loop`` modes (scripted: tool_call on turn 1, answer once a tool
+result is in the transcript) — so this proves the loop end-to-end without a real engine. The
+real-engine gate is ``test_integration_tool_calling.py``.
 """
 
 from __future__ import annotations
@@ -111,8 +111,7 @@ def test_tool_loop_hits_the_iteration_cap_honestly(pg_url: str) -> None:
 
 
 def test_plain_llm_with_empty_tools_is_unchanged(pg_url: str) -> None:
-    # A tools-less llm (empty tools) is the pre-M21 single-shot path — no tool_choice sent, one
-    # turn.
+    # A tools-less llm (empty tools) is the single-shot path — no tool_choice sent, one turn.
     with FakeInference(response="just an answer") as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
         with TestClient(app) as client:

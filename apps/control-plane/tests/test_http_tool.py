@@ -1,11 +1,11 @@
-"""M19 §2.3 — the generic http tool with connection-injected auth (the workhorse).
+"""The generic http tool with connection-injected auth (the workhorse).
 
-The load-bearing guards (m19.md §4):
+The load-bearing guards:
 * template substitution (``$in.field``) reaches the wire; the connection injects auth SERVER-SIDE
   (verified at the real receiving server) and the auth value is **absent from the IR**;
 * a non-2xx is a normal ``ok`` value, a transport failure binds ``err`` (no hang);
 * GraphQL is just an http POST with a ``{query, variables}`` body;
-* rotating the connection's secret does **not** change a saved agent's ``contentHash`` (§1.1), and
+* rotating the connection's secret does **not** change a saved agent's ``contentHash``, and
   the saved IR carries no secret.
 """
 
@@ -145,7 +145,7 @@ def test_http_tool_injects_auth_and_substitutes(client: TestClient) -> None:
         assert "city=berlin" in req["path"]
         assert req["headers"]["x-trace"] == "abc"
 
-    # The secret value NEVER appears in the IR the client sent (auth is server-side only — §1.1).
+    # The secret value NEVER appears in the IR the client sent (auth is server-side only).
     import json as _json
 
     assert "tok-SECRET-123" not in _json.dumps(ir)
@@ -176,7 +176,7 @@ def test_http_tool_graphql_body(client: TestClient) -> None:
 
 
 def test_http_tool_idempotency_key_reaches_the_wire(client: TestClient) -> None:
-    # §2.5: an idempotencyKey (templated, {runId}/{nodeId} + $in) becomes an Idempotency-Key header
+    # An idempotencyKey (templated, {runId}/{nodeId} + $in) becomes an Idempotency-Key header
     # so a partial-failure re-run is a provider no-op. Here we prove it reaches the wire.
     with fake_http() as server:
         con = _bearer_connection(client)
@@ -195,7 +195,7 @@ def test_http_tool_non_2xx_is_ok_value(client: TestClient) -> None:
         con = _bearer_connection(client)
         ir = _http_agent(server.url, con)
         out = _run(client, ir, {})
-        # A non-2xx is a normal return value bound to ``ok`` (m6.md §4), not an err.
+        # A non-2xx is a normal return value bound to ``ok``, not an err.
         assert out["status"] == "completed"
         assert '"status": 404' in out["output"]
 
@@ -219,7 +219,7 @@ def test_http_tool_missing_connection_binds_err(client: TestClient) -> None:
 
 
 def test_rotating_secret_keeps_agent_hash_and_ir_has_no_secret(client: TestClient) -> None:
-    # The M19 §1.1 / §4 key guard: a saved agent referencing a connection has a stable contentHash;
+    # Key guard: a saved agent referencing a connection has a stable contentHash;
     # rotating the connection's secret does NOT move it, and the saved IR carries no secret.
     with fake_http() as server:
         con = _bearer_connection(client, "v1-secret")

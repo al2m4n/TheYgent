@@ -1,4 +1,4 @@
-// Shared box/mask overlay (M18 §2.2 / §2.6) — the ONE component that draws detections on an image,
+// Shared box/mask overlay — the ONE component that draws detections on an image,
 // used by BOTH a grounding VLM's structured output (boxes-as-text parsed from a chat response) AND a
 // classic-CV tool's result (YOLO/SAM via an external MCP server). "See boxes on the feed" works for
 // both because they render through the same component.
@@ -65,7 +65,7 @@ export function DetectionOverlay({ src, detections, normalized, width = 480 }: P
 /**
  * Best-effort parse of bounding boxes from a model/tool JSON payload (grounding VLM output or a CV
  * tool result). Accepts a few common shapes: `{detections:[{box|bbox,label,score}]}` or a bare array.
- * Unknown shapes → []. Pure, so the §4 "detection overlay from a fixture" guard tests it directly.
+ * Unknown shapes → []. Pure, so the "detection overlay from a fixture" guard tests it directly.
  */
 export function parseDetections(payload: unknown): Detection[] {
   const list = Array.isArray(payload)
@@ -89,8 +89,8 @@ export function parseDetections(payload: unknown): Detection[] {
 
 /**
  * Parse detections from a run/tool OUTPUT string. The run output is JSON-serialized on the wire
- * (control-plane `_coerce_output`), so both the tool tester (§2.6) and the chat panel's VLM grounding
- * overlay (§2.2) JSON-parse it first, then reuse `parseDetections`. Best-effort: a non-JSON string or
+ * (control-plane `_coerce_output`), so both the tool tester and the chat panel's VLM grounding
+ * overlay JSON-parse it first, then reuse `parseDetections`. Best-effort: a non-JSON string or
  * an unknown shape → [] (so a plain-text answer simply renders no boxes — it never throws).
  */
 export function detectionsFromOutput(output: string | null | undefined): Detection[] {

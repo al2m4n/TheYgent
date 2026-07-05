@@ -1,10 +1,10 @@
 """Eviction is a policy OBJECT the manager calls — never inline manager logic.
 
-M1 ships ``CountAndPriorityPolicy``: a count ceiling as the deterministic
+``CountAndPriorityPolicy`` ships as the default: a count ceiling as the deterministic
 primary mechanism, priority-then-LRU ordering, and an optional off-by-default
 RAM watermark as a secondary trigger. The ``select_victims`` signature is the
 seam a real ``ResourceBudgetPolicy`` (RAM/VRAM accounting) drops into later
-without touching the manager (plan §"EvictionPolicy object").
+without touching the manager.
 
 The manager only ever offers *evictable* engines (inflight == 0, not draining)
 to the policy, so an engine serving an in-flight request can never be selected.

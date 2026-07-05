@@ -1,16 +1,16 @@
 """Run the control-plane: ``python -m theygent_control_plane`` / ``theygent-control-plane``.
 
 ``THEYGENT_INFERENCE_PLANE_URL`` points at the inference plane's OpenAI-compatible data-plane
-root (must include ``/v1``). The control-plane talks to it only over HTTP (§3.1).
+root (must include ``/v1``). The control-plane talks to it only over HTTP.
 
-``DATABASE_URL`` is the Postgres store (async DSN, ``postgresql+asyncpg://…`` — M4 §1.4);
+``DATABASE_URL`` is the Postgres store (async DSN, ``postgresql+asyncpg://…``);
 the control-plane fails readiness if it is unset/unreachable. Apply migrations first with
 ``uv run --package theygent-control-plane alembic upgrade head``.
 
-``THEYGENT_INVOKE_TOKEN`` (M12 §1.3) is the bearer token gating the unattended deploy surfaces
+``THEYGENT_INVOKE_TOKEN`` is the bearer token gating the unattended deploy surfaces
 (``POST /agents/{id}/invoke``). When UNSET those surfaces are closed (deny-by-default): set it
-before exposing an agent for non-interactive invocation. The M12 schedule dispatcher starts with
-the app (in-process — m12.md §3); webhook ``/hooks/{id}`` firing is authed per-webhook by the
+before exposing an agent for non-interactive invocation. The schedule dispatcher starts with
+the app (in-process); webhook ``/hooks/{id}`` firing is authed per-webhook by the
 signing secret in the trigger's config, not this token.
 
 ``THEYGENT_DURABLE=1`` opts the unattended fire path (triggers) AND the durable-run endpoint onto

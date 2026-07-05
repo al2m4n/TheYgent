@@ -1,4 +1,4 @@
-"""M19 §2.9 — the transform node (deterministic JSON-template reshape, no code sandbox).
+"""The transform node (deterministic JSON-template reshape, no code sandbox).
 
 A ``transform`` reshapes ``A.out → B.in`` without a code node: its ``expr`` is a JSON document whose
 string leaves may be ``$in`` refs, resolved over the journaled inputs. Deterministic, inline (no

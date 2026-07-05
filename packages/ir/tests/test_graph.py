@@ -1,7 +1,7 @@
-"""Pure-unit tests for the Agent Graph IR seam (theygent-graph-schema.md §8).
+"""Pure-unit tests for the Agent Graph IR seam.
 
 No DB, no HTTP — these pin the static contract the control-plane walker depends on:
-content-hash determinism (§8.2), the ``type``/``kind`` taxonomy (§8.1), per-type config
+content-hash determinism, the ``type``/``kind`` taxonomy, per-type config
 validation, edge/port integrity, and cycle rejection. The end-to-end exercise through the
 ``/graphs/runs`` endpoint lives in the control-plane fast suite.
 """
@@ -21,7 +21,7 @@ from theygent_ir import (
 
 
 def _trivial() -> dict:
-    """The simplest graph that runs: input -> llm -> output (m5.md §4)."""
+    """The simplest graph that runs: input -> llm -> output."""
     return {
         "schemaVersion": "1.0",
         "id": "agt_01J9X8TRIVIAL",
@@ -88,30 +88,30 @@ def test_trivial_validates_and_orders() -> None:
 
 
 def test_source_is_optional() -> None:
-    # The m5.md §4 binding omits `source` (a lifecycle concern, irrelevant to M5 — §8.4).
+    # The binding omits `source` (a lifecycle concern, irrelevant to graph IR).
     ir = parse_document(_trivial())
     assert ir.models["default"].source is None
-    # ...and a §8.4 document that includes it still validates.
+    # ...and a document that includes it still validates.
     doc = _trivial()
     doc["models"]["default"]["source"] = "hf"
     assert parse_document(doc).models["default"].source == "hf"
 
 
-def test_graph_model_binding_has_no_modality_field_m20_guard() -> None:
-    # M20 added `modality` to the INFERENCE registration binding (registration.ManagedBinding), NOT
+def test_graph_model_binding_has_no_modality_field_guard() -> None:
+    # `modality` belongs on the INFERENCE registration binding (registration.ManagedBinding), NOT
     # the hashed graph binding (graph.ModelBinding). A model node's modality INTENT is hashed via
     # its node `type` (llm for chat/vision, transcribe/speak for audio), never via the binding. If a
     # future change threads `modality` onto the graph binding, every agent's contentHash silently
-    # shifts (a §8.4-class reversal). This guards that line.
+    # shifts (a load-bearing reversal). This guards that line.
     from theygent_ir import ModelBinding
 
     assert "modality" not in ModelBinding.model_fields
 
 
-def test_trivial_content_hash_is_pinned_m20_guard() -> None:
-    # Pin the hash of a representative graph (with a managed ModelBinding). M20 touched ONLY the
-    # inference registration payload, so this hash is byte-identical pre/post-M20 and must stay so
-    # until a DELIBERATE graph-IR change. A drift here means the graph binding or envelope moved.
+def test_trivial_content_hash_is_pinned_guard() -> None:
+    # Pin the hash of a representative graph (with a managed ModelBinding). The inference
+    # registration payload is separate, so this hash must stay stable until a DELIBERATE
+    # graph-IR change. A drift here means the graph binding or envelope moved.
     assert (
         content_hash(parse_document(_trivial()))
         == "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
@@ -119,7 +119,7 @@ def test_trivial_content_hash_is_pinned_m20_guard() -> None:
 
 
 def test_content_hash_strips_view_dragging_a_node_is_not_a_new_version() -> None:
-    # THE load-bearing §8.2 promise (§8.0 rule 2): editing the view — dragging a node,
+    # The load-bearing content-hash promise: editing the view — dragging a node,
     # changing zoom/collapsed state — must NEVER change the hash, or every drag would mint a
     # "new version". Proven the way the promise is worded: the SAME logical graph with two
     # DIFFERENT view blocks (and one with none) all hash identically.
@@ -171,7 +171,7 @@ def test_hash_prefix() -> None:
 
 def test_wrong_kind_for_type_rejected() -> None:
     doc = _trivial()
-    doc["nodes"][1]["kind"] = "boundary"  # llm must be activity (§8.1)
+    doc["nodes"][1]["kind"] = "boundary"  # llm must be activity
     with pytest.raises(GraphValidationError, match="must have kind 'activity'"):
         validate_graph(parse_document(doc))
 
@@ -226,12 +226,12 @@ def test_unknown_envelope_key_rejected() -> None:
     from pydantic import ValidationError
 
     doc = _trivial()
-    doc["surprise"] = True  # extra="forbid": an IR typo fails loudly (§3.1)
+    doc["surprise"] = True  # extra="forbid": an IR typo fails loudly
     with pytest.raises(ValidationError):
         parse_document(doc)
 
 
-# ── M6 node types: tool + router config + taxonomy ────────────────────────────
+# ── tool + router node types: config + taxonomy ───────────────────────────────
 
 
 def test_tool_and_router_configs_validate() -> None:
@@ -244,7 +244,7 @@ def test_tool_and_router_configs_validate() -> None:
 
 def test_router_must_be_orchestration() -> None:
     doc = _trivial()
-    doc["nodes"][1]["type"] = "router"  # kind is still 'activity' (wrong for router — §8.1)
+    doc["nodes"][1]["type"] = "router"  # kind is still 'activity' (wrong for router)
     with pytest.raises(GraphValidationError, match="must have kind 'orchestration'"):
         validate_graph(parse_document(doc))
 
@@ -290,7 +290,7 @@ def test_content_hash_stable_under_config_key_reorder() -> None:
     assert content_hash(parse_document(doc)) == h
 
 
-# ── M7 node type: mcp_tool config + taxonomy ──────────────────────────────────
+# ── mcp_tool node type: config + taxonomy ─────────────────────────────────────
 
 
 def test_mcp_tool_config_validates() -> None:
@@ -304,7 +304,7 @@ def test_mcp_tool_config_validates() -> None:
 def test_mcp_tool_must_be_activity() -> None:
     doc = _trivial()
     doc["nodes"][1]["type"] = "mcp_tool"
-    doc["nodes"][1]["kind"] = "orchestration"  # wrong for mcp_tool (it's an activity — §8.1)
+    doc["nodes"][1]["kind"] = "orchestration"  # wrong for mcp_tool (it's an activity)
     with pytest.raises(GraphValidationError, match="must have kind 'activity'"):
         validate_graph(parse_document(doc))
 
@@ -317,12 +317,12 @@ def test_mcp_tool_config_shape_validated() -> None:
         validate_graph(parse_document(doc))
 
 
-# ── M10: multi-input (named in-ports, port-addressed) ─────────────────────────
+# ── multi-input (named in-ports, port-addressed) ──────────────────────────────
 
 
 def _two_input_doc() -> dict:
     """input fans out to two echo tools → one llm with in-ports [file, question] → output. The
-    minimal multi-input graph (m10.md §3): the llm reads two distinct upstreams on two in-ports."""
+    minimal multi-input graph: the llm reads two distinct upstreams on two in-ports."""
 
     def ports(ins: list[str], outs: list[str]) -> dict:
         return {
@@ -386,7 +386,7 @@ def _two_input_doc() -> dict:
 
 
 def test_two_input_node_validates_and_orders() -> None:
-    # A node with two in-ports, each fed by one data edge, is a first-class valid shape (m10.md §2).
+    # A node with two in-ports, each fed by one data edge, is a first-class valid shape.
     ir = parse_document(_two_input_doc())
     validate_graph(ir)
     order = [n.id for n in topological_order(ir)]
@@ -395,7 +395,7 @@ def test_two_input_node_validates_and_orders() -> None:
 
 
 def test_duplicate_data_edge_to_one_in_port_rejected() -> None:
-    # Two data edges into the `file` port is an ambiguous multi-input binding (m10.md §3).
+    # Two data edges into the `file` port is an ambiguous multi-input binding.
     doc = _two_input_doc()
     doc["edges"].append(
         {
@@ -413,7 +413,7 @@ def test_duplicate_data_edge_to_one_in_port_rejected() -> None:
 
 def test_unfed_required_in_port_rejected_per_port() -> None:
     # Per-port required check: drop the `question` feed; `file` is still fed but the node fails
-    # because a REQUIRED in-port dangles (m10.md §3 — per-port, not per-node).
+    # because a REQUIRED in-port dangles (per-port check, not per-node).
     doc = _two_input_doc()
     doc["edges"] = [e for e in doc["edges"] if e["id"] != "e4"]  # remove n_q -> n_llm.question
     with pytest.raises(GraphValidationError, match="required in-port 'question' is not connected"):
@@ -421,7 +421,7 @@ def test_unfed_required_in_port_rejected_per_port() -> None:
 
 
 def test_optional_in_port_may_be_unfed() -> None:
-    # An in-port declared `required: false` may dangle and resolve to null at runtime (m10.md §3).
+    # An in-port declared `required: false` may dangle and resolve to null at runtime.
     doc = _two_input_doc()
     doc["edges"] = [e for e in doc["edges"] if e["id"] != "e4"]
     # mark the `question` in-port optional (it's the 2nd in-port of n_llm, index 1).
@@ -430,7 +430,7 @@ def test_optional_in_port_may_be_unfed() -> None:
 
 
 def test_edge_to_undeclared_in_port_rejected() -> None:
-    # An edge targeting an in-port the node never declared is caught by the handle check (§3).
+    # An edge targeting an in-port the node never declared is caught by the handle check.
     doc = _two_input_doc()
     doc["edges"][3]["targetHandle"] = "ghost"  # e4 -> n_llm.ghost (no such in-port)
     with pytest.raises(GraphValidationError, match="no in-port"):
@@ -438,11 +438,11 @@ def test_edge_to_undeclared_in_port_rejected() -> None:
 
 
 def test_content_hash_stable_across_port_required_default() -> None:
-    # The M10→M11 hinge (m11.md §1.1 makes hash agreement load-bearing): the registry must hash
-    # byte-for-byte like the walker, over view-stripped canonical JSON, forever. M10 introduced
-    # `Port.required: bool = True` INSIDE the hashed region — so an IR that OMITS `required` MUST
-    # hash identically to one that writes `required: true`, or two "identical" agents mint two
-    # versions. Canonicalization materializes the default, so omitted == explicit-true.
+    # Hash agreement between the registry and the walker is load-bearing: both must hash
+    # byte-for-byte over view-stripped canonical JSON, forever. `Port.required: bool = True`
+    # lives INSIDE the hashed region — so an IR that OMITS `required` MUST hash identically
+    # to one that writes `required: true`, or two "identical" agents mint two versions.
+    # Canonicalization materializes the default, so omitted == explicit-true.
     base = _trivial()
     h = content_hash(parse_document(base))
     explicit = copy.deepcopy(base)
@@ -457,7 +457,7 @@ def test_content_hash_stable_across_port_required_default() -> None:
     assert content_hash(parse_document(optional)) != h
 
 
-# ── M19 the node palette (m19.md §2) — new types, per-instance guardrail kind, role ──────────────
+# ── node palette — new types, per-instance guardrail kind, role ───────────────
 
 
 def _graph_with(node: dict, *, src_handle: str, in_handle: str = "in") -> dict:
@@ -472,7 +472,7 @@ def _graph_with(node: dict, *, src_handle: str, in_handle: str = "in") -> dict:
     return doc
 
 
-def test_m19_new_types_validate() -> None:
+def test_new_types_validate() -> None:
     # transcribe / speak reference the declared ``default`` model; both are activities.
     for node, src, in_h in (
         (
@@ -576,7 +576,7 @@ def test_guardrail_model_is_activity() -> None:
 
 
 def test_guardrail_model_as_orchestration_rejected() -> None:
-    # The §1.2 determinism guard: a model check is I/O — it MUST be an activity, never lowered as
+    # Determinism guard: a model check is I/O — it MUST be an activity, never lowered as
     # deterministic orchestration. The per-instance kind derivation rejects the mislabel at compile.
     node = _guardrail_node(
         "orchestration",
@@ -644,7 +644,7 @@ def test_http_tool_binding_and_node_validate() -> None:
 
 
 def test_mcp_tool_binding_requires_exactly_one_target() -> None:
-    # M19 §2.4: an mcp tool binding sets EXACTLY ONE of server / connection.
+    # An mcp tool binding sets EXACTLY ONE of server / connection.
     both = {
         "schemaVersion": "1.0",
         "id": "a",
@@ -668,7 +668,7 @@ def test_mcp_tool_binding_requires_exactly_one_target() -> None:
 
 
 def test_port_role_is_hashed_content() -> None:
-    # role is IR content (not view): changing a handle's role moves the contentHash (M19 §2.10),
+    # role is IR content (not view): changing a handle's role moves the contentHash,
     # while the default ``data`` is materialized so omitting it hashes like writing it.
     base = _trivial()
     h = content_hash(parse_document(base))
@@ -682,15 +682,16 @@ def test_port_role_is_hashed_content() -> None:
     assert content_hash(parse_document(control)) != h
 
 
-# ── M20 cross-plane follow-up: multimodal message content (text + image_url) ──────────────────────
-# An ``llm`` node's message ``content`` may now be a list of OpenAI content parts so a graph can
-# drive a vision model. The load-bearing invariant is backward compatibility: a plain-string
-# ``content`` must hash and serialize byte-for-byte as before, so a pre-M20 agent never re-versions.
+# ── multimodal message content (text + image_url) ─────────────────────────────
+# An ``llm`` node's message ``content`` may now be a list of OpenAI content parts so a graph
+# can drive a vision model. The load-bearing invariant is backward compatibility: a plain-string
+# ``content`` must hash and serialize byte-for-byte as before, so an existing agent never
+# re-versions.
 
-# The hashes a STRING-content graph produced *before* the union was added — recorded here so the
+# The hash a STRING-content graph produced before the union was added — recorded here so the
 # back-compat guarantee is pinned against a concrete value, not just self-consistency. If the union
 # ever silently re-canonicalizes a string content, these constants break.
-_PRE_M20_TRIVIAL_HASH = "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
+_STRING_CONTENT_HASH = "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
 
 
 def _with_content(content: object) -> dict:
@@ -700,10 +701,10 @@ def _with_content(content: object) -> dict:
     return doc
 
 
-def test_string_content_hashes_identically_to_pre_m20() -> None:
+def test_string_content_hashes_identically() -> None:
     # The whole back-compat claim in one assert: a string content yields the EXACT hash it did
     # before ``content`` became a union (no silent re-canonicalization → no spurious re-version).
-    assert content_hash(parse_document(_trivial())) == _PRE_M20_TRIVIAL_HASH
+    assert content_hash(parse_document(_trivial())) == _STRING_CONTENT_HASH
 
 
 def test_string_content_still_dumps_as_a_bare_string() -> None:
@@ -742,7 +743,7 @@ def test_list_content_changes_the_hash() -> None:
     # of a text agent), while string content is unchanged (the back-compat seam above).
     assert (
         content_hash(parse_document(_with_content([{"type": "text", "text": "$in"}])))
-        != _PRE_M20_TRIVIAL_HASH
+        != _STRING_CONTENT_HASH
     )
 
 
@@ -760,11 +761,11 @@ def test_content_part_rejects_extra_keys() -> None:
         validate_graph(doc)
 
 
-# ── M21 autonomous tool-calling (llm.tools) ───────────────────────────────────
+# ── autonomous tool-calling (llm.tools) ───────────────────────────────────────
 
 
 def _http_tool_binding(**over: object) -> dict:
-    """A self-describing http tool binding (M21): description + parameterSchema + request shape,
+    """A self-describing http tool binding: description + parameterSchema + request shape,
     with a single ``$in.query`` slot matching the schema's one property."""
     b: dict = {
         "kind": "http",
@@ -789,8 +790,8 @@ def _llm_tools_doc(
     max_iter: int = 8,
     bindings: dict | None = None,
 ) -> dict:
-    """``_trivial`` with the llm node carrying M21 tool-calling config + a tool binding in ir.tools.
-    The tool is referenced by config (``llm.tools``), NOT wired by an edge — the M21 seam."""
+    """``_trivial`` with the llm node carrying autonomous tool-calling config + a tool binding
+    in ir.tools. The tool is referenced by config (``llm.tools``), NOT wired by an edge."""
     doc = _trivial()
     doc["tools"] = bindings if bindings is not None else {"search": _http_tool_binding()}
     doc["nodes"][1]["config"] = {
@@ -883,20 +884,20 @@ def test_body_template_slot_satisfies_property() -> None:
 
 
 def test_llm_tools_field_is_hash_stable_when_omitted() -> None:
-    # M21 adds fields to LlmConfig, but `Node.config` is hashed as the opaque authored dict — so an
-    # llm graph that doesn't write the new fields is byte-identical to pre-M21 (no schemaVersion
-    # bump; m21.md §6 Q4). A tools-bearing llm is a genuine content change → a different hash.
-    assert content_hash(parse_document(_trivial())) == _PRE_M20_TRIVIAL_HASH
-    assert content_hash(parse_document(_llm_tools_doc())) != _PRE_M20_TRIVIAL_HASH
+    # `Node.config` is hashed as the opaque authored dict — so an llm graph that doesn't write
+    # the tool-calling fields is byte-identical to earlier graphs (no schemaVersion bump needed).
+    # A tools-bearing llm is a genuine content change → a different hash.
+    assert content_hash(parse_document(_trivial())) == _STRING_CONTENT_HASH
+    assert content_hash(parse_document(_llm_tools_doc())) != _STRING_CONTENT_HASH
 
 
 def test_empty_tools_list_is_single_shot_no_checks() -> None:
-    # Empty `tools` is the pre-M21 single-shot path: the M21 checks don't fire (e.g. a 0 max is fine
-    # because the loop never runs).
+    # Empty `tools` is the single-shot path: the tool-calling checks don't fire
+    # (e.g. a 0 max is fine because the loop never runs).
     validate_graph(parse_document(_llm_tools_doc(tools=[], max_iter=0, bindings={})))
 
 
-# ── M22: tool wiring as capability edges (tool node → llm `tools` port) ─────────
+# ── tool wiring as capability edges (tool node → llm `tools` port) ───────────
 
 
 def _capability_graph(tool_node: dict, *, channel: str = "tool", to_handle: str = "tools") -> dict:
@@ -926,7 +927,7 @@ def _builtin_tool_node(node_id: str = "n_tool", ref: str = "echo") -> dict:
         "kind": "activity",
         "config": {"tool": ref, "description": "echo the value back"},
         "ports": {
-            "in": [{"id": "in", "type": "any"}],  # required (M6) but unfed — capability exemption
+            "in": [{"id": "in", "type": "any"}],  # required but unfed — capability exemption
             "out": [{"id": "out", "type": "any"}, {"id": "err", "type": "error"}],
         },
     }
@@ -961,7 +962,7 @@ _Q_SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "require
 
 def test_m22_builtin_capability_wired_to_llm_validates() -> None:
     # A builtin tool node wired to the llm's tools-port is a valid capability — and its required
-    # (M6) `in` port may be unfed (the model supplies args at call time, §5 exemption).
+    # `in` port may be unfed (the model supplies args at call time).
     validate_graph(parse_document(_capability_graph(_builtin_tool_node())))
 
 
@@ -1031,7 +1032,7 @@ def test_m22_http_capability_unfillable_slot_rejected() -> None:
 
 
 def test_m22_tool_channel_widening_is_hash_stable() -> None:
-    # The PortRole/EdgeChannel widening + the optional ToolConfig fields must NOT shift a pre-M22
+    # The PortRole/EdgeChannel widening + the optional ToolConfig fields must NOT shift an existing
     # graph's contentHash (Node.config is hashed as authored; existing role/channel values intact).
     assert content_hash(parse_document(_trivial())) == content_hash(parse_document(_trivial()))
     # A capability wiring IS real content → a different hash from the plain trivial graph.
@@ -1047,7 +1048,7 @@ def test_m22_capability_tool_excluded_from_topo_order() -> None:
 
 
 def test_m22_capability_node_id_may_equal_its_ir_tools_key() -> None:
-    # M22 (D1): the editor derives ir.tools keyed by node id (a mirror of the node binding), so a
+    # The editor derives ir.tools keyed by node id (a mirror of the node binding), so a
     # capability node id EQUAL to its ir.tools key is the norm — it must validate, not be rejected.
     doc = _capability_graph(_builtin_tool_node(node_id="n_echo"))
     doc["tools"] = {"n_echo": {"kind": "builtin", "ref": "echo"}}

@@ -1,4 +1,4 @@
-// M18 bench — RTL render guards (m18.md §4 frontend). Proves the capability-routed panels render
+// RTL render guards for capability-routed panels. Proves the capability-routed panels render
 // the right inputs DRIVEN BY capabilities (no hardcoded modality switch): a chat+vision model shows
 // the chat panel WITH image attach; the param form hides a capability the model lacks.
 

@@ -1,27 +1,27 @@
-"""``content_hash`` — content-addressed graph identity (theygent-graph-schema.md §8.2/§8.0).
+"""``content_hash`` — content-addressed graph identity.
 
 The hash is computed over the **canonical, view-stripped, key-sorted JSON** of the document.
 Three deliberate exclusions, each load-bearing:
 
 * ``view`` — React-Flow layout (positions, zoom, collapsed state). Dragging a node must never
-  produce a "new version" (§8.0 rule 2), so layout is never hashed.
+  produce a "new version" (layout must not affect graph identity), so layout is never hashed.
 * ``contentHash`` itself — it is *derived from* the document; hashing it would be circular.
 * whitespace and key order — normalized by ``sort_keys=True`` + compact separators, so the
   same logical graph always yields the same hash regardless of how the JSON was formatted.
 
-M5 *computes and records* this on the ``Run`` but does not yet gate execution on it — that is
-a registry concern (M5 §3.3). Recording it now means the field is already correct when the
+This hash is computed and recorded on each ``Run`` but does not gate execution — that is a
+registry concern. Recording it at run time means the field is already correct when the
 registry consumes it. The prefix is ``sha256:`` to keep the algorithm explicit on the wire.
 
-**Decision D2 (theygent-m10-decisions.md) — canonicalize the hydrated, default-filled model, NOT
-the source bytes.** The hash runs over ``ir.model_dump(...)`` of the *validated* Pydantic model, so
-every field with a schema default is present at its effective value — e.g. M10's
-``Port.required: bool = True`` appears whether or not the author wrote it. Consequence: an IR that
-omits a defaulted field hashes **identically** to one that writes the default explicitly, so two
-semantically identical agents never mint two registry versions (the M11 §1.1 load-bearing
-guarantee). This is one function — the walker and the future registry both call it, so they can
-never disagree. The default-fill set is the model's own ``schemaVersion``; adding a new defaulted
-field is a schema change that never silently re-hashes content stored under an older version.
+**Canonicalize the hydrated, default-filled model, NOT the source bytes.** The hash runs over
+``ir.model_dump(...)`` of the *validated* Pydantic model, so every field with a schema default
+is present at its effective value — e.g. ``Port.required: bool = True`` appears whether or not
+the author wrote it. Consequence: an IR that omits a defaulted field hashes **identically** to
+one that writes the default explicitly, so two semantically identical agents never mint two
+registry versions (the load-bearing guarantee that keeps the registry stable). This is one
+function — the walker and the registry both call it, so they can never disagree. The default-fill
+set is the model's own ``schemaVersion``; adding a new defaulted field is a schema change that
+never silently re-hashes content stored under an older version.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any
 
 from theygent_ir.graph import IRDocument
 
-#: Top-level keys excluded from the hash (§8.2). ``view`` is layout; ``contentHash`` is derived.
+#: Top-level keys excluded from the hash. ``view`` is layout; ``contentHash`` is derived.
 _EXCLUDED = ("view", "contentHash", "content_hash")
 
 
@@ -43,7 +43,7 @@ def _canonical(doc: dict[str, Any]) -> str:
 
 
 def content_hash(ir: IRDocument) -> str:
-    """``sha256:<hex>`` over the canonical, view-stripped, key-sorted JSON of ``ir`` (§8.2).
+    """``sha256:<hex>`` over the canonical, view-stripped, key-sorted JSON of ``ir``.
 
     Computed from the *validated* document dumped by wire alias (camelCase), so the hash is
     over the document's canonical wire form — independent of how the input JSON was ordered or

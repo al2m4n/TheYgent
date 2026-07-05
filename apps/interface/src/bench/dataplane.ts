@@ -1,4 +1,4 @@
-// The model bench's DATA-PLANE calls — the §10 / §1.4 guard made concrete.
+// The model bench's DATA-PLANE calls — the plane-boundary guard made concrete.
 //
 // Raw inference payloads (prompts, images, audio in/out) go DIRECTLY to the inference base URL in
 // the user's trust domain (the localhost sidecar on desktop, the user's own infra self-hosted) —
@@ -37,7 +37,7 @@ export interface ChatChunk {
 /**
  * Stream a chat/vision completion from the inference data plane (SSE). Yields parsed chunks; the
  * caller stamps `performance.now()` per chunk to feed the pure metrics math. `messages` may carry
- * OpenAI image content blocks (the VLM/vision path — no separate endpoint, §1.3).
+ * OpenAI image content blocks (the VLM/vision path — no separate endpoint).
  */
 export async function* streamChat(
   model: string,
@@ -47,7 +47,7 @@ export async function* streamChat(
   const res = await fetch(`${INFERENCE_URL}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
-    // include_usage so the final chunk carries token counts + cost for the metrics (§2.4).
+    // include_usage so the final chunk carries token counts + cost for the metrics.
     body: JSON.stringify({
       model,
       messages,
@@ -127,7 +127,7 @@ export interface SpeakResult {
   totalMs: number;
 }
 
-/** TTS → audio bytes, streamed so we can stamp TTFB (first audio byte) honestly (§2.2). */
+/** TTS → audio bytes, streamed so we can stamp TTFB (first audio byte) honestly. */
 export async function speak(
   model: string,
   input: string,

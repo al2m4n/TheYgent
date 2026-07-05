@@ -1,7 +1,7 @@
 [project]
 name = "theygent-gateway-client"
 version = "0.1.0"
-description = "Thin, stateless OpenAI-compatible async client for the inference-plane seam (theygent-stack-9.1.md §9.1; M3 §3.3)"
+description = "Thin, stateless OpenAI-compatible async client for the inference-plane seam"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=1.40",

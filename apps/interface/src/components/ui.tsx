@@ -1,4 +1,4 @@
-// A tiny set of inline primitives (M15 mirrors the cockpit: Tailwind, no component library). Five
+// A tiny set of inline primitives (mirrors the cockpit: Tailwind, no component library). Five
 // small building blocks for the chrome around the canvas — buttons, inputs, badges.
 
 import {
@@ -117,7 +117,7 @@ export function Page({ children, className = "" }: { children: ReactNode; classN
   return <div className={`w-full px-4 py-6 sm:px-6 lg:px-8 ${className}`}>{children}</div>;
 }
 
-// ── M16 Registries primitives (mirrors the cockpit's ui.tsx, in this app's palette) ──
+// ── Registries primitives (mirrors the cockpit's ui.tsx, in this app's palette) ──
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (

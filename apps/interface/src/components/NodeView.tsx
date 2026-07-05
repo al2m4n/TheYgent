@@ -57,7 +57,11 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
   return (
     <div
       className={`relative min-w-[150px] rounded-lg border bg-[var(--c-elev)] px-3 py-2 shadow-md ${
-        selected ? "border-blue-400 ring-1 ring-blue-400/50" : style.ring
+        // A saturated 2px ring (not a faint 1px one) so the selection reads on BOTH the dark node and
+        // the white light-mode node; the offset lifts the ring off the card so it stays legible.
+        selected
+          ? "border-blue-500 ring-2 ring-blue-500 ring-offset-1 ring-offset-[var(--c-bg)]"
+          : style.ring
       }`}
     >
       <div className="flex items-center justify-between gap-2">

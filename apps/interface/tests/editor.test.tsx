@@ -1,4 +1,4 @@
-// M19 §2.10 editor work: handle roles + data/control connect rules, the http-tool connection
+// Editor work: handle roles + data/control connect rules, the http-tool connection
 // binding (id, never the secret), and the graph-level connections panel (secret write-only).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -8,7 +8,7 @@ import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { connect, setHttpToolBinding } from "../src/adapter";
 
-// ── pure adapter: handle roles + connect rules (§2.10) ───────────────────────────────────────────
+// ── pure adapter: handle roles + connect rules ───────────────────────────────────────────────────
 
 function rolesIr(): IRDocument {
   return {
@@ -50,7 +50,7 @@ function rolesIr(): IRDocument {
   } as IRDocument;
 }
 
-describe("connect: handle roles drive the channel (§2.10)", () => {
+describe("connect: handle roles drive the channel", () => {
   it("data→data connects, channel derived as data", () => {
     const r = connect(rolesIr(), {
       source: "n1",
@@ -96,7 +96,7 @@ describe("connect: handle roles drive the channel (§2.10)", () => {
   });
 });
 
-describe("setHttpToolBinding writes the connection id, never a secret (§1.1)", () => {
+describe("setHttpToolBinding writes the connection id, never a secret", () => {
   it("declares ir.tools[key] = {kind:http, connection} + sets config.tool", () => {
     const ir = {
       schemaVersion: "1.0",
@@ -135,7 +135,7 @@ describe("setHttpToolBinding writes the connection id, never a secret (§1.1)", 
   });
 });
 
-// ── RTL: the connections panel — secret is write-only (§1.1) ─────────────────────────────────────
+// ── RTL: the connections panel — secret is write-only ────────────────────────────────────────────
 
 vi.mock("../src/lib/api", () => ({
   api: {

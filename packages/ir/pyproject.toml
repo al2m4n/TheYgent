@@ -15,4 +15,4 @@ packages = ["src/theygent_ir"]
 [dependency-groups]
 # Pure-unit tests for the IR seam (content-hash determinism, graph validation, topo order).
 # No DB, no HTTP — the package stays pure, so its tests do too.
-dev = ["pytest>=8", "ruff>=0.5", "ty>=0.0.1a1"]
+dev = ["pytest>=8", "pytest-xdist>=3", "ruff>=0.5", "ty>=0.0.1a1"]

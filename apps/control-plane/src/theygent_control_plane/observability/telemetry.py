@@ -1,20 +1,20 @@
-"""The capture wrapper — the one new piece of execution code (M17 §4), shared by both runtimes.
+"""The capture wrapper — the one new piece of execution code shared by both runtimes.
 
 ``Telemetry`` is the per-process observability resource (one per app / durable runtime). It owns the
 two always-local sinks (the Postgres ``span``/``node_io`` writers + the live :class:`SpanBus`), the
-optional OTLP sink (§1.1, opt-in), the worker identity (process ``host:pid``), and the capture
-policy bounds (deployment ceiling ∧ topology default — §1.8). It hands out a :class:`RunTrace` per
+optional OTLP sink (opt-in), the worker identity (process ``host:pid``), and the capture
+policy bounds (deployment ceiling ∧ topology default). It hands out a :class:`RunTrace` per
 run, which opens a run-root span and a :class:`SpanScope` per node; the scope is the wrapper that
 **opens an OTel-shaped span, records timing, sets GenAI-semconv scalars + the worker that handled
 it,
 writes the ``span`` row + ``node_io`` per the effective capture policy, and fans the close event
 onto
-the live bus + the OTLP sink** (§4). It is **runtime-agnostic** (no ``dbos`` import) so it runs
-identically under the interactive M5 walker and the durable DBOS step body — the §1.5 "one wrapper,
+the live bus + the OTLP sink**. It is **runtime-agnostic** (no ``dbos`` import) so it runs
+identically under the interactive walker and the durable DBOS step body — the "one wrapper,
 both runtimes" rule. It writes through the **normal async data layer**, never inside
-``@DBOS.transaction`` (m13-dbos §3).
+``@DBOS.transaction``.
 
-Idempotency on resume (§4): spans/io are written ONCE, on close, keyed by deterministic ids with
+Idempotency on resume: spans/io are written ONCE, on close, keyed by deterministic ids with
 ON CONFLICT DO NOTHING — first-writer-wins. A resumed durable run re-opens every span on the new
 worker, but the completed ones' rows already stand (with the worker that finished them pre-crash),
 so the waterfall **visibly hops workers** at the resume point instead of overwriting history. The
@@ -53,14 +53,14 @@ from theygent_control_plane.observability.store import (
 
 logger = logging.getLogger("theygent.control_plane.observability")
 
-# The interactive M5 walker has no DBOS executor — its spans are stamped with this sentinel so the
-# waterfall can still say "handled by: in-process" (vs a named durable worker — the §1 attribution).
+# The interactive walker has no DBOS executor — its spans are stamped with this sentinel so the
+# waterfall can still say "handled by: in-process" (vs a named durable worker — worker attribution).
 INPROC_EXECUTOR = "inproc"
 
 
 def _stringify_attr(value: Any) -> Any:
     """OTLP scalar coercion — keep numbers/bools/strings, JSON-ify the rest (defensive; we only ever
-    set scalars on spans, never payloads — §1.3)."""
+    set scalars on spans, never payloads)."""
     return value if isinstance(value, (str, int, float, bool)) or value is None else str(value)
 
 
@@ -92,7 +92,7 @@ class SpanScope:
     scope writes the ``span`` row + ``node_io`` (per the effective capture level), publishes the
     live
     close event, and ships the redacted copy to the OTLP sink. NEVER stores payloads in span
-    attributes (§1.3) — payloads go to ``node_io`` only, capped + truncated (§1.7)."""
+    attributes — payloads go to ``node_io`` only, capped + truncated."""
 
     def __init__(
         self,
@@ -157,7 +157,7 @@ class SpanScope:
     def set_io(
         self, *, inputs: dict[str, Any] | None = None, outputs: dict[str, Any] | None = None
     ) -> None:
-        """Record the node's RESOLVED (post-``$in``) per-port I/O (§3). Always recorded in memory;
+        """Record the node's RESOLVED (post-``$in``) per-port I/O. Always recorded in memory;
         what is *persisted* on close is governed by the effective capture level (full → payloads +
         sizes; metadata → sizes only; off → no row)."""
         if inputs is not None:
@@ -166,7 +166,7 @@ class SpanScope:
             self._outputs = outputs
 
     def child_phase(self, phase: str, name: str | None = None) -> _SpanCM:
-        """Open a child PHASE span (queue.wait / model.generate / model.load / mcp.connect — §2),
+        """Open a child PHASE span (queue.wait / model.generate / model.load / mcp.connect),
         parented to this span. Phase spans carry timing only — no ``node_io``."""
         return self._t._span_cm(
             run_id=self.span.run_id,
@@ -259,7 +259,7 @@ class SpanScope:
         in_store, bytes_in, trunc_in = _cap_port_map(self._inputs, max_bytes)
         out_store, bytes_out, trunc_out = _cap_port_map(self._outputs, max_bytes)
         truncated = trunc_in or trunc_out
-        if self._capture_level == "metadata":  # sizes only, no payloads (§4)
+        if self._capture_level == "metadata":  # sizes only, no payloads
             return bytes_in, bytes_out, truncated, None, None
         return bytes_in, bytes_out, truncated, in_store, out_store
 
@@ -267,7 +267,7 @@ class SpanScope:
 def _cap_port_map(
     port_map: dict[str, Any] | None, max_bytes: int
 ) -> tuple[dict[str, Any] | None, int, bool]:
-    """Cap each port's value independently (§1.7), returning (stored_map, total_bytes,
+    """Cap each port's value independently, returning (stored_map, total_bytes,
     truncated)."""
     if not port_map:
         return None, 0, False
@@ -283,7 +283,7 @@ def _cap_port_map(
 
 
 def _span_payload(span: Span) -> dict[str, Any]:
-    """The lightweight live/SSE shape (no payloads — §1.3). **snake_case**, identical in field names
+    """The lightweight live/SSE shape (no payloads). **snake_case**, identical in field names
     to :class:`SpanView` so the frontend merges /trace (persisted) and /trace/stream (live) into one
     shape — matching the existing theygent API convention (``/runs`` is snake_case too)."""
     return {
@@ -324,7 +324,7 @@ class _SpanCM:
 
 
 class RunTrace:
-    """The per-run handle a walk drives (M17 §4). Opens the run-root span (the waterfall's t0
+    """The per-run handle a walk drives. Opens the run-root span (the waterfall's t0
     anchor)
     and hands out a node span per node. ``executor_id`` is the worker that ran this walk —
     ``inproc``
@@ -347,7 +347,7 @@ class RunTrace:
         self._root_span_id = derive_span_id(self._root_pk)
         self._root_start_ns = now_ns()
         # Announce the root on the live bus so the waterfall has its t0 immediately (the row itself
-        # is written once, on finish — write-on-close keeps resume idempotency, §4).
+        # is written once, on finish — write-on-close keeps resume idempotency.
         self._t.bus.publish(
             run_id,
             "open",
@@ -369,8 +369,8 @@ class RunTrace:
     def node_span(self, node: Any) -> _SpanCM:
         """Open a node span (parented to the run root). ``node`` is an IR ``Node`` (has
         id/type/kind);
-        the wrapper stamps ``span.node_id == node.id == React Flow node id`` (the §1.6 frozen join
-        key) so the waterfall later overlays straight onto the M15 canvas."""
+        the wrapper stamps ``span.node_id == node.id == React Flow node id`` (the frozen join
+        key) so the waterfall later overlays straight onto the canvas."""
         return self._t._span_cm(
             run_id=self.run_id,
             name=node.id,
@@ -386,7 +386,7 @@ class RunTrace:
         )
 
     def branch_span(self, node: Any, branch_index: int) -> _SpanCM:
-        """Open a per-iteration span for a ``loop``/``map`` node (M14 §2) so the trace reads against
+        """Open a per-iteration span for a ``loop``/``map`` node so the trace reads against
         the drawn graph one bar per branch. Named ``<node_id>#<i>``; parented to the run root."""
         return self._t._span_cm(
             run_id=self.run_id,
@@ -403,7 +403,7 @@ class RunTrace:
         )
 
     async def skipped(self, node: Any) -> None:
-        """Record a SKIPPED node (a dead branch this run — m6.md §4) as a zero-width span so the
+        """Record a SKIPPED node (a dead branch this run) as a zero-width span so the
         waterfall greys it in place (status=skipped). No I/O, no body."""
         scope = self._make_scope(
             name=node.id,
@@ -419,7 +419,7 @@ class RunTrace:
         await scope._close(error_status=False)
 
     async def emit_queue_wait(self, enqueued_ns: int) -> None:
-        """Emit the ``queue.wait`` phase span (§2): enqueue → workflow pickup, the often-biggest gap
+        """Emit the ``queue.wait`` phase span: enqueue → workflow pickup, the often-biggest gap
         on the durable path. A run-level phase (it precedes every node), parented to the run root,
         spanning ``[enqueued_ns, now]``."""
         scope = self._make_scope(
@@ -488,7 +488,7 @@ class RunTrace:
 
 
 class Telemetry:
-    """The per-process observability resource (M17 §4). Owns the sinks, the worker identity, and the
+    """The per-process observability resource. Owns the sinks, the worker identity, and the
     capture-policy bounds; hands out a :class:`RunTrace` per run. Threaded into the interactive
     ``WalkContext`` and the durable ``DurableResources`` so the SAME wrapper runs in both."""
 
@@ -518,11 +518,11 @@ class Telemetry:
 
     @property
     def otlp_enabled(self) -> bool:
-        """Whether the opt-in OTLP sink is wired (the ``test_two_sink_wiring`` claim — §7)."""
+        """Whether the opt-in OTLP sink is wired (the ``test_two_sink_wiring`` claim)."""
         return self.otlp is not None
 
     def resolve_capture(self, agent_policy: CaptureLevel | None) -> CaptureLevel:
-        """The §1.8 effective capture level (ceiling ∧ topology default ∧ agent policy)."""
+        """The effective capture level (ceiling ∧ topology default ∧ agent policy)."""
         return resolve_effective_capture(
             ceiling=self.ceiling,
             topology_default=self.topology_default,
@@ -530,7 +530,7 @@ class Telemetry:
         )
 
     async def effective_capture_for(self, agent_id: str | None) -> CaptureLevel:
-        """Resolve the effective capture level for a run, loading the agent's policy once (§4 — the
+        """Resolve the effective capture level for a run, loading the agent's policy once (the
         wrapper resolves the level once per run, not per node). ``None`` agent_id (inline graph run,
         no saved agent) → the topology default under the ceiling."""
         async with self.sessionmaker() as session:

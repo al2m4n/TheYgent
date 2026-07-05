@@ -8,7 +8,7 @@
 // All data comes from the inference plane's /admin/* surface (the user-controlled plane). Discovery +
 // install run THERE — theygent never sees the download (the sovereignty promise).
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Download, Lock, Plus, Star } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
@@ -36,6 +36,7 @@ import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api }
 import { countBy, engineTone, toggle } from "../lib/categories";
 import { formatBytes, relativeTime } from "../lib/format";
 import { notify, trackDownload } from "../lib/notify";
+import { useInView } from "../lib/useInView";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -728,7 +729,31 @@ function BrowsePanel() {
         engines: engineSel,
         limit,
       }),
+    // Growing `limit` on scroll changes the key — keep the current list on screen while the bigger
+    // page loads instead of blanking to the skeleton.
+    placeholderData: keepPreviousData,
   });
+
+  // Infinite scroll: the hub catalog has no cursor, so "more" is a bigger `limit`, capped at the
+  // server's max of 100. Grow it as the sentinel nears the viewport; a short page (fewer entries than
+  // the requested limit) means the hub returned everything it has for this query.
+  const CATALOG_MAX = 100;
+  const canLoadMore = !!data && data.entries.length >= limit && limit < CATALOG_MAX;
+  const loadMoreRef = useInView(() => setLimit((l) => Math.min(l + 30, CATALOG_MAX)), {
+    enabled: canLoadMore && !isFetching,
+  });
+  // Rendered at the end of the list AND under the "no caps match" empty state, so scrolling keeps
+  // widening the loaded set even while the capability filter is hiding everything loaded so far.
+  const moreSentinel = (
+    <>
+      {canLoadMore && <div ref={loadMoreRef} aria-hidden className="h-px" />}
+      {isFetching && data && (
+        <div className="flex justify-center py-2">
+          <Spinner />
+        </div>
+      )}
+    </>
+  );
 
   const ready = data?.engines ?? [];
   const noEngine = data !== undefined && ready.length === 0;
@@ -748,7 +773,7 @@ function BrowsePanel() {
     setCapsFilter((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
 
   // Capability filter is CLIENT-SIDE over the loaded page (HF exposes no capability filter). An
-  // entry passes only if it has every active cap; "Load more" pulls further pages to widen the set.
+  // entry passes only if it has every active cap; scrolling pulls further pages to widen the set.
   const shownEntries = useMemo(() => {
     const entries = data?.entries ?? [];
     if (capsFilter.length === 0) return entries;
@@ -845,10 +870,13 @@ function BrowsePanel() {
       ) : !data || data.entries.length === 0 ? (
         <Empty>No matching models. Try a different search.</Empty>
       ) : shownEntries.length === 0 ? (
-        <Empty>
-          None of the {data.entries.length} loaded models match the capability filter — try “Load
-          more” to fetch further pages, or clear the filter.
-        </Empty>
+        <>
+          <Empty>
+            None of the {data.entries.length} loaded models match the capability filter — keep
+            scrolling to load more, or clear the filter.
+          </Empty>
+          {moreSentinel}
+        </>
       ) : (
         <div className="space-y-2">
           {shownEntries.map((entry) => (
@@ -859,13 +887,8 @@ function BrowsePanel() {
               onToggle={() => setSelected((s) => (s === entry.ref ? null : entry.ref))}
             />
           ))}
-          {data.entries.length >= limit && (
-            <div className="pt-1 text-center">
-              <Button onClick={() => setLimit((l) => l + 30)} disabled={isFetching}>
-                {isFetching ? "Loading…" : "Load more"}
-              </Button>
-            </div>
-          )}
+          {/* Scroll sentinel: grows the page as it nears the viewport — no "load more" button. */}
+          {moreSentinel}
         </div>
       )}
     </div>

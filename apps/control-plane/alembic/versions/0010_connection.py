@@ -1,6 +1,7 @@
-"""connection + secret — the tool/MCP auth seam (M19 §1.1)
+"""connection + secret — the tool/MCP auth seam
 
-M19's #1 hard-to-reverse decision: tool/MCP auth never lives inline in the IR. A node references a
+The #1 hard-to-reverse decision here: tool/MCP auth never lives inline in the IR. A node references
+a
 logical tool key in ``ir.tools``; that binding references a ``connection`` by id; the connection
 carries NON-SECRET config in JSONB and a ``secret_ref`` pointing at the encrypted ``secret`` row.
 The handler resolves connection → secret_ref → plaintext SERVER-SIDE, inside the step, at runtime —
@@ -8,11 +9,11 @@ raw secrets never reach the IR, the canvas, a span, or the journal. Rotating the
 agent's ``contentHash`` stable (the connection id is hashed content; the secret behind it is not).
 
 * ``secret`` — encrypted-at-rest secret material (Fernet token text; ``secrets.SecretStore``). The
-  plaintext is NEVER stored here. A real KMS/vault is the deferred upgrade (``theygent-stack.md``).
+  plaintext is NEVER stored here. A real KMS/vault is the deferred upgrade.
 * ``connection`` — ``kind`` ∈ {http_auth, mcp_server}; ``config`` (JSONB) is non-secret only;
   ``secret_ref`` → ``secret.id``. The IR references this row by ``id`` from its ``tools`` block.
 
-Hand-written and fully reversible — the §6 round-trip test exercises upgrade head -> downgrade base
+Hand-written and fully reversible — the round-trip test exercises upgrade head -> downgrade base
 including both new tables.
 """
 

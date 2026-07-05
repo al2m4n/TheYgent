@@ -1,4 +1,4 @@
-"""Thread-level conversational memory (M4 §4/§6) — mechanical replay, proven against
+"""Thread-level conversational memory — mechanical replay, proven against
 real Postgres + real Alembic schema.
 
 Memory here is deliberately NOT smart: store the turns, replay them verbatim on the next
@@ -39,7 +39,7 @@ def test_thread_replay_sends_prior_turns(client: TestClient, fake_inference: Fak
     assert r2["status"] == "completed"
 
     # The fake captured run #2's request: prior user+assistant turns (in order) prepended
-    # to the new input. This is naive full replay (§4) — no summarization/truncation.
+    # to the new input. This is naive full replay — no summarization/truncation.
     assert fake_inference.captured["messages"] == [
         {"role": "user", "content": "first question"},
         {"role": "assistant", "content": FULL_MESSAGE},
@@ -58,7 +58,7 @@ def test_atomic_pair_write(client: TestClient, pg_url: str) -> None:
 
 
 def test_ordering_is_deterministic_across_runs(client: TestClient, pg_url: str) -> None:
-    # position (not a timestamp — §3) gives a stable replay order across multiple runs.
+    # position (not a timestamp) gives a stable replay order across multiple runs.
     thread_id = str(ULID())
     for text in ("q1", "q2", "q3"):
         _one_shot(client, thread_id, text)
@@ -98,7 +98,7 @@ async def test_concurrent_same_thread_runs_do_not_collide(
 
 def test_failed_run_writes_no_turns(pg_url: str) -> None:
     # A failed (pre-stream) run contributes no turn — the thread never holds a dangling
-    # user turn with no answer (§4). The run row still records the failure.
+    # user turn with no answer. The run row still records the failure.
     thread_id = str(ULID())
     with FakeInference(mode="error_503") as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)

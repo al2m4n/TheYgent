@@ -1,7 +1,7 @@
-"""The real cross-process proof (M3 §6) — control-plane -> real inference -> real MLX.
+"""The real cross-process proof — control-plane -> real inference -> real MLX.
 
 The fast suite fakes the model; this is the thing it can't give: a real prompt going
-across the §8 process boundary to a real ``mlx_lm.server`` and streaming back. We launch
+across the process boundary to a real ``mlx_lm.server`` and streaming back. We launch
 the **real inference plane as a subprocess** (not an in-process import — that keeps the
 control-plane free of any inference code dependency and makes the boundary genuine),
 register a tiny MLX model over its ``/admin`` surface, then drive ``/runs``.
@@ -45,7 +45,7 @@ pytestmark = pytest.mark.integration
 _MLX_MODEL = os.environ.get("THEYGENT_MLX_MODEL")
 _HAVE_MLX = bool(shutil.which("mlx_lm.server") or os.environ.get("THEYGENT_MLX_BIN"))
 _HAVE_NPX = bool(shutil.which("npx"))
-# M4: the real cross-process proof now includes real Postgres. On the macOS MLX job (no
+# The real cross-process proof now includes real Postgres. On the macOS MLX job (no
 # Docker, so no testcontainers) the DB comes from a brew-installed PG via DATABASE_URL.
 _DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -56,7 +56,7 @@ _skip = pytest.mark.skipif(
 
 
 def _prepare_db() -> str:
-    """Apply real Alembic migrations to the real DATABASE_URL, then start clean (§0)."""
+    """Apply real Alembic migrations to the real DATABASE_URL, then start clean."""
     ini = Path(__file__).resolve().parents[1] / "alembic.ini"
     assert _DATABASE_URL is not None
     os.environ["DATABASE_URL"] = _DATABASE_URL  # env.py reads this
@@ -159,7 +159,7 @@ def test_runs_against_real_mlx_subprocess() -> None:
 def _real_inference_plane():
     """Spawn the real inference plane as a subprocess and register the MLX model.
 
-    Same genuine §8 process boundary as the test above (not an in-process import), factored
+    Same genuine process boundary as the test above (not an in-process import), factored
     out so the two-turn memory proof can reuse it.
     """
     port = _free_port()
@@ -189,7 +189,7 @@ def _real_inference_plane():
 
 
 def _trivial_ir(model_id: str) -> dict:
-    """The m5.md §4 trivial graph (input -> llm -> output), bound to a registered logical id."""
+    """The trivial graph (input -> llm -> output), bound to a registered logical id."""
     return {
         "schemaVersion": "1.0",
         "id": "agt_01J9X8MLXDEMO",
@@ -244,10 +244,10 @@ def _trivial_ir(model_id: str) -> dict:
 
 @_skip
 def test_two_turn_thread_against_real_mlx_via_graph() -> None:
-    # The demoable M5 proof (m5.md §6): the two-turn thread, end to end across real Postgres AND
-    # a real model — but driven by POST /graphs/runs with the trivial IR instead of /runs. Real
-    # model recall through a real graph. The logical id "local" is registered on the inference
-    # plane, so the graph's models["default"].model = "local" resolves at the seam unchanged.
+    # Two-turn thread, end to end across real Postgres AND a real model — but driven by POST
+    # /graphs/runs with the trivial IR instead of /runs. Real model recall through a real graph.
+    # The logical id "local" is registered on the inference plane, so the graph's
+    # models["default"].model = "local" resolves at the seam unchanged.
     db_url = _prepare_db()
     thread_id = str(ULID())
     ir = _trivial_ir("local")
@@ -269,7 +269,7 @@ def test_two_turn_thread_against_real_mlx_via_graph() -> None:
             assert turn2["status"] == "completed"
             assert turn2["output"].strip(), "expected real generated text from MLX"
 
-            # The Run records the graph's identity (content-addressed — §4).
+            # The Run records the graph's identity (content-addressed).
             got = client.get(f"/runs/{turn2['runId']}").json()
             assert got["graph_id"] == "agt_01J9X8MLXDEMO"
             assert got["content_hash"].startswith("sha256:")
@@ -287,7 +287,7 @@ def test_two_turn_thread_against_real_mlx_via_graph() -> None:
 def test_two_turn_thread_against_real_mlx() -> None:
     # The thing the fast suite can't give: a two-turn thread end to end across real
     # Postgres AND a real model. Turn 2 replays turn 1's turns (loaded from the DB) over
-    # the §8 process boundary into a real mlx_lm.server (M4 §6 integration).
+    # the process boundary into a real mlx_lm.server.
     db_url = _prepare_db()
     thread_id = str(ULID())
     with _real_inference_plane() as base:
@@ -326,12 +326,12 @@ def test_two_turn_thread_against_real_mlx() -> None:
 
 
 def _agent_http_ir() -> dict:
-    """The M6 agent shape (m6.md §6): input(decision) -> router -> tool(http_fetch) -> llm -> out.
+    """Router-tool-llm agent shape: input(decision) -> router -> tool(http_fetch) -> llm -> out.
 
     The route is driven by the JSON the *input* carries (``$in.in.handle``), not by the tiny model's
     text — so the router selection is deterministic while every other hop is genuinely real: a real
     outbound HTTP GET to a threaded local server (the tool), then real MLX summarizing the fetched
-    body (the llm). Real-MLX-as-router is the §8 hand-drive demo, where flaky tiny-model JSON is
+    body (the llm). Real-MLX-as-router is the hand-driven demo shape, where flaky tiny-model JSON is
     acceptable; an automated test must not hinge on it."""
     return {
         "schemaVersion": "1.0",
@@ -445,9 +445,9 @@ def _agent_http_ir() -> dict:
 
 @_skip
 def test_agent_router_tool_against_real_mlx() -> None:
-    # The demoable M6 proof (m6.md §6/§8): a graph that is recognizably an *agent* — router +
-    # real outbound HTTP fetch + real MLX — end to end, persisted as a Run. The threaded local
-    # HTTP server returns a known body; the model reads the fetched body and answers from it.
+    # A graph that is recognizably an *agent* — router + real outbound HTTP fetch + real MLX —
+    # end to end, persisted as a Run. The threaded local HTTP server returns a known body; the
+    # model reads the fetched body and answers from it.
     db_url = _prepare_db()
     with (
         _real_inference_plane() as base,
@@ -474,9 +474,9 @@ def test_agent_router_tool_against_real_mlx() -> None:
 def _fs_agent_ir(read_tool: str) -> dict:
     """input(absolute path) → mcp_tool(fs, <read_tool>, {path: $in}) → llm(read it) → output.
 
-    The M7 demo shape (m7.md §6/§8): a real external MCP server reads a real file, then a real model
-    reasons over the contents. The path comes from the input (deterministic); the read-tool name is
-    discovered from the server's capability list (it differs across server-filesystem versions)."""
+    A real external MCP server reads a real file, then a real model reasons over the contents.
+    The path comes from the input (deterministic); the read-tool name is discovered from the
+    server's capability list (it differs across server-filesystem versions)."""
     return {
         "schemaVersion": "1.0",
         "id": "agt_01J9X8MCPDEMO",
@@ -557,9 +557,8 @@ def _fs_agent_ir(read_tool: str) -> dict:
     reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
 )
 def test_agent_reads_file_via_real_mcp_and_mlx() -> None:
-    # The demoable M7 proof (m7.md §6/§8): a real agent reads a real file through the official
-    # filesystem MCP server, then a real MLX model answers from its contents — the first time the
-    # platform is *useful*. Skips clean if the MCP server can't be fetched/spawned.
+    # A real agent reads a real file through the official filesystem MCP server, then a real MLX
+    # model answers from its contents. Skips clean if the MCP server can't be fetched/spawned.
     db_url = _prepare_db()
     with tempfile.TemporaryDirectory() as tmp:
         # Resolve symlinks (macOS /var -> /private/var): the server's allowed-dir check compares
@@ -580,7 +579,7 @@ def test_agent_reads_file_via_real_mcp_and_mlx() -> None:
                 )
                 assert reg.status_code == 200, reg.text
                 # Capability probe also drives the (slow, network) connect; skip clean if the
-                # server can't be fetched/spawned (no network in CI — m7.md §8).
+                # server can't be fetched/spawned (no network in CI).
                 tools_resp = client.get("/admin/mcp/servers/fs/tools")
                 if tools_resp.status_code == 503:
                     pytest.skip("filesystem MCP server unavailable (npx fetch/spawn failed)")
@@ -608,13 +607,13 @@ def test_agent_reads_file_via_real_mcp_and_mlx() -> None:
 
 
 def _fs_qa_agent_ir(read_tool: str) -> dict:
-    """The M10 acceptance demo (m10.md §5 integration / §7 step 6): the first agent M9 could NOT
-    express. The run input is an object ``{path, question}``; it fans out to a real MCP file read
-    (``$in.in.path``) and an ``echo`` carrying the question (``$in.in.question``); the ``llm`` node
-    declares TWO in-ports — ``file`` and ``question`` — and composes ``$in.file`` AND
-    ``$in.question`` into one prompt. The answer is determined by file∩question: the model must read
-    the file (via the ``mcp_tool`` port) to know the facts AND parse the question to pick the right
-    one. ``read_tool`` is discovered from the server's caps (it varies across server-filesystem)."""
+    """Multi-input file-and-question agent: the run input is an object ``{path, question}``; it fans
+    out to a real MCP file read (``$in.in.path``) and an ``echo`` carrying the question
+    (``$in.in.question``); the ``llm`` node declares TWO in-ports — ``file`` and ``question`` — and
+    composes ``$in.file`` AND ``$in.question`` into one prompt. The answer is determined by
+    file∩question: the model must read the file (via the ``mcp_tool`` port) to know the facts AND
+    parse the question to pick the right one. ``read_tool`` is discovered from the server's caps
+    (it varies across server-filesystem)."""
     return {
         "schemaVersion": "1.0",
         "id": "agt_01J9X8MULTIIN",
@@ -727,12 +726,11 @@ def _fs_qa_agent_ir(read_tool: str) -> dict:
     reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
 )
 def test_multi_input_file_and_question_against_real_mcp_and_mlx() -> None:
-    # THE M10 closure proof (m10.md §5 integration): a graph reads a file on one in-port AND takes a
-    # question on another, composes BOTH into one real MLX prompt, and the answer is determined by
-    # file∩question — visibly using file content it could only have gotten via the mcp_tool port.
-    # The deterministic half (the rendered prompt carries both values, in the right slots) is pinned
-    # exactly in the fast suite (test_multi_input.py); this is the real-path behavioral half. Skips
-    # clean if the MCP server can't be fetched/spawned.
+    # A graph reads a file on one in-port AND takes a question on another, composes BOTH into one
+    # real MLX prompt, and the answer is determined by file∩question — visibly using file content
+    # it could only have gotten via the mcp_tool port. The deterministic half (the rendered prompt
+    # carries both values, in the right slots) is pinned in the fast suite (test_multi_input.py);
+    # this is the real-path behavioral half. Skips clean if the MCP server can't be fetched/spawned.
     db_url = _prepare_db()
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.realpath(tmp)  # macOS /var -> /private/var: the server compares realpaths
@@ -787,11 +785,10 @@ def test_multi_input_file_and_question_against_real_mcp_and_mlx() -> None:
     reason="needs npx, THEYGENT_MLX_MODEL, mlx_lm.server, and DATABASE_URL",
 )
 def test_save_agent_then_invoke_by_id_across_restart() -> None:
-    # THE M11 closure proof (m11.md §6 integration / §8 step 9): save the M10 file+question agent
-    # under a name, invoke it BY ID (never pasting the IR), get a real MLX answer; then "restart"
-    # control-plane (a fresh app on the same Postgres) and invoke it AGAIN — it still resolves and
-    # runs. The first time the platform has *agents*, not graph paste-ins. Skips clean if the MCP
-    # server can't be fetched/spawned.
+    # Save the multi-input file+question agent under a name, invoke it BY ID (never pasting the IR),
+    # get a real MLX answer; then "restart" control-plane (a fresh app on the same Postgres) and
+    # invoke it AGAIN — it still resolves and runs, proving the registry persists across restarts.
+    # Skips clean if the MCP server can't be fetched/spawned.
     db_url = _prepare_db()
     with tempfile.TemporaryDirectory() as tmp:
         root = os.path.realpath(tmp)  # macOS /var -> /private/var: the server compares realpaths
@@ -853,10 +850,9 @@ def test_save_agent_then_invoke_by_id_across_restart() -> None:
 
 @_skip
 def test_invoke_token_authed_against_real_mlx() -> None:
-    # THE M12 deploy proof, option (a) (m12.md §5 integration / §7 step 8): with NO cockpit, a
-    # token-authed POST /agents/{id}/invoke runs the saved M11 agent on real MLX and returns a real
-    # result — and an UNAUTHENTICATED invoke is refused (401). The first time the platform exposes a
-    # deployed agent a program can call.
+    # With NO cockpit, a token-authed POST /agents/{id}/invoke runs the saved agent on real MLX and
+    # returns a real result — and an UNAUTHENTICATED invoke is refused (401). This is the unattended
+    # invoke surface: a deployed agent a program can call directly.
     db_url = _prepare_db()
     ir = _trivial_ir("local")
     with _real_inference_plane() as base:
@@ -872,7 +868,7 @@ def test_invoke_token_authed_against_real_mlx() -> None:
             agent_id = created.json()["id"]
             body = {"input": "Say hello in one word.", "stream": False}
 
-            # Anonymous (no token) → 401: the unattended surface is gated (§1.3).
+            # Anonymous (no token) → 401: the unattended surface is gated.
             assert client.post(f"/agents/{agent_id}/invoke", json=body).status_code == 401
 
             # Token-authed → a real MLX result, cockpit-free.
@@ -886,17 +882,18 @@ def test_invoke_token_authed_against_real_mlx() -> None:
             assert r.json()["output"].strip(), "expected real generated text from MLX"
             got = client.get(f"/runs/{r.json()['runId']}").json()
             assert got["graph_id"] == agent_id
-            assert got["trigger_id"] is None  # a direct invoke is not trigger-fired (lineage §2)
+            assert (
+                got["trigger_id"] is None
+            )  # a direct invoke is not trigger-fired (no trigger lineage)
 
 
 @_skip
 def test_schedule_fires_against_real_mlx_on_its_own() -> None:
-    # THE M12 deploy proof, option (b) (m12.md §5 integration / §7 step 8): register a near-future
-    # cron schedule pinned to the saved agent, then WATCH a Run appear and complete on its own — the
-    # real in-process dispatcher loop firing real MLX, no human in the cockpit. "It ran without me",
-    # the thing no prior milestone could show. Drives the actual background loop (start_dispatcher
-    # default on), so this genuinely demonstrates unattended firing — and polls up to ~90s because a
-    # one-minute cron resolves at the next minute boundary.
+    # Register a near-future cron schedule pinned to the saved agent, then WATCH a Run appear and
+    # complete on its own — the real in-process dispatcher loop firing real MLX, no human in the
+    # cockpit. Drives the actual background loop (start_dispatcher default on), so this genuinely
+    # demonstrates unattended firing — polls up to ~90s because a one-minute cron resolves at the
+    # next minute boundary.
     db_url = _prepare_db()
     ir = _trivial_ir("local")
     with _real_inference_plane() as base:
@@ -928,4 +925,4 @@ def test_schedule_fires_against_real_mlx_on_its_own() -> None:
                 time.sleep(2.0)
             assert fired is not None, "the schedule never fired on its own within the deadline"
             assert fired["status"] == "completed"
-            assert fired["graph_version"] == "0.1.0"  # the pinned version ran (§3.2)
+            assert fired["graph_version"] == "0.1.0"  # the pinned version ran

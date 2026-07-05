@@ -1,10 +1,11 @@
-"""Repeatable hand-drive smoke for apps/interface (M15 §4 acceptance), driven against a LIVE stack.
+"""Repeatable hand-drive smoke for apps/interface, driven against a LIVE stack.
 
 The mocked Vitest tests prove the FE in isolation; they CANNOT prove the one thing that matters
 most across the seam: that a pure layout change ("drag a node") leaves the **server-computed
 contentHash** untouched, while a real content edit changes it — and that the edited agent still
-RUNS via the M5 walker (the path M13 reuses). This script asserts exactly that against the running
-control-plane, so it keeps paying off after M15 instead of being a one-off click.
+RUNS via the walker (the path the durable runtime reuses). This script asserts exactly that against
+the running control-plane, so it keeps paying off as the codebase evolves instead of being a
+one-off click.
 
 What it does (idempotent — uses a unique agent id per run):
   1. create an agent (input→output) at v0.1.0            → record contentHash h1
@@ -15,7 +16,7 @@ What it does (idempotent — uses a unique agent id per run):
   3. add v0.2.0 = a STRUCTURAL edit (relabel a node)     → assert hash != h1   (content hashes)
   4. GET v0.2.0 (reload)                                 → assert the IR round-trips
   5. run v0.2.0 via /agents/{id}/runs with an input      → assert it completes, output == input
-     (the M13/M5 run path — execution unchanged by the canvas)
+     (the walker run path — execution unchanged by the canvas)
 
 Prereqs: `make up` (control-plane on :8080 + its Postgres). No inference needed — an input→output
 graph passes its input straight through, so this never depends on a model being resident.
@@ -41,7 +42,8 @@ BASE = os.environ.get("THEYGENT_CONTROL_PLANE_URL", "http://localhost:8080").rst
 TOKEN = os.environ.get("THEYGENT_DEV_TOKEN", "dev-local")
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
-# A unique id per run so re-running never collides on create (identity is immutable — M11).
+# A unique id per run so re-running never collides on create
+# (agent identity is immutable after creation).
 AGENT_ID = f"agent.smoke.{int(time.time())}"
 
 _passed = 0
@@ -127,9 +129,9 @@ def main() -> None:
 
         # 2. a pure DRAG: re-publish the SAME version with different positions. Because `view` is
         #    not hashed, this is the SAME content → an idempotent 200 (NOT a 409 version_conflict),
-        #    and the hash is unchanged. This is the server-verified §1.4 invariant the mocked FE
-        #    test cannot give us. (Comparing two distinct versions can't isolate `view` — `version`
-        #    is itself hashed, so a different version always yields a different hash.)
+        #    and the hash is unchanged. This is the server-verified view-isolation invariant that
+        #    a mocked test cannot give us. (Comparing two distinct versions can't isolate `view`
+        #    — `version` is itself hashed, so a different version always yields a different hash.)
         view_b = {
             "nodes": {
                 "n_in": {"position": {"x": 99, "y": 77}},
@@ -143,7 +145,7 @@ def main() -> None:
             f"status {r.status_code}",
         )
         h2 = next(v["content_hash"] for v in r.json()["versions"] if v["version"] == "0.1.0")
-        check("drag leaves contentHash UNCHANGED (server-verified §1.4)", h2 == h1, f"{h2} == {h1}")
+        check("drag leaves contentHash UNCHANGED (server-verified)", h2 == h1, f"{h2} == {h1}")
 
         # 3. a STRUCTURAL edit (relabel a node) → hash MUST change
         r = c.post(
@@ -169,10 +171,10 @@ def main() -> None:
         )
         check("reloaded node label round-tripped", stored["ir"]["nodes"][0].get("label") == "start")
 
-        # 5. execute via the M11/M5 run path — the canvas changed nothing the runtime sees.
+        # 5. execute via the agent run path — the canvas changed nothing the runtime sees.
         run_id = run_agent(c, AGENT_ID, "0.2.0", "hello-from-smoke")
         check("run produced a run id (streamed)", bool(run_id), run_id or "")
-        # poll the persisted Run for its terminal outcome (M9 §2.2: output persists).
+        # poll the persisted Run for its terminal outcome (run output is persisted to the DB).
         outcome = poll_run(c, run_id)
         check(
             "run completed via the walker",
@@ -189,7 +191,7 @@ def main() -> None:
 
 
 def run_agent(c: httpx.Client, agent_id: str, version: str, value: str) -> str:
-    """Invoke /agents/{id}/runs (M11, by reference) and read the run id off the SSE stream."""
+    """Invoke /agents/{id}/runs (by agent reference) and read the run id off the SSE stream."""
     run_id = ""
     with c.stream(
         "POST",

@@ -1,10 +1,10 @@
-"""Fast suite for the IR walker (m5.md §6) — a real graph drives a run over the real HTTP
+"""Fast suite for the IR walker — a real graph drives a run over the real HTTP
 seam, fake model, real Postgres via testcontainers.
 
-The whole point of M5: ``/graphs/runs`` is behaviourally identical to ``/runs`` for the
-trivial graph, but the *path* is IR-driven. So these mirror the M3/M4 assertions (same SSE
-shape, same error mapping, same thread replay) — now through the walker — and add the
-seam-specific proofs: IR validation, per-node logs, content-hash recording, cycle rejection.
+``/graphs/runs`` is behaviourally identical to ``/runs`` for the trivial graph, but the
+*path* is IR-driven. So these mirror the earlier /runs assertions (same SSE shape, same
+error mapping, same thread replay) — now through the walker — and add the seam-specific
+proofs: IR validation, per-node logs, content-hash recording, cycle rejection.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ def test_durable_only_node_rejected_on_interactive_path(client: TestClient) -> N
 
 def test_graph_stream_full_loop(client: TestClient, fake_inference: FakeInference) -> None:
     # Happy path: the trivial graph executes and the SSE relay produces the SAME shape /runs
-    # does today (the M5 thesis: identical behaviour, IR-driven path).
+    # does today (identical behaviour, IR-driven path).
     with client.stream(
         "POST",
         "/graphs/runs",
@@ -126,11 +126,11 @@ def test_graph_stream_full_loop(client: TestClient, fake_inference: FakeInferenc
     assert events[-1][1] == "[DONE]"
 
     # The model RESOLVED from the graph's `models["default"]` binding reached the wire as the
-    # logical id — never rewritten, never an engine name (§8.4 / §9.1.1).
+    # logical id — never rewritten, never an engine name.
     assert fake_inference.captured["model"] == "triage-fast"
     assert fake_inference.captured["run_id_header"] == run_id
 
-    # The Run records the graph's identity (§4): id, version, contentHash. A graph run is a Run.
+    # The Run records the graph's identity: id, version, contentHash. A graph run is a Run.
     got = client.get(f"/runs/{run_id}").json()
     assert got["status"] == "completed"
     assert got["graph_id"] == "agt_01J9X8TRIVIAL"
@@ -159,7 +159,7 @@ def test_input_substituted_into_llm_message(
 def test_per_node_logs_keyed_by_run_id(
     client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # The OTel attach-point is exercised, not just present (§5 step 4 / §6): each node's id
+    # The OTel attach-point is exercised, not just present: each node's id
     # lands on a structured log keyed by run_id. Spans hang here later.
     with caplog.at_level(logging.INFO, logger="theygent.control_plane.walker"):
         body = _graph_run(client, stream=False)
@@ -174,7 +174,7 @@ def test_per_node_logs_keyed_by_run_id(
 
 
 def test_invalid_ir_rejected_no_run(client: TestClient, pg_url: str) -> None:
-    # A bad `kind` for a `type` -> 400 with a precise error and NO Run created (§3.1/§6).
+    # A bad `kind` for a `type` -> 400 with a precise error and NO Run created.
     doc = trivial_ir()
     doc["nodes"][1]["kind"] = "boundary"  # llm must be activity
     resp = client.post("/graphs/runs", json={"ir": doc, "input": "x", "stream": False})
@@ -210,7 +210,7 @@ def test_cycle_rejected_at_validation(client: TestClient) -> None:
 
 
 def test_engine_name_binding_rejected(client: TestClient, fake_inference: FakeInference) -> None:
-    # The logical-id invariant still holds at the seam (§6): an engine name in the model
+    # The logical-id invariant still holds at the seam: an engine name in the model
     # binding is rejected up front; nothing reaches the inference wire.
     doc = trivial_ir()
     doc["models"]["default"]["model"] = "mlx"
@@ -226,12 +226,13 @@ def _recorded_hash(client: TestClient, doc: dict) -> str:
 
 
 def test_content_hash_recorded_and_stable(client: TestClient) -> None:
-    # The §8.2 promise the Run records: contentHash is content-addressed, NOT layout-addressed.
+    # The Run records: contentHash is content-addressed, NOT layout-addressed.
     # Dragging a node (mutating the view block) must not mint a new version; a real content
     # change must.
     h1 = _recorded_hash(client, trivial_ir())
 
-    # Same graph, node dragged + zoomed — a *different* view block. Hash unchanged (§8.0 rule 2).
+    # Same graph, node dragged + zoomed — a *different* view block. Hash unchanged
+    # (view is excluded from content).
     dragged = trivial_ir()
     dragged["view"] = {
         "nodes": {"n_llm": {"position": {"x": 999, "y": 17}, "collapsed": True}},
@@ -246,10 +247,10 @@ def test_content_hash_recorded_and_stable(client: TestClient) -> None:
 
 
 def test_recorded_hash_is_the_ir_function_and_default_fills(client: TestClient) -> None:
-    # Decision D2 (theygent-m10-decisions.md): the Run's recorded contentHash is byte-identical to
-    # the IR package's content_hash for the same document — ONE function, so the future registry
-    # (M11) and the walker can never disagree. And it canonicalizes the DEFAULT-FILLED model: an IR
-    # that omits Port.required hashes identically to one that writes `required: true`.
+    # The Run's recorded contentHash is byte-identical to the IR package's content_hash for the
+    # same document — ONE function, so the agent registry and the walker can never disagree. And
+    # it canonicalizes the DEFAULT-FILLED model: an IR that omits Port.required hashes identically
+    # to one that writes `required: true`.
     from theygent_ir import content_hash, parse_document
 
     doc = trivial_ir()
@@ -263,7 +264,7 @@ def test_recorded_hash_is_the_ir_function_and_default_fills(client: TestClient) 
 
 
 def test_thread_memory_across_graph_runs(client: TestClient, fake_inference: FakeInference) -> None:
-    # M4 thread replay, now through the graph path (§6): run #2 in the same thread sees run #1.
+    # Thread replay through the graph path: run #2 in the same thread sees run #1.
     thread_id = str(ULID())
     r1 = _graph_run(client, stream=False, thread_id=thread_id)
     assert r1["status"] == "completed"
@@ -287,10 +288,10 @@ def test_graph_thread_pair_persists(client: TestClient, pg_url: str) -> None:
 
 
 def test_error_mapping_stream_surfaces_before_sse_commit(pg_url: str) -> None:
-    # The M2/M3 warm-before-stream lesson, now on the graph path: a pre-stream 503/404 (the llm
-    # node's open_stream raising before any token) must surface as a CLEAN error status — never
-    # a 200 text/event-stream that then breaks. The walker is primed before /graphs/runs commits
-    # to an SSE response, so the error is mapped here. Asserted three ways: (1) the status is the
+    # Warm-before-stream on the graph path: a pre-stream 503/404 (the llm node's open_stream
+    # raising before any token) must surface as a CLEAN error status — never a 200
+    # text/event-stream that then breaks. The walker is primed before /graphs/runs commits to an
+    # SSE response, so the error is mapped here. Asserted three ways: (1) the status is the
     # mapped 503/404, not 200; (2) the body is a JSON error, not an event-stream; (3) the
     # content-type was never committed to text/event-stream.
     for mode, status, code in (
@@ -328,7 +329,7 @@ def test_error_mapping_non_stream(pg_url: str) -> None:
 
 
 def test_failed_graph_run_writes_no_turns(pg_url: str) -> None:
-    # A failed graph run contributes no turn (§4): the thread never holds a dangling user turn.
+    # A failed graph run contributes no turn: the thread never holds a dangling user turn.
     thread_id = str(ULID())
     with FakeInference(mode="error_503") as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
@@ -358,7 +359,7 @@ def test_midstream_drop_fails_cleanly(pg_url: str) -> None:
 
 
 def test_runs_endpoint_unchanged(client: TestClient) -> None:
-    # /runs is untouched (§7): a non-graph run still works and records no graph fields.
+    # /runs is untouched: a non-graph run still works and records no graph fields.
     resp = client.post("/runs", json={"input": "hi", "model": "triage-fast", "stream": False})
     assert resp.status_code == 200
     got = client.get(f"/runs/{resp.json()['runId']}").json()

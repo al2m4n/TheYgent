@@ -1,8 +1,8 @@
-"""M22 — visual tool wiring (the interactive walker).
+"""Visual tool wiring (the interactive walker).
 
 A configured tool node wired to an llm's ``tools`` port via a ``channel:"tool"`` edge is a
 CAPABILITY the model may call. The available-tool set is derived from those edges (the function name
-= the tool NODE id), so the M21 autonomous loop runs without a graph-level ``config.tools`` entry.
+= the tool NODE id), so the autonomous tool loop runs without a graph-level ``config.tools`` entry.
 The capability node is NOT executed as a standalone step. Driven by the fake's ``tool_call`` mode
 (calls the named function on turn 1, answers once a tool result is in the transcript). Durable
 parity lives in test_durable.py; the IR rules are pinned in packages/ir/tests/test_graph.py.
@@ -65,7 +65,7 @@ def _run(client: TestClient, ir: dict, *, input_: str = "do the thing") -> dict:
     return client.post("/graphs/runs", json={"ir": ir, "input": input_, "stream": False}).json()
 
 
-def test_m22_wired_capability_tool_then_answers(pg_url: str) -> None:
+def test_wired_capability_tool_then_answers(pg_url: str) -> None:
     # The headline: a tool node wired to the llm (no config.tools) is callable — the model calls it
     # by NODE id, the walker resolves the binding from the node's config, runs it, feeds the result
     # back, and the model answers. All from the visual wire.
@@ -87,7 +87,7 @@ def test_m22_wired_capability_tool_then_answers(pg_url: str) -> None:
     )
 
 
-def test_m22_capability_tool_call_streams_the_node_id(pg_url: str) -> None:
+def test_capability_tool_call_streams_the_node_id(pg_url: str) -> None:
     with FakeInference(
         mode="tool_call", tool_name="n_echo", tool_args={"value": "hi"}, response="streamed answer"
     ) as server:
@@ -109,11 +109,11 @@ def test_m22_capability_tool_call_streams_the_node_id(pg_url: str) -> None:
             ev = None
     tool_calls = [json.loads(d)["toolCall"] for e, d in events if e == "tool_call"]
     deltas = [json.loads(d)["delta"] for e, d in events if e == "delta"]
-    assert tool_calls == ["n_echo"]  # the function name is the wired tool NODE id (M22)
+    assert tool_calls == ["n_echo"]  # the function name is the wired tool NODE id
     assert "".join(deltas) == "streamed answer"
 
 
-def test_m22_capability_node_does_not_run_as_a_step(pg_url: str) -> None:
+def test_capability_node_does_not_run_as_a_step(pg_url: str) -> None:
     # A capability tool node is NOT executed in topo order — only called by the model. Proof: the
     # tool node's own ok/err handle never binds a node-level output (it is skipped from the walk),
     # yet the run still completes via the llm's answer. We assert the run output is the llm answer,
@@ -130,8 +130,8 @@ def test_m22_capability_node_does_not_run_as_a_step(pg_url: str) -> None:
     assert not persisted.get("error")
 
 
-def test_m22_plain_llm_no_wires_is_single_shot(pg_url: str) -> None:
-    # An llm with a `tools` port but NO wired tool node (and empty config.tools) is the pre-M21
+def test_plain_llm_no_wires_is_single_shot(pg_url: str) -> None:
+    # An llm with a `tools` port but NO wired tool node (and empty config.tools) is the
     # single-shot path — the capability set is empty, so the loop runs zero iterations.
     ir = llm_ir("$in")
     ir["nodes"][1]["ports"]["in"].append(
@@ -186,14 +186,14 @@ def _mcp_tool_node(node_id: str = "n_mcp") -> dict:
     }
 
 
-def test_m22_http_tool_binding_has_timeout_seconds() -> None:
+def test_http_tool_binding_has_timeout_seconds() -> None:
     # Regression (review #9): HttpTool gained `timeout_seconds`, so the autonomous loop's
-    # `binding.timeout_seconds` (legacy M21 http binding) no longer AttributeErrors — and a
-    # capability http tool can carry its configured timeout.
+    # `binding.timeout_seconds` no longer AttributeErrors — and a capability http tool can carry
+    # its configured timeout.
     assert "timeout_seconds" in HttpTool.model_fields
 
 
-def test_m22_capability_binding_http_carries_inline_config() -> None:
+def test_capability_binding_http_carries_inline_config() -> None:
     # review #2/#8: a capability http tool node's binding is built from its INLINE config — and the
     # configured timeoutSeconds is NOT dropped (it flows through HttpTool.timeout_seconds).
     ir = parse_document(_capability_graph(_http_tool_node()))
@@ -205,7 +205,7 @@ def test_m22_capability_binding_http_carries_inline_config() -> None:
     assert binding.timeout_seconds == 7.5
 
 
-def test_m22_capability_binding_mcp() -> None:
+def test_capability_binding_mcp() -> None:
     # review #12: a capability mcp_tool node resolves to an McpTool from its inline server/tool.
     ir = parse_document(_capability_graph(_mcp_tool_node()))
     binding = _capability_binding(ir, "n_mcp")
@@ -214,10 +214,10 @@ def test_m22_capability_binding_mcp() -> None:
     assert binding.tool == "read_file"
 
 
-async def test_m22_union_offers_legacy_key_and_capability_node_id() -> None:
+async def test_union_offers_legacy_key_and_capability_node_id() -> None:
     # review #11: one llm with a legacy ir.tools key (config.tools=["echo"]) AND a wired capability
     # node → the model is offered BOTH function names, keyed differently (the ir.tools key vs the
-    # node id). This is the M22 union the loop concatenates.
+    # node id). This union is what the loop concatenates.
     doc = _capability_graph(_http_tool_node())
     doc["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
     doc["nodes"][1]["config"]["tools"] = ["echo"]

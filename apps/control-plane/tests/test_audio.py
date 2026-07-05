@@ -1,10 +1,10 @@
-"""M19 §2.2 — the audio model-call nodes (transcribe · speak).
+"""Tests for the audio model-call nodes (transcribe · speak).
 
-Guards (m19.md §2.2 / §4):
+Guards:
 * ``transcribe`` reads an audio REFERENCE → text; ``speak`` text → an audio REFERENCE (the bytes are
   a stored artifact, NOT journaled — the run output carries the ref, never the audio bytes);
-* the audio goes to the **inference base URL** (the gateway), never a control-plane route (§10);
-* logical-id only — an engine-name binding is rejected up front (the M18 §4 negative test extended).
+* the audio goes to the **inference base URL** (the gateway), never a control-plane route;
+* logical-id only — an engine-name binding is rejected up front.
 """
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ def _run(client: TestClient, ir: dict[str, Any], input_value: Any) -> dict[str, 
 
 def test_transcribe_audio_ref_to_text(client: TestClient, fake_inference: FakeInference) -> None:
     # The run input is an audio REFERENCE (a local path); the handler fetches the bytes + posts them
-    # to the inference plane's /v1/audio/transcriptions (NOT a control-plane route — §10).
+    # to the inference plane's /v1/audio/transcriptions (NOT a control-plane route).
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(b"RIFF....fake-wav-bytes")
         path = f.name
@@ -114,14 +114,14 @@ def test_speak_text_to_audio_reference(client: TestClient, fake_inference: FakeI
 
 def test_transcribe_missing_ref_binds_err(client: TestClient) -> None:
     # A bad audio ref binds the err handle (the tool ok/err contract) — but here err isn't wired to
-    # output, so the run completes with no output (the M9 empty-output legibility), not a crash.
+    # output, so the run completes with no output (honest empty output, not a crash).
     ir = _audio_agent("transcribe", in_handle="audio", out_handle="text")
     out = _run(client, ir, {"ref": "/does/not/exist.wav", "contentType": "audio/wav"})
     assert out["status"] == "completed"  # honest empty, not a 500
 
 
 def test_transcribe_engine_name_rejected(client: TestClient) -> None:
-    # Logical-id only (§1.3): an engine-name model binding is rejected up front, before a Run.
+    # Logical-id only: an engine-name model binding is rejected up front, before a Run.
     ir = _audio_agent("transcribe", in_handle="audio", out_handle="text")
     ir["models"]["voicebox"] = {"binding": "mlx", "model": "mlx"}  # an engine name
     resp = client.post("/graphs/runs", json={"ir": ir, "input": {"ref": "x"}, "stream": False})

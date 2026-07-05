@@ -14,13 +14,17 @@ import {
 } from "../components/ui";
 import { countBy, statusTone, toggle } from "../lib/categories";
 import { relativeTime, shortId } from "../lib/format";
-import { useRuns } from "../queries";
+import { useInView } from "../lib/useInView";
+import { flattenPages, useRunsInfinite } from "../queries";
 
 // The natural status reading order (lifecycle), so the chips don't reorder as counts change.
 const STATUS_ORDER = ["created", "streaming", "waiting", "completed", "failed"];
 
 export function RunsList() {
-  const { data: runs, isLoading, error } = useRuns(50);
+  const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    useRunsInfinite();
+  const runs = useMemo(() => flattenPages(data), [data]);
+  const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [statusSel, setStatusSel] = useState<string[]>([]);
   const [q, setQ] = useState("");
 
@@ -56,7 +60,7 @@ export function RunsList() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold text-slate-100">Runs</h1>
-          <p className="text-xs text-slate-500">Most recent 50 · auto-refreshing every 3s</p>
+          <p className="text-xs text-slate-500">Newest first · auto-refreshing every 3s</p>
         </div>
         <Link to="/compose" className={buttonClass("primary", "shrink-0")}>
           New run
@@ -152,6 +156,14 @@ export function RunsList() {
                 ))}
               </tbody>
             </Table>
+          )}
+
+          {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
+          {hasNextPage && <div ref={loadMoreRef} aria-hidden className="h-px" />}
+          {isFetchingNextPage && (
+            <div className="flex justify-center py-3">
+              <Spinner />
+            </div>
           )}
         </>
       )}

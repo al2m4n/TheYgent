@@ -16,7 +16,7 @@ export interface ValidationIssue {
   edgeId?: string;
 }
 
-// Validate a node's `config` against its PER-TYPE JSON Schema (§2.3) — not just JSON parse-ability.
+// Validate a node's `config` against its PER-TYPE JSON Schema — not just JSON parse-ability.
 // "Guarded" must mean schema-valid, or the editor would let you save config that parses but the
 // backend's Pydantic rejects. We compile each type's schema once (Ajv, lenient on meta-schema
 // strictness since these are Pydantic-emitted draft schemas) and cache it.
@@ -38,7 +38,7 @@ function configValidator(type: string): ValidateFunction | null {
   return fn;
 }
 
-// Single-value consumers take exactly ONE in-port (m10.md — `output`/`router`). Multi-input is for
+// Single-value consumers take exactly ONE in-port (`output`/`router`). Multi-input is for
 // value-producers; a >1-in-port consumer is an ambiguous forward.
 const SINGLE_IN_CONSUMERS = new Set(["output", "router"]);
 // subgraph/loop/map compose a SAVED, PINNED agent body — exactly one of version/contentHash.
@@ -92,7 +92,7 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
         issues.push({ severity: "error", message: `config '${key}' is required`, nodeId: n.id });
       }
     }
-    // config must validate against the per-type JSON Schema (§2.3) — catches schema-invalid-but-
+    // config must validate against the per-type JSON Schema — catches schema-invalid-but-
     // parseable config (e.g. a number where a string is required) the inspector's JSON editor alone
     // would let through. This is what makes the editor block such a save instead of 400-ing at run.
     const validate = configValidator(n.type);
@@ -273,8 +273,8 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     fed.add(key);
   }
 
-  // M22: a CAPABILITY tool node (the source of a `tool` edge) supplies its args from the model, not
-  // an upstream edge — so it is exempt from the required-in-port rule (mirrors graph.py §5).
+  // A CAPABILITY tool node (the source of a `tool` edge) supplies its args from the model, not
+  // an upstream edge — so it is exempt from the required-in-port rule (mirrors graph.py).
   const capabilityNodes = new Set(
     edges.filter((e) => (e.channel ?? "data") === "tool").map((e) => e.source),
   );
@@ -301,8 +301,8 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     }
   }
 
-  // M22: a tool/mcp_tool node is a CAPABILITY (wired to an llm via `tool` edges) OR a STEP
-  // (data/control edges) — not both (mirrors graph.py §4c, so the editor flags it before a 400).
+  // A tool/mcp_tool node is a CAPABILITY (wired to an llm via `tool` edges) OR a STEP
+  // (data/control edges) — not both (mirrors graph.py, so the editor flags it before a 400).
   for (const n of nodes) {
     if (n.type !== "tool" && n.type !== "mcp_tool") continue;
     const chans = new Set(edges.filter((e) => e.source === n.id).map((e) => e.channel ?? "data"));
@@ -315,7 +315,7 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     }
   }
 
-  // 6: cycle detection (Kahn over data + control edges — both impose ordering). M22: `tool` edges
+  // 6: cycle detection (Kahn over data + control edges — both impose ordering). `tool` edges
   // are a capability wire (no ordering — the model calls lazily), so EXCLUDE them, matching the
   // backend's topological_order (graph.py).
   if (

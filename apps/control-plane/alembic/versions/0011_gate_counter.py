@@ -1,12 +1,12 @@
-"""gate_counter — the lean per-key ratelimit counter (M19 §2.8/§1.6)
+"""gate_counter — the lean per-key ratelimit counter
 
-M19 adds a ``gate`` seam (``ratelimit``/``quota``), NOT a metering/billing engine (§1.6).
+The ``gate`` seam (``ratelimit``/``quota``) is NOT a metering/billing engine.
 ``ratelimit`` is backed by this one trivial counter table: ``id`` is a composite scope+key+window
 string, ``count`` the hits in the current fixed window (reset when it rolls). ``quota`` builds no
-new table — it READS accumulated token usage off the M17 ``span`` rows (§1.6: read, not re-metered).
+new table — it READS accumulated token usage off the existing ``span`` rows (read, not re-metered).
 
-Per-key/per-caller only (per-USER is the deferred identity milestone — §1.6). No metering API.
-Hand-written + reversible — the §6 round-trip test covers it.
+Per-key/per-caller only (per-USER is the deferred identity tier). No metering API.
+Hand-written + reversible — the round-trip test covers it.
 """
 
 from __future__ import annotations

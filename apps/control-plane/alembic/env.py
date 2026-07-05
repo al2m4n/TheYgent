@@ -1,6 +1,6 @@
 """Alembic environment (async) — migrations run over the same asyncpg DSN the app uses.
 
-The schema is owned here (§1.1); ``target_metadata`` points at the ORM ``Base.metadata``
+The schema is owned here; ``target_metadata`` points at the ORM ``Base.metadata``
 so future autogenerate has a reference, but migrations are reviewed by hand. The URL comes
 from ``DATABASE_URL`` (set by the app/tests), never hard-coded.
 """

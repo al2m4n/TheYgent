@@ -1,4 +1,4 @@
-"""M19 §2.4 — mcp_tool made real over BOTH transports (stdio + HTTP) via a connection.
+"""mcp_tool made real over BOTH transports (stdio + HTTP) via a connection.
 
 Guards:
 * ``HttpMcpClient`` does the real streamable-HTTP handshake against a real MCP server (the same

@@ -53,7 +53,7 @@ def test_capabilities_endpoint_carries_reasoning() -> None:
         assert "toolCalling" in caps
 
 
-# ── the shared, pure detectors (also drive the M16 browse-time catalog hints) ────
+# ── the shared, pure detectors (also drive the browse-time catalog hints) ────
 
 
 def test_tool_marker_detection() -> None:
