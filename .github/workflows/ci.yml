@@ -128,7 +128,12 @@ jobs:
         run: brew install llama.cpp
       - name: install mlx-lm (isolated tool, mlx_lm.server on PATH)
         run: |
-          uv tool install mlx-lm
+          # transformers<5.13: mlx-lm registers its NewlineTokenizer under a string key
+          # ("NewlineTokenizer"); transformers 5.13.0 made AutoTokenizer.register assume a
+          # config *class* (reads key.__module__), so mlx_lm.server crashes at import with
+          # "AttributeError: 'str' object has no attribute '__module__'". Drop the pin once
+          # mlx-lm registers with a real config class (unfixed on their main as of 2026-07).
+          uv tool install mlx-lm --with 'transformers<5.13'
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: cache tiny GGUF
         id: gguf
