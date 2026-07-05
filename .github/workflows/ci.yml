@@ -98,7 +98,11 @@ jobs:
   # clean when THEYGENT_GGUF_PATH is unset (cache miss + fetch failure).
   integration:
     name: integration (non-blocking, real llama-server)
-    runs-on: macos-14
+    # macOS 26+ is REQUIRED, not just a version bump: the published mlx / mlx-metal wheels target
+    # `macosx_26_0_arm64`, so on an older Apple-Silicon runner (e.g. macos-14) the Metal backend
+    # can't load and mlx_lm.server exits at startup ("engine exited early (code 1)"). Both are
+    # Apple Silicon, so llama.cpp + MLX both run here.
+    runs-on: macos-26
     continue-on-error: true
     env:
       GGUF_DIR: ${{ github.workspace }}/.gguf-cache
@@ -108,7 +112,7 @@ jobs:
       # pre-installed taps (we only need the core llama.cpp formula).
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_ENV_HINTS: "1"
-      # macos-14 is Apple Silicon, so the MLX (Tier A) real path runs here too.
+      # The MLX (Tier A) real path runs on this Apple-Silicon runner (see the macOS-26 note above).
       THEYGENT_MLX_MODEL: mlx-community/Qwen2.5-0.5B-Instruct-4bit
       # The control-plane integration tests need a REAL Postgres + real migrations.
       # macOS runners have no Docker (so no testcontainers) — use a brew-installed PG over

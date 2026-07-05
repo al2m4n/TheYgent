@@ -23,8 +23,9 @@ import json
 import os
 import socket
 import subprocess
+import tempfile
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import IO, Protocol, runtime_checkable
 
 import httpx
 from theygent_ir import Capabilities, ManagedBinding
@@ -86,23 +87,55 @@ async def _health_ok(base_url: str) -> bool:
         return False
 
 
+def _output_tail(log: IO[bytes], *, limit: int = 2000) -> str:
+    """Best-effort tail of a dead/terminated child's captured output, for the crash message.
+    Only safe to call once the child is gone (parent and child share the file offset)."""
+    try:
+        log.seek(0)
+        data = log.read()
+    except OSError:
+        return ""
+    if not data:
+        return ""
+    text = data.decode("utf-8", "replace").strip()
+    return f"\n--- engine output (tail) ---\n{text[-limit:]}" if text else ""
+
+
 async def _spawn_openai_server(
     cmd: list[str], base_url: str, *, startup_timeout: float
 ) -> subprocess.Popen[bytes]:
-    """Spawn an OpenAI-compatible server subprocess and wait until it is healthy."""
-    proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + startup_timeout
-    while loop.time() < deadline:
-        if proc.poll() is not None:
-            raise RuntimeError(f"engine exited early (code {proc.returncode}): {cmd[0]}")
-        if await _health_ok(base_url):
-            return proc
-        await asyncio.sleep(0.25)
-    proc.terminate()
-    raise TimeoutError(f"engine {cmd[0]} did not become ready within {startup_timeout}s")
+    """Spawn an OpenAI-compatible server subprocess and wait until it is healthy.
+
+    stdout+stderr go to an anonymous temp file rather than being discarded: when the engine
+    crashes at startup (a missing Metal/CUDA runtime, an unresolvable model, bad flags) its
+    traceback is the only thing that says *why*, so we fold the tail into the raised error. A
+    temp file (not a PIPE) is used deliberately — a long-lived server whose output nobody drains
+    would eventually block on a full pipe buffer. The parent's handle is dropped once startup
+    resolves; the child keeps its own fd and the file is reclaimed when the engine exits.
+    """
+    log = tempfile.TemporaryFile()
+    try:
+        proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
+            cmd, stdout=log, stderr=subprocess.STDOUT
+        )
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + startup_timeout
+        while loop.time() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"engine exited early (code {proc.returncode}): {cmd[0]}{_output_tail(log)}"
+                )
+            if await _health_ok(base_url):
+                return proc
+            await asyncio.sleep(0.25)
+        proc.terminate()
+        raise TimeoutError(
+            f"engine {cmd[0]} did not become ready within {startup_timeout}s{_output_tail(log)}"
+        )
+    finally:
+        # Drop the parent's copy of the fd. On success the child keeps its own dup and logs into
+        # the (now-anonymous) file for its lifetime; on failure we've already read the tail above.
+        log.close()
 
 
 class _SubprocessHandle:
