@@ -163,15 +163,20 @@ jobs:
             echo "GGUF absent — llama.cpp integration will skip"
           fi
           # THEYGENT_MLX_MODEL is set in job env; the MLX test gates on mlx_lm.server too.
-          # -p no:xdist: these spawn real llama-server/mlx_lm.server processes against a shared
-          # HF cache dir and real unified memory — parallelizing them races real engine spawns,
-          # not just test code (root addopts sets -n auto for the fast suite; override it here).
-          uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration -p no:xdist
+          # -n0: these spawn real llama-server/mlx_lm.server processes against a shared HF cache
+          # dir and real unified memory — parallelizing them races real engine spawns, not just
+          # test code, so they must stay serial. Root addopts sets `-n auto` for the fast suite;
+          # `-n0` overrides it to run in the main process. Do NOT use `-p no:xdist`: disabling the
+          # plugin unregisters the `-n` option that addopts still passes, so pytest then aborts with
+          # "unrecognized arguments: -n".
+          uv run --package theygent-inference-plane pytest apps/inference-plane/tests -m integration -n0
       - name: integration test (control-plane -> real inference -> real MLX, cross-process)
         run: |
           # Same MLX env (THEYGENT_MLX_MODEL + mlx_lm.server on PATH); skips clean if absent.
           # The control-plane spawns the real inference plane as a subprocess and drives /runs.
-          uv run --package theygent-control-plane pytest apps/control-plane/tests -m integration -p no:xdist
+          # -n0 (not -p no:xdist): stay serial while keeping the xdist plugin loaded — see the
+          # note in the inference-plane integration step above.
+          uv run --package theygent-control-plane pytest apps/control-plane/tests -m integration -n0
 
   # TODO: vLLM real-path job — UNVERIFIED until run on a CUDA host.
   # We don't have a CUDA runner, so this is intentionally NOT wired. To enable it,
