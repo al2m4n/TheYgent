@@ -426,6 +426,31 @@ export const api = {
 
   getRun: (id: string) => request<Run>(CONTROL_PLANE_URL, `/runs/${encodeURIComponent(id)}`),
 
+  // ── artifacts (audio in/out for an agent run) ────────────────────────────────
+  // An audio agent is orchestrated by the control-plane walker, so its input/output audio crosses
+  // the control plane as an artifact REFERENCE. These move the bytes: upload a recorded clip to get
+  // a ref to pass as run input; download the ref the speak node produced to play it. Raw body, not
+  // JSON — request() only does JSON, and an <audio src> can't carry the auth header, so we fetch
+  // the bytes and object-URL them.
+  uploadArtifact: async (
+    blob: Blob,
+  ): Promise<{ ref: string; contentType: string; bytes: number }> => {
+    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts`, {
+      method: "POST",
+      headers: { "Content-Type": blob.type || "application/octet-stream", ...authHeaders() },
+      body: blob,
+    });
+    if (!res.ok) throw await toError(res);
+    return res.json();
+  },
+  downloadArtifact: async (ref: string): Promise<Blob> => {
+    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts/${encodeURIComponent(ref)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw await toError(res);
+    return res.blob();
+  },
+
   listSessions: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set("limit", String(params.limit));

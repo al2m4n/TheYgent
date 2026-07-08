@@ -1,15 +1,17 @@
 // The New Chat page: pick what to talk to — a registered model or a saved agent — and go.
-// Every conversation is a session (created on the first message, listed under Recents and
-// Chats). Text targets run through streamed control-plane runs (the server replays history and
-// appends the turns). Voice targets — a transcription model (speak or attach audio, the reply is
-// the transcript) or a speech model (type text, the reply is playable audio) — go DIRECTLY to
-// the inference data plane, exactly like the bench: raw audio never transits the control plane;
-// the finished turn pair is recorded to the session as text. The target pin freezes once the
-// conversation starts; "New chat" starts a fresh session.
+// Every conversation is a session (created on the first message, listed under Recents and Chats).
+// Transports by target:
+//   - a text model / agent → streamed control-plane runs (server replays history, appends turns);
+//   - a voice MODEL (transcription/speech) → DIRECTLY to the inference data plane like the bench
+//     (raw audio never transits the control plane; the turn is recorded as text);
+//   - a voice AGENT (input/output boundary is audio) → the control-plane run path, which the
+//     walker orchestrates (transcribe → llm → speak): the recorded clip uploads to the artifact
+//     store as the run input, and the spoken-answer artifact downloads into a playable bubble.
+// The target pin freezes once the conversation starts; "New chat" starts a fresh session.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ChatView } from "../chat/ChatView";
 import { type InferenceChatModality, useInferenceChat } from "../chat/useInferenceChat";
 import { type RunChatTarget, useRunChat } from "../chat/useRunChat";
@@ -19,6 +21,12 @@ import { shortId } from "../lib/format";
 import { useModels } from "../queries";
 
 type TargetKind = "model" | "agent";
+
+// A boundary node in an agent's IR — we only read its declared payload modality.
+interface AgentBoundaryNode {
+  type: string;
+  config?: { modality?: string };
+}
 
 const VOICE_MODALITIES = new Set<string>(["audio.transcription", "audio.speech"]);
 
@@ -35,11 +43,39 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
   const [kind, setKind] = useState<TargetKind>("model");
   const [pickedModel, setPickedModel] = useState("");
   const [pickedAgent, setPickedAgent] = useState("");
+  // Null = follow latest (recomputed from fresh data — never captured once, mirroring the bench).
+  const [pickedVersion, setPickedVersion] = useState<string | null>(null);
   const modelView = models.data?.find(
     (m) => m.logicalId === (pickedModel || models.data?.[0]?.logicalId),
   );
   const model = modelView?.logicalId ?? "";
   const agent = agents.data?.find((a) => a.id === (pickedAgent || agents.data?.[0]?.id));
+
+  // The picked agent's full version list (newest first) — so a specific version can be pinned to
+  // test, not only the latest.
+  const agentDetail = useQuery({
+    queryKey: ["agent", agent?.id],
+    queryFn: () => api.getAgent(agent?.id ?? ""),
+    enabled: kind === "agent" && Boolean(agent?.id),
+  });
+  const versions = agentDetail.data?.versions ?? [];
+  const version = pickedVersion ?? versions[0]?.version ?? agent?.latest_version ?? "";
+  // A fresh agent selection follows that agent's latest again (a pin can't carry across agents).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset the pin only when the agent changes
+  useEffect(() => setPickedVersion(null), [agent?.id]);
+
+  // Read the picked version's boundary modalities from its IR — an audio input/output agent gets
+  // the voice composer and a spoken-reply bubble instead of text (the run path is the same).
+  const agentVersion = useQuery({
+    queryKey: ["agentver", agent?.id, version],
+    queryFn: () => api.getAgentVersion(agent?.id ?? "", version),
+    enabled: kind === "agent" && Boolean(agent?.id && version),
+  });
+  const agentNodes = (agentVersion.data?.ir as { nodes?: AgentBoundaryNode[] } | undefined)?.nodes;
+  const boundaryModality = (nodeType: string) =>
+    agentNodes?.find((n) => n.type === nodeType)?.config?.modality ?? "text";
+  const agentAudioIn = kind === "agent" && boundaryModality("input") === "audio";
+  const agentAudioOut = kind === "agent" && boundaryModality("output") === "audio";
 
   // The registered modality decides the transport: chat/vision talk through control-plane runs;
   // a voice model talks straight to the data plane (there is no run path for audio).
@@ -53,11 +89,13 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
         ? { kind: "model", model }
         : null
       : agent
-        ? { kind: "agent", agentId: agent.id, agentName: agent.name }
+        ? { kind: "agent", agentId: agent.id, agentName: agent.name, version: version || undefined }
         : null;
 
   const runChat = useRunChat(runTarget, {
     placeholder: kind === "agent" ? "Message the agent…" : "Send a message…",
+    audioInput: agentAudioIn,
+    audioOutput: agentAudioOut,
     disabledNote:
       kind === "agent"
         ? "No saved agents yet — build one on the canvas first."
@@ -124,6 +162,27 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
               </option>
             ))}
           </Select>
+        )}
+        {/* Which version to test — defaults to latest; pinned once the conversation starts. */}
+        {kind === "agent" && versions.length > 0 && (
+          <Select
+            value={version}
+            onChange={(e) => setPickedVersion(e.target.value)}
+            disabled={started}
+            aria-label="Version"
+            className="w-44"
+            title={started ? "The version is pinned once the conversation starts" : undefined}
+          >
+            {versions.map((v, i) => (
+              <option key={v.version} value={v.version}>
+                v{v.version}
+                {i === 0 ? " · latest" : ""} · {shortId(v.content_hash, 10)}
+              </option>
+            ))}
+          </Select>
+        )}
+        {kind === "agent" && (agentAudioIn || agentAudioOut) && (
+          <Badge tone="violet">{agentAudioIn && agentAudioOut ? "voice" : "audio"}</Badge>
         )}
         {started && (
           <Button variant="ghost" onClick={onNewChat}>

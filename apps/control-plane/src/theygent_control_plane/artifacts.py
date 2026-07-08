@@ -33,20 +33,30 @@ def default_artifact_dir() -> str:
     )
 
 
-def _write_blocking(path: str, data: bytes) -> None:
+def _write_blocking(path: str, data: bytes, content_type: str) -> None:
     with open(path, "wb") as f:
         f.write(data)
+    # A tiny sidecar keeps the content type with the bytes, so fetching a stored id recovers the
+    # real mime (an id alone is otherwise typeless). Best-effort — its absence just means octet.
+    with open(f"{path}.type", "w") as f:
+        f.write(content_type)
 
 
-def _read_local_blocking(base_dir: str, target: str) -> bytes:
-    """Read a stored artifact id (relative to ``base_dir``) or an absolute/local path. Blocking —
-    run off the event loop via ``asyncio.to_thread``."""
+def _read_local_blocking(base_dir: str, target: str) -> tuple[bytes, str | None]:
+    """Read a stored artifact id (relative to ``base_dir``) or an absolute/local path, plus the
+    stored content type when a sidecar exists. Blocking — run off the loop via to_thread."""
     stored = os.path.join(base_dir, target)
     path = stored if os.path.exists(stored) else target
     if not os.path.exists(path):
         raise FileNotFoundError(f"audio artifact not found for ref {target!r}")
     with open(path, "rb") as f:
-        return f.read()
+        data = f.read()
+    sidecar = f"{path}.type"
+    content_type = None
+    if os.path.exists(sidecar):
+        with open(sidecar) as f:
+            content_type = f.read().strip() or None
+    return data, content_type
 
 
 class LocalArtifactStore:
@@ -63,7 +73,9 @@ class LocalArtifactStore:
         """Store ``data``, return its reference (``{ref, contentType, bytes}``). The bytes live on
         disk (an artifact); only the reference is journaled/returned."""
         ref_id = f"art_{ULID()}"
-        await asyncio.to_thread(_write_blocking, os.path.join(self._dir, ref_id), data)
+        await asyncio.to_thread(
+            _write_blocking, os.path.join(self._dir, ref_id), data, content_type
+        )
         return {"ref": ref_id, "contentType": content_type, "bytes": len(data)}
 
     async def fetch(self, ref: object) -> tuple[bytes, str]:
@@ -84,5 +96,7 @@ class LocalArtifactStore:
                 resp = await client.get(target, timeout=30.0)
             resp.raise_for_status()
             return resp.content, resp.headers.get("content-type", content_type)
-        data = await asyncio.to_thread(_read_local_blocking, self._dir, target)
-        return data, content_type
+        data, stored_type = await asyncio.to_thread(_read_local_blocking, self._dir, target)
+        # A stored artifact's own recorded type wins over a caller-supplied default (a bare-id
+        # fetch has none); a local path with no sidecar falls back to the default.
+        return data, stored_type or content_type

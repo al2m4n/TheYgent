@@ -1358,6 +1358,39 @@ def create_app(
             return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
         return Response(status_code=204)
 
+    # ── artifacts (the audio-in/audio-out blob surface for the run path) ───────────
+    # An audio agent is orchestrated by the control-plane walker (input -> transcribe -> llm ->
+    # speak -> output), so its input audio is fetched and its output audio is stored HERE (the
+    # artifact store already backs the transcribe/speak nodes). These two routes let a browser
+    # participate: POST bytes to get a reference to pass as run input, GET the reference the
+    # speak node produced. This is the LOCAL, single-user realization of the artifact store —
+    # the cloud-aware signed-URL blob store stays the deferred upgrade (artifacts.py). A GET
+    # serves ONLY stored `art_` ids (never an arbitrary path/url a ref may also carry), so it
+    # can't be turned into a read-any-file primitive.
+
+    @app.post("/artifacts", dependencies=[Depends(require_auth)])
+    async def upload_artifact(request: Request) -> Any:
+        # Raw body upload (Content-Type is the artifact's mime) — no multipart, so a browser posts
+        # a Blob directly. Returns the reference dict {ref, contentType, bytes} the run input uses.
+        data = await request.body()
+        if not data:
+            return _error("empty artifact body", status=400, code="empty_artifact")
+        content_type = request.headers.get("content-type") or "application/octet-stream"
+        ref = await app.state.artifacts.put(data, content_type)
+        return JSONResponse(ref, status_code=201)
+
+    @app.get("/artifacts/{ref}", dependencies=[Depends(require_auth)])
+    async def download_artifact(ref: str) -> Any:
+        # Serve a STORED artifact only — an `art_<...>` id the store minted. Reject anything else
+        # (a path/url the store's fetch would also resolve) so this is not an arbitrary-file read.
+        if not ref.startswith("art_") or "/" in ref or "\\" in ref:
+            return _error("not a stored artifact id", status=400, code="invalid_artifact_ref")
+        try:
+            data, content_type = await app.state.artifacts.fetch(ref)
+        except (FileNotFoundError, ValueError):
+            return _error(f"unknown artifact {ref!r}", status=404, code="artifact_not_found")
+        return Response(content=data, media_type=content_type)
+
     # ── theygent-native API: /graphs/runs (the IR walker) ───────────
     # The consumer of the IR seam: validate an IRDocument, walk it node by node, and
     # produce a Run exactly as /runs does — but IR-driven. A graph run is still a
