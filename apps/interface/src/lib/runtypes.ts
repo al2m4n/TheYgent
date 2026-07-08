@@ -1,12 +1,12 @@
-// Run / thread / trace wire shapes for the operator surface (Runs, Threads, Compose) ported from
+// Run / session / trace wire shapes for the operator surface (Runs, Sessions, Compose) ported from
 // the cockpit (apps/web). Consumed as-is (the backend contracts are frozen; the UI adapts).
 //
 // Two conventions coexist by surface and we honor both rather than normalize:
-//  - /runs + /threads payloads are snake_case (thread_id, created_at) — the run surface.
+//  - /runs + /sessions payloads are snake_case (session_id, created_at) — the run surface.
 //  - SSE frames are camelCase (runId) — see the SSE frame types at the bottom + lib/sse.ts.
 //
 // The agent-registry + inference-plane (camelCase /admin/*) shapes the interface already needs for
-// the canvas live in lib/api.ts; this file adds only the run/thread/trace shapes the cockpit views
+// the canvas live in lib/api.ts; this file adds only the run/session/trace shapes the cockpit views
 // brought with them.
 
 // `waiting` is a durable run paused at a human node (awaiting resume); the reconcile sweep leaves
@@ -15,7 +15,7 @@ export type RunStatus = "created" | "streaming" | "waiting" | "completed" | "fai
 
 export interface Run {
   id: string;
-  thread_id: string | null;
+  session_id: string | null;
   status: RunStatus;
   model: string;
   graph_id: string | null;
@@ -24,8 +24,8 @@ export interface Run {
   created_at: string;
   updated_at: string;
   error: string | null;
-  // The run's final output, persisted regardless of threading (so a one-shot run's answer survives
-  // the stream/tab). Null until a terminal output is reached.
+  // The run's final output, persisted whether or not the run belongs to a session (so a one-shot
+  // run's answer survives the stream/tab). Null until a terminal output is reached.
   output: string | null;
   // Durable-run breadcrumbs the backend returns: the node a `waiting` run is paused at, the terminal
   // timestamp, and the trigger that fired it (null for a UI-initiated run).
@@ -34,28 +34,31 @@ export interface Run {
   trigger_id?: string | null;
 }
 
-export interface ThreadSummary {
+export interface SessionSummary {
   id: string;
   created_at: string;
   last_activity: string;
   message_count: number;
   preview: string | null;
+  // Opaque client-owned metadata (the server passes the JSONB column through untouched).
+  metadata: Record<string, unknown> | null;
 }
 
-export interface ThreadMessage {
+export interface SessionMessage {
   id: string;
-  run_id: string;
+  run_id: string | null; // null for client-appended turns (they have no run)
   role: string; // user | assistant
   content: string;
   position: number;
   created_at: string;
 }
 
-export interface ThreadDetail {
+export interface SessionDetail {
   id: string;
   created_at: string;
   updated_at: string;
-  messages: ThreadMessage[];
+  metadata: Record<string, unknown> | null;
+  messages: SessionMessage[];
 }
 
 // ── control-plane observability /runs/{id}/trace + /io + /io-policy (snake_case) ──

@@ -1,8 +1,8 @@
 """Read-only list endpoints for the cockpit.
 
 The one sanctioned cockpit-driven backend addition: thin, paginated, newest-first lists over
-already-persisted runs and threads, plus a thread-detail read. They add NO write path and NO
-aggregation/summary endpoint — they only surface state the run path already persists.
+already-persisted runs and sessions, plus a session-detail read. The session list/detail
+adds NO aggregation/summary endpoint — it only surfaces state the write paths persist.
 Proven against the same real Postgres + real Alembic schema as the rest of the fast suite.
 """
 
@@ -13,10 +13,10 @@ from fastapi.testclient import TestClient
 from ulid import ULID
 
 
-def _run(client: TestClient, *, thread_id: str | None = None, text: str = "hi") -> dict:
+def _run(client: TestClient, *, session_id: str | None = None, text: str = "hi") -> dict:
     body: dict = {"input": text, "model": "triage-fast", "stream": False}
-    if thread_id is not None:
-        body["thread_id"] = thread_id
+    if session_id is not None:
+        body["session_id"] = session_id
     resp = client.post("/runs", json=body)
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -58,34 +58,34 @@ def test_list_runs_limit_bounds(client: TestClient) -> None:
     assert client.get("/runs", params={"limit": 999}).status_code == 422
 
 
-def test_list_threads_summary(client: TestClient) -> None:
-    thread_id = str(ULID())
-    _run(client, thread_id=thread_id, text="first user message")
-    _run(client, thread_id=thread_id, text="follow up")
+def test_list_sessions_summary(client: TestClient) -> None:
+    session_id = str(ULID())
+    _run(client, session_id=session_id, text="first user message")
+    _run(client, session_id=session_id, text="follow up")
 
-    threads = client.get("/threads").json()["threads"]
-    assert len(threads) == 1
-    t = threads[0]
-    assert t["id"] == thread_id
+    sessions = client.get("/sessions").json()["sessions"]
+    assert len(sessions) == 1
+    t = sessions[0]
+    assert t["id"] == session_id
     # Two runs, user+assistant each = 4 messages; preview is the first user turn (position 0).
     assert t["message_count"] == 4
     assert t["preview"] == "first user message"
     assert t["last_activity"] is not None
 
 
-def test_list_threads_excludes_one_shot_runs(client: TestClient) -> None:
-    # A run with no thread_id never creates a thread row — it must not appear here.
+def test_list_sessions_excludes_one_shot_runs(client: TestClient) -> None:
+    # A run with no session_id never creates a session row — it must not appear here.
     _run(client)
-    assert client.get("/threads").json()["threads"] == []
+    assert client.get("/sessions").json()["sessions"] == []
 
 
-def test_thread_detail_messages_in_order(client: TestClient) -> None:
-    thread_id = str(ULID())
-    _run(client, thread_id=thread_id, text="hello")
-    _run(client, thread_id=thread_id, text="again")
+def test_session_detail_messages_in_order(client: TestClient) -> None:
+    session_id = str(ULID())
+    _run(client, session_id=session_id, text="hello")
+    _run(client, session_id=session_id, text="again")
 
-    detail = client.get(f"/threads/{thread_id}").json()
-    assert detail["id"] == thread_id
+    detail = client.get(f"/sessions/{session_id}").json()
+    assert detail["id"] == session_id
     msgs = detail["messages"]
     assert [(m["role"], m["content"], m["position"]) for m in msgs] == [
         ("user", "hello", 0),
@@ -97,10 +97,10 @@ def test_thread_detail_messages_in_order(client: TestClient) -> None:
     assert all(m["run_id"] for m in msgs)
 
 
-def test_thread_detail_unknown_404(client: TestClient) -> None:
-    resp = client.get("/threads/nope")
+def test_session_detail_unknown_404(client: TestClient) -> None:
+    resp = client.get("/sessions/nope")
     assert resp.status_code == 404
-    assert resp.json()["error"]["code"] == "thread_not_found"
+    assert resp.json()["error"]["code"] == "session_not_found"
 
 
 def test_cors_dev_origin_allowed(client: TestClient) -> None:

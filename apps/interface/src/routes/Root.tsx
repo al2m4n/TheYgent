@@ -1,24 +1,32 @@
+import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   Bot,
   Boxes,
+  ChevronDown,
+  ChevronRight,
+  Database,
   type LucideIcon,
   MessageSquare,
+  MessagesSquare,
   Monitor,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
   Settings,
+  Settings2,
   SquarePen,
   Sun,
   User,
 } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
-import { LocalCredentials } from "../components/LocalCredentials";
 import { Modal } from "../components/ui";
+import { api } from "../lib/api";
+import { shortId } from "../lib/format";
 import { NotificationCenter } from "../lib/notify";
+import type { SessionSummary } from "../lib/runtypes";
 import { type ThemePref, useTheme } from "../lib/theme";
 
 // The shell: a collapsible LEFT sidebar + the routed view. The interface is canvas-first, so chrome
@@ -32,16 +40,27 @@ interface NavEntry {
   exact?: boolean;
 }
 
-// Order is provisional (a fuller IA pass comes later). The canvas (Agents) leads; the operator
-// surfaces (Runs/Threads/Compose) and the registries (Registries/MCP) follow.
-const NAV: NavEntry[] = [
+// Three groups, separated in the rail: the build/observe surfaces (Agents/Runs), the
+// conversational surfaces (New Chat / Chats, with the recent sessions right below), and a
+// collapsible Configuration group (Registries, MCP, the reserved RAG slot, app Settings).
+const NAV_MAIN: NavEntry[] = [
   { to: "/", label: "Agents", icon: Bot, exact: true },
   { to: "/runs", label: "Runs", icon: Activity },
-  { to: "/threads", label: "Threads", icon: MessageSquare },
-  { to: "/compose", label: "Compose", icon: SquarePen },
+];
+
+const NAV_CHAT: NavEntry[] = [
+  { to: "/chat", label: "New Chat", icon: SquarePen },
+  { to: "/sessions", label: "Chats", icon: MessagesSquare },
+];
+
+// Configuration entries around the RAG placeholder (which is reserved, not routed).
+const NAV_CONFIG_HEAD: NavEntry[] = [
   { to: "/registries", label: "Registries", icon: Boxes },
   { to: "/mcp", label: "MCP", icon: Plug },
 ];
+// App-level settings (endpoints, credentials) — distinct from the profile's USER settings
+// (identity, theme) at the bottom of the rail.
+const NAV_SETTINGS: NavEntry = { to: "/settings", label: "Settings", icon: Settings };
 
 // The collapse preference is a pure UI pref (NOT the IR store — that stays the registry API). Persist
 // it so the rail keeps its width across reloads; guarded for non-DOM (test) environments.
@@ -104,26 +123,27 @@ export function Root() {
           onCollapse={() => setRailCollapsed(true)}
         />
 
-        {/* Primary navigation. */}
-        <nav className="flex-1 space-y-1 px-2 py-2">
-          {NAV.map((item) => (
+        {/* Primary navigation: build/observe · chat · configuration · recents. */}
+        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2">
+          {NAV_MAIN.map((item) => (
             <NavItem key={item.to} item={item} collapsed={effectiveCollapsed} />
           ))}
+          <NavSeparator />
+          {NAV_CHAT.map((item) => (
+            <NavItem key={item.to} item={item} collapsed={effectiveCollapsed} />
+          ))}
+          <NavSeparator />
+          <ConfigGroup collapsed={effectiveCollapsed} />
+          <RecentSessions collapsed={effectiveCollapsed} />
         </nav>
 
-        {/* Bottom: settings + the user/profile entry — the latter opens the settings modal. */}
+        {/* Bottom: the user/profile entry — USER settings (identity, theme), not app settings. */}
         <div className="shrink-0 space-y-1 border-t border-slate-800 px-2 py-2">
-          <SideButton
-            icon={Settings}
-            label="Settings"
-            collapsed={effectiveCollapsed}
-            onClick={() => setSettingsOpen(true)}
-          />
           <ProfileButton collapsed={effectiveCollapsed} onClick={() => setSettingsOpen(true)} />
         </div>
       </aside>
 
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
 
       {/* The single scroll region: the document never scrolls (body is overflow-hidden), so the
           sidebar stays fixed while a long page scrolls here. Routes that own their height (the
@@ -239,30 +259,139 @@ function NavItem({ item, collapsed }: { item: NavEntry; collapsed: boolean }) {
   );
 }
 
-// A non-routed button mirroring NavItem styling (Settings, etc.).
-function SideButton({
-  icon: Icon,
-  label,
-  collapsed,
-  onClick,
-}: {
-  icon: LucideIcon;
-  label: string;
-  collapsed: boolean;
-  onClick?: () => void;
-}) {
+// The most recent sessions, right under the primary nav — one click back into any conversation.
+// Every chat surface (the chat page, a model bench, an agent chat) records into a session, so
+// this is the "continue where I left off" list. Hidden while the rail is collapsed (the Sessions
+// nav item stays as the icon-sized entry point).
+function RecentSessions({ collapsed }: { collapsed: boolean }) {
+  const recent = useQuery({
+    queryKey: ["sessions", "recent"],
+    queryFn: () => api.listSessions({ limit: 8 }),
+    refetchInterval: 30_000,
+    // The rail must never surface a scary error — an unreachable control plane just means no list.
+    retry: false,
+  });
+  if (collapsed || !recent.data || recent.data.length === 0) return null;
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={collapsed ? undefined : label}
-      onClick={onClick}
-      className={`${itemClass(collapsed)} w-full text-slate-400 hover:bg-slate-800/60 hover:text-slate-100`}
+    <div className="mt-3 border-t border-slate-800 pt-2">
+      <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+        Recents
+      </p>
+      {recent.data.map((s) => (
+        <RecentItem key={s.id} session={s} />
+      ))}
+    </div>
+  );
+}
+
+// Prefer a human label: an explicit title, the first user message, the target — the id only as
+// the last resort.
+function recentLabel(s: SessionSummary): string {
+  const meta = s.metadata ?? {};
+  const title = typeof meta.title === "string" ? meta.title : "";
+  const target =
+    typeof meta.agent_name === "string"
+      ? meta.agent_name
+      : typeof meta.model === "string"
+        ? meta.model
+        : "";
+  return title || s.preview?.trim() || target || shortId(s.id);
+}
+
+function RecentItem({ session }: { session: SessionSummary }) {
+  const Icon = session.metadata?.kind === "bench.agent" ? Bot : MessageSquare;
+  return (
+    <Link
+      to="/sessions/$sessionId"
+      params={{ sessionId: session.id }}
+      title={session.preview ?? session.id}
+      className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-100 [&.active]:bg-slate-800 [&.active]:text-slate-100"
     >
-      <Icon size={18} strokeWidth={2} className="shrink-0" />
-      {!collapsed && <span className="truncate">{label}</span>}
-      {collapsed && <CollapsedTip label={label} />}
-    </button>
+      <Icon size={13} className="shrink-0" />
+      <span className="truncate">{recentLabel(session)}</span>
+    </Link>
+  );
+}
+
+// A quiet horizontal rule between nav groups.
+function NavSeparator() {
+  return <div aria-hidden className="mx-1 my-2 border-t border-slate-800" />;
+}
+
+// The reserved retrieval slot: visible so the IA already has its place, inert until it ships.
+function RagPlaceholder({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div
+      aria-disabled
+      title={collapsed ? undefined : "Coming soon"}
+      className={`${itemClass(collapsed)} cursor-default text-slate-600`}
+    >
+      <Database size={18} strokeWidth={2} className="shrink-0" />
+      {!collapsed && (
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate">RAG</span>
+          <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-500">
+            soon
+          </span>
+        </span>
+      )}
+      {collapsed && <CollapsedTip label="RAG — soon" />}
+    </div>
+  );
+}
+
+// The collapsible Configuration group. Expanded rail: a disclosure header over the entries;
+// collapsed rail: the entries render as plain icons (a hidden dropdown would strand them).
+// The open preference persists like the rail width does.
+const CONFIG_OPEN_KEY = "theygent.ui.configOpen";
+
+function readConfigOpen(): boolean {
+  try {
+    return typeof localStorage === "undefined" || localStorage.getItem(CONFIG_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function ConfigGroup({ collapsed }: { collapsed: boolean }) {
+  const [open, setOpen] = useState(readConfigOpen);
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONFIG_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      // no localStorage (tests) — in-memory state still drives the UI this session.
+    }
+  }, [open]);
+
+  const items = (
+    <>
+      {NAV_CONFIG_HEAD.map((item) => (
+        <NavItem key={item.to} item={item} collapsed={collapsed} />
+      ))}
+      <RagPlaceholder collapsed={collapsed} />
+      <NavItem item={NAV_SETTINGS} collapsed={collapsed} />
+    </>
+  );
+
+  if (collapsed) return items;
+
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={`${itemClass(false)} w-full text-slate-500 hover:bg-slate-800/60 hover:text-slate-300`}
+      >
+        <Settings2 size={18} strokeWidth={2} className="shrink-0" />
+        <span className="truncate text-xs font-semibold uppercase tracking-wide">
+          Configuration
+        </span>
+        <Chevron size={14} className="ml-auto shrink-0" />
+      </button>
+      {open && <div className="mt-1 space-y-1">{items}</div>}
+    </div>
   );
 }
 
@@ -293,19 +422,19 @@ function ProfileButton({
   );
 }
 
-// The user/settings modal (opened from the profile entry). For now it's mostly a placeholder for
-// future user configuration; the one wired control is the theme switch (icon-only) in the corner.
+// The USER settings modal (opened from the profile entry): identity + theme. App-level
+// configuration (endpoints, credentials) lives on the /settings page under Configuration.
 const THEME_OPTIONS: { pref: ThemePref; icon: LucideIcon; label: string }[] = [
   { pref: "light", icon: Sun, label: "Light" },
   { pref: "dark", icon: Moon, label: "Dark" },
   { pref: "system", icon: Monitor, label: "System" },
 ];
 
-function SettingsModal({ onClose }: { onClose: () => void }) {
+function UserSettingsModal({ onClose }: { onClose: () => void }) {
   const { pref, setTheme } = useTheme();
   return (
-    <Modal title="Settings" width="max-w-lg" onClose={onClose}>
-      <div className="flex min-h-[200px] flex-col">
+    <Modal title="User settings" width="max-w-lg" onClose={onClose}>
+      <div className="flex min-h-[160px] flex-col">
         {/* Identity + placeholder for the user configuration to come. */}
         <div className="flex items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600/80 text-white">
@@ -315,9 +444,6 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
             <div className="text-sm font-medium text-slate-100">Local user</div>
             <div className="text-xs text-slate-500">single-user · localhost</div>
           </div>
-        </div>
-        <div className="mt-4 border-t border-slate-800 pt-4">
-          <LocalCredentials />
         </div>
 
         {/* Theme switch — icon-only buttons pinned to the bottom-right corner. */}

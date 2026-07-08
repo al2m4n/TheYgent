@@ -6,8 +6,8 @@ Three silent behaviors made honest:
   output node topo order visited last) — now a loud 422, same no-silent-ambiguity rule as a
   single-value consumer with two in-ports.
 * A graph with no output node (or whose taken branch reaches none) used to complete green with
-  ``output: ""``/``error: null`` — and, threaded, append a BLANK assistant turn. Now it carries an
-  honest empty-output reason and appends no turn.
+  ``output: ""``/``error: null`` — and, in a session, append a BLANK assistant turn. Now it
+  carries an honest empty-output reason and appends no turn.
 * A node type the IR schema declares but no runtime executes (code/rag/…) used to create a Run
   and then die as a misleading 502 ``inference_error`` — now a clean 400 before any Run.
 """
@@ -78,16 +78,16 @@ def _no_output_ir() -> dict:
 def test_zero_output_graph_is_honest_and_appends_no_blank_turn(client: TestClient) -> None:
     r = client.post(
         "/graphs/runs",
-        json={"ir": _no_output_ir(), "input": "hi", "thread_id": "t_blank_guard", "stream": False},
+        json={"ir": _no_output_ir(), "input": "hi", "session_id": "s_blank_guard", "stream": False},
     )
     assert r.status_code == 200
     body = r.json()
     got = client.get(f"/runs/{body['runId']}").json()
     assert got["status"] == "completed"
     assert got["error"] is not None and "declares no output node" in got["error"]
-    # No blank assistant turn: the thread exists but carries no messages.
-    thread = client.get("/threads/t_blank_guard").json()
-    assert thread["messages"] == []
+    # No blank assistant turn: the session exists but carries no messages.
+    detail = client.get("/sessions/s_blank_guard").json()
+    assert detail["messages"] == []
 
 
 def _skipped_output_ir() -> dict:

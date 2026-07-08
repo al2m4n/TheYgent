@@ -14,6 +14,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 import litellm
 
 from theygent_inference_plane import tool_parse
@@ -40,6 +41,17 @@ def merge_params(binding_params: dict[str, Any], request: dict[str, Any]) -> dic
         if key not in _RESERVED:
             merged[key] = value
     return merged
+
+
+class UpstreamHttpError(RuntimeError):
+    """An upstream HTTP error from a direct (non-dispatch-layer) call. Carries ``status_code`` +
+    ``message`` in the same duck-typed shape the endpoint error mapping already reads, so a direct
+    call's failure surfaces exactly like a dispatched one."""
+
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.message = message
 
 
 class Gateway:
@@ -121,13 +133,67 @@ class Gateway:
         return _to_dict(resp)
 
     async def speak(self, upstream: Upstream, text: str, params: dict[str, Any]) -> bytes:
-        # TTS returns audio bytes (the OpenAI speech shape). LiteLLM hands back an
-        # HttpxBinaryResponseContent; `.content` is the whole audio body.
-        resp = await litellm.aspeech(
-            model=f"openai/{upstream.model}",
-            api_base=upstream.api_base,
-            api_key=upstream.api_key,
-            input=text,
-            **params,
-        )
-        return resp.content
+        # TTS returns audio bytes (the OpenAI speech shape) — posted to the upstream DIRECTLY,
+        # not through the dispatch layer, for two reasons observed against real engines:
+        #   1. The dispatch layer hard-requires a voice string, but real engines don't — a local
+        #      speech server synthesizes with its model's own default when no voice is named
+        #      (voice vocabularies are engine-specific; inventing one here would name a voice
+        #      the engine doesn't have).
+        #   2. Speech servers stream the body and, on a synthesis error, abort AFTER the 200
+        #      header (certain inputs trip an engine's text processing) — the dispatch layer
+        #      swallows that abort into a silent empty body, where a direct read raises and maps
+        #      to an honest, actionable upstream error.
+        # An upstream that itself requires a voice answers with its own error, surfaced through
+        # the same status mapping as every upstream error.
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
+                resp = await client.post(
+                    f"{upstream.api_base}/audio/speech",
+                    headers={"Authorization": f"Bearer {upstream.api_key}"},
+                    json={"model": upstream.model, "input": text, **params},
+                )
+                if resp.status_code >= 400:
+                    raise UpstreamHttpError(resp.status_code, resp.text[:500])
+                audio = resp.content
+        except httpx.HTTPError as exc:
+            raise UpstreamHttpError(
+                502,
+                "the speech engine aborted mid-synthesis — some inputs trip an engine's text "
+                f"processing; try rephrasing (the engine log has the cause). Transport: {exc}",
+            ) from exc
+        if not audio:
+            raise UpstreamHttpError(
+                502,
+                "the speech engine produced no audio for this input — try rephrasing (some "
+                "inputs trip an engine's text processing); if every input fails, the engine log "
+                "names the cause (an unloadable model or an unknown voice)",
+            )
+        return audio
+
+    async def generate_image(
+        self, upstream: Upstream, prompt: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        # Image generation returns the OpenAI images shape ({data: [{b64_json}]}) — posted to the
+        # upstream DIRECTLY, like speak. The local generators are diffusion CLIs behind a bundled
+        # wrapper server (not the dispatch layer), and a reachable image API is already this exact
+        # OpenAI shape, so one direct POST covers both. Generation is minutes-scale per image and
+        # loads weights per request, so the timeout is generous.
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1200.0, connect=10.0)) as client:
+                resp = await client.post(
+                    f"{upstream.api_base}/images/generations",
+                    headers={"Authorization": f"Bearer {upstream.api_key}"},
+                    json={"model": upstream.model, "prompt": prompt, **params},
+                )
+        except httpx.HTTPError as exc:
+            raise UpstreamHttpError(
+                502, f"the image engine was unreachable or aborted mid-generation: {exc}"
+            ) from exc
+        if resp.status_code >= 400:
+            raise UpstreamHttpError(resp.status_code, resp.text[:500])
+        result = _to_dict(resp.json())
+        if not result.get("data"):
+            raise UpstreamHttpError(
+                502, "the image engine produced no image for this prompt (the engine log has why)"
+            )
+        return result

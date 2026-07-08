@@ -346,7 +346,7 @@ describe("Registries page — installed + add", () => {
     // The installed model shows without any tab switch (Installed IS the page now).
     await screen.findByText("qwen-reasoner");
     // Capabilities are not auto-fetched (probing warms the engine) — there's a probe button.
-    fireEvent.click(screen.getByRole("button", { name: "Probe" }));
+    fireEvent.click(screen.getByRole("button", { name: "Probe capabilities" }));
     await screen.findByText("reasoning");
     expect(screen.getByText("tools")).toBeInTheDocument();
     expect(screen.getByText("32k ctx")).toBeInTheDocument();
@@ -411,9 +411,11 @@ describe("Registries page — installed + add", () => {
 
     await screen.findByText(/No models registered yet/);
     fireEvent.click(screen.getByRole("button", { name: /Add model/ }));
-    // "Browse Hugging Face" is a button (not a link) — clicking it opens the modal in place.
+    // "Browse Hugging Face" is a button (not a link) — clicking it opens the hub modal in place.
     fireEvent.click(screen.getByRole("button", { name: /Browse Hugging Face/ }));
-    expect(await screen.findByText("Add a model from a hub")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Browse and install directly into your inference plane"),
+    ).toBeInTheDocument();
     // …and the hub search + results render inside the modal.
     await screen.findByText("Qwen2.5-7B-Instruct-GGUF");
     expect(screen.getByPlaceholderText(/qwen, llama, phi/)).toBeInTheDocument();

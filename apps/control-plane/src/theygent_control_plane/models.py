@@ -29,14 +29,17 @@ class Base(DeclarativeBase):
 _TZ = TIMESTAMP(timezone=True)
 
 
-class ThreadRow(Base):
-    __tablename__ = "thread"
+class ChatSessionRow(Base):
+    # ``chat_session``, not ``session`` — the bare name collides with SQLAlchemy's
+    # ``AsyncSession``/``session`` convention everywhere a store method takes both.
+    __tablename__ = "chat_session"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(_TZ)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
     # Reserved name on Declarative (``Base.metadata``), so the attribute is ``meta`` while
-    # the column stays ``metadata``. No semantics yet — reserved for later.
+    # the column stays ``metadata``. Opaque JSONB the client owns (kind/model/title …);
+    # the control plane stores and returns it, never interprets it.
     meta: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
 
 
@@ -44,9 +47,10 @@ class RunRow(Base):
     __tablename__ = "run"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # NULL = one-shot run with no thread/memory. Threads are opt-in.
-    # ON DELETE not set: the schema never hard-deletes threads/runs.
-    thread_id: Mapped[str | None] = mapped_column(ForeignKey("thread.id"), nullable=True)
+    # NULL = one-shot run with no session/memory. Sessions are opt-in.
+    # ON DELETE not set here: deleting a session nulls this FK explicitly (the run
+    # history outlives the conversation it happened in).
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("chat_session.id"), nullable=True)
     status: Mapped[str] = mapped_column(String)  # created|streaming|completed|failed
     model: Mapped[str] = mapped_column(String)  # logical id (never an engine name)
     params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -64,7 +68,7 @@ class RunRow(Base):
     # *did* run must outlive the trigger definition, so a referential constraint is the wrong tool.
     trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
-    # The run's final accumulated output, durable regardless of threading. NULL for a run that
+    # The run's final accumulated output, durable with or without a session. NULL for a run that
     # never reached a terminal output (e.g. a failed run). TEXT — outputs can be large; kept
     # on the run row (the domain/ORM split still holds via the `Run` entity).
     output: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -90,21 +94,23 @@ class MessageRow(Base):
     __tablename__ = "message"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    # thread_id is denormalized (also reachable via run) for direct ordered thread reads.
-    thread_id: Mapped[str] = mapped_column(ForeignKey("thread.id"))
-    run_id: Mapped[str] = mapped_column(ForeignKey("run.id"))
+    # session_id is denormalized (also reachable via run) for direct ordered session reads.
+    session_id: Mapped[str] = mapped_column(ForeignKey("chat_session.id"))
+    # NULL = a client-appended turn (a direct-to-inference chat persisting its history);
+    # populated when a run wrote the pair.
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("run.id"), nullable=True)
     role: Mapped[str] = mapped_column(String)  # user|assistant (system later)
     content: Mapped[str] = mapped_column(String)
-    # Monotonic within the thread; THE ordering key (not timestamps — see _TZ note).
+    # Monotonic within the session; THE ordering key (not timestamps — see _TZ note).
     position: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(_TZ)
 
-    # UNIQUE: a thread's positions are dense and monotonic; uniqueness is correct by
+    # UNIQUE: a session's positions are dense and monotonic; uniqueness is correct by
     # design. It is also the safety net for concurrency — append_turn serializes writes
-    # with SELECT … FOR UPDATE on the thread row, but if that lock ever regressed, a
+    # with SELECT … FOR UPDATE on the session row, but if that lock ever regressed, a
     # colliding position would fail loudly here instead of silently losing a turn (the
     # one race shared Postgres state introduced that a single-instance dict could not).
-    __table_args__ = (Index("ix_message_thread_position", "thread_id", "position", unique=True),)
+    __table_args__ = (Index("ix_message_session_position", "session_id", "position", unique=True),)
 
 
 class AgentRow(Base):
@@ -112,7 +118,7 @@ class AgentRow(Base):
     The *content* lives in ``AgentVersionRow``; this row is just the named identity so a
     new version of an agent never mints a new ``id``. ``owner_id``/``workspace_id`` are deliberately
     omitted now: the Team-tier shared registry slots a scoping column in later WITHOUT a
-    reshape — exactly as the Run was built Postgres-ready before threads existed. Single-user
+    reshape — exactly as the Run was built Postgres-ready before sessions existed. Single-user
     localhost until then. ``id`` is the IR document's own ``id`` (the IR carries its identity;
     the registry persists it under that key, so a stored agent and the Run it produces agree)."""
 

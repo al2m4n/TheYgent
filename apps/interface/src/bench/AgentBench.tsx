@@ -11,6 +11,8 @@ import { ChevronDown } from "lucide-react";
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Selection } from "../adapter";
+import { ChatView } from "../chat/ChatView";
+import { useRunChat } from "../chat/useRunChat";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { ResumePanel, parseTyped } from "../components/ResumePanel";
 import {
@@ -236,8 +238,41 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
         </div>
       )}
 
+      {/* Talk to the agent: each turn is a streamed run with session memory (the conversation is
+          recorded as a session and shows under Recents). Durable-only agents run through the
+          durable queue, which has no streaming/session path — the single-shot Run above covers
+          them. */}
+      {!durableOnly && !irLoading && (
+        <div className="space-y-2 border-t border-slate-800 pt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Chat</p>
+          <AgentChat agentId={agent.id} agentName={agent.name} version={version} />
+        </div>
+      )}
+
       {ir && <ApplyPreset agentId={agent.id} ir={ir} />}
     </div>
+  );
+}
+
+function AgentChat({
+  agentId,
+  agentName,
+  version,
+}: {
+  agentId: string;
+  agentName: string;
+  version: string;
+}) {
+  const chat = useRunChat(
+    { kind: "agent", agentId, agentName, version },
+    { placeholder: "Message the agent…" },
+  );
+  return (
+    <ChatView
+      controller={chat}
+      listClassName="max-h-[40vh]"
+      emptyHint="Message the agent — turns share session memory, so it remembers the conversation."
+    />
   );
 }
 

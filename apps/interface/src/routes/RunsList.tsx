@@ -36,7 +36,7 @@ export function RunsList() {
       if (statusSel.length && !statusSel.includes(r.status)) return false;
       if (needle) {
         const hay =
-          `${r.id} ${r.model ?? ""} ${r.graph_id ?? ""} ${r.thread_id ?? ""}`.toLowerCase();
+          `${r.id} ${r.model ?? ""} ${r.graph_id ?? ""} ${r.session_id ?? ""}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
@@ -62,8 +62,8 @@ export function RunsList() {
           <h1 className="text-lg font-semibold text-slate-100">Runs</h1>
           <p className="text-xs text-slate-500">Newest first · auto-refreshing every 3s</p>
         </div>
-        <Link to="/compose" className={buttonClass("primary", "shrink-0")}>
-          New run
+        <Link to="/chat" className={buttonClass("primary", "shrink-0")}>
+          New chat
         </Link>
       </div>
 
@@ -73,9 +73,9 @@ export function RunsList() {
         <Spinner />
       ) : !runs || runs.length === 0 ? (
         <Empty>
-          No runs yet.{" "}
-          <Link to="/compose" className={linkClass}>
-            Compose one →
+          No runs yet. Runs come from chats, agent invocations, and triggers —{" "}
+          <Link to="/chat" className={linkClass}>
+            start a chat →
           </Link>
         </Empty>
       ) : (
@@ -103,7 +103,7 @@ export function RunsList() {
                   <Th>Status</Th>
                   <Th>Model</Th>
                   <Th>Graph</Th>
-                  <Th>Thread</Th>
+                  <Th>Session</Th>
                   <Th>Created</Th>
                 </tr>
               </thead>
@@ -137,13 +137,13 @@ export function RunsList() {
                       {run.graph_id ? `${shortId(run.graph_id, 10)}@${run.graph_version}` : "—"}
                     </Td>
                     <Td className="whitespace-nowrap">
-                      {run.thread_id ? (
+                      {run.session_id ? (
                         <Link
-                          to="/threads/$threadId"
-                          params={{ threadId: run.thread_id }}
+                          to="/sessions/$sessionId"
+                          params={{ sessionId: run.session_id }}
                           className="mono text-slate-400 hover:text-slate-200"
                         >
-                          {shortId(run.thread_id, 10)}
+                          {shortId(run.session_id, 10)}
                         </Link>
                       ) : (
                         <span className="text-slate-600">—</span>

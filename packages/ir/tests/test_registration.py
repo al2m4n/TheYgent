@@ -1,11 +1,13 @@
 """The ``modality`` axis on the inference-plane registration payload (registration.py).
 
 ``modality`` is the THIRD orthogonal axis (alongside ``binding`` = engine and ``source`` = weights):
-it names the *task* a managed model serves and the manager dispatches the spawn on it. The guards:
+it names the *task* a model serves. On ``ManagedBinding`` the manager dispatches the spawn on it;
+on ``ReachableBinding`` it is a pure declaration (a reachable upstream is never probed, so the
+declared task is the only signal the chat/bench surfaces have to route their UI). The guards:
 
-* it is ADDITIVE + backward-compatible — a payload without a ``modality`` key parses as ``chat``;
-* the frozen ``Modality`` vocabulary is enforced (an unknown value fails loudly);
-* it lands ONLY on ``ManagedBinding`` — a reachable binding rejects it (``extra="forbid"``);
+* it is ADDITIVE + backward-compatible — a payload without a ``modality`` key parses as ``chat``
+  on BOTH arms;
+* the frozen ``Modality`` vocabulary is enforced (an unknown value fails loudly) on BOTH arms;
 * it is NOT a new ``binding`` value — the binding enum is untouched;
 * it round-trips through the registry-persistence wire shape (``model_dump(by_alias=True)``).
 """
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-from theygent_ir import ManagedBinding, parse_registration
+from theygent_ir import ManagedBinding, ReachableBinding, parse_registration
 
 # ── backward compatibility: a payload without modality defaults to "chat" ─────
 
@@ -61,20 +63,59 @@ def test_modality_is_not_a_binding_value() -> None:
         parse_registration({"binding": "mlx-vlm", "source": "hf", "model": "m"})
 
 
-# ── modality lands ONLY on the managed arm ───────────────────────────────────
+# ── modality on the reachable arm: a declaration, same vocabulary, same default ─
 
 
-def test_reachable_binding_rejects_modality() -> None:
-    # A reachable openai-compatible upstream self-describes modality over its URL — extra=forbid.
+def test_reachable_binding_defaults_modality_to_chat() -> None:
+    # Every pre-existing reachable registration (no modality key) parses unchanged.
+    b = parse_registration(
+        {"binding": "openai-compatible", "baseUrl": "https://api.example.com/v1", "model": "gpt-x"}
+    )
+    assert isinstance(b, ReachableBinding)
+    assert b.modality == "chat"
+
+
+@pytest.mark.parametrize("modality", ["audio.transcription", "audio.speech", "embeddings"])
+def test_reachable_binding_declares_non_chat_modality(modality: str) -> None:
+    # A reachable whisper/speech/embeddings server declares its task — the platform can't probe
+    # it, and the chat/bench surfaces route the voice composer / speech reply on this.
+    b = parse_registration(
+        {
+            "binding": "openai-compatible",
+            "baseUrl": "https://api.example.com/v1",
+            "model": "whisper-1",
+            "modality": modality,
+        }
+    )
+    assert isinstance(b, ReachableBinding)
+    assert b.modality == modality
+
+
+def test_reachable_binding_rejects_unknown_modality() -> None:
     with pytest.raises(ValidationError):
         parse_registration(
             {
                 "binding": "openai-compatible",
                 "baseUrl": "https://api.example.com/v1",
                 "model": "gpt-x",
-                "modality": "vision",
+                "modality": "video",
             }
         )
+
+
+def test_reachable_modality_round_trips_through_wire_dump() -> None:
+    original = parse_registration(
+        {
+            "binding": "openai-compatible",
+            "baseUrl": "https://api.example.com/v1",
+            "model": "whisper-1",
+            "modality": "audio.transcription",
+        }
+    )
+    reparsed = parse_registration(original.model_dump(by_alias=True))
+    assert reparsed == original
+    assert isinstance(reparsed, ReachableBinding)
+    assert reparsed.modality == "audio.transcription"
 
 
 # ── the registry-persistence round-trip (registry.json wire shape) ───────────

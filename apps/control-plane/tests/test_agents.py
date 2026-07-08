@@ -7,7 +7,7 @@ reference instead of re-pasting the whole IR every run. So these prove: it persi
 restart; the registry's hash IS the walker's hash; the hash is view-stripped + key-order
 stable; versions are immutable; an invoke-by-reference run is behaviourally identical to
 /graphs/runs and the Run row carries the agent's coordinate; pinned invokes run exactly that
-content; and thread memory is unchanged through /agents/*.
+content; and session memory is unchanged through /agents/*.
 """
 
 from __future__ import annotations
@@ -391,27 +391,27 @@ def test_exact_identical_republish_is_idempotent_200(client: TestClient) -> None
     assert len(resp.json()["versions"]) == 1
 
 
-# ── thread memory unchanged through /agents/* ────────────────────────────────────
+# ── session memory unchanged through /agents/* ───────────────────────────────────
 
 
-def test_thread_memory_replays_through_agent_invoke(
+def test_session_memory_replays_through_agent_invoke(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
     ir = _agent_ir()
     client.post("/agents", json={"ir": ir})
-    thread_id = str(ULID())
+    session_id = str(ULID())
 
     def ask(text: str) -> dict:
         r = client.post(
             f"/agents/{ir['id']}/runs",
-            json={"input": text, "thread_id": thread_id, "stream": False},
+            json={"input": text, "session_id": session_id, "stream": False},
         )
         assert r.status_code == 200, r.text
         return r.json()
 
     assert ask("first")["status"] == "completed"
     assert ask("second")["status"] == "completed"
-    # Turn 2 replays turn 1 (thread memory), verified through the /agents/* path.
+    # Turn 2 replays turn 1 (session memory), verified through the /agents/* path.
     assert fake_inference.captured["messages"] == [
         {"role": "user", "content": "first"},
         {"role": "assistant", "content": FULL_MESSAGE},

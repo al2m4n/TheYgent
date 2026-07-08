@@ -43,9 +43,11 @@ export async function* streamChat(
   model: string,
   messages: unknown[],
   params: Record<string, unknown>,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatChunk> {
   const res = await fetch(`${INFERENCE_URL}/v1/chat/completions`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
     // include_usage so the final chunk carries token counts + cost for the metrics.
     body: JSON.stringify({
@@ -155,4 +157,36 @@ export async function speak(
   const type = res.headers.get("content-type") || "audio/mpeg";
   const blobParts = parts.map((p) => p as unknown as BlobPart);
   return { blob: new Blob(blobParts, { type }), ttfbMs, totalMs };
+}
+
+export interface GeneratedImage {
+  blob: Blob;
+  totalMs: number;
+}
+
+/**
+ * Text-to-image → an image blob. Requests base64 (the bytes come back inline, no URL to a server
+ * in a different trust domain), decodes the first image, and returns it as a PNG blob for a chat
+ * bubble. Engine knobs (e.g. `steps`) ride in `params` — the inference route forwards them through.
+ */
+export async function generateImage(
+  model: string,
+  prompt: string,
+  params: Record<string, unknown>,
+): Promise<GeneratedImage> {
+  const start = performance.now();
+  const res = await fetch(`${INFERENCE_URL}/v1/images/generations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
+    body: JSON.stringify({ model, prompt, response_format: "b64_json", ...params }),
+  });
+  if (!res.ok) throw await failFrom(res);
+  const body = (await res.json()) as { data?: { b64_json?: string; url?: string }[] };
+  const first = body.data?.[0];
+  if (!first?.b64_json) throw new ApiError("the image endpoint returned no image", 502, "no_image");
+  const bytes = Uint8Array.from(atob(first.b64_json), (c) => c.charCodeAt(0));
+  return {
+    blob: new Blob([bytes as unknown as BlobPart], { type: "image/png" }),
+    totalMs: performance.now() - start,
+  };
 }

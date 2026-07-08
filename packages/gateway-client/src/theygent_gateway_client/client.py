@@ -20,6 +20,7 @@ Invariants this module holds:
 
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from typing import Any
 
@@ -30,6 +31,17 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 # passes generation params (temperature, max_tokens, …) via ``params``; these would
 # collide with our explicit kwargs, so we drop them defensively.
 _RESERVED = frozenset({"model", "messages", "stream", "extra_headers"})
+
+# OpenAI-standard image-generation params — passed as named kwargs to ``images.generate``. Anything
+# else (an engine knob like ``steps``) goes through ``extra_body`` so the SDK doesn't reject it.
+_OPENAI_IMAGE_PARAMS = frozenset(
+    {"size", "n", "quality", "style", "user", "background", "output_format", "output_compression"}
+)
+# The two fields ``generate_image`` always sets itself as named kwargs — dropped from a caller's
+# params so they never collide with the explicit kwarg. Local to image generation: keeping them out
+# of the shared ``_RESERVED`` means they still ride through on ``speak``/``transcribe`` (where
+# ``response_format`` selects the audio/text format), which ``_clean_params`` must not strip.
+_IMAGE_FORCED = frozenset({"prompt", "response_format"})
 
 
 def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -192,6 +204,47 @@ class GatewayClient:
             **_clean_params(params),
         )
         return response.content
+
+    # Local diffusion generation is minutes-scale and loads weights per request, far exceeding the
+    # client's default timeout (tuned for chat). Image generation gets its own generous per-request
+    # timeout so a legitimately slow render isn't cut off as a spurious "request timed out".
+    IMAGE_TIMEOUT_SEC = 1200.0
+
+    async def generate_image(
+        self,
+        *,
+        model: str,
+        prompt: str,
+        params: Mapping[str, Any] | None = None,
+        extra_headers: Mapping[str, str] | None = None,
+    ) -> bytes:
+        """Text-to-image → image bytes. ``model`` is a logical id; ``size``/``n`` ride in ``params``
+        as OpenAI-standard fields, while engine-specific knobs (e.g. ``steps``) go through
+        ``extra_body`` so the SDK doesn't reject them (it validates named kwargs against the OpenAI
+        schema). Requests base64 (the bytes come back inline, never a URL to a server in a different
+        trust domain) and returns the first image's decoded bytes — symmetric to ``speak``, so the
+        caller stores them as an artifact ref. Uses a long per-request timeout (generation is
+        minutes-scale) that overrides the chat-tuned client default without touching other calls."""
+        # Drop the fields this method sets itself (prompt, response_format) so a caller-supplied one
+        # can't duplicate the explicit kwarg; everything else splits into OpenAI-standard kwargs vs.
+        # engine knobs (extra_body).
+        clean = {k: v for k, v in _clean_params(params).items() if k not in _IMAGE_FORCED}
+        standard = {k: v for k, v in clean.items() if k in _OPENAI_IMAGE_PARAMS}
+        extra = {k: v for k, v in clean.items() if k not in _OPENAI_IMAGE_PARAMS}
+        response = await self._client.images.generate(
+            model=model,
+            prompt=prompt,
+            response_format="b64_json",
+            extra_headers=dict(extra_headers) if extra_headers else None,
+            extra_body=extra or None,
+            timeout=self.IMAGE_TIMEOUT_SEC,
+            **standard,
+        )
+        data = response.data or []
+        b64 = data[0].b64_json if data else None
+        if not b64:
+            raise RuntimeError("image endpoint returned no image data")
+        return base64.b64decode(b64)
 
     async def models(self) -> list[str]:
         """List logical model ids the inference plane exposes (GET ``/v1/models``).

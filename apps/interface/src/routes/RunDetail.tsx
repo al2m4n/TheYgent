@@ -14,7 +14,7 @@ import {
 } from "../components/ui";
 import { relativeTime } from "../lib/format";
 import { useLiveRun } from "../lib/live";
-import { useRun, useThread } from "../queries";
+import { useRun, useSession } from "../queries";
 
 function Detail({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -31,8 +31,8 @@ export function RunDetail() {
   // `live: true` also covers a durable run paused at a human node ("waiting"): the row polls at a
   // relaxed cadence so a resume — from here or anywhere else — shows up without a manual reload.
   const { data: run, isLoading, error, refetch } = useRun(runId, { live: !live?.done });
-  const threadId = run?.thread_id ?? null;
-  const { data: thread } = useThread(threadId ?? "");
+  const sessionId = run?.session_id ?? null;
+  const { data: session } = useSession(sessionId ?? "");
 
   // When a streamed run finishes, the canonical output may live ONLY in the persisted run row:
   // a graph whose terminal node isn't an `llm` (a `tool`/`router`/`mcp_tool` output, e.g. the
@@ -69,12 +69,12 @@ export function RunDetail() {
   const status = live ? live.status : run.status;
   const isStreaming = !!live && !live.done;
 
-  // Persisted output: the server persists `run.output` for EVERY run (threaded or not), so a
-  // terminal run's answer is read straight from the row. Fall back to the thread's assistant turns
+  // Persisted output: the server persists `run.output` for EVERY run (in a session or not), so a
+  // terminal run's answer is read straight from the row. Fall back to the session's assistant turns
   // only for older runs persisted before the output column existed (output === null).
   const persistedOutput =
     run.output ??
-    thread?.messages
+    session?.messages
       ?.filter((m) => m.run_id === run.id && m.role === "assistant")
       .map((m) => m.content)
       .join("\n");
@@ -109,11 +109,11 @@ export function RunDetail() {
           value={run.graph_id ? `${run.graph_id} @ ${run.graph_version}` : "—"}
         />
         <Detail
-          label="Thread"
+          label="Session"
           value={
-            threadId ? (
-              <Link to="/threads/$threadId" params={{ threadId }} className={linkClass}>
-                {threadId}
+            sessionId ? (
+              <Link to="/sessions/$sessionId" params={{ sessionId }} className={linkClass}>
+                {sessionId}
               </Link>
             ) : (
               "—"

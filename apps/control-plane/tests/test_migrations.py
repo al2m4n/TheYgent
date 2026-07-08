@@ -55,8 +55,8 @@ async def _tables(url: str) -> set[str]:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
         names = (
-            "'thread', 'run', 'message', 'mcp_server', 'agent', 'agent_version', 'trigger', "
-            "'span', 'node_io', 'agent_io_policy', "
+            "'chat_session', 'run', 'message', 'mcp_server', 'agent', 'agent_version', "
+            "'trigger', 'span', 'node_io', 'agent_io_policy', "
             "'bench_suite', 'bench_case', 'bench_run', 'bench_preset', "
             "'secret', 'connection', 'gate_counter'"
         )
@@ -97,7 +97,7 @@ def test_migration_round_trip(pg_url: str) -> None:
         assert asyncio.run(_tables(scratch)) == set()  # scratch starts bare
         command.upgrade(cfg, "head")
         assert asyncio.run(_tables(scratch)) == {
-            "thread",
+            "chat_session",
             "run",
             "message",
             "mcp_server",
@@ -117,13 +117,17 @@ def test_migration_round_trip(pg_url: str) -> None:
         }  # built
         # Column-level proof for the trigger-related run columns (a column add/drop is
         # invisible to the table-set check above, so the round-trip could silently regress
-        # without this).
-        assert {"trigger_id", "completed_at", "awaiting_node"} <= asyncio.run(_run_columns(scratch))
+        # without this). ``session_id`` proves the thread→session column rename actually ran
+        # (the table-set check alone would miss a half-applied rename).
+        assert {"trigger_id", "completed_at", "awaiting_node", "session_id"} <= asyncio.run(
+            _run_columns(scratch)
+        )
+        assert "thread_id" not in asyncio.run(_run_columns(scratch))
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
         command.upgrade(cfg, "head")
         assert asyncio.run(_tables(scratch)) == {
-            "thread",
+            "chat_session",
             "run",
             "message",
             "mcp_server",

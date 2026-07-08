@@ -226,6 +226,49 @@
       },
       "type": "human"
     },
+    "imagine": {
+      "configSchema": {
+        "additionalProperties": false,
+        "description": "``imagine`` activity node config \u2014 text in \u2192 image-ref out, mapping 1:1 to\n``POST /v1/images/generations``. The image analog of ``speak``: ``model`` names a ``models``\nkey whose binding advertises the ``images.generation`` modality; ``params`` carries\n``size``/``n``/``steps``. The step's return value is a REFERENCE to the produced image (bytes\nare an artifact, never journaled); it feeds an ``output`` (``modality:image``) or an action\n``tool``.",
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "title": "ImagineConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "model": "",
+        "params": {}
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": true,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "imagine"
+    },
     "input": {
       "configSchema": {
         "additionalProperties": false,

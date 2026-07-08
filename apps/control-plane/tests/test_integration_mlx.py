@@ -243,13 +243,13 @@ def _trivial_ir(model_id: str) -> dict:
 
 
 @_skip
-def test_two_turn_thread_against_real_mlx_via_graph() -> None:
-    # Two-turn thread, end to end across real Postgres AND a real model — but driven by POST
+def test_two_turn_session_against_real_mlx_via_graph() -> None:
+    # Two-turn session, end to end across real Postgres AND a real model — but driven by POST
     # /graphs/runs with the trivial IR instead of /runs. Real model recall through a real graph.
     # The logical id "local" is registered on the inference plane, so the graph's
     # models["default"].model = "local" resolves at the seam unchanged.
     db_url = _prepare_db()
-    thread_id = str(ULID())
+    session_id = str(ULID())
     ir = _trivial_ir("local")
     with _real_inference_plane() as base:
         app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
@@ -258,7 +258,7 @@ def test_two_turn_thread_against_real_mlx_via_graph() -> None:
             def ask(text: str) -> dict:
                 r = client.post(
                     "/graphs/runs",
-                    json={"ir": ir, "input": text, "stream": False, "thread_id": thread_id},
+                    json={"ir": ir, "input": text, "stream": False, "session_id": session_id},
                 )
                 assert r.status_code == 200, r.text
                 return r.json()
@@ -274,7 +274,7 @@ def test_two_turn_thread_against_real_mlx_via_graph() -> None:
             assert got["graph_id"] == "agt_01J9X8MLXDEMO"
             assert got["content_hash"].startswith("sha256:")
 
-    rows = asyncio.run(fetch_messages(db_url, thread_id))
+    rows = asyncio.run(fetch_messages(db_url, session_id))
     assert [p for _, _, p in rows] == [0, 1, 2, 3]
     assert [role for role, _, _ in rows] == ["user", "assistant", "user", "assistant"]
     assert rows[0][1].startswith("Remember this fact")
@@ -284,12 +284,12 @@ def test_two_turn_thread_against_real_mlx_via_graph() -> None:
 
 
 @_skip
-def test_two_turn_thread_against_real_mlx() -> None:
-    # The thing the fast suite can't give: a two-turn thread end to end across real
+def test_two_turn_session_against_real_mlx() -> None:
+    # The thing the fast suite can't give: a two-turn session end to end across real
     # Postgres AND a real model. Turn 2 replays turn 1's turns (loaded from the DB) over
     # the process boundary into a real mlx_lm.server.
     db_url = _prepare_db()
-    thread_id = str(ULID())
+    session_id = str(ULID())
     with _real_inference_plane() as base:
         app = create_app(inference_base_url=f"{base}/v1", database_url=db_url)
         with TestClient(app) as client:
@@ -301,7 +301,7 @@ def test_two_turn_thread_against_real_mlx() -> None:
                         "input": text,
                         "model": "local",
                         "stream": False,
-                        "thread_id": thread_id,
+                        "session_id": session_id,
                     },
                 )
                 assert r.status_code == 200, r.text
@@ -314,7 +314,7 @@ def test_two_turn_thread_against_real_mlx() -> None:
             assert turn2["output"].strip(), "expected real generated text from MLX"
 
     # Real DB, end to end: both turns persisted in order with the model's real replies.
-    rows = asyncio.run(fetch_messages(db_url, thread_id))
+    rows = asyncio.run(fetch_messages(db_url, session_id))
     assert [p for _, _, p in rows] == [0, 1, 2, 3]
     assert [role for role, _, _ in rows] == ["user", "assistant", "user", "assistant"]
     assert rows[0][1].startswith("Remember this fact")  # turn 1 input stored verbatim

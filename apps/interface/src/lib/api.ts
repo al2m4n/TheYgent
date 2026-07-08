@@ -11,9 +11,10 @@ import type {
   IoPolicy,
   NodeIo,
   Run,
+  SessionDetail,
+  SessionMessage,
+  SessionSummary,
   Span,
-  ThreadDetail,
-  ThreadSummary,
 } from "./runtypes";
 import { type SSEEvent, readSSE } from "./sse";
 
@@ -123,7 +124,14 @@ export interface StoredVersion {
 // from it. We never send an engine name to the data plane — this is management-plane read-only.
 export interface ModelView {
   logicalId: string;
-  binding: { binding: string; model?: string; source?: string; [k: string]: unknown };
+  binding: {
+    binding: string;
+    model?: string;
+    source?: string;
+    /** The registered task: chat | vision | embeddings | audio.transcription | audio.speech. */
+    modality?: string;
+    [k: string]: unknown;
+  };
   state?: unknown;
 }
 
@@ -405,7 +413,7 @@ export interface BenchPresetRecord extends BenchPresetInput {
 }
 
 export const api = {
-  // ── control-plane runs + threads (the operator surface, ported from the cockpit) ──
+  // ── control-plane runs + sessions (the operator surface, ported from the cockpit) ──
   listRuns: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set("limit", String(params.limit));
@@ -418,19 +426,70 @@ export const api = {
 
   getRun: (id: string) => request<Run>(CONTROL_PLANE_URL, `/runs/${encodeURIComponent(id)}`),
 
-  listThreads: (params: { limit?: number; before?: string } = {}) => {
+  // ── artifacts (audio in/out for an agent run) ────────────────────────────────
+  // An audio agent is orchestrated by the control-plane walker, so its input/output audio crosses
+  // the control plane as an artifact REFERENCE. These move the bytes: upload a recorded clip to get
+  // a ref to pass as run input; download the ref the speak node produced to play it. Raw body, not
+  // JSON — request() only does JSON, and an <audio src> can't carry the auth header, so we fetch
+  // the bytes and object-URL them.
+  uploadArtifact: async (
+    blob: Blob,
+  ): Promise<{ ref: string; contentType: string; bytes: number }> => {
+    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts`, {
+      method: "POST",
+      headers: { "Content-Type": blob.type || "application/octet-stream", ...authHeaders() },
+      body: blob,
+    });
+    if (!res.ok) throw await toError(res);
+    return res.json();
+  },
+  downloadArtifact: async (ref: string): Promise<Blob> => {
+    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts/${encodeURIComponent(ref)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw await toError(res);
+    return res.blob();
+  },
+
+  listSessions: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set("limit", String(params.limit));
     if (params.before) q.set("before", params.before);
     const qs = q.toString();
-    return request<{ threads: ThreadSummary[] }>(
+    return request<{ sessions: SessionSummary[] }>(
       CONTROL_PLANE_URL,
-      `/threads${qs ? `?${qs}` : ""}`,
-    ).then((r) => r.threads);
+      `/sessions${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.sessions);
   },
 
-  getThread: (id: string) =>
-    request<ThreadDetail>(CONTROL_PLANE_URL, `/threads/${encodeURIComponent(id)}`),
+  getSession: (id: string) =>
+    request<SessionDetail>(CONTROL_PLANE_URL, `/sessions/${encodeURIComponent(id)}`),
+
+  // Create — or idempotently ensure — a session. An existing id returns the row (replacing
+  // `metadata` wholesale iff provided); a missing id has the server generate one.
+  createSession: (body: { id?: string; metadata?: Record<string, unknown> }) =>
+    request<SessionSummary>(CONTROL_PLANE_URL, "/sessions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Append a user + assistant turn pair to an EXISTING session (404 `session_not_found` otherwise —
+  // no implicit create). Client-written turns carry no run, so their `run_id` comes back null.
+  appendSessionTurns: (
+    sessionId: string,
+    body: { user_content: string; assistant_content: string },
+  ) =>
+    request<{ messages: SessionMessage[] }>(
+      CONTROL_PLANE_URL,
+      `/sessions/${encodeURIComponent(sessionId)}/turns`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+
+  // Delete a session and its messages; runs that pointed at it stay, detached (session_id → null).
+  deleteSession: (sessionId: string) =>
+    request<void>(CONTROL_PLANE_URL, `/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    }),
 
   // ── control-plane observability (the run waterfall) ──────────────────────────
   // The waterfall payload: the run's span tree (timing + status + worker attribution + edge sizes).
@@ -700,6 +759,7 @@ export const api = {
       limit?: number;
       engines?: string[]; // narrow to a subset of ready engines
       size?: string; // "small" | "medium" | "large" — param-size filter
+      modality?: string; // task filter: chat | vision | embeddings | audio.transcription | audio.speech
     } = {},
   ) => {
     const q = new URLSearchParams();
@@ -708,6 +768,7 @@ export const api = {
     if (params.limit) q.set("limit", String(params.limit));
     if (params.engines?.length) q.set("engines", params.engines.join(","));
     if (params.size) q.set("size", params.size);
+    if (params.modality) q.set("modality", params.modality);
     const qs = q.toString();
     return request<CatalogList>(INFERENCE_URL, `/admin/catalog/models${qs ? `?${qs}` : ""}`);
   },
