@@ -1,8 +1,8 @@
 """Fast suite for run output persistence + honest empty output.
 
-Before this fix, an un-threaded run's output lived ONLY in the live SSE stream: close the
+Before this fix, a session-less run's output lived ONLY in the live SSE stream: close the
 tab and the answer was gone — ``GET /runs/{id}`` returned metadata, no output. The fix persists the
-final output on the run row regardless of threading, additively (the POST wire contract is
+final output on the run row with or without a session, additively (the POST wire contract is
 unchanged). The honest-empty-output fix makes "nothing reached the output because an upstream node
 errored" an honest signal instead of a green ``completed`` with ``output: ""`` and ``error: null``.
 """
@@ -18,10 +18,10 @@ from fastapi.testclient import TestClient
 from theygent_control_plane.app import create_app
 
 
-def test_unthreaded_run_output_persists_and_survives_restart(
+def test_sessionless_run_output_persists_and_survives_restart(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
-    # A one-shot /runs (no thread_id) — previously it persisted NO output.
+    # A one-shot /runs (no session_id) — previously it persisted NO output.
     app1 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
     with TestClient(app1) as c1:
         created = c1.post(
@@ -58,8 +58,8 @@ def test_streamed_run_output_persists(client: TestClient) -> None:
     assert client.get(f"/runs/{run_id}").json()["output"] == FULL_MESSAGE
 
 
-def test_unthreaded_graph_run_output_persists(client: TestClient) -> None:
-    # The cockpit's "Output is not persisted for one-shot runs" gap: an un-threaded /graphs/runs
+def test_sessionless_graph_run_output_persists(client: TestClient) -> None:
+    # The cockpit's "Output is not persisted for one-shot runs" gap: a session-less /graphs/runs
     # now returns its output from GET /runs/{id}.
     created = client.post(
         "/graphs/runs", json={"ir": trivial_ir(), "input": "x", "stream": False}

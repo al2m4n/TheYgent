@@ -1,6 +1,6 @@
 import { Link, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { Empty, Page, linkClass } from "./components/ui";
-import { Compose } from "./routes/Compose";
+import { Chat } from "./routes/Chat";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
 import { Mcp } from "./routes/Mcp";
@@ -8,8 +8,9 @@ import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
 import { RunDetail } from "./routes/RunDetail";
 import { RunsList } from "./routes/RunsList";
-import { ThreadDetail } from "./routes/ThreadDetail";
-import { ThreadsList } from "./routes/ThreadsList";
+import { SessionDetail } from "./routes/SessionDetail";
+import { SessionsList } from "./routes/SessionsList";
+import { Settings } from "./routes/Settings";
 
 // An unknown URL lands on a styled page inside the shell (not the router's bare default text),
 // with a link back out.
@@ -30,7 +31,13 @@ const rootRoute = createRootRoute({ component: Root, notFoundComponent: NotFound
 
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Home });
 
-// ── operator surface (ported from the cockpit): runs, threads, compose ──
+// ── operator surface: chat, runs, sessions ──
+const chatRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/chat",
+  component: Chat,
+});
+
 const runsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs",
@@ -43,26 +50,16 @@ const runDetailRoute = createRoute({
   component: RunDetail,
 });
 
-const threadsRoute = createRoute({
+const sessionsRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/threads",
-  component: ThreadsList,
+  path: "/sessions",
+  component: SessionsList,
 });
 
-const threadDetailRoute = createRoute({
+const sessionDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/threads/$threadId",
-  component: ThreadDetail,
-});
-
-const composeRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/compose",
-  component: Compose,
-  // The "new run in this thread" link pre-fills the composer via ?threadId=.
-  validateSearch: (search: Record<string, unknown>): { threadId?: string } => ({
-    threadId: typeof search.threadId === "string" ? search.threadId : undefined,
-  }),
+  path: "/sessions/$sessionId",
+  component: SessionDetail,
 });
 
 const registriesRoute = createRoute({
@@ -88,16 +85,23 @@ const mcpRoute = createRoute({
   component: Mcp,
 });
 
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: Settings,
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
+  chatRoute,
   runsRoute,
   runDetailRoute,
-  threadsRoute,
-  threadDetailRoute,
-  composeRoute,
+  sessionsRoute,
+  sessionDetailRoute,
   editorRoute,
   registriesRoute,
   mcpRoute,
+  settingsRoute,
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: "intent" });

@@ -947,7 +947,7 @@ async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
                     run = await RunStore().create_run(
                         s,
                         model="",
-                        thread_id=None,
+                        session_id=None,
                         params=None,
                         graph_id="agt_schema",
                         graph_version="0.1.0",
@@ -987,7 +987,7 @@ async def test_resume_refuses_waiting_run_without_awaiting_node(pg_url: str) -> 
                 sm = app.state.sessionmaker
                 async with sm() as s, s.begin():
                     run = await RunStore().create_run(
-                        s, model="", thread_id=None, params=None, graph_id="agt_x"
+                        s, model="", session_id=None, params=None, graph_id="agt_x"
                     )
                     await RunStore().set_status(s, run.id, "waiting")
                 r = await ac.post(f"/runs/{run.id}/resume", json={"input": "x"})

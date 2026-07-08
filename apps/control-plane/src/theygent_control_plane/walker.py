@@ -1,5 +1,5 @@
 """The IR walker — the IR↔runtime seam: walk an :class:`~theygent_ir.IRDocument` node by node and
-execute it against the run/thread spine.
+execute it against the run/session spine.
 
 **This is an interpreter, not a compiler.** The walker lowers each node to in-process Python now;
 a durable compiler will later re-target the same IR to a durable runtime (Temporal/Restate/DBOS).
@@ -14,7 +14,7 @@ Two seam rules it holds:
   *within* a kind — so adding a node type is an additive handler, and the durable compiler can lower
   the same IR to a durable target with the same dispatch.
 * **No DB calls inside the walker.** It is a pure async function over a :class:`WalkContext`: the
-  control-plane loads thread memory and persists the ``Run`` through the same ``/runs``
+  control-plane loads session memory and persists the ``Run`` through the same ``/runs``
   seams, then hands the walker the prior messages, the gateway client, and the tool registry.
 
 Node types executed initially: ``input``/``output``/``llm``; later additions include ``tool`` (the
@@ -74,6 +74,7 @@ from theygent_control_plane.mcp import (
     McpToolNotFound,
 )
 from theygent_control_plane.observability import RunTrace, SpanScope, now_ns
+from theygent_control_plane.reasoning import ThinkSplitter
 from theygent_control_plane.tools import DEFAULT_REGISTRY, ToolRegistry
 
 logger = logging.getLogger("theygent.control_plane.walker")
@@ -136,7 +137,7 @@ class WalkResult:
     bound from the executed ``output`` boundary node's in-port. The canonical output is the output
     node's value, not the accumulated deltas — a ``tool`` result that never streamed is still a
     valid output. The control-plane reads it after the walk to populate the non-stream response and
-    the thread's assistant turn.
+    the session's assistant turn.
 
     ``output_produced`` is True iff an ``output`` boundary node actually executed (vs. being skipped
     because its inbound branch was dead) — it disambiguates a legitimately ``None`` output from "no
@@ -157,7 +158,7 @@ class WalkResult:
 @dataclass
 class WalkContext:
     """Everything the walker needs that it must not fetch itself. ``prior_messages`` is the
-    thread replay the control-plane already loaded; ``extra_headers`` carries the
+    session replay the control-plane already loaded; ``extra_headers`` carries the
     ``x-theygent-run-id`` correlation header; ``tools`` is the registry ``tool`` nodes dispatch
     against. The walker does no I/O beyond the gateway call and the tool callables."""
 
@@ -183,7 +184,7 @@ class WalkContext:
     # The observability handle for this run (the control-plane opens it before walking). When set,
     # the walker wraps each node in a span and captures per-node I/O through it (the one-wrapper
     # seam); when ``None`` (telemetry not wired) the walk is purely additive — the walker still does
-    # no run-state/thread DB I/O itself; telemetry is an injected side-channel.
+    # no run-state/session DB I/O itself; telemetry is an injected side-channel.
     run_trace: RunTrace | None = None
 
 
@@ -688,7 +689,13 @@ async def execute_llm(
     ``tool_calls``. This is ONE turn — it does NOT loop; the loop (execute tools → feed results back
     → call again) lives in the caller (the walker / durable compiler) so each turn stays a
     journalable step. A pre-stream 503/404 raises from ``open_stream``; a mid-stream death raises
-    (→ failed run)."""
+    (→ failed run).
+
+    Reasoning is split engine-agnostically: a separate ``reasoning_content`` delta field is
+    forwarded as-is, and inline ``<think>…</think>`` spans left in ``delta.content`` by
+    raw-template servers are routed through a :class:`~reasoning.ThinkSplitter` — so the
+    thinking reaches ``on_delta`` as ``"reasoning"`` either way and NEVER accumulates into
+    the returned output (see ``reasoning.py`` for the engine variance)."""
 
     upstream = await gateway.open_stream(
         model=model_id,
@@ -703,6 +710,7 @@ async def execute_llm(
     finish_reason: str | None = None
     usage: dict[str, int] | None = None
     tool_acc: dict[int, dict[str, Any]] = {}
+    splitter = ThinkSplitter()  # one per turn — inline think state is per-stream
     async for chunk in upstream:
         parsed = parse_chunk(chunk)
         if parsed.finish_reason:
@@ -712,11 +720,25 @@ async def execute_llm(
         if parsed.reasoning and on_delta is not None:
             on_delta(parsed.reasoning, "reasoning")
         if parsed.content:
-            output += parsed.content
-            if on_delta is not None:
-                on_delta(parsed.content, "content")
+            answer, thinking = splitter.push(parsed.content)
+            if thinking and on_delta is not None:
+                on_delta(thinking, "reasoning")
+            if answer:
+                output += answer
+                if on_delta is not None:
+                    on_delta(answer, "content")
         if parsed.tool_calls:
             _accumulate_tool_calls(tool_acc, parsed.tool_calls)
+    # Stream end: release anything the splitter held back (a false-partial tag is answer
+    # text; an unclosed think block stays reasoning — the all-thinking case then leaves the
+    # output honestly blank for the empty-output reason).
+    answer, thinking = splitter.flush()
+    if thinking and on_delta is not None:
+        on_delta(thinking, "reasoning")
+    if answer:
+        output += answer
+        if on_delta is not None:
+            on_delta(answer, "content")
     truncated_empty = finish_reason == "length" and not output.strip() and not tool_acc
     return LlmActivityResult(
         output=output,
@@ -2061,7 +2083,7 @@ async def _walk_llm(
     config = LlmConfig.model_validate(node.config)
     model_id, params = resolve_model(ir, config)
     ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
-    # Naive full replay: prior thread turns verbatim, then this turn's rendered prompt. The prompt
+    # Naive full replay: prior session turns verbatim, then this turn's rendered prompt. The prompt
     # may compose several in-ports — $in.file AND $in.question — via the port map.
     messages = [*ctx.prior_messages, *_render_messages(node, config, ports)]
 

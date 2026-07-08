@@ -43,9 +43,11 @@ export async function* streamChat(
   model: string,
   messages: unknown[],
   params: Record<string, unknown>,
+  signal?: AbortSignal,
 ): AsyncGenerator<ChatChunk> {
   const res = await fetch(`${INFERENCE_URL}/v1/chat/completions`, {
     method: "POST",
+    signal,
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
     // include_usage so the final chunk carries token counts + cost for the metrics.
     body: JSON.stringify({

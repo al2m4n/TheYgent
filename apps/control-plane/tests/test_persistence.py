@@ -37,13 +37,13 @@ def test_run_survives_restart(fake_inference: FakeInference, pg_url: str) -> Non
 
 
 def test_one_shot_persists_no_messages(client: TestClient, pg_url: str) -> None:
-    # A run with no thread_id is a one-shot: it persists the
+    # A run with no session_id is a one-shot: it persists the
     # run row but contributes NO conversational turns.
     body = client.post(
         "/runs", json={"input": "hi", "model": "triage-fast", "stream": False}
     ).json()
     assert body["status"] == "completed"
     assert body["output"] == FULL_MESSAGE
-    # The run is reachable, but the message table stays empty — nothing thread-shaped.
-    assert client.get(f"/runs/{body['runId']}").json()["thread_id"] is None
+    # The run is reachable, but the message table stays empty — nothing session-shaped.
+    assert client.get(f"/runs/{body['runId']}").json()["session_id"] is None
     assert asyncio.run(count_all_messages(pg_url)) == 0

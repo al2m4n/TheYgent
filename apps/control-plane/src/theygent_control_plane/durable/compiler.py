@@ -604,8 +604,9 @@ async def _complete_run_step(
     run_id: str, status: str, output: str | None, error: str | None
 ) -> None:
     """Terminalize the Run (idempotent: setting the same terminal values twice is a no-op). The
-    durable ``fire()`` path is un-threaded (thread_id None), so there is no thread turn to append —
-    completion is just the status/output/error write (the output is persisted on the run row)."""
+    durable ``fire()`` path carries no session (session_id None), so there is no session turn to
+    append — completion is just the status/output/error write (the output is persisted on the run
+    row)."""
     res = _res()
     async with res.sessionmaker() as session, session.begin():
         await res.store.set_status(session, run_id, status, output=output, error=error)  # type: ignore[arg-type]
@@ -753,8 +754,8 @@ async def _durable_walk(
     running ``orchestration``/``boundary`` inline. This mirrors ``walker.walk`` exactly — same
     traversal order, same edge-liveness/skip logic, same value threading — but the I/O lives in
     journaled steps so the run resumes from the last completed activity. Returns
-    ``(output, output_produced, empty_reason)``. The thread-memory replay is empty on the durable
-    ``fire()`` path (un-threaded); prior messages are threaded in by the caller if ever needed.
+    ``(output, output_produced, empty_reason)``. The session-memory replay is empty on the durable
+    ``fire()`` path (no session); prior messages are threaded in by the caller if ever needed.
 
     The four additive-lowering types are each a new branch here, classified by the existing ``kind``
     — NOT a new subsystem: ``human`` (boundary) → ``DBOS.recv`` durable wait; ``subgraph``
@@ -1344,7 +1345,7 @@ def _log_branch(run_id: str, node_id: str, kind: str, index: int) -> None:
 async def theygent_run(
     agent_ref: dict[str, Any],
     input_value: Any,
-    thread_id: str | None,
+    session_id: str | None,
     trigger_id: str | None,
 ) -> dict[str, Any]:
     """The single generic durable workflow. Resolve the pinned saved agent's **immutable** IR,
@@ -1352,9 +1353,10 @@ async def theygent_run(
     trigger kind converges here via the re-pointed ``fire()`` seam. Returns the same non-stream
     result dict ``fire`` returns, so the contract above is unchanged.
 
-    ``thread_id`` is accepted for shape-parity with the interactive run path but is ``None`` on the
-    durable ``fire()`` route (thread memory is an interactive-cockpit concern); a future durable
-    threaded entry threads prior messages in through a step without reshaping this signature."""
+    ``session_id`` is accepted for shape-parity with the interactive run path but is ``None`` on
+    the durable ``fire()`` route (session memory is an interactive-cockpit concern); a future
+    session-aware durable entry threads prior messages in through a step without reshaping this
+    signature."""
 
     run_id = DBOS.workflow_id  # stable across resume — the run row is keyed by it
     # Composition nesting depth rides inside the opaque agent_ref dict (the frozen signature is

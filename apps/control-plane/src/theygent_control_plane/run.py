@@ -2,7 +2,7 @@
 
 ``Run`` is a clean Pydantic entity that maps 1:1 to a table. ``Run`` stays the **domain**
 shape and is *not* the ORM row: it is mapped to/from ``RunRow`` in ``store.py``.
-``thread_id`` is the one additive field (optional; ``None`` = a one-shot run).
+``session_id`` is the one additive field (optional; ``None`` = a one-shot run).
 
 The earlier in-memory run registry is gone: persistence now lives in the Postgres-backed
 ``RunStore`` (``store.py``), so runs survive a restart and are shared state across
@@ -42,7 +42,7 @@ class Run(BaseModel):
     """A single request, from creation to a terminal status.
 
     ``model`` is the **logical** model id forwarded to inference (never an engine name).
-    ``thread_id`` is ``None`` for a one-shot run. The status lifecycle is
+    ``session_id`` is ``None`` for a one-shot run. The status lifecycle is
     ``created`` -> ``streaming`` -> ``completed`` | ``failed``.
 
     Three nullable graph fields are populated for a ``/graphs/runs`` run and ``None`` for a
@@ -51,7 +51,7 @@ class Run(BaseModel):
     """
 
     id: str = Field(default_factory=new_ulid)
-    thread_id: str | None = None
+    session_id: str | None = None
     status: RunStatus = "created"
     model: str
     graph_id: str | None = None
@@ -60,8 +60,8 @@ class Run(BaseModel):
     # Which trigger fired this run (None = interactive) — giving an unattended run
     # lineage back to the schedule/webhook that fired it.
     trigger_id: str | None = None
-    # The run's final output, persisted on success so GET /runs/{id} can return it for an
-    # un-threaded run too (not only the live SSE stream). None until a terminal output is reached.
+    # The run's final output, persisted on success so GET /runs/{id} can return it for a
+    # session-less run too (not only the live SSE stream). None until a terminal output is reached.
     output: str | None = None
     # When a run is ``waiting`` at a ``human`` node, the id of that node — the bookkeeping
     # the waiting status needs. ``POST /runs/{id}/resume`` reads it to validate the awaited
@@ -82,33 +82,39 @@ class Run(BaseModel):
 # reads existing persisted state.
 
 
-class ThreadSummary(BaseModel):
-    """One row of the threads list — aggregates over a thread's messages."""
+class SessionSummary(BaseModel):
+    """One row of the sessions list — aggregates over a session's messages."""
 
     id: str
     created_at: datetime
     last_activity: datetime
     message_count: int
-    # First user message (thread message at ``position == 0``); ``None`` for an empty thread.
+    # First user message (session message at ``position == 0``); ``None`` for an empty session.
     preview: str | None = None
+    # Opaque client-owned JSONB (kind/model/title …) — stored and returned verbatim,
+    # never interpreted by the control plane.
+    metadata: dict[str, Any] | None = None
 
 
-class ThreadMessage(BaseModel):
+class SessionMessage(BaseModel):
     id: str
-    run_id: str
+    # None = a client-appended turn (persisted chat history with no run behind it);
+    # populated when a run wrote the pair.
+    run_id: str | None = None
     role: str  # user | assistant
     content: str
     position: int
     created_at: datetime
 
 
-class ThreadDetail(BaseModel):
-    """A thread with its messages in ``position`` order (thread detail view)."""
+class SessionDetail(BaseModel):
+    """A session with its messages in ``position`` order (session detail view)."""
 
     id: str
     created_at: datetime
     updated_at: datetime
-    messages: list[ThreadMessage] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+    messages: list[SessionMessage] = Field(default_factory=list)
 
 
 # ── Agent registry domain entities ───────────────────────────────────────────

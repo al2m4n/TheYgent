@@ -1,7 +1,7 @@
 """Direct-DB helpers for tests — assert persisted state the API doesn't expose.
 
 There is no /messages endpoint (no standalone memory resource is exposed), so the
-thread-memory tests inspect the ``message`` / ``run`` rows directly over asyncpg. Reads
+session-memory tests inspect the ``message`` / ``run`` rows directly over asyncpg. Reads
 only; the production path always goes through the app + Alembic-managed schema.
 """
 
@@ -19,7 +19,7 @@ async def truncate(url: str) -> None:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
         await conn.execute(
-            "TRUNCATE message, run, thread, mcp_server, trigger, agent_version, agent, "
+            "TRUNCATE message, run, chat_session, mcp_server, trigger, agent_version, agent, "
             "span, node_io, agent_io_policy, "
             "bench_run, bench_case, bench_suite, bench_preset, "
             "connection, secret, gate_counter "
@@ -64,23 +64,23 @@ async def get_run_row(url: str, run_id: str) -> dict[str, object] | None:
         await conn.close()
 
 
-async def fetch_messages(url: str, thread_id: str) -> list[tuple[str, str, int]]:
-    """(role, content, position) for a thread, ordered by the ordering key (position)."""
+async def fetch_messages(url: str, session_id: str) -> list[tuple[str, str, int]]:
+    """(role, content, position) for a session, ordered by the ordering key (position)."""
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
         rows = await conn.fetch(
-            "SELECT role, content, position FROM message WHERE thread_id = $1 ORDER BY position",
-            thread_id,
+            "SELECT role, content, position FROM message WHERE session_id = $1 ORDER BY position",
+            session_id,
         )
         return [(r["role"], r["content"], r["position"]) for r in rows]
     finally:
         await conn.close()
 
 
-async def count_messages(url: str, thread_id: str) -> int:
+async def count_messages(url: str, session_id: str) -> int:
     conn = await asyncpg.connect(dsn=plain_dsn(url))
     try:
-        return await conn.fetchval("SELECT count(*) FROM message WHERE thread_id = $1", thread_id)
+        return await conn.fetchval("SELECT count(*) FROM message WHERE session_id = $1", session_id)
     finally:
         await conn.close()
 

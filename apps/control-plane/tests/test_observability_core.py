@@ -16,7 +16,7 @@ from theygent_control_plane.store import RunStore
 async def _seed_run(sessionmaker, model: str = "triage-fast") -> str:
     store = RunStore()
     async with sessionmaker() as s, s.begin():
-        run = await store.create_run(s, model=model, thread_id=None, params=None)
+        run = await store.create_run(s, model=model, session_id=None, params=None)
     return run.id
 
 

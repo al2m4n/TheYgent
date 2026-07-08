@@ -90,7 +90,9 @@ const STT_PARAMS: ParamSpec[] = [
 ];
 
 const TTS_PARAMS: ParamSpec[] = [
-  { key: "voice", label: "Voice", type: "text", placeholder: "alloy" },
+  // Voice names are engine-specific; empty falls through to the binding's default, then the
+  // engine's own model default.
+  { key: "voice", label: "Voice", type: "text", placeholder: "engine default" },
   { key: "speed", label: "Speed", type: "number", min: 0.25, max: 4, step: 0.05 },
   {
     key: "response_format",

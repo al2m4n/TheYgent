@@ -9,7 +9,27 @@
 // install run THERE — theygent never sees the download (the sovereignty promise).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, Download, Lock, Plus, Star } from "lucide-react";
+import {
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Eye,
+  Flame,
+  FlaskConical,
+  Loader2,
+  Lock,
+  MessageSquare,
+  Mic,
+  Plus,
+  Search,
+  Snowflake,
+  Star,
+  Trash2,
+  Volume2,
+  Waypoints,
+  Wrench,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
 import { CategoryBadge, FilterBar } from "../components/Filters";
@@ -95,6 +115,24 @@ function minimalEntry(ref: string): CatalogEntry {
   };
 }
 
+// The registry's `model` field is a full local path for downloaded weights (source=local-path) and a
+// short upstream id for reachable/hub models. An absolute path blows out the column and reads as
+// noise, so a local model shows just its file/dir name; everything else shows the id as-is. The full
+// value always rides in the tooltip.
+function modelDisplay(binding: ModelView["binding"]): { text: string; full?: string } {
+  const model = binding.model;
+  if (!model) return { text: "—" };
+  if (binding.source === "local-path") {
+    const base =
+      model
+        .replace(/[/\\]+$/, "")
+        .split(/[/\\]/)
+        .pop() || model;
+    return { text: base, full: model };
+  }
+  return { text: model, full: model };
+}
+
 const FIT_TONE: Record<Fit, string> = {
   fits: "green",
   tight: "amber",
@@ -130,22 +168,25 @@ export function Registries() {
           <h1 className="text-lg font-semibold text-slate-100">Registries</h1>
           <p className="text-xs text-slate-500">Models registered in your inference plane.</p>
         </div>
-        <Button variant="primary" onClick={() => setAdding((a) => !a)}>
-          {adding ? (
-            "Close"
-          ) : (
-            <>
-              <Plus size={14} /> Add model
-            </>
-          )}
+        <Button variant="primary" onClick={() => setAdding(true)}>
+          <Plus size={14} /> Add model
         </Button>
       </div>
 
-      {adding && (
-        <AddModelPanel onClose={() => setAdding(false)} onBrowse={() => setBrowsing(true)} />
-      )}
-
       <InstalledPanel />
+
+      {adding && (
+        <Modal title="Add a model" width="max-w-2xl" onClose={() => setAdding(false)}>
+          <AddModelPanel
+            onClose={() => setAdding(false)}
+            onBrowse={() => {
+              // The browse pop-up replaces this one rather than stacking on top of it.
+              setAdding(false);
+              setBrowsing(true);
+            }}
+          />
+        </Modal>
+      )}
 
       {browsing && <BrowseModal onClose={() => setBrowsing(false)} />}
     </Page>
@@ -174,19 +215,7 @@ function AddModelPanel({
   });
 
   return (
-    <Card className="mb-4 space-y-3 p-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-200">Add a model</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          className="text-slate-500 hover:text-slate-300"
-        >
-          ✕
-        </button>
-      </div>
-
+    <div className="space-y-3">
       <div className="flex rounded-md border border-slate-700 p-0.5 text-sm">
         {(
           [
@@ -249,7 +278,7 @@ function AddModelPanel({
           onSubmit={(logicalId, body) => register.mutate({ logicalId, body })}
         />
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -342,7 +371,7 @@ function InstalledPanel() {
     <div className="space-y-4">
       {engines && (
         <p className="text-xs text-slate-400">
-          Resident engines: <span className="text-slate-200">{residentCount}</span> /{" "}
+          Resident Models: <span className="text-slate-200">{residentCount}</span> /{" "}
           {engines.maxResident}
         </p>
       )}
@@ -403,12 +432,14 @@ function InstalledPanel() {
                         </CategoryBadge>
                       </Td>
                       <Td className="mono text-slate-300">
-                        <span
-                          className="block max-w-[220px] truncate"
-                          title={m.binding.model ?? undefined}
-                        >
-                          {m.binding.model ?? "—"}
-                        </span>
+                        {(() => {
+                          const { text, full } = modelDisplay(m.binding);
+                          return (
+                            <span className="block max-w-[220px] truncate" title={full}>
+                              {text}
+                            </span>
+                          );
+                        })()}
                       </Td>
                       <Td>
                         <CategoryBadge
@@ -424,32 +455,51 @@ function InstalledPanel() {
                         <CapabilitiesCell logicalId={m.logicalId} />
                       </Td>
                       <Td>
-                        <div className="flex flex-wrap gap-1">
-                          <Button variant="primary" onClick={() => setBenchModel(m)}>
-                            Bench
+                        <div className="flex gap-1">
+                          <Button
+                            variant="primary"
+                            aria-label="Bench"
+                            title="Test & benchmark this model"
+                            onClick={() => setBenchModel(m)}
+                          >
+                            <FlaskConical size={14} />
                           </Button>
                           <Button
+                            aria-label="Warm"
+                            title="Warm — load the model into the engine"
                             disabled={warm.isPending}
                             onClick={() => warm.mutate(m.logicalId)}
                           >
-                            {warm.isPending && warm.variables === m.logicalId ? "Warming…" : "Warm"}
+                            {warm.isPending && warm.variables === m.logicalId ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Flame size={14} />
+                            )}
                           </Button>
                           <Button
+                            aria-label="Evict"
+                            title="Evict — unload the model from memory"
                             disabled={evict.isPending}
                             onClick={() => evict.mutate(m.logicalId)}
                           >
-                            {evict.isPending && evict.variables === m.logicalId
-                              ? "Evicting…"
-                              : "Evict"}
+                            {evict.isPending && evict.variables === m.logicalId ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Snowflake size={14} />
+                            )}
                           </Button>
                           <Button
                             variant="danger"
+                            aria-label="Delete"
+                            title="Delete — unregister this model"
                             disabled={remove.isPending}
                             onClick={() => setConfirmDelete(m.logicalId)}
                           >
-                            {remove.isPending && remove.variables === m.logicalId
-                              ? "Deleting…"
-                              : "Delete"}
+                            {remove.isPending && remove.variables === m.logicalId ? (
+                              <Loader2 size={14} className="animate-spin" />
+                            ) : (
+                              <Trash2 size={14} />
+                            )}
                           </Button>
                         </div>
                       </Td>
@@ -510,10 +560,11 @@ function CapabilitiesCell({ logicalId }: { logicalId: string }) {
   if (!show) {
     return (
       <Button
+        aria-label="Probe capabilities"
         title="Probe capabilities — loads the model into the engine"
         onClick={() => setShow(true)}
       >
-        Probe
+        <Search size={14} />
       </Button>
     );
   }
@@ -674,18 +725,12 @@ function ManualRegisterForm({
 export function BrowseModal({ onClose }: { onClose: () => void }) {
   // Progress shows in the global NotificationCenter, so the modal stays open while you install more.
   return (
-    <Modal title="Add a model from a hub" width="max-w-3xl" onClose={onClose}>
+    <Modal
+      title="Browse and install directly into your inference plane"
+      width="max-w-3xl"
+      onClose={onClose}
+    >
       <div className="space-y-4">
-        <div>
-          <p className="text-xs text-slate-500">
-            Browse and install directly into your inference plane.
-          </p>
-          <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
-            <span>Source:</span>
-            <Badge tone="blue">Hugging Face</Badge>
-            <span className="text-slate-600">· more hubs later</span>
-          </div>
-        </div>
         <BrowsePanel />
       </div>
     </Modal>
@@ -694,18 +739,41 @@ export function BrowseModal({ onClose }: { onClose: () => void }) {
 
 // Capability filters — matched against the browse-time hints on each entry (client-side; HF has no
 // server-side capability filter). Keys are CatalogEntry boolean fields.
+// Capability chips — CLIENT-SIDE booleans over the loaded page (HF exposes no capability filter),
+// multi-select (AND). Vision is NOT here: it's a first-class task below (server-side), so it filters
+// the listing query itself rather than the loaded slice.
 const CAP_FILTERS = [
-  { key: "reasoning", label: "Reasoning" },
-  { key: "toolCalling", label: "Tools" },
-  { key: "vision", label: "Vision" },
+  { key: "reasoning", label: "Reasoning", icon: Brain },
+  { key: "toolCalling", label: "Tools", icon: Wrench },
 ] as const;
 type CapKey = (typeof CAP_FILTERS)[number]["key"];
+
+// Task chips — SERVER-SIDE via the hub's pipeline tag (a model has exactly one task), so these are
+// single-select and narrow the listing query, unlike the client-side capability chips beside them.
+const TASK_CHIPS = [
+  { value: "chat", label: "Chat", icon: MessageSquare },
+  { value: "vision", label: "Vision", icon: Eye },
+  { value: "embeddings", label: "Embeddings", icon: Waypoints },
+  { value: "audio.transcription", label: "Speech-to-text", icon: Mic },
+  { value: "audio.speech", label: "Text-to-speech", icon: Volume2 },
+];
+
+// The hub pipeline tag → the task label shown on a card (chat/text-generation is the default and
+// wears no badge). Mirrors the modality the install will register.
+const TASK_OF_PIPELINE: Record<string, string> = {
+  "image-text-to-text": "vision",
+  "feature-extraction": "embeddings",
+  "sentence-similarity": "embeddings",
+  "automatic-speech-recognition": "speech-to-text",
+  "text-to-speech": "text-to-speech",
+};
 
 function BrowsePanel() {
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [sort, setSort] = useState("trending");
   const [size, setSize] = useState("");
+  const [task, setTask] = useState(""); // server-side task (modality) filter; "" ⇒ any
   const [engineSel, setEngineSel] = useState<string[]>([]); // empty ⇒ all ready engines
   const [capsFilter, setCapsFilter] = useState<CapKey[]>([]); // client-side capability filter
   const [limit, setLimit] = useState(30);
@@ -717,15 +785,16 @@ function BrowsePanel() {
   }, [search]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset paging on input change
-  useEffect(() => setLimit(30), [debounced, sort, size, engineSel]);
+  useEffect(() => setLimit(30), [debounced, sort, size, task, engineSel]);
 
   const { data, isFetching, error } = useQuery({
-    queryKey: ["catalog", debounced, sort, size, engineSel.join(","), limit],
+    queryKey: ["catalog", debounced, sort, size, task, engineSel.join(","), limit],
     queryFn: () =>
       api.searchCatalogModels({
         search: debounced,
         sort,
         size: size || undefined,
+        modality: task || undefined,
         engines: engineSel,
         limit,
       }),
@@ -835,14 +904,30 @@ function BrowsePanel() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-        <span>Capabilities:</span>
-        {CAP_FILTERS.map(({ key, label }) => {
+        <span>Filter:</span>
+        {/* Task chips (violet) — single-select, server-side: a model has ONE task, and this narrows
+            the listing query itself. */}
+        {TASK_CHIPS.map(({ value, label, icon: Icon }) => (
+          <CategoryBadge
+            key={value}
+            tone="violet"
+            active={task === value}
+            icon={<Icon size={12} strokeWidth={2} />}
+            onClick={() => setTask((cur) => (cur === value ? "" : value))}
+            title={`Show only ${label.toLowerCase()} models`}
+          >
+            {label}
+          </CategoryBadge>
+        ))}
+        {/* Capability chips (blue) — multi-select, client-side over the loaded page (metadata hints). */}
+        {CAP_FILTERS.map(({ key, label, icon: Icon }) => {
           const on = capsFilter.includes(key);
           return (
             <CategoryBadge
               key={key}
               tone="blue"
               active={on}
+              icon={<Icon size={12} strokeWidth={2} />}
               onClick={() => toggleCap(key)}
               title={`Show only ${label.toLowerCase()} models (from metadata hints)`}
             >
@@ -851,7 +936,7 @@ function BrowsePanel() {
           );
         })}
         {capsFilter.length > 0 && (
-          <span className="text-[11px] text-slate-600">· filters the loaded list</span>
+          <span className="text-[11px] text-slate-600">· capabilities filter the loaded list</span>
         )}
       </div>
 
@@ -990,6 +1075,11 @@ function ModelCard({
             {updated && <span>updated {updated}</span>}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1">
+            {/* Non-chat tasks wear their modality — it's what the install will register. */}
+            {typeof entry.badges.pipelineTag === "string" &&
+              TASK_OF_PIPELINE[entry.badges.pipelineTag] && (
+                <Badge tone="violet">{TASK_OF_PIPELINE[entry.badges.pipelineTag]}</Badge>
+              )}
             <CapabilityBadges caps={entry} />
           </div>
         </div>

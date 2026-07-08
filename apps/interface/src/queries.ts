@@ -1,4 +1,4 @@
-// TanStack Query hooks for the operator surface (Runs, Threads, Compose) ported from the cockpit.
+// TanStack Query hooks for the operator surface (Runs, Chats/Sessions) ported from the cockpit.
 // Server state lives here; mutations auto-invalidate the relevant list queries on success. Local UI
 // state stays component useState. The query keys match the ad-hoc keys the canvas routes already use
 // (["agents"], ["agent", id], ["models"]) so invalidation stays consistent across both surfaces.
@@ -7,7 +7,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import type { IRDocument } from "@theygent/ir-types";
 import { api } from "./lib/api";
 
-// Page size for the scroll-paginated lists (runs/threads/agents). The control-plane list endpoints are
+// Page size for the scroll-paginated lists (runs/sessions/agents). The control-plane list endpoints are
 // keyset-paginated: pass the LAST row's `id` as `before` to get the strictly-older next page, and a
 // short page (fewer than PAGE rows) means the end. Endpoints cap `limit` at 200; 50 keeps each scroll
 // fetch snappy.
@@ -43,8 +43,8 @@ export const keys = {
   // surface the other's shape (an envelope into mergeSpans' for…of → crash). Distinct key isolates it.
   trace: (id: string) => ["run-trace", id] as const,
   nodeIo: (id: string, nodeId: string) => ["node-io", id, nodeId] as const,
-  threads: () => ["threads"] as const,
-  thread: (id: string) => ["thread", id] as const,
+  sessions: () => ["sessions"] as const,
+  session: (id: string) => ["session", id] as const,
   agents: () => ["agents"] as const,
   agent: (id: string) => ["agent", id] as const,
   models: () => ["models"] as const,
@@ -63,12 +63,12 @@ export function useRunsInfinite() {
   });
 }
 
-// The Threads list: scroll-paginated (newest activity first). Keyed under ["threads", …] so a broad
-// ["threads"] invalidation reaches it. (The simple `useThreads` below stays for the composer's picker.)
-export function useThreadsInfinite() {
+// The Sessions list: scroll-paginated (newest activity first). Keyed under ["sessions", …] so a broad
+// ["sessions"] invalidation reaches it.
+export function useSessionsInfinite() {
   return useInfiniteQuery({
-    queryKey: ["threads", "infinite"],
-    queryFn: ({ pageParam }) => api.listThreads({ limit: PAGE, before: pageParam }),
+    queryKey: ["sessions", "infinite"],
+    queryFn: ({ pageParam }) => api.listSessions({ limit: PAGE, before: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: nextByIdCursor,
   });
@@ -132,15 +132,18 @@ export function useNodeIo(runId: string, nodeId: string | null) {
   });
 }
 
-export function useThreads() {
-  return useQuery({ queryKey: keys.threads(), queryFn: () => api.listThreads({ limit: 50 }) });
-}
-
-export function useThread(id: string) {
-  // Only fetch a real thread id. A run detail for a one-shot (un-threaded) run passes "",
-  // and `GET /threads/` redirects to the LIST endpoint (no `.messages`) — fetching it would
+export function useSession(id: string, opts: { fresh?: boolean } = {}) {
+  // Only fetch a real session id. A run detail for a one-shot (session-less) run passes "",
+  // and `GET /sessions/` redirects to the LIST endpoint (no `.messages`) — fetching it would
   // hand the run detail a wrong-shaped object. `enabled` keeps that request from happening.
-  return useQuery({ queryKey: keys.thread(id), queryFn: () => api.getThread(id), enabled: !!id });
+  // `fresh` forces a refetch on every mount — the session chat seeds its transcript ONCE from
+  // this data, so a stale cache at mount would show an outdated conversation.
+  return useQuery({
+    queryKey: keys.session(id),
+    queryFn: () => api.getSession(id),
+    enabled: !!id,
+    refetchOnMount: opts.fresh ? "always" : undefined,
+  });
 }
 
 export function useModels() {

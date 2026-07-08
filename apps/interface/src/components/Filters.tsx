@@ -14,6 +14,7 @@ export function CategoryBadge({
   tone = "slate",
   active = false,
   count,
+  icon,
   onClick,
   title,
   children,
@@ -21,6 +22,8 @@ export function CategoryBadge({
   tone?: Tone;
   active?: boolean;
   count?: number;
+  /** An icon that REPLACES the colour dot (the icon carries the category cue instead). */
+  icon?: ReactNode;
   onClick?: () => void;
   title?: string;
   children: ReactNode;
@@ -33,7 +36,11 @@ export function CategoryBadge({
     : `${base} border-transparent bg-slate-800/70 text-slate-300 ${onClick ? "hover:bg-slate-700/70" : ""}`;
   const inner = (
     <>
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${t.dot}`} />
+      {icon ? (
+        <span className="shrink-0">{icon}</span>
+      ) : (
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${t.dot}`} />
+      )}
       <span className="truncate">{children}</span>
       {count != null && <span className="text-slate-500">{count}</span>}
     </>

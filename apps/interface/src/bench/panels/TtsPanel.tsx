@@ -1,12 +1,12 @@
-// Text-to-speech panel — text → audio playback + download; metric = TTFB (first audio byte),
-// total latency, chars/sec. Data plane direct (json → bytes).
+// Text-to-speech panel — chat-shaped: type text, send, and the synthesized audio comes back as a
+// playable reply bubble. Data plane direct (json → bytes); metric = TTFB (first audio byte),
+// total latency, chars/sec per exchange.
 
 import { useState } from "react";
-import { Button, ErrorBanner, Field, Input } from "../../components/ui";
+import { ChatView } from "../../chat/ChatView";
+import { type CompletedTurn, useInferenceChat } from "../../chat/useInferenceChat";
 import type { BenchRunInput } from "../../lib/api";
 import { ParamForm } from "../ParamForm";
-import { speak } from "../dataplane";
-import { type BenchMetrics, computeTtsMetrics } from "../metrics";
 import { paramsForModality } from "../params";
 import type { PanelProps } from "../registry";
 import { MetricsView, SavePresetButton, SaveResultButton, useParams } from "../shared";
@@ -14,68 +14,49 @@ import { MetricsView, SavePresetButton, SaveResultButton, useParams } from "../s
 export function TtsPanel({ logicalId, caps, binding, modelRef, onRecorded }: PanelProps) {
   const specs = paramsForModality("audio.speech", caps);
   const form = useParams(specs);
-  const [text, setText] = useState("");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<BenchMetrics | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [turns, setTurns] = useState<Record<string, CompletedTurn>>({});
 
-  async function run() {
-    setRunning(true);
-    setError(null);
-    setAudioUrl(null);
-    setMetrics(null);
-    try {
-      const { blob, ttfbMs, totalMs } = await speak(logicalId, text, form.params);
-      setAudioUrl(URL.createObjectURL(blob));
-      setMetrics(computeTtsMetrics(text.length, ttfbMs, totalMs));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRunning(false);
-    }
-  }
+  const chat = useInferenceChat({
+    logicalId,
+    modality: "audio.speech",
+    caps,
+    params: form.params,
+    onTurn: (id, turn) => setTurns((t) => ({ ...t, [id]: turn })),
+  });
 
-  const buildRecord = (): BenchRunInput => ({
+  const buildRecord = (turn: CompletedTurn): BenchRunInput => ({
     target_kind: "model",
     modality: "audio.speech",
     logical_id: logicalId,
     model_ref: modelRef,
     binding,
-    params: form.params,
-    metrics: (metrics ?? {}) as Record<string, number>,
+    params: turn.params,
+    metrics: turn.metrics,
   });
 
   return (
     <div className="space-y-3">
-      <Field label="Text">
-        <Input
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Text to speak…"
-        />
-      </Field>
       <ParamForm specs={specs} values={form.values} onChange={form.set} />
-      <div className="flex items-center gap-2">
-        <Button variant="primary" onClick={run} disabled={running || !text.trim()}>
-          {running ? "Synthesizing…" : "Speak"}
-        </Button>
-        {metrics && <SaveResultButton build={buildRecord} onSaved={onRecorded} />}
-      </div>
-      <ErrorBanner error={error} />
-      {audioUrl && (
-        // biome-ignore lint/a11y/useMediaCaption: synthesized speech preview, no caption source
-        <audio controls src={audioUrl} className="w-full" />
-      )}
-      {metrics && <MetricsView metrics={metrics} />}
-      {metrics && (
-        <SavePresetButton
-          modality="audio.speech"
-          logicalId={logicalId}
-          params={form.params}
-          caps={caps}
-        />
-      )}
+      <ChatView
+        controller={chat}
+        emptyHint="Type text and send — the reply is the synthesized audio."
+        renderExtras={(m) => {
+          const turn = m.role === "assistant" ? turns[m.id] : undefined;
+          if (!turn) return null;
+          return (
+            <div className="space-y-2 pt-1">
+              <MetricsView metrics={turn.metrics} />
+              <SaveResultButton build={() => buildRecord(turn)} onSaved={onRecorded} />
+            </div>
+          );
+        }}
+      />
+      <SavePresetButton
+        modality="audio.speech"
+        logicalId={logicalId}
+        params={form.params}
+        caps={caps}
+      />
     </div>
   );
 }

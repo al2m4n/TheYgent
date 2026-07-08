@@ -68,6 +68,19 @@ def _modality_for_pipeline(pipeline_tag: str | None) -> Modality:
     return mod if mod is not None else "chat"
 
 
+#: The inverse direction, for FILTERING a listing by task: theygent ``modality`` → the HF
+#: ``pipeline_tag``(s) that carry it. ``embeddings`` spans two tags (the API takes one tag per
+#: call, so a filtered listing fans out per tag and merges — same union-and-dedupe discipline as
+#: the per-engine-library fan-out). ``chat`` is the text-generation default.
+MODALITY_PIPELINES: dict[Modality, tuple[str, ...]] = {
+    "chat": ("text-generation",),
+    "vision": ("image-text-to-text",),
+    "embeddings": ("feature-extraction", "sentence-similarity"),
+    "audio.transcription": ("automatic-speech-recognition",),
+    "audio.speech": ("text-to-speech",),
+}
+
+
 #: HF ``sort`` keys (huggingface_hub 1.x). Our enum is the stable surface; this maps it.
 _HF_SORT: dict[str, str] = {
     "trending": "trending_score",
@@ -99,6 +112,9 @@ class CatalogQuery(BaseModel):
     #: Optional HF ``num_parameters`` filter (e.g. ``"max:3B"`` / ``"min:3B,max:15B"``) — the
     #: param-size filter. ``None`` ⇒ no size constraint.
     num_params: str | None = None
+    #: Optional task filter: only models serving this modality (mapped to HF pipeline_tag(s) via
+    #: ``MODALITY_PIPELINES``). ``None`` ⇒ every task lists.
+    modality: Modality | None = None
 
 
 class CatalogVariant(_Wire):
@@ -283,16 +299,20 @@ def _variant_quality(label: str, engine: str) -> str | None:
         if "16" in u:
             return "full precision"
         return None
+    # Describe precision/quality only — never assert a cross-variant size ranking here. The row
+    # shows each variant's real size next to this hint, and the variants aren't guaranteed to be the
+    # same size ordering as the quant gradient, so a static "largest"/"large" claim can contradict
+    # the number shown right beside it.
     if u.startswith(("Q2", "Q3", "IQ2", "IQ3")):
-        return "small · lower quality"
+        return "lower quality"
     if u.startswith("Q4"):
         return "balanced"
     if u.startswith(("Q5", "Q6")):
         return "high quality"
     if u.startswith("Q8"):
-        return "max quality · large"
+        return "max quality"
     if u in ("F16", "BF16", "FP16", "F32", "FP32"):
-        return "full precision · largest"
+        return "full precision"
     return None
 
 
@@ -428,42 +448,51 @@ class HuggingFaceProvider:
         if not libraries:
             return []  # no runnable engine ⇒ nothing to show (never surface an unrunnable model)
         by_ref: dict[str, CatalogEntry] = {}
+        # A task filter fans out once more, per pipeline_tag (the API takes one tag per call);
+        # an unfiltered listing stays a single call per library.
+        pipeline_tags: tuple[str | None, ...] = (
+            MODALITY_PIPELINES[q.modality] if q.modality else (None,)
+        )
         for engine, library in libraries.items():
-            try:
-                # ``expand`` pulls the enrichment fields (gated, lastModified, safetensors→params)
-                # the lightweight listing omits — verified present in huggingface_hub 1.x.
-                models = self._hf().list_models(
-                    filter=library,
-                    search=q.search or None,
-                    sort=_HF_SORT[q.sort],
-                    limit=q.limit,
-                    expand=[
-                        "downloads",
-                        "likes",
-                        "tags",
-                        "pipeline_tag",
-                        "gated",
-                        "lastModified",
-                        "safetensors",
-                        # ``config`` (safetensors/MLX repos) + ``gguf`` (GGUF repos) ride the SAME
-                        # list call — they carry the chat template, architectures and GGUF context
-                        # inline, so browse-time capability hints (reasoning / tool_calling / vision
-                        # / max_context) cost zero extra per-repo fetches. Verified present together
-                        # in huggingface_hub 1.x for both the ``mlx`` and ``gguf`` library filters.
-                        "config",
-                        "gguf",
-                    ],
-                    **({"num_parameters": q.num_params} if q.num_params else {}),
-                )
-            except Exception as exc:
-                raise CatalogError(f"hugging face listing failed: {exc}") from exc
-            for mi in islice(models, q.limit):
-                entry = by_ref.get(mi.id)
-                if entry is None:
-                    entry = self._entry_from_model_info(mi)
-                    by_ref[mi.id] = entry
-                if engine not in entry.engines:
-                    entry.engines.append(engine)
+            for pipeline_tag in pipeline_tags:
+                try:
+                    # ``expand`` pulls the enrichment fields (gated, lastModified,
+                    # safetensors→params) the lightweight listing omits — verified present in
+                    # huggingface_hub 1.x.
+                    models = self._hf().list_models(
+                        filter=library,
+                        search=q.search or None,
+                        sort=_HF_SORT[q.sort],
+                        limit=q.limit,
+                        expand=[
+                            "downloads",
+                            "likes",
+                            "tags",
+                            "pipeline_tag",
+                            "gated",
+                            "lastModified",
+                            "safetensors",
+                            # ``config`` (safetensors/MLX repos) + ``gguf`` (GGUF repos) ride the
+                            # SAME list call — they carry the chat template, architectures and
+                            # GGUF context inline, so browse-time capability hints (reasoning /
+                            # tool_calling / vision / max_context) cost zero extra per-repo
+                            # fetches. Verified present together in huggingface_hub 1.x for both
+                            # the ``mlx`` and ``gguf`` library filters.
+                            "config",
+                            "gguf",
+                        ],
+                        **({"num_parameters": q.num_params} if q.num_params else {}),
+                        **({"pipeline_tag": pipeline_tag} if pipeline_tag else {}),
+                    )
+                except Exception as exc:
+                    raise CatalogError(f"hugging face listing failed: {exc}") from exc
+                for mi in islice(models, q.limit):
+                    entry = by_ref.get(mi.id)
+                    if entry is None:
+                        entry = self._entry_from_model_info(mi)
+                        by_ref[mi.id] = entry
+                    if engine not in entry.engines:
+                        entry.engines.append(engine)
         return list(by_ref.values())
 
     def _entry_from_model_info(self, mi: Any) -> CatalogEntry:
@@ -568,6 +597,9 @@ class HuggingFaceProvider:
             if "mlx" not in entry.engines:
                 entry.engines.append("mlx")
 
+        # Order smallest → largest so the size column reads monotonically (unknown sizes last) and
+        # the quality gradient (compact → full precision) lines up with the numbers shown.
+        variants.sort(key=lambda v: (v.size_bytes is None, v.size_bytes or 0))
         _mark_recommended(variants)
         entry.variants = variants
         # The detail view gets a one-paragraph blurb from the model card (one fetch, here only).

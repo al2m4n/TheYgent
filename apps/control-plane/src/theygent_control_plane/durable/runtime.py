@@ -176,14 +176,14 @@ class DurableRuntime:
         agent_ref: dict[str, Any],
         input_value: Any,
         *,
-        thread_id: str | None = None,
+        session_id: str | None = None,
         trigger_id: str | None = None,
     ) -> Any:
         """Enqueue ``theygent_run`` on the durable queue, returning the DBOS workflow handle (whose
         id IS the run id). The control-plane awaits the handle (the result-or-handle contract)
         or returns the run id for polling."""
         return await RUN_QUEUE.enqueue_async(
-            theygent_run, agent_ref, input_value, thread_id, trigger_id
+            theygent_run, agent_ref, input_value, session_id, trigger_id
         )
 
     async def resume(self, run_id: str, input_value: Any, *, node_id: str | None = None) -> None:

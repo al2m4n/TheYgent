@@ -76,13 +76,26 @@ class FakeHfApi:
         self._by_repo = by_repo or {}
         self.list_filters: list[Any] = []
         self.num_params: list[Any] = []
+        self.pipeline_tags: list[Any] = []
 
     def list_models(
-        self, *, filter=None, search=None, sort=None, limit=None, expand=None, num_parameters=None
+        self,
+        *,
+        filter=None,
+        search=None,
+        sort=None,
+        limit=None,
+        expand=None,
+        num_parameters=None,
+        pipeline_tag=None,
     ):
         self.list_filters.append(filter)
         self.num_params.append(num_parameters)
-        return list(self._by_library.get(filter, []))
+        self.pipeline_tags.append(pipeline_tag)
+        models = self._by_library.get(filter, [])
+        if pipeline_tag is not None:
+            models = [m for m in models if getattr(m, "pipeline_tag", None) == pipeline_tag]
+        return list(models)
 
     def model_info(self, repo_id, *, files_metadata=False, expand=None):
         # HF rejects files_metadata + expand together; get() therefore makes two calls. The fake
@@ -166,6 +179,38 @@ def test_no_ready_engine_lists_nothing() -> None:
     p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)
     assert p.list(CatalogQuery(engines=[])) == []
     assert api.list_filters == []  # no query issued at all
+
+
+# ── task (modality) filter — pipeline_tag rides the listing query ─────────────────
+
+
+def test_modality_filter_passes_the_pipeline_tag() -> None:
+    whisper = FakeModelInfo(
+        id="org/whisper-gguf",
+        tags=["gguf"],
+        pipeline_tag="automatic-speech-recognition",
+        siblings=[],
+    )
+    api = FakeHfApi(by_library={"gguf": [_qwen_gguf(), whisper]})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)
+    entries = p.list(CatalogQuery(engines=["llamacpp"], modality="audio.transcription"))
+    assert [e.ref for e in entries] == ["org/whisper-gguf"]
+    assert api.pipeline_tags == ["automatic-speech-recognition"]
+
+
+def test_modality_filter_fans_out_per_pipeline_tag() -> None:
+    # embeddings spans two HF tags — the listing queries each and merges (union + dedupe).
+    api = FakeHfApi(by_library={"gguf": []})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)
+    p.list(CatalogQuery(engines=["llamacpp"], modality="embeddings"))
+    assert api.pipeline_tags == ["feature-extraction", "sentence-similarity"]
+
+
+def test_no_modality_filter_sends_no_pipeline_tag() -> None:
+    api = FakeHfApi(by_library={"gguf": [_qwen_gguf()]})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)
+    p.list(CatalogQuery(engines=["llamacpp"]))
+    assert api.pipeline_tags == [None]
 
 
 # ── get(): variants + fit (the variant picker) ───────────────────────────────────
@@ -431,7 +476,7 @@ def test_get_sets_variant_quality_and_fit_reason() -> None:
     entry = p.get("bartowski/Qwen2.5-7B-Instruct-GGUF", CatalogQuery(engines=["llamacpp"]))
     by_label = {v.label: v for v in entry.variants}
     assert by_label["Q4_K_M"].quality == "balanced"
-    assert by_label["Q8_0"].quality == "max quality · large"
+    assert by_label["Q8_0"].quality == "max quality"
     assert "GB" in (by_label["Q4_K_M"].fit_reason or "")
 
 

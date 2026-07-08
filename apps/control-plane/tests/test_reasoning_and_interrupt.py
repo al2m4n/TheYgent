@@ -66,14 +66,14 @@ def test_reasoning_not_folded_into_output(pg_url: str) -> None:
 
 def test_empty_length_completion_is_honest_stream(pg_url: str) -> None:
     # Budget exhausted by thinking → empty content + finish_reason=length. The run completes but
-    # carries an honest reason (not error:null) and appends NO thread turn.
+    # carries an honest reason (not error:null) and appends NO session turn.
     with FakeInference(mode="empty_length") as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
         with TestClient(app) as client:
             with client.stream(
                 "POST",
                 "/runs",
-                json={"input": "hi", "model": "triage-fast", "stream": True, "thread_id": "te"},
+                json={"input": "hi", "model": "triage-fast", "stream": True, "session_id": "te"},
             ) as resp:
                 events = _events("".join(resp.iter_text()))
             run_id = json.loads(events[0][1])["runId"]
@@ -83,8 +83,8 @@ def test_empty_length_completion_is_honest_stream(pg_url: str) -> None:
             assert got["error"] is not None
             assert "maxTokens" in got["error"] and "length" in got["error"]
             # No blank assistant turn was stored for the empty answer.
-            thread = client.get("/threads/te").json()
-            assert all(m["role"] != "assistant" or m["content"] for m in thread["messages"])
+            detail = client.get("/sessions/te").json()
+            assert all(m["role"] != "assistant" or m["content"] for m in detail["messages"])
 
 
 def test_empty_length_completion_is_honest_non_stream(pg_url: str) -> None:

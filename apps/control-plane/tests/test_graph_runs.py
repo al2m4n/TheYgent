@@ -3,7 +3,7 @@ seam, fake model, real Postgres via testcontainers.
 
 ``/graphs/runs`` is behaviourally identical to ``/runs`` for the trivial graph, but the
 *path* is IR-driven. So these mirror the earlier /runs assertions (same SSE shape, same
-error mapping, same thread replay) — now through the walker — and add the seam-specific
+error mapping, same session replay) — now through the walker — and add the seam-specific
 proofs: IR validation, per-node logs, content-hash recording, cycle rejection.
 """
 
@@ -34,10 +34,10 @@ def _parse_sse(text: str) -> list[tuple[str | None, str]]:
     return events
 
 
-def _graph_run(client: TestClient, *, stream: bool, thread_id: str | None = None) -> dict:
+def _graph_run(client: TestClient, *, stream: bool, session_id: str | None = None) -> dict:
     body: dict = {"ir": trivial_ir(), "input": "name three EU capitals", "stream": stream}
-    if thread_id is not None:
-        body["thread_id"] = thread_id
+    if session_id is not None:
+        body["session_id"] = session_id
     resp = client.post("/graphs/runs", json=body)
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -263,12 +263,14 @@ def test_recorded_hash_is_the_ir_function_and_default_fills(client: TestClient) 
     assert _recorded_hash(client, explicit) == _recorded_hash(client, doc)
 
 
-def test_thread_memory_across_graph_runs(client: TestClient, fake_inference: FakeInference) -> None:
-    # Thread replay through the graph path: run #2 in the same thread sees run #1.
-    thread_id = str(ULID())
-    r1 = _graph_run(client, stream=False, thread_id=thread_id)
+def test_session_memory_across_graph_runs(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # Session replay through the graph path: run #2 in the same session sees run #1.
+    session_id = str(ULID())
+    r1 = _graph_run(client, stream=False, session_id=session_id)
     assert r1["status"] == "completed"
-    r2 = _graph_run(client, stream=False, thread_id=thread_id)
+    r2 = _graph_run(client, stream=False, session_id=session_id)
     assert r2["status"] == "completed"
 
     assert fake_inference.captured["messages"] == [
@@ -278,10 +280,10 @@ def test_thread_memory_across_graph_runs(client: TestClient, fake_inference: Fak
     ]
 
 
-def test_graph_thread_pair_persists(client: TestClient, pg_url: str) -> None:
-    thread_id = str(ULID())
-    _graph_run(client, stream=False, thread_id=thread_id)
-    assert asyncio.run(fetch_messages(pg_url, thread_id)) == [
+def test_graph_session_pair_persists(client: TestClient, pg_url: str) -> None:
+    session_id = str(ULID())
+    _graph_run(client, stream=False, session_id=session_id)
+    assert asyncio.run(fetch_messages(pg_url, session_id)) == [
         ("user", "name three EU capitals", 0),
         ("assistant", FULL_MESSAGE, 1),
     ]
@@ -329,17 +331,17 @@ def test_error_mapping_non_stream(pg_url: str) -> None:
 
 
 def test_failed_graph_run_writes_no_turns(pg_url: str) -> None:
-    # A failed graph run contributes no turn: the thread never holds a dangling user turn.
-    thread_id = str(ULID())
+    # A failed graph run contributes no turn: the session never holds a dangling user turn.
+    session_id = str(ULID())
     with FakeInference(mode="error_503") as server:
         app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
         with TestClient(app) as client:
             resp = client.post(
                 "/graphs/runs",
-                json={"ir": trivial_ir(), "input": "q", "stream": False, "thread_id": thread_id},
+                json={"ir": trivial_ir(), "input": "q", "stream": False, "session_id": session_id},
             )
             assert resp.status_code == 503
-    assert asyncio.run(count_messages(pg_url, thread_id)) == 0
+    assert asyncio.run(count_messages(pg_url, session_id)) == 0
 
 
 def test_midstream_drop_fails_cleanly(pg_url: str) -> None:

@@ -13,6 +13,13 @@ Selectable ``mode`` exercises the control-plane's error paths:
   * ``reasoning``      — a reasoning model: emits ``reasoning_content`` deltas then ``content``
   * ``empty_length``   — emits only ``reasoning_content`` then ``finish_reason: length`` (the
                          budget-exhausted-no-answer case surfaced honestly)
+  * ``inline_think``   — a raw-template server: the thinking travels INLINE in ``content`` as
+                         ``<think>…</think>``, with BOTH tags split across chunk boundaries
+                         (the shape the splitter must never leak)
+  * ``inline_think_both``     — ``inline_think`` plus a separate ``reasoning_content`` delta
+                                (both forms in one stream)
+  * ``inline_think_unclosed`` — the block never closes and no answer follows;
+                                ``finish_reason: length`` (all-thinking, inline form)
 
 An optional ``response`` overrides the streamed/returned content (default ``"hello world"``).
 The optional ``response`` override makes an ``llm`` node emit a deterministic routing decision
@@ -32,6 +39,8 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
+# The inline-think modes' thinking text — importable so tests assert the reasoning stream verbatim.
+INLINE_THINKING = "deep thoughts"
 
 
 def _build_app(
@@ -79,7 +88,7 @@ def _build_app(
         # Prove the control-plane forwards the run-id header and the logical id verbatim.
         captured["run_id_header"] = request.headers.get("x-theygent-run-id")
         captured["model"] = body.get("model")
-        # Capture the full messages array so thread-replay tests can assert the prior
+        # Capture the full messages array so session-replay tests can assert the prior
         # turns (in order) were prepended to the new input.
         captured["messages"] = body.get("messages")
 
@@ -139,6 +148,14 @@ def _build_app(
             msg["reasoning_content"] = "thinking step..."
         elif mode == "empty_length":
             msg = {"role": "assistant", "content": "", "reasoning_content": "thinking step..."}
+            finish = "length"
+        elif mode in ("inline_think", "inline_think_both"):
+            # Raw-template shape: the whole message carries the thinking inline.
+            msg["content"] = f"<think>{INLINE_THINKING}</think>{content}"
+            if mode == "inline_think_both":
+                msg["reasoning_content"] = "field thinking..."
+        elif mode == "inline_think_unclosed":
+            msg = {"role": "assistant", "content": f"<think>{INLINE_THINKING}"}
             finish = "length"
         elif mode in ("tool_call", "tool_loop") and not wants_answer:
             msg = {
@@ -245,6 +262,33 @@ async def _stream(
         yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[:mid]}}]})
         yield _chunk(model, {"tool_calls": [{"index": 0, "function": {"arguments": argstr[mid:]}}]})
         yield _chunk(model, {}, finish="tool_calls")
+        for piece in _tail():
+            yield piece
+        return
+
+    # A raw-template server: thinking INLINE in `content` as <think> tags, with BOTH the
+    # opening and the closing tag split across chunk boundaries — the worst case the
+    # control-plane's splitter must handle without leaking half a tag.
+    if mode in ("inline_think", "inline_think_both", "inline_think_unclosed"):
+        if mode == "inline_think_both":
+            # Both forms at once: a separate reasoning_content delta AND inline tags.
+            yield _chunk(model, {"role": "assistant", "reasoning_content": "field thinking..."})
+        yield _chunk(model, {"role": "assistant", "content": "<th"})
+        if mode == "inline_think_unclosed":
+            # Budget exhausted mid-think: the block never closes, no answer follows.
+            yield _chunk(model, {"content": f"ink>{INLINE_THINKING}"})
+            yield _chunk(model, {}, finish="length")
+            for piece in _tail():
+                yield piece
+            return
+        think_mid = len(INLINE_THINKING) // 2
+        yield _chunk(model, {"content": f"ink>{INLINE_THINKING[:think_mid]}"})
+        yield _chunk(model, {"content": f"{INLINE_THINKING[think_mid:]}</thi"})
+        answer_chunks = _CHUNKS if content == FULL_MESSAGE else [content]
+        yield _chunk(model, {"content": "nk>" + answer_chunks[0]})
+        for piece in answer_chunks[1:]:
+            yield _chunk(model, {"content": piece})
+        yield _chunk(model, {}, finish="stop")
         for piece in _tail():
             yield piece
         return

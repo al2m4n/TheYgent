@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
-from theygent_ir import Capabilities, ManagedBinding, parse_registration
+from theygent_ir import Capabilities, ManagedBinding, Modality, parse_registration
 
 from theygent_inference_plane.catalog import (
     ENGINE_LIBRARY,
@@ -44,8 +44,10 @@ from theygent_inference_plane.launcher import (
     EngineUnavailableError,
     LlamaCppLauncher,
     ManagedLauncherSet,
+    MlxAudioLauncher,
     MlxLauncher,
     MlxVlmLauncher,
+    WhisperCppLauncher,
 )
 from theygent_inference_plane.manager import (
     EngineManager,
@@ -78,12 +80,15 @@ class EmbeddingsRequest(BaseModel):
 
 class SpeechRequest(BaseModel):
     # The OpenAI text-to-speech shape. `model` is a LOGICAL id. `voice`/`response_format`/
-    # `speed` ride through as params; the response is audio bytes.
+    # `speed` ride through as params; the response is audio bytes. `voice` is deliberately
+    # OPTIONAL with no invented default: voice vocabularies are per-engine (an OpenAI voice name
+    # forced onto a local speech server names a voice it doesn't have), so an omitted voice falls
+    # through to the binding's registered `params` default, then the engine's own default.
     model_config = ConfigDict(extra="allow")
 
     model: str
     input: str
-    voice: str = "alloy"
+    voice: str | None = None
 
 
 # Map an OpenAI `response_format` to the audio MIME type for the TTS response body.
@@ -163,8 +168,13 @@ def create_app(
         {
             ("llamacpp", "chat"): _llamacpp,
             ("llamacpp", "embeddings"): _llamacpp,
+            # Speech-to-text is the ggml family's OTHER program (whisper-server), dispatched by
+            # the modality key exactly like mlx vision — same engine name, different server.
+            ("llamacpp", "audio.transcription"): WhisperCppLauncher(),
             ("mlx", "chat"): MlxLauncher(),
             ("mlx", "vision"): MlxVlmLauncher(),
+            # Text-to-speech is MLX's other program (mlx_audio.server), same dispatch pattern.
+            ("mlx", "audio.speech"): MlxAudioLauncher(),
             ("vllm", "chat"): VllmLauncher(),
         }
     )
@@ -299,8 +309,9 @@ def create_app(
             except EngineUnavailableError as exc:
                 return _engine_unavailable(exc)
         else:
-            # Reachable upstreams aren't probed locally; advertise defaults.
-            caps = Capabilities()
+            # Reachable upstreams aren't probed locally; advertise the DECLARED task (the only
+            # signal there is — the chat/bench surfaces route their UI on it), all else defaults.
+            caps = Capabilities(modalities=[binding.modality])
         return JSONResponse(caps.model_dump(by_alias=True))
 
     @app.post("/admin/models/{logical_id}:warm")
@@ -415,8 +426,10 @@ def create_app(
         limit: int = 30,
         engines: str | None = None,
         size: str | None = None,
+        modality: Modality | None = None,
     ) -> Response:
-        # `sort` is validated at the edge (an unknown value → 422) since it's the Sort literal.
+        # `sort`/`modality` are validated at the edge (an unknown value → 422) — both are
+        # literals; `modality` narrows the listing to one task (chat/vision/embeddings/audio.*).
         ready = _ready_engines()
         # An optional `engines` override narrows to a subset — but only ever within what's ready, so
         # The invariant (never surface an unrunnable model) holds even if the client asks wider.
@@ -431,6 +444,7 @@ def create_app(
             limit=min(max(limit, 1), 100),
             engines=selected,
             num_params=_SIZE_NUM_PARAMS.get(size or ""),
+            modality=modality,
         )
         try:
             entries = await asyncio.to_thread(catalog.list, q)
@@ -751,7 +765,11 @@ def create_app(
     async def speech(req: SpeechRequest) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
-                params = merge_params(binding.params, req.model_dump())
+                # exclude_none: an omitted voice must not shadow the binding's registered default.
+                # Voice resolution: request voice → binding params default → NONE, in which case
+                # the gateway posts voiceless and the engine's own default speaks (voice names are
+                # engine-specific; nothing here invents one).
+                params = merge_params(binding.params, req.model_dump(exclude_none=True))
                 params.pop("input", None)
                 audio = await gateway.speak(upstream, req.input, params)
             fmt = str(params.get("response_format", "mp3"))

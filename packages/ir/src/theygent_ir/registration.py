@@ -64,10 +64,11 @@ class ManagedBinding(_Wire):
     the task differs) and it defaults to ``"chat"`` so every prior registration is unchanged. A
     deliberate, named additive extension.
 
-    Lands ONLY here, never on ``ReachableBinding`` (a reachable upstream self-describes its own
-    modality over its URL). NOTE the distinction from the graph IR's ``graph.ModelBinding``: this is
-    the inference-plane registration payload (local ``registry.json``, never content-hashed), so the
-    field never touches a saved agent's ``contentHash``.
+    ``ReachableBinding`` carries the same axis (see its docstring — the platform can't probe a
+    reachable upstream, and the chat/bench surfaces route their UI on the declared task). NOTE the
+    distinction from the graph IR's ``graph.ModelBinding``: this is the inference-plane
+    registration payload (local ``registry.json``, never content-hashed), so the field never
+    touches a saved agent's ``contentHash``.
     """
 
     binding: ManagedBindingName
@@ -84,11 +85,20 @@ class ReachableBinding(_Wire):
 
     ``credential_ref`` resolves in the user's trust domain only and must never
     cross a cloud boundary.
+
+    ``modality`` names the task the upstream serves, same axis as on ``ManagedBinding``. A
+    reachable upstream is never probed (by design), so this declaration is the ONLY signal the
+    platform has for routing UI — a transcription server gets the voice composer, a speech server
+    gets text-in/audio-out — and for the capabilities a UI reads. Defaults to ``"chat"`` so every
+    prior registration is unchanged; a deliberate, named additive extension (it supersedes the
+    earlier "reachable upstreams self-describe over their URL" stance, which predates any surface
+    needing to route on the task).
     """
 
     binding: ReachableBindingName
     base_url: str
     model: str
+    modality: Modality = "chat"
     credential_ref: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
 

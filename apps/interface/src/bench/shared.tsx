@@ -46,7 +46,7 @@ const LABEL: Record<string, string> = {
   rtf: "Real-time factor",
 };
 
-export function MetricsView({ metrics }: { metrics: BenchMetrics }) {
+export function MetricsView({ metrics }: { metrics: BenchMetrics | Record<string, number> }) {
   const entries = Object.entries(metrics).filter(([, v]) => typeof v === "number") as [
     string,
     number,

@@ -47,7 +47,7 @@ INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
-.PHONY: help install migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint
+.PHONY: help install engines migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -58,6 +58,41 @@ install: ## uv sync (Python workspace) + pnpm install (TS workspace)
 	uv sync
 	@echo "==> pnpm install"
 	pnpm install
+
+# The engine servers behind every managed (engine, modality) slot. The platform launches and
+# supervises these binaries but never builds/bundles them (a desktop-shell packaging concern), so
+# a dev machine installs them once here. Idempotent — rerun after a pull to pick up new slots.
+#   llama-server     chat + embeddings            (brew: llama.cpp)
+#   whisper-server   speech-to-text               (brew: whisper-cpp; ffmpeg converts the browser
+#                                                  microphone's webm/opus uploads)
+#   mlx_lm.server    MLX chat (Apple Silicon)     (uv tool: mlx-lm)
+#   mlx_vlm.server   MLX vision                   (uv tool: mlx-vlm)
+#   mlx_audio.server MLX text-to-speech           (uv tool: mlx-audio — its server extras are not
+#                                                  declared upstream, hence the --with list;
+#                                                  webrtcvad still imports pkg_resources, hence
+#                                                  Python 3.12 + setuptools<81; the misaki g2p
+#                                                  needs spaCy's small English model wheel)
+# vLLM is deliberately absent: CUDA-host only (`pip install vllm` there).
+UV_TOOL_DIR ?= $(HOME)/.local/share/uv/tools
+SPACY_EN_WHEEL := https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+
+engines: ## Install the local engine servers (macOS): chat, vision, embeddings, STT, TTS
+ifeq ($(shell uname),Darwin)
+	@echo "==> brew install llama.cpp whisper-cpp ffmpeg"
+	brew install llama.cpp whisper-cpp ffmpeg
+	@echo "==> uv tool install mlx-lm / mlx-vlm / mlx-audio"
+	uv tool install mlx-lm --with 'transformers<5.13'
+	uv tool install mlx-vlm
+	uv tool install --python 3.12 mlx-audio \
+		--with uvicorn --with fastapi --with webrtcvad --with python-multipart \
+		--with 'setuptools<81' --with 'misaki[en]' --with 'transformers<5.13'
+	uv pip install --python $(UV_TOOL_DIR)/mlx-audio/bin/python "en_core_web_sm @ $(SPACY_EN_WHEEL)"
+	@echo "==> done — /readyz on the inference plane shows the per-(engine,modality) breakdown"
+else
+	@echo "Non-macOS host: install llama.cpp (llama-server), whisper.cpp (whisper-server) and"
+	@echo "ffmpeg with your package manager; the MLX servers are Apple-Silicon-only; vLLM belongs"
+	@echo "on a CUDA host (pip install vllm)."
+endif
 
 hooks: ## Install the git pre-commit hooks (.pre-commit-config.yaml — mirrors the CI gates)
 	@echo "==> uvx pre-commit install"

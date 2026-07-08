@@ -21,6 +21,7 @@ import contextlib
 import glob
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -79,10 +80,10 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-async def _health_ok(base_url: str) -> bool:
+async def _health_ok(base_url: str, health_path: str = "/health") -> bool:
     try:
         async with httpx.AsyncClient(timeout=2.0) as client:
-            return (await client.get(f"{base_url}/health")).status_code == 200
+            return (await client.get(f"{base_url}{health_path}")).status_code == 200
     except httpx.HTTPError:
         return False
 
@@ -102,7 +103,7 @@ def _output_tail(log: IO[bytes], *, limit: int = 2000) -> str:
 
 
 async def _spawn_openai_server(
-    cmd: list[str], base_url: str, *, startup_timeout: float
+    cmd: list[str], base_url: str, *, startup_timeout: float, health_path: str = "/health"
 ) -> subprocess.Popen[bytes]:
     """Spawn an OpenAI-compatible server subprocess and wait until it is healthy.
 
@@ -125,7 +126,7 @@ async def _spawn_openai_server(
                 raise RuntimeError(
                     f"engine exited early (code {proc.returncode}): {cmd[0]}{_output_tail(log)}"
                 )
-            if await _health_ok(base_url):
+            if await _health_ok(base_url, health_path):
                 return proc
             await asyncio.sleep(0.25)
         proc.terminate()
@@ -140,11 +141,15 @@ async def _spawn_openai_server(
 
 class _SubprocessHandle:
     """Shared lifecycle for a spawned OpenAI-compatible server. Subclasses provide
-    the engine-specific ``capabilities`` probe."""
+    the engine-specific ``capabilities`` probe. ``health_path`` covers servers with no
+    ``/health`` route (any stable 200 route works — liveness, not readiness)."""
 
-    def __init__(self, proc: subprocess.Popen[bytes], base_url: str) -> None:
+    def __init__(
+        self, proc: subprocess.Popen[bytes], base_url: str, *, health_path: str = "/health"
+    ) -> None:
         self._proc = proc
         self._base_url = base_url
+        self._health_path = health_path
 
     @property
     def base_url(self) -> str:
@@ -155,7 +160,7 @@ class _SubprocessHandle:
         return self._proc.pid
 
     async def health(self) -> bool:
-        return await _health_ok(self._base_url)
+        return await _health_ok(self._base_url, self._health_path)
 
     async def capabilities(self) -> Capabilities:  # pragma: no cover - overridden
         raise NotImplementedError
@@ -252,6 +257,191 @@ class LlamaCppLauncher:
             self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
         )
         return LlamaCppHandle(proc, base_url, modality=binding.modality)
+
+
+# ── whisper.cpp (the ggml-family speech-to-text server — the llamacpp audio.transcription
+#    modality). Like mlx vision, this is a DIFFERENT program dispatched by the (engine, modality)
+#    key: whisper-server is whisper.cpp's HTTP server, sibling to llama-server. It natively
+#    exposes /health and serves its inference route at a configurable path, so
+#    `--inference-path /v1/audio/transcriptions` makes it OpenAI-conformant for the gateway
+#    (multipart in → {"text": …} out, verified against the real binary). `--convert` (when ffmpeg
+#    is present) transcodes non-wav uploads — notably the browser microphone's webm/opus. ─────────
+
+
+def locate_whisper_model(binding: ManagedBinding) -> str:
+    """The whisper weights FILE for a binding — whisper-server takes a file, not a dir/repo.
+
+    A catalog install lands a directory; pick the single weights file inside, preferring the
+    whisper.cpp-native ``ggml-*.bin`` form (this server reads ggml .bin whisper models; a
+    llama-style GGUF conversion of whisper fails its magic check). Ambiguity or absence raises
+    loudly — a guessed model file is a silent wrong-model bug.
+    """
+    model, source = binding.model, binding.source
+    if source == "local-path":
+        if os.path.isfile(model):
+            return model
+        candidates = sorted(
+            glob.glob(os.path.join(model, "*.bin")) + glob.glob(os.path.join(model, "*.gguf"))
+        )
+    else:  # hf — only what the hub cache already holds; weights are installed via the catalog.
+        repo = "models--" + model.replace("/", "--")
+        candidates = sorted(
+            glob.glob(os.path.join(_hf_hub_dir(), repo, "snapshots", "*", "*.bin"))
+            + glob.glob(os.path.join(_hf_hub_dir(), repo, "snapshots", "*", "*.gguf"))
+        )
+    if not candidates:
+        raise RuntimeError(
+            f"no whisper weights file (*.bin / *.gguf) found for {model!r} — install the model "
+            "locally first (whisper.cpp reads its native ggml-*.bin form, e.g. from the "
+            "ggerganov/whisper.cpp repository)"
+        )
+    ggml = [c for c in candidates if os.path.basename(c).startswith("ggml")]
+    if len(ggml) == 1:
+        return ggml[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    raise RuntimeError(
+        f"ambiguous whisper weights for {model!r}: {[os.path.basename(c) for c in candidates]} — "
+        "point the binding at the exact file"
+    )
+
+
+class WhisperCppHandle(_SubprocessHandle):
+    async def capabilities(self) -> Capabilities:
+        # A transcription server serves exactly one task; chat-shaped capability probes don't
+        # apply (approximate: nothing beyond the declared modality is probed).
+        return Capabilities(modalities=["audio.transcription"], approximate=True)
+
+
+class WhisperCppLauncher:
+    """Spawns ``whisper-server`` (whisper.cpp) for a speech-to-text binding."""
+
+    ENV_VAR = "THEYGENT_WHISPERCPP_BIN"
+
+    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 120.0) -> None:
+        self._startup_timeout = startup_timeout
+        try:
+            self._command: list[str] | None = resolve_engine_command(
+                exe_name="whisper-server",
+                env_var=self.ENV_VAR,
+                explicit=binary_path,
+                install_hint="install whisper.cpp (e.g. `brew install whisper-cpp`)",
+            )
+            self._reason: str | None = None
+        except EngineBinaryNotFound as exc:
+            self._command = None
+            self._reason = str(exc)
+
+    @property
+    def ready(self) -> bool:
+        return self._command is not None
+
+    @property
+    def not_ready_reason(self) -> str | None:
+        return self._reason
+
+    def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
+        assert self._command is not None
+        cmd = [
+            *self._command,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            # Serve the OpenAI transcriptions route directly — the gateway's api_base ends in /v1
+            # and LiteLLM appends /audio/transcriptions, landing exactly here.
+            "--inference-path",
+            "/v1/audio/transcriptions",
+            "-m",
+            locate_whisper_model(binding),
+        ]
+        if shutil.which("ffmpeg"):
+            # Browser recordings arrive as webm/opus; whisper-server transcodes via ffmpeg when
+            # told to. Without ffmpeg the server still runs — wav uploads only.
+            cmd += ["--convert", "--tmp-dir", tempfile.gettempdir()]
+        return cmd
+
+    async def launch(self, binding: ManagedBinding) -> EngineHandle:
+        if self._command is None:
+            raise EngineBinaryNotFound(self._reason or "whisper-server unavailable")
+        port = _free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = await _spawn_openai_server(
+            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+        )
+        return WhisperCppHandle(proc, base_url)
+
+
+# ── mlx-audio (the MLX audio.speech server — text-to-speech on Apple Silicon). A different
+#    program dispatched by the (engine, modality) key, like mlx vision and llamacpp
+#    transcription: mlx_audio.server natively serves the OpenAI /v1/audio/speech route (kokoro
+#    and friends), loading the requested model per request from the `model` field the gateway
+#    forwards (the registered binding.model rides through unchanged). It exposes no /health —
+#    /v1/models is the stable liveness route. Its STT route exists but is NOT registered here:
+#    its whisper loader failed against a real model, so transcription stays with whisper.cpp
+#    until an mlx-audio run proves green ("type-checks" is not "works"). ─────────────────────────
+
+
+class MlxAudioHandle(_SubprocessHandle):
+    def __init__(self, proc: subprocess.Popen[bytes], base_url: str) -> None:
+        super().__init__(proc, base_url, health_path="/v1/models")
+
+    async def capabilities(self) -> Capabilities:
+        # A speech server serves exactly one registered task; nothing else is probed.
+        return Capabilities(modalities=["audio.speech"], approximate=True)
+
+
+class MlxAudioLauncher:
+    """Spawns ``mlx_audio.server`` for a text-to-speech binding (Apple Silicon)."""
+
+    ENV_VAR = "THEYGENT_MLX_AUDIO_BIN"
+
+    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 120.0) -> None:
+        self._startup_timeout = startup_timeout
+        try:
+            self._command: list[str] | None = resolve_engine_command(
+                exe_name="mlx_audio.server",
+                env_var=self.ENV_VAR,
+                module="mlx_audio.server",
+                explicit=binary_path,
+                install_hint=(
+                    "install mlx-audio with its server extras (e.g. `uv tool install mlx-audio "
+                    "--with uvicorn --with fastapi --with webrtcvad --with python-multipart "
+                    "--with 'setuptools<81' --with 'misaki[en]'` plus spaCy's en_core_web_sm)"
+                ),
+            )
+            self._reason: str | None = None
+        except EngineBinaryNotFound as exc:
+            self._command = None
+            self._reason = str(exc)
+
+    @property
+    def ready(self) -> bool:
+        return self._command is not None
+
+    @property
+    def not_ready_reason(self) -> str | None:
+        return self._reason
+
+    def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
+        assert self._command is not None
+        # The server is model-agnostic at spawn: it loads whatever `model` each request names,
+        # and the gateway forwards the registered binding.model — so no model flag here.
+        del binding
+        return [*self._command, "--host", "127.0.0.1", "--port", str(port)]
+
+    async def launch(self, binding: ManagedBinding) -> EngineHandle:
+        if self._command is None:
+            raise EngineBinaryNotFound(self._reason or "mlx_audio.server unavailable")
+        port = _free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = await _spawn_openai_server(
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            health_path="/v1/models",
+        )
+        return MlxAudioHandle(proc, base_url)
 
 
 # ── MLX (managed, the Tier-A milestone — proven on Apple Silicon) ────────

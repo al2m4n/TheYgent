@@ -1,4 +1,4 @@
-"""``RunStore`` — Postgres-backed run persistence + thread memory.
+"""``RunStore`` — Postgres-backed run persistence + session memory.
 
 Replaces the earlier in-memory ``RunRegistry``. Every method takes an ``AsyncSession`` handed in
 by the caller, who owns the transaction boundary: the read path uses a request
@@ -6,9 +6,9 @@ session; the run-execution path opens a transaction per logical operation (so th
 post-stream pair-write is atomic on its own). Nothing here commits — the caller does.
 
 Domain/persistence split: callers see the Pydantic ``Run`` and plain message
-tuples; ``RunRow``/``MessageRow``/``ThreadRow`` never leak out.
+tuples; ``RunRow``/``MessageRow``/``ChatSessionRow`` never leak out.
 
-Thread memory is **mechanical, not smart**: store the turns, replay them verbatim.
+Session memory is **mechanical, not smart**: store the turns, replay them verbatim.
 No summarization, no token-budget truncation, no vector retrieval — full replay only.
 """
 
@@ -31,11 +31,11 @@ from theygent_control_plane.models import (
     BenchPresetRow,
     BenchRunRow,
     BenchSuiteRow,
+    ChatSessionRow,
     ConnectionRow,
     McpServerRow,
     MessageRow,
     RunRow,
-    ThreadRow,
     TriggerRow,
 )
 from theygent_control_plane.run import (
@@ -50,10 +50,10 @@ from theygent_control_plane.run import (
     ConnectionKind,
     Run,
     RunStatus,
+    SessionDetail,
+    SessionMessage,
+    SessionSummary,
     StoredVersion,
-    ThreadDetail,
-    ThreadMessage,
-    ThreadSummary,
     Trigger,
     TriggerKind,
     new_ulid,
@@ -81,7 +81,7 @@ def _to_run(row: RunRow) -> Run:
     """Map a persistence row to the detached domain entity."""
     return Run(
         id=row.id,
-        thread_id=row.thread_id,
+        session_id=row.session_id,
         # DB columns are untyped str; the lifecycle is constrained at write time.
         status=cast(RunStatus, row.status),
         model=row.model,
@@ -112,7 +112,7 @@ class RunStore:
         session: AsyncSession,
         *,
         model: str,
-        thread_id: str | None,
+        session_id: str | None,
         params: dict | None,
         graph_id: str | None = None,
         graph_version: str | None = None,
@@ -124,7 +124,7 @@ class RunStore:
         # interactive path is unchanged; a schedule-/webhook-fired run passes it.
         run = Run(
             model=model,
-            thread_id=thread_id,
+            session_id=session_id,
             graph_id=graph_id,
             graph_version=graph_version,
             content_hash=content_hash,
@@ -133,7 +133,7 @@ class RunStore:
         session.add(
             RunRow(
                 id=run.id,
-                thread_id=thread_id,
+                session_id=session_id,
                 status=run.status,
                 model=model,
                 params=params or None,
@@ -166,14 +166,14 @@ class RunStore:
         ``GET /runs/{id}`` correlates across a crash/resume. A DBOS step may re-execute if the
         process dies after the row commits but before the step result is journaled (at-least-once),
         so this is ON CONFLICT DO NOTHING — a re-exec is a no-op, never a duplicate-PK crash. The
-        thread-memory path is unused on the durable ``fire()`` route (thread_id is None), so this
-        creates an un-threaded run, exactly like an interactive graph run minus the new-ULID id."""
+        session-memory path is unused on the durable ``fire()`` route (session_id is None), so this
+        creates a session-less run, exactly like an interactive graph run minus the new-ULID id."""
         ts = now()
         await session.execute(
             pg_insert(RunRow)
             .values(
                 id=run_id,
-                thread_id=None,
+                session_id=None,
                 status="created",
                 model=model,
                 params=None,
@@ -217,68 +217,82 @@ class RunStore:
         rows = (await session.execute(stmt)).scalars().all()
         return [_to_run(row) for row in rows]
 
-    async def list_threads(
-        self, session: AsyncSession, *, limit: int, before: str | None = None
-    ) -> list[ThreadSummary]:
-        """Recent threads, newest-activity first.
-
-        Each summary carries the message count, last-activity instant, and the first user
-        message preview (always ``position == 0`` — turns are appended as user/assistant
-        pairs, so the very first user turn is position 0). ``before`` is a thread id cursor
-        on ``(created_at, id)`` DESC, mirroring ``list_runs``.
-        """
+    @staticmethod
+    def _session_summary_stmt() -> Any:
+        """The base summary select (aggregates joined onto the session row) shared by the
+        list view and the single-row summary an upsert returns."""
         counts = (
             select(
-                MessageRow.thread_id.label("thread_id"),
+                MessageRow.session_id.label("session_id"),
                 func.count().label("message_count"),
                 func.max(MessageRow.created_at).label("last_message_at"),
             )
-            .group_by(MessageRow.thread_id)
+            .group_by(MessageRow.session_id)
             .subquery()
         )
         first_user = (
-            select(MessageRow.thread_id.label("thread_id"), MessageRow.content.label("preview"))
+            select(MessageRow.session_id.label("session_id"), MessageRow.content.label("preview"))
             .where(MessageRow.position == 0)
             .subquery()
         )
-        stmt = (
+        return (
             select(
-                ThreadRow.id,
-                ThreadRow.created_at,
-                ThreadRow.updated_at,
+                ChatSessionRow.id,
+                ChatSessionRow.created_at,
+                ChatSessionRow.updated_at,
+                ChatSessionRow.meta.label("meta"),
                 func.coalesce(counts.c.message_count, 0).label("message_count"),
-                func.coalesce(counts.c.last_message_at, ThreadRow.updated_at).label(
+                func.coalesce(counts.c.last_message_at, ChatSessionRow.updated_at).label(
                     "last_activity"
                 ),
                 first_user.c.preview,
             )
-            .outerjoin(counts, counts.c.thread_id == ThreadRow.id)
-            .outerjoin(first_user, first_user.c.thread_id == ThreadRow.id)
-            .order_by(ThreadRow.created_at.desc(), ThreadRow.id.desc())
+            .outerjoin(counts, counts.c.session_id == ChatSessionRow.id)
+            .outerjoin(first_user, first_user.c.session_id == ChatSessionRow.id)
+        )
+
+    @staticmethod
+    def _to_session_summary(row: Any) -> SessionSummary:
+        return SessionSummary(
+            id=row.id,
+            created_at=row.created_at,
+            last_activity=row.last_activity,
+            message_count=int(row.message_count),
+            preview=row.preview,
+            metadata=row.meta,
+        )
+
+    async def list_chat_sessions(
+        self, session: AsyncSession, *, limit: int, before: str | None = None
+    ) -> list[SessionSummary]:
+        """Recent sessions, newest-activity first.
+
+        Each summary carries the message count, last-activity instant, the first user
+        message preview (always ``position == 0`` — turns are appended as user/assistant
+        pairs, so the very first user turn is position 0), and the client-owned metadata.
+        ``before`` is a session id cursor on ``(created_at, id)`` DESC, mirroring ``list_runs``.
+        """
+        stmt = (
+            self._session_summary_stmt()
+            .order_by(ChatSessionRow.created_at.desc(), ChatSessionRow.id.desc())
             .limit(limit)
         )
         if before is not None:
-            anchor = await session.get(ThreadRow, before)
+            anchor = await session.get(ChatSessionRow, before)
             if anchor is not None:
                 stmt = stmt.where(
-                    tuple_(ThreadRow.created_at, ThreadRow.id) < (anchor.created_at, anchor.id)
+                    tuple_(ChatSessionRow.created_at, ChatSessionRow.id)
+                    < (anchor.created_at, anchor.id)
                 )
         rows = (await session.execute(stmt)).all()
-        return [
-            ThreadSummary(
-                id=row.id,
-                created_at=row.created_at,
-                last_activity=row.last_activity,
-                message_count=int(row.message_count),
-                preview=row.preview,
-            )
-            for row in rows
-        ]
+        return [self._to_session_summary(row) for row in rows]
 
-    async def get_thread(self, session: AsyncSession, thread_id: str) -> ThreadDetail | None:
-        """A thread and its messages in ``position`` order."""
-        thread = await session.get(ThreadRow, thread_id)
-        if thread is None:
+    async def get_chat_session(
+        self, session: AsyncSession, session_id: str
+    ) -> SessionDetail | None:
+        """A session and its messages in ``position`` order."""
+        chat_session = await session.get(ChatSessionRow, session_id)
+        if chat_session is None:
             return None
         rows = (
             await session.execute(
@@ -290,16 +304,17 @@ class RunStore:
                     MessageRow.position,
                     MessageRow.created_at,
                 )
-                .where(MessageRow.thread_id == thread_id)
+                .where(MessageRow.session_id == session_id)
                 .order_by(MessageRow.position)
             )
         ).all()
-        return ThreadDetail(
-            id=thread.id,
-            created_at=thread.created_at,
-            updated_at=thread.updated_at,
+        return SessionDetail(
+            id=chat_session.id,
+            created_at=chat_session.created_at,
+            updated_at=chat_session.updated_at,
+            metadata=chat_session.meta,
             messages=[
-                ThreadMessage(
+                SessionMessage(
                     id=row.id,
                     run_id=row.run_id,
                     role=row.role,
@@ -417,25 +432,66 @@ class RunStore:
         )
         return cast("CursorResult[Any]", result).rowcount or 0
 
-    async def ensure_thread(self, session: AsyncSession, thread_id: str) -> None:
-        """Idempotently create the thread row (existing or new). ON CONFLICT DO
-        NOTHING so a follow-up run in an existing thread is a no-op, not a PK violation."""
+    async def ensure_chat_session(self, session: AsyncSession, session_id: str) -> None:
+        """Idempotently create the session row (existing or new). ON CONFLICT DO
+        NOTHING so a follow-up run in an existing session is a no-op, not a PK violation."""
         ts = now()
         await session.execute(
-            pg_insert(ThreadRow)
-            .values(id=thread_id, created_at=ts, updated_at=ts, meta=None)
-            .on_conflict_do_nothing(index_elements=[ThreadRow.id])
+            pg_insert(ChatSessionRow)
+            .values(id=session_id, created_at=ts, updated_at=ts, meta=None)
+            .on_conflict_do_nothing(index_elements=[ChatSessionRow.id])
         )
 
-    async def load_thread_messages(
-        self, session: AsyncSession, thread_id: str
+    async def upsert_chat_session(
+        self, session: AsyncSession, *, session_id: str, metadata: dict[str, Any] | None
+    ) -> SessionSummary:
+        """The client-write ensure: create the session row, or — when it already exists and
+        ``metadata`` was provided — replace its metadata WHOLE (never a deep merge; the value is
+        opaque and client-owned). ``metadata=None`` on an existing row changes nothing, so the
+        call is an idempotent ensure. Returns the summary row either way (the caller owns the
+        transaction, like every other store method)."""
+        ts = now()
+        stmt = pg_insert(ChatSessionRow).values(
+            id=session_id, created_at=ts, updated_at=ts, meta=metadata
+        )
+        if metadata is not None:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[ChatSessionRow.id],
+                set_={"metadata": metadata, "updated_at": ts},
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=[ChatSessionRow.id])
+        await session.execute(stmt)
+        row = (
+            await session.execute(
+                self._session_summary_stmt().where(ChatSessionRow.id == session_id)
+            )
+        ).one()
+        return self._to_session_summary(row)
+
+    async def delete_chat_session(self, session: AsyncSession, session_id: str) -> bool:
+        """Delete a session and its messages, DETACHING (not deleting) its runs — run history
+        outlives the conversation it happened in, so ``run.session_id`` is nulled and the run
+        rows stay. All three writes ride in the caller's one transaction. Returns whether the
+        session row existed."""
+        await session.execute(
+            update(RunRow).where(RunRow.session_id == session_id).values(session_id=None)
+        )
+        await session.execute(delete(MessageRow).where(MessageRow.session_id == session_id))
+        result = await session.execute(
+            delete(ChatSessionRow).where(ChatSessionRow.id == session_id)
+        )
+        return bool(cast("CursorResult[Any]", result).rowcount)
+
+    async def load_session_messages(
+        self, session: AsyncSession, session_id: str
     ) -> list[dict[str, str]]:
         """Prior turns ordered by ``position`` (the ordering key, never a timestamp), as
         OpenAI-shaped ``{role, content}`` dicts ready to prepend to the new input."""
         rows = (
             await session.execute(
                 select(MessageRow.role, MessageRow.content)
-                .where(MessageRow.thread_id == thread_id)
+                .where(MessageRow.session_id == session_id)
                 .order_by(MessageRow.position)
             )
         ).all()
@@ -445,56 +501,80 @@ class RunStore:
         self,
         session: AsyncSession,
         *,
-        thread_id: str,
-        run_id: str,
+        session_id: str,
+        run_id: str | None,
         user_content: str,
         assistant_content: str,
-    ) -> None:
+    ) -> list[SessionMessage]:
         """Append the user+assistant pair at the next two positions.
 
-        Called inside the caller's single success transaction, alongside the run's
-        ``completed`` update — so the pair and the run state land together or not at all.
-        The thread row is locked first (FOR UPDATE) so concurrent runs in the same thread
-        can't pick the same ``position`` (the control-plane scales horizontally)."""
-        await session.execute(
-            select(ThreadRow.id).where(ThreadRow.id == thread_id).with_for_update()
-        )
-        # The thread's updated_at means "last write"; without this it stays frozen at creation
+        Called inside the caller's single transaction — on the run path alongside the run's
+        ``completed`` update (so the pair and the run state land together or not at all), and by
+        the client-write turns endpoint with ``run_id=None`` (persisted chat history with no run
+        behind it). The session row is locked first (FOR UPDATE) so concurrent writers to the
+        same session can't pick the same ``position`` (the control-plane scales horizontally).
+        Returns the two appended messages, id/position stamped for the wire — or an EMPTY list
+        when the session row no longer exists (see below)."""
+        locked = (
+            await session.execute(
+                select(ChatSessionRow.id).where(ChatSessionRow.id == session_id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked is None:
+            # The session was deleted out from under the writer (DELETE /sessions racing an
+            # in-flight run in that session). Inserting the pair would hit the
+            # message→chat_session FK and blow up the CALLER'S whole transaction — for a run,
+            # that transaction also carries the `completed` + output write, so the run's real
+            # outcome would be destroyed by a session deletion. The honest posture: the run
+            # still completes and persists its output; it simply has no session left to write
+            # into. Append nothing, loudly return the empty list (the turns endpoint maps it
+            # to 404; the run paths ignore the return value).
+            return []
+        # The session's updated_at means "last write"; without this it stays frozen at creation
         # even as turns land (the row is already locked above, so the touch is race-free).
         await session.execute(
-            update(ThreadRow).where(ThreadRow.id == thread_id).values(updated_at=now())
+            update(ChatSessionRow).where(ChatSessionRow.id == session_id).values(updated_at=now())
         )
         next_pos = (
             await session.execute(
                 select(func.coalesce(func.max(MessageRow.position), -1) + 1).where(
-                    MessageRow.thread_id == thread_id
+                    MessageRow.session_id == session_id
                 )
             )
         ).scalar_one()
         ts = now()
-        await session.execute(
-            insert(MessageRow),
-            [
-                {
-                    "id": new_ulid(),
-                    "thread_id": thread_id,
-                    "run_id": run_id,
-                    "role": "user",
-                    "content": user_content,
-                    "position": next_pos,
-                    "created_at": ts,
-                },
-                {
-                    "id": new_ulid(),
-                    "thread_id": thread_id,
-                    "run_id": run_id,
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "position": next_pos + 1,
-                    "created_at": ts,
-                },
-            ],
-        )
+        pair = [
+            {
+                "id": new_ulid(),
+                "session_id": session_id,
+                "run_id": run_id,
+                "role": "user",
+                "content": user_content,
+                "position": next_pos,
+                "created_at": ts,
+            },
+            {
+                "id": new_ulid(),
+                "session_id": session_id,
+                "run_id": run_id,
+                "role": "assistant",
+                "content": assistant_content,
+                "position": next_pos + 1,
+                "created_at": ts,
+            },
+        ]
+        await session.execute(insert(MessageRow), pair)
+        return [
+            SessionMessage(
+                id=cast(str, m["id"]),
+                run_id=run_id,
+                role=cast(str, m["role"]),
+                content=cast(str, m["content"]),
+                position=cast(int, m["position"]),
+                created_at=ts,
+            )
+            for m in pair
+        ]
 
 
 def _to_mcp_config(row: McpServerRow) -> McpServerConfig:
@@ -632,7 +712,7 @@ class AgentStore:
         of the same bytes is idempotent (no conflict, no new row). Publishing *different* content
         under an existing coordinate raises :class:`VersionConflict` (immutability guard).
 
-        The agent row is locked FOR UPDATE first (like ``append_turn`` locks the thread row) so
+        The agent row is locked FOR UPDATE first (like ``append_turn`` locks the session row) so
         concurrent publishes can't pick the same ``seq`` or both insert the same version — the
         control-plane scales horizontally. ``seq`` is ``max(seq) + 1`` per agent, the
         monotonic ordering key, starting at 1."""

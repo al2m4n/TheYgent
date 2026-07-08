@@ -4,14 +4,14 @@ Surfaces (theygent-native, deliberately NOT OpenAI-shaped — the OpenAI-compat
 surface lives on the inference plane):
 
   * POST /runs            create + execute a run; SSE stream when stream:true.
-                          Optional ``thread_id`` opts the run into conversational memory.
+                          Optional ``session_id`` opts the run into conversational memory.
   * GET  /runs/{run_id}   run status (now read from Postgres — survives a restart)
   * GET  /healthz         liveness
   * GET  /readyz          readiness — can it reach the inference plane AND Postgres?
 
 The control-plane reaches inference **only** over HTTP via the gateway-client (the
 one hard-to-reverse rule). Postgres is the control-plane store: runs persist
-and threads replay prior turns. Two session paths: read handlers take a request-
+and chat sessions replay prior turns. Two DB-session paths: read handlers take a request-
 scoped session via ``Depends``; run execution opens a transaction per logical operation
 via the sessionmaker, because a streaming run writes its turns *after* returning the
 response. ``create_app`` takes ``database_url`` + ``inference_base_url`` (or injected
@@ -35,7 +35,7 @@ from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
@@ -63,6 +63,7 @@ from theygent_control_plane.observability import (
     build_otlp_sink,
     now_ns,
 )
+from theygent_control_plane.reasoning import ThinkSplitter, split_think
 from theygent_control_plane.run import _SECRETISH_CONFIG_KEYS as _SECRETISH_CONFIG_KEYS
 from theygent_control_plane.run import (
     BenchCase,
@@ -74,6 +75,7 @@ from theygent_control_plane.run import (
     Run,
     Trigger,
     TriggerKind,
+    new_ulid,
 )
 from theygent_control_plane.secrets import SECRET_KEY_ENV, SecretStore
 from theygent_control_plane.store import (
@@ -135,9 +137,9 @@ class RunRequest(BaseModel):
     model: str
     params: dict[str, Any] = {}
     stream: bool = True
-    # Opt-in conversational memory: None -> one-shot (nothing persisted to a thread);
+    # Opt-in conversational memory: None -> one-shot (nothing persisted to a session);
     # given (existing or new) -> prior turns replayed, this turn appended.
-    thread_id: str | None = None
+    session_id: str | None = None
 
 
 class ResumeRunRequest(BaseModel):
@@ -150,7 +152,7 @@ class ResumeRunRequest(BaseModel):
 class GraphRunRequest(BaseModel):
     # The IR envelope, inline. Kept as a raw dict so the control-plane owns the 400 shape
     # when it fails IR validation, rather than FastAPI's generic 422. ``input`` binds to the
-    # graph's input boundary node; ``thread_id`` reuses thread memory through the graph path
+    # graph's input boundary node; ``session_id`` reuses session memory through the graph path
     # unchanged. Snake_case request fields, matching /runs.
     #
     # ``input`` is ``Any``, not ``str`` (deliberate contract extension — graph path only).
@@ -162,7 +164,7 @@ class GraphRunRequest(BaseModel):
     ir: dict[str, Any]
     input: Any = None
     stream: bool = True
-    thread_id: str | None = None
+    session_id: str | None = None
 
 
 class CreateAgentRequest(BaseModel):
@@ -185,12 +187,12 @@ class AgentRunRequest(BaseModel):
     # Invoke a saved agent by reference. ``input`` binds to the agent's input boundary node
     # (Any, like /graphs/runs — a multi-input agent's input is naturally an object). The version is
     # resolved as: pinned ``content_hash`` (immutable, content-addressed) > pinned ``version`` >
-    # latest published (default). ``thread_id`` reuses thread memory; ``stream`` mirrors the
+    # latest published (default). ``session_id`` reuses session memory; ``stream`` mirrors the
     # other run surfaces. Ships input-only invocation; typed params are deferred.
     input: Any = None
     version: str | None = None
     content_hash: str | None = None
-    thread_id: str | None = None
+    session_id: str | None = None
     stream: bool = True
 
 
@@ -202,8 +204,24 @@ class InvokeRequest(BaseModel):
     input: Any = None
     version: str | None = None
     content_hash: str | None = None
-    thread_id: str | None = None
+    session_id: str | None = None
     stream: bool = False
+
+
+class CreateSessionRequest(BaseModel):
+    # Client-write ensure of a session. ``id`` omitted → the server mints one (the same idgen
+    # runs use); given → idempotent ensure (an existing session updates its metadata iff
+    # provided — whole-value replace, the value is opaque and client-owned).
+    id: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AppendTurnsRequest(BaseModel):
+    # A client-appended user/assistant pair (a direct-to-inference chat persisting its
+    # history). Both non-blank: the no-blank-turns posture the run paths hold applies to
+    # client writes too. The pair lands atomically with ``run_id`` NULL.
+    user_content: str = Field(min_length=1)
+    assistant_content: str = Field(min_length=1)
 
 
 class CreateTriggerRequest(BaseModel):
@@ -722,25 +740,25 @@ def create_app(
                 code="engine_name_not_allowed",
             )
 
-        # Create the run (and ensure its thread) in one transaction so it persists
+        # Create the run (and ensure its session) in one transaction so it persists
         # immediately — GET /runs/{id} works during streaming and across a restart.
         async with tx() as session:
-            if req.thread_id:
-                await store.ensure_thread(session, req.thread_id)
+            if req.session_id:
+                await store.ensure_chat_session(session, req.session_id)
             run = await store.create_run(
-                session, model=req.model, thread_id=req.thread_id, params=req.params
+                session, model=req.model, session_id=req.session_id, params=req.params
             )
 
         # Naive full replay: prior turns verbatim + the new input. No summarization,
         # no truncation — those are deliberate later additions.
         messages: list[dict[str, Any]] = []
-        if req.thread_id:
+        if req.session_id:
             async with tx() as session:
-                messages = list(await store.load_thread_messages(session, req.thread_id))
+                messages = list(await store.load_session_messages(session, req.session_id))
         messages.append({"role": "user", "content": req.input})
         logger.info(
             "run.created",
-            extra={"run_id": run.id, "model": run.model, "thread_id": run.thread_id},
+            extra={"run_id": run.id, "model": run.model, "session_id": run.session_id},
         )
 
         # Trace the prompt run too (a one-node run). No agent → the capture level is the
@@ -804,6 +822,10 @@ def create_app(
                 finish_reason: str | None = None
                 first_token_ns: int | None = None
                 usage: dict[str, int] | None = None
+                # Engine variance: thinking may arrive INLINE in `content` as <think> tags
+                # (a raw-template server) instead of the separate `reasoning_content` field —
+                # one splitter per stream routes it to `event: reasoning` either way.
+                splitter = ThinkSplitter()
                 # The generation is the run's single ``llm`` node span (under the run-root) —
                 # the gap before it is the open_stream/engine latency; the bar is the generation.
                 async with run_trace.node_span(_PROMPT_NODE) as scope:
@@ -819,18 +841,33 @@ def create_app(
                         delta = choice.delta
                         if delta is None:
                             continue
-                        # A reasoning model streams `reasoning_content` (its thinking) before
-                        # `content` (its answer). Forward the thinking as visible progress so it
-                        # doesn't look frozen, but NEVER into `output` — only content is the answer.
+                        # A reasoning model streams its thinking before its answer. Forward the
+                        # thinking as visible progress so it doesn't look frozen, but NEVER into
+                        # `output` — only the answer is the answer.
                         reasoning = getattr(delta, "reasoning_content", None)
                         if reasoning:
                             yield _sse("reasoning", {"runId": run.id, "reasoning": reasoning})
                         content = getattr(delta, "content", None)
                         if content:
-                            if first_token_ns is None:
-                                first_token_ns = now_ns()
-                            output += content
-                            yield _sse("delta", {"runId": run.id, "delta": content})
+                            answer, thinking = splitter.push(content)
+                            if thinking:
+                                yield _sse("reasoning", {"runId": run.id, "reasoning": thinking})
+                            if answer:
+                                if first_token_ns is None:
+                                    first_token_ns = now_ns()  # ttft = first ANSWER token
+                                output += answer
+                                yield _sse("delta", {"runId": run.id, "delta": answer})
+                    # Stream end: release what the splitter held (a false-partial tag is answer
+                    # text; an unclosed think block stays reasoning, leaving the output honestly
+                    # blank for `_empty_output_reason`).
+                    answer, thinking = splitter.flush()
+                    if thinking:
+                        yield _sse("reasoning", {"runId": run.id, "reasoning": thinking})
+                    if answer:
+                        if first_token_ns is None:
+                            first_token_ns = now_ns()
+                        output += answer
+                        yield _sse("delta", {"runId": run.id, "delta": answer})
                     scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
                     attrs: dict[str, Any] = {"gen_ai.request.model": run.model}
                     if finish_reason:
@@ -841,16 +878,17 @@ def create_app(
                     scope.set_attributes(attrs)
                 # Success: mark completed AND append the turn pair in ONE transaction. The output
                 # is persisted; an empty answer (model hit its token cap before producing
-                # content) is surfaced honestly and contributes no thread turn (no blank assistant).
+                # content) is surfaced honestly and contributes no session turn (no blank
+                # assistant).
                 empty_reason = _empty_output_reason(output, finish_reason)
                 async with tx() as s:
                     await store.set_status(
                         s, run.id, "completed", output=output, error=empty_reason
                     )
-                    if run.thread_id and empty_reason is None:
+                    if run.session_id and empty_reason is None:
                         await store.append_turn(
                             s,
-                            thread_id=run.thread_id,
+                            session_id=run.session_id,
                             run_id=run.id,
                             user_content=user_input,
                             assistant_content=output,
@@ -861,7 +899,7 @@ def create_app(
                 yield _sse("run", {"runId": run.id, "status": "completed"})
                 yield "data: [DONE]\n\n"
             except Exception as exc:  # inference died mid-stream: fail cleanly.
-                # A failed run contributes no turns — write nothing to the thread, so it
+                # A failed run contributes no turns — write nothing to the session, so it
                 # never holds a dangling user turn with no answer. The run row records it.
                 async with tx() as s:
                     await store.set_status(s, run.id, "failed", error=str(exc))
@@ -910,7 +948,11 @@ def create_app(
                     model=run.model, messages=messages, params=params, extra_headers=_headers(run)
                 )
                 choice = completion.choices[0] if completion.choices else None
-                output = (choice.message.content if choice else "") or ""
+                raw_content = (choice.message.content if choice else "") or ""
+                # A raw-template server may leave the model's thinking inline as <think> tags;
+                # only the answer persists (parity with the separate-field shape, whose
+                # non-stream `reasoning_content` is progress, not the answer, and not stored).
+                output, _thinking = split_think(raw_content)
                 finish_reason = choice.finish_reason if choice else None
                 scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
                 scope.set_attributes(
@@ -939,14 +981,14 @@ def create_app(
             )
 
         # An empty answer (model hit its token cap before producing content) is surfaced honestly
-        # and contributes no thread turn — same posture as the streaming path (no blank turns).
+        # and contributes no session turn — same posture as the streaming path (no blank turns).
         empty_reason = _empty_output_reason(output, finish_reason)
         async with tx() as s:
             await store.set_status(s, run.id, "completed", output=output, error=empty_reason)
-            if run.thread_id and empty_reason is None:
+            if run.session_id and empty_reason is None:
                 await store.append_turn(
                     s,
-                    thread_id=run.thread_id,
+                    session_id=run.session_id,
                     run_id=run.id,
                     user_content=user_input,
                     assistant_content=output,
@@ -1242,23 +1284,79 @@ def create_app(
             "reason": reason,
         }
 
-    @app.get("/threads", dependencies=[Depends(require_auth)])
-    async def list_threads(
+    @app.get("/sessions", dependencies=[Depends(require_auth)])
+    async def list_sessions(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
         session: AsyncSession = Depends(get_session),
     ) -> Any:
-        # Read-only paginated thread list (newest activity first). Same additive shape as GET /runs.
-        # No new memory write surface — this only *reads* what runs already persisted.
-        threads = await store.list_threads(session, limit=limit, before=before)
-        return {"threads": [t.model_dump(mode="json") for t in threads]}
+        # Read-only paginated session list (newest activity first). Same additive shape as
+        # GET /runs.
+        sessions = await store.list_chat_sessions(session, limit=limit, before=before)
+        return {"sessions": [s.model_dump(mode="json") for s in sessions]}
 
-    @app.get("/threads/{thread_id}", dependencies=[Depends(require_auth)])
-    async def get_thread(thread_id: str, session: AsyncSession = Depends(get_session)) -> Any:
-        thread = await store.get_thread(session, thread_id)
-        if thread is None:
-            return _error(f"unknown thread {thread_id!r}", status=404, code="thread_not_found")
-        return thread.model_dump(mode="json")
+    @app.get("/sessions/{session_id}", dependencies=[Depends(require_auth)])
+    async def get_session_detail(
+        session_id: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        detail = await store.get_chat_session(session, session_id)
+        if detail is None:
+            return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
+        return detail.model_dump(mode="json")
+
+    # Sessions are writable by the client too (a deliberate contract extension): a
+    # direct-to-inference chat — which never passes through a run — can persist its history
+    # here. The run paths keep writing their own turns exactly as before; these endpoints are
+    # a second writer, serialized by the same FOR UPDATE lock in ``append_turn``.
+
+    @app.post("/sessions", status_code=201, dependencies=[Depends(require_auth)])
+    async def create_session_endpoint(req: CreateSessionRequest) -> Any:
+        # Idempotent ensure: a missing id mints one server-side (the same idgen runs use); an
+        # existing id updates metadata iff provided (whole-value replace) and returns the row.
+        session_id = req.id or new_ulid()
+        async with tx() as session:
+            summary = await store.upsert_chat_session(
+                session, session_id=session_id, metadata=req.metadata
+            )
+        return JSONResponse(summary.model_dump(mode="json"), status_code=201)
+
+    @app.post("/sessions/{session_id}/turns", status_code=201, dependencies=[Depends(require_auth)])
+    async def append_session_turns(session_id: str, req: AppendTurnsRequest) -> Any:
+        # Append a client-written user/assistant pair with run_id NULL — the same FOR-UPDATE +
+        # max(position)+1 mechanics as the run paths, so client and run writers interleave
+        # without colliding. No implicit create: an unknown session is a 404, not an ensure
+        # (POST /sessions is the ensure).
+        async with tx() as session:
+            if await store.get_chat_session(session, session_id) is None:
+                return _error(
+                    f"unknown session {session_id!r}", status=404, code="session_not_found"
+                )
+            appended = await store.append_turn(
+                session,
+                session_id=session_id,
+                run_id=None,
+                user_content=req.user_content,
+                assistant_content=req.assistant_content,
+            )
+        if not appended:
+            # The session vanished between the (unlocked) existence check and the locked
+            # append — a concurrent DELETE won the race and append_turn wrote nothing. Same
+            # 404 as if it never existed; never a 201 carrying an empty pair.
+            return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
+        return JSONResponse(
+            {"messages": [m.model_dump(mode="json") for m in appended]}, status_code=201
+        )
+
+    @app.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
+    async def delete_session_endpoint(session_id: str) -> Any:
+        # One transaction: detach the session's runs (run history outlives the conversation it
+        # happened in, so run.session_id is nulled — never a run delete), drop its messages,
+        # drop the session row.
+        async with tx() as session:
+            deleted = await store.delete_chat_session(session, session_id)
+        if not deleted:
+            return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
+        return Response(status_code=204)
 
     # ── theygent-native API: /graphs/runs (the IR walker) ───────────
     # The consumer of the IR seam: validate an IRDocument, walk it node by node, and
@@ -1277,16 +1375,16 @@ def create_app(
         # 2. Execute on the shared IR-run path — the SAME path /agents/{id}/runs reuses; the
         #    only difference between the two surfaces is where the IR came from (inline body here,
         #    the registry there). Everything below — engine/tool/MCP up-front checks, the Run row,
-        #    SSE relay, thread memory — is identical.
+        #    SSE relay, session memory — is identical.
         return await _execute_ir_run(
-            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+            ir, input_value=req.input, session_id=req.session_id, stream=req.stream
         )
 
     async def _execute_ir_run(
         ir: IRDocument,
         *,
         input_value: Any,
-        thread_id: str | None,
+        session_id: str | None,
         stream: bool,
         trigger_id: str | None = None,
     ) -> Any:
@@ -1414,12 +1512,12 @@ def create_app(
         # invoke this is the agent's coordinate (ir.id == agent id, ir.version == the resolved
         # version, chash == the stored content hash), so the Run row carries it.
         async with tx() as session:
-            if thread_id:
-                await store.ensure_thread(session, thread_id)
+            if session_id:
+                await store.ensure_chat_session(session, session_id)
             run = await store.create_run(
                 session,
                 model=run_model,
-                thread_id=thread_id,
+                session_id=session_id,
                 params=None,
                 graph_id=ir.id,
                 graph_version=ir.version,
@@ -1427,12 +1525,12 @@ def create_app(
                 trigger_id=trigger_id,
             )
 
-        # Thread memory is unchanged through the graph path: prior turns replay into the llm
+        # Session memory is unchanged through the graph path: prior turns replay into the llm
         # node's messages (the walker prepends ctx.prior_messages).
         prior: list[dict[str, Any]] = []
-        if thread_id:
+        if session_id:
             async with tx() as session:
-                prior = list(await store.load_thread_messages(session, thread_id))
+                prior = list(await store.load_session_messages(session, session_id))
         logger.info(
             "graph_run.created",
             extra={
@@ -1440,7 +1538,7 @@ def create_app(
                 "graph_id": run.graph_id,
                 "graph_version": run.graph_version,
                 "content_hash": run.content_hash,
-                "thread_id": run.thread_id,
+                "session_id": run.session_id,
             },
         )
 
@@ -1544,10 +1642,10 @@ def create_app(
                     )
                     # No turn for an empty output — never store a blank assistant turn (the
                     # output != "" guard holds even when no empty_reason was derived).
-                    if run.thread_id and result.empty_reason is None and output != "":
+                    if run.session_id and result.empty_reason is None and output != "":
                         await store.append_turn(
                             s,
-                            thread_id=run.thread_id,
+                            session_id=run.session_id,
                             run_id=run.id,
                             user_content=_coerce_output(user_input),
                             assistant_content=output,
@@ -1634,10 +1732,10 @@ def create_app(
             # No turn for an empty output — never store a blank assistant turn (the output != ""
             # guard holds even when no empty_reason was derived).
             await store.set_status(s, run.id, "completed", output=output, error=result.empty_reason)
-            if run.thread_id and result.empty_reason is None and output != "":
+            if run.session_id and result.empty_reason is None and output != "":
                 await store.append_turn(
                     s,
-                    thread_id=run.thread_id,
+                    session_id=run.session_id,
                     run_id=run.id,
                     user_content=_coerce_output(user_input),
                     assistant_content=output,
@@ -1890,14 +1988,14 @@ def create_app(
             extra={"trigger_id": trigger.id, "agent_id": trigger.agent_id, "kind": trigger.kind},
         )
         return await _execute_ir_run(
-            ir, input_value=input_value, thread_id=None, stream=False, trigger_id=trigger.id
+            ir, input_value=input_value, session_id=None, stream=False, trigger_id=trigger.id
         )
 
     @app.post("/agents/{agent_id}/runs", dependencies=[Depends(require_auth)])
     async def run_agent(agent_id: str, req: AgentRunRequest) -> Any:
         # Invoke-by-reference: resolve the agent's IR (pinned contentHash > pinned version >
         # latest), then run it through the existing walker path (_execute_ir_run) — same SSE relay,
-        # same Run row (recording the agent's graph_id/graph_version/contentHash), same thread
+        # same Run row (recording the agent's graph_id/graph_version/contentHash), same session
         # memory. The only new thing is *where the IR came from*: the registry, not the body.
         ir, err = await _resolve_agent_ir(
             agent_id, version=req.version, content_hash_pin=req.content_hash
@@ -1907,7 +2005,7 @@ def create_app(
         assert ir is not None
         logger.info("agent.invoked", extra={"agent_id": agent_id})
         return await _execute_ir_run(
-            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+            ir, input_value=req.input, session_id=req.session_id, stream=req.stream
         )
 
     @app.post("/agents/{agent_id}/durable-runs", dependencies=[Depends(require_auth)])
@@ -1944,7 +2042,7 @@ def create_app(
             "content_hash": req.content_hash or (None if req.version else ir.content_hash),
             "enqueued_ns": now_ns(),  # the workflow emits the enqueue→pickup wait span
         }
-        handle = await runtime.enqueue_run(agent_ref, req.input, thread_id=req.thread_id)
+        handle = await runtime.enqueue_run(agent_ref, req.input, session_id=req.session_id)
         run_id = handle.workflow_id
         logger.info("agent.durable_run", extra={"agent_id": agent_id, "run_id": run_id})
         # The run row is written by the workflow's first step on worker pickup (async), so wait
@@ -2246,7 +2344,7 @@ def create_app(
         assert ir is not None
         logger.info("agent.invoked_unattended", extra={"agent_id": agent_id})
         return await _execute_ir_run(
-            ir, input_value=req.input, thread_id=req.thread_id, stream=req.stream
+            ir, input_value=req.input, session_id=req.session_id, stream=req.stream
         )
 
     @app.post("/hooks/{trigger_id}")
@@ -2629,7 +2727,7 @@ def _canonical_ir_and_view(ir: IRDocument) -> tuple[dict[str, Any], dict[str, An
 
 
 def _coerce_output(value: Any) -> str:
-    """The run's output as a string for the wire + thread storage. A graph's output node may
+    """The run's output as a string for the wire + session storage. A graph's output node may
     bind a non-string value (e.g. ``http_fetch``'s ``{status, body, headers}``); serialize it so
     the ``output`` field and the ``assistant`` turn stay strings. A graph that binds the llm text
     passes through unchanged — backward-compatible."""

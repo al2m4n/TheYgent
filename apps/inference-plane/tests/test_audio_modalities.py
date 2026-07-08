@@ -68,6 +68,38 @@ def test_capabilities_endpoint_reports_audio_modality() -> None:
         assert caps["modalities"] == ["audio.transcription"]
 
 
+def test_capabilities_endpoint_reports_reachable_declared_modality() -> None:
+    # A reachable upstream is never probed; its DECLARED task is the only signal there is, and
+    # the capabilities read must surface it so a UI can route voice/speech composers on it.
+    with TestClient(create_app(launcher=FakeUpstreamLauncher(), enable_reaper=False)) as c:
+        c.put(
+            "/admin/models/whisper-remote",
+            json={
+                "binding": "openai-compatible",
+                "baseUrl": "http://127.0.0.1:1/v1",
+                "model": "whisper-1",
+                "modality": "audio.transcription",
+            },
+        )
+        caps = c.get("/admin/models/whisper-remote/capabilities").json()
+        assert caps["modalities"] == ["audio.transcription"]
+
+
+def test_capabilities_endpoint_reachable_defaults_to_chat() -> None:
+    # No declaration → the pre-existing default: a plain chat passthrough.
+    with TestClient(create_app(launcher=FakeUpstreamLauncher(), enable_reaper=False)) as c:
+        c.put(
+            "/admin/models/hosted-chat",
+            json={
+                "binding": "openai-compatible",
+                "baseUrl": "http://127.0.0.1:1/v1",
+                "model": "gpt-x",
+            },
+        )
+        caps = c.get("/admin/models/hosted-chat/capabilities").json()
+        assert caps["modalities"] == ["chat"]
+
+
 # ── embeddings (managed + reachable) ─────────────────────────────────────────
 
 
@@ -118,6 +150,27 @@ def test_speech_managed(client: TestClient) -> None:
     )
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("audio/")
+    assert r.content == FAKE_AUDIO
+
+
+def test_speech_without_a_voice_uses_the_engine_default(client: TestClient) -> None:
+    # Voice names are engine-specific, so the plane never invents one: absent a request voice and
+    # a binding default, the request goes to the engine voiceless (direct post — the dispatch
+    # layer can't express "no voice") and the engine's own default speaks.
+    client.put("/admin/models/tts-bare", json=managed_payload(binding="llamacpp"))
+    r = client.post("/v1/audio/speech", json={"model": "tts-bare", "input": "hello"})
+    assert r.status_code == 200
+    assert r.content == FAKE_AUDIO
+
+
+def test_speech_voice_defaults_from_binding_params(client: TestClient) -> None:
+    # A binding registered with a params voice speaks without the caller naming one — the way a
+    # chat surface can talk to a local speech model without knowing its voice vocabulary.
+    payload = managed_payload(binding="llamacpp")
+    payload["params"] = {"voice": "af_heart"}
+    client.put("/admin/models/tts-voiced", json=payload)
+    r = client.post("/v1/audio/speech", json={"model": "tts-voiced", "input": "hello"})
+    assert r.status_code == 200
     assert r.content == FAKE_AUDIO
 
 
