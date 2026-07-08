@@ -127,3 +127,85 @@ def test_transcribe_engine_name_rejected(client: TestClient) -> None:
     resp = client.post("/graphs/runs", json={"ir": ir, "input": {"ref": "x"}, "stream": False})
     assert resp.status_code == 400
     assert resp.json()["error"]["code"] == "engine_name_not_allowed"
+
+
+def _imagine_agent() -> dict[str, Any]:
+    """input(text) -> imagine -> output(image ref). Mirrors _audio_agent for the image modality."""
+    return {
+        "schemaVersion": "1.0",
+        "id": "agt_image",
+        "name": "image-agent",
+        "version": "0.1.0",
+        "models": {"painter": {"binding": "llamacpp", "model": "painter-fast"}},
+        "tools": {},
+        "nodes": [
+            {
+                "id": "n_in",
+                "type": "input",
+                "kind": "boundary",
+                "config": {"modality": "text"},
+                "ports": {"in": [], "out": [{"id": "out", "type": "any"}]},
+            },
+            {
+                "id": "n_img",
+                "type": "imagine",
+                "kind": "activity",
+                "config": {"model": "painter", "params": {"size": "512x512"}},
+                "ports": {
+                    "in": [{"id": "prompt", "type": "any"}],
+                    "out": [
+                        {"id": "image", "type": "any"},
+                        {"id": "err", "type": "error"},
+                    ],
+                },
+            },
+            {
+                "id": "n_out",
+                "type": "output",
+                "kind": "boundary",
+                "config": {"modality": "image"},
+                "ports": {"in": [{"id": "in", "type": "any"}], "out": []},
+            },
+        ],
+        "edges": [
+            {
+                "id": "e1",
+                "source": "n_in",
+                "sourceHandle": "out",
+                "target": "n_img",
+                "targetHandle": "prompt",
+                "channel": "data",
+            },
+            {
+                "id": "e2",
+                "source": "n_img",
+                "sourceHandle": "image",
+                "target": "n_out",
+                "targetHandle": "in",
+                "channel": "data",
+            },
+        ],
+    }
+
+
+def test_imagine_text_to_image_reference(client: TestClient, fake_inference: FakeInference) -> None:
+    out = _run(client, _imagine_agent(), "a red apple on a table")
+    assert out["status"] == "completed"
+    # The output is a REFERENCE (a stored artifact), not the image bytes (the bytes never journal).
+    ref = __import__("json").loads(out["output"])
+    assert ref["ref"].startswith("art_")
+    assert ref["contentType"] == "image/png"
+    # The prompt + logical id reached the inference plane's /v1/images/generations (not a
+    # control-plane route); an engine name was never sent.
+    assert fake_inference.captured["image_hit"] is True
+    assert fake_inference.captured["image_model"] == "painter-fast"
+    assert fake_inference.captured["image_prompt"] == "a red apple on a table"
+
+
+def test_imagine_engine_name_rejected(client: TestClient) -> None:
+    # Logical-id only: an engine-name model binding on an imagine node is rejected up front.
+    ir = _imagine_agent()
+    ir["models"]["painter"] = {"binding": "llamacpp", "model": "llamacpp"}  # an engine name
+    resp = client.post("/graphs/runs", json={"ir": ir, "input": "x", "stream": False})
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "engine_name_not_allowed"

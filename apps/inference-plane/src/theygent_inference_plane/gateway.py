@@ -169,3 +169,31 @@ class Gateway:
                 "names the cause (an unloadable model or an unknown voice)",
             )
         return audio
+
+    async def generate_image(
+        self, upstream: Upstream, prompt: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        # Image generation returns the OpenAI images shape ({data: [{b64_json}]}) — posted to the
+        # upstream DIRECTLY, like speak. The local generators are diffusion CLIs behind a bundled
+        # wrapper server (not the dispatch layer), and a reachable image API is already this exact
+        # OpenAI shape, so one direct POST covers both. Generation is minutes-scale per image and
+        # loads weights per request, so the timeout is generous.
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(1200.0, connect=10.0)) as client:
+                resp = await client.post(
+                    f"{upstream.api_base}/images/generations",
+                    headers={"Authorization": f"Bearer {upstream.api_key}"},
+                    json={"model": upstream.model, "prompt": prompt, **params},
+                )
+        except httpx.HTTPError as exc:
+            raise UpstreamHttpError(
+                502, f"the image engine was unreachable or aborted mid-generation: {exc}"
+            ) from exc
+        if resp.status_code >= 400:
+            raise UpstreamHttpError(resp.status_code, resp.text[:500])
+        result = _to_dict(resp.json())
+        if not result.get("data"):
+            raise UpstreamHttpError(
+                502, "the image engine produced no image for this prompt (the engine log has why)"
+            )
+        return result

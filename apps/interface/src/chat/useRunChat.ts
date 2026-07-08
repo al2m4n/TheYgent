@@ -36,6 +36,16 @@ export interface RunChatOptions {
    * answer — download it and attach a playable bubble (the llm's text still streams as content).
    */
   audioOutput?: boolean;
+  /**
+   * The agent's input boundary is image: the composer takes an image (upload/camera) plus a
+   * question, sent as {image: <data URI>, text} the vlm llm node drills into an image_url part.
+   */
+  imageInput?: boolean;
+  /**
+   * The agent's output boundary is image: run.output is an artifact reference to a generated image
+   * — download it and attach an image bubble (symmetric to audioOutput).
+   */
+  imageOutput?: boolean;
 }
 
 export function useRunChat(
@@ -91,22 +101,23 @@ export function useRunChat(
     async (text: string, attachments: Attachment[]) => {
       const t = targetRef.current;
       if (!t) return;
-      const { audioInput, audioOutput } = optsRef.current;
-      // A voice agent's turns are audio artifact references, not text — letting the SERVER append
-      // them would store `{"ref":"art_…"}` as the session turn (an ugly Recents preview) and, on a
-      // later turn, replay that JSON to the llm. So a voice agent's runs are session-less; we record
-      // a READABLE turn (label + the answer text) ourselves after the run.
-      const isVoice = Boolean(audioInput || audioOutput);
+      const { audioInput, audioOutput, imageInput, imageOutput } = optsRef.current;
+      // A media agent's turns carry non-text values (audio/image refs, a base64 image) — letting
+      // the SERVER append them would store an ugly blob as the session turn and replay it to the
+      // llm. So a media agent's runs are session-less; we record a READABLE turn (a label + the
+      // answer text) ourselves after the run.
+      const isMedia = Boolean(audioInput || audioOutput || imageInput || imageOutput);
       setError(null);
       setBusy(true);
       stoppedRef.current = false;
-      // An audio agent's user turn IS the recorded/uploaded clip — show it, not text.
+      // A media agent's user turn shows the clip/image it sent (plus any typed question).
       const audioIn = audioInput ? attachments.find((a) => a.kind === "audio") : undefined;
+      const imageIn = imageInput ? attachments.find((a) => a.kind === "image") : undefined;
       const userMsg: ChatMessage = {
         id: messageId(),
         role: "user",
         content: text,
-        attachments: audioIn ? [audioIn] : undefined,
+        attachments: audioIn ? [audioIn] : imageIn ? [imageIn] : undefined,
       };
       const assistantId = messageId();
       setMessages((cur) => [
@@ -118,12 +129,16 @@ export function useRunChat(
       try {
         const sess = await ensureSession();
         const path = t.kind === "model" ? "/runs" : `/agents/${encodeURIComponent(t.agentId)}/runs`;
-        // Audio-in agent: upload the clip to the artifact store, pass the reference as run input
-        // (the input boundary is audio; the walker fetches and transcribes it).
+        // Media-in agents shape the run input from the attachment:
+        //  - audio: upload the clip → pass the artifact reference (the walker fetches+transcribes);
+        //  - image: pass {image: <data URI>, text} — the vlm llm node drills $in.in.image /
+        //    $in.in.text into an image_url content part + the question.
         let agentInput: unknown = text;
         if (audioIn?.blob) {
           const ref = await api.uploadArtifact(audioIn.blob);
           agentInput = { ref: ref.ref, contentType: ref.contentType };
+        } else if (imageIn) {
+          agentInput = { image: imageIn.url, text };
         }
         const body =
           t.kind === "model"
@@ -138,8 +153,8 @@ export function useRunChat(
             : {
                 input: agentInput,
                 stream: true,
-                // Voice agent: session-less run (see above); text agent: server-appended turns.
-                session_id: isVoice ? null : sess,
+                // Media agent: session-less run (see above); text agent: server-appended turns.
+                session_id: isMedia ? null : sess,
                 ...(t.version != null ? { version: t.version } : {}),
               };
 
@@ -178,10 +193,11 @@ export function useRunChat(
           if (stoppedRef.current) stopped = true;
           else throw e;
         }
-        // Audio-output agent: run.output is an artifact reference to the spoken answer (the llm's
-        // text streamed as `content`). Fetch the bytes and attach a playable bubble.
-        let audioNote: string | undefined;
-        if (audioOutput && !failed && !stopped && runId) {
+        // Media-output agent: run.output is an artifact reference to the produced media (spoken
+        // answer or generated image). Fetch the bytes and attach a playable/viewable bubble.
+        let mediaNote: string | undefined;
+        if ((audioOutput || imageOutput) && !failed && !stopped && runId) {
+          const mediaKind = imageOutput ? "image" : "audio";
           try {
             const run = await api.getRun(runId);
             const ref = run.output ? (JSON.parse(run.output) as { ref?: string }) : null;
@@ -189,14 +205,21 @@ export function useRunChat(
               const blob = await api.downloadArtifact(ref.ref);
               patchMessage(assistantId, {
                 attachments: [
-                  { kind: "audio", url: URL.createObjectURL(blob), blob, name: "reply" },
+                  { kind: mediaKind, url: URL.createObjectURL(blob), blob, name: "reply" },
                 ],
               });
             } else if (run.status === "failed") {
               failed = run.error ?? "run failed";
+            } else {
+              // Completed but carried no artifact reference — say so instead of a blank bubble.
+              mediaNote = imageOutput
+                ? "The agent produced no image for this turn."
+                : "The agent produced no playable audio for this turn.";
             }
           } catch {
-            audioNote = "The agent produced no playable audio for this turn.";
+            mediaNote = imageOutput
+              ? "The agent produced no image for this turn."
+              : "The agent produced no playable audio for this turn.";
           }
         } else if (!failed && !stopped && !content && runId) {
           // A text graph whose answer comes from a non-streaming node (the output node's value,
@@ -212,28 +235,36 @@ export function useRunChat(
             // The stream already ended; a failed lookup just leaves the honest empty-note below.
           }
         }
+        // A media-output agent legitimately streams no text (its answer is the produced clip/image),
+        // so the empty-content note applies only to text agents.
+        const mediaOutput = Boolean(audioOutput || imageOutput);
         patchMessage(assistantId, {
           streaming: false,
           error:
             failed ??
-            audioNote ??
+            mediaNote ??
             (stopped
               ? "stopped"
-              : !content && !audioOutput
+              : !content && !mediaOutput
                 ? "The run finished without visible content — a reasoning model may have spent the whole token budget thinking."
                 : undefined),
         });
-        // Voice agent: the run was session-less, so record a READABLE turn ourselves (the answer
-        // text; the user turn is a label since the input was audio). A text agent's turns were
-        // appended by the server.
-        if (isVoice && sess && !failed && !stopped && content) {
-          await recordTurn(sess, audioInput ? "🎤 voice message" : text, content);
+        // Media agent: the run was session-less, so record a READABLE turn ourselves (a label for
+        // the sent media + a label for the answer). A text agent's turns were appended by the
+        // server. A media-output agent has no text answer — record a placeholder so the session
+        // still shows the exchange.
+        // Only a real media result records a turn — a mediaNote means nothing playable/viewable
+        // was produced, so the placeholder must not masquerade as a successful exchange.
+        const answerLabel = content || (imageOutput ? "🖼 image" : audioOutput ? "🔊 audio" : "");
+        if (isMedia && sess && !failed && !stopped && !mediaNote && answerLabel) {
+          const userLabel = audioInput ? "🎤 voice message" : imageInput ? text || "🖼 image" : text;
+          await recordTurn(sess, userLabel, answerLabel);
           queryClient.invalidateQueries({ queryKey: ["session", sess] });
         }
         // Refresh what lists/details show.
         queryClient.invalidateQueries({ queryKey: ["sessions"] });
         queryClient.invalidateQueries({ queryKey: ["runs"] });
-        if (sess && !isVoice) queryClient.invalidateQueries({ queryKey: ["session", sess] });
+        if (sess && !isMedia) queryClient.invalidateQueries({ queryKey: ["session", sess] });
       } catch (e) {
         // The failed turn wears its own note in the bubble — no duplicate global banner.
         const msg = e instanceof Error ? e.message : String(e);
@@ -256,11 +287,19 @@ export function useRunChat(
     if (opts.audioInput) {
       return { audio: true, audioRequired: true, textDisabled: true };
     }
+    // A vision agent takes an image (upload/camera) AND a question — text stays enabled.
+    if (opts.imageInput) {
+      return { images: true, placeholder: "Attach an image and ask about it…" };
+    }
+    // An image-generation agent (text prompt in → image out) prompts for a description.
+    if (opts.imageOutput) {
+      return { placeholder: "Describe an image to generate…" };
+    }
     return {
       placeholder:
         opts.placeholder ?? (target?.kind === "agent" ? "Message the agent…" : "Send a message…"),
     };
-  }, [opts.audioInput, opts.placeholder, target?.kind]);
+  }, [opts.audioInput, opts.imageInput, opts.imageOutput, opts.placeholder, target?.kind]);
 
   return {
     messages,

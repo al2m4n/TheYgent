@@ -24,9 +24,10 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
-from typing import IO, Protocol, runtime_checkable
+from typing import IO, ClassVar, Protocol, runtime_checkable
 
 import httpx
 from theygent_ir import Capabilities, ManagedBinding
@@ -181,6 +182,24 @@ class _SubprocessHandle:
 # ── llama.cpp (managed, proven) ─────────────────────────────────────────
 
 
+def locate_llama_mmproj(binding: ManagedBinding) -> str | None:
+    """The multimodal projector file for a llama.cpp vision binding, if one sits with the weights.
+
+    A GGUF VLM ships a companion ``mmproj-*.gguf`` (the vision projector). For a local model we look
+    beside the weights file; for an hf model we look in the hub snapshot cache. ``None`` when
+    absent — the caller then falls back to llama-server's own ``--mmproj-auto`` resolution.
+    """
+    if binding.source == "local-path":
+        base = binding.model if os.path.isdir(binding.model) else os.path.dirname(binding.model)
+        hits = glob.glob(os.path.join(base, "*mmproj*.gguf")) + glob.glob(
+            os.path.join(base, "*.mmproj.gguf")
+        )
+    else:
+        repo = "models--" + binding.model.replace("/", "--")
+        hits = glob.glob(os.path.join(_hf_hub_dir(), repo, "snapshots", "*", "*mmproj*.gguf"))
+    return sorted(hits)[0] if hits else None
+
+
 class LlamaCppHandle(_SubprocessHandle):
     def __init__(
         self, proc: subprocess.Popen[bytes], base_url: str, *, modality: str = "chat"
@@ -204,6 +223,16 @@ class LlamaCppHandle(_SubprocessHandle):
             # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
             return Capabilities(
                 modalities=["embeddings"], max_context=max_context, approximate=True
+            )
+        if self._modality == "vision":
+            # A vision server (llama-server + a multimodal projector) accepts image_url content on
+            # /v1/chat/completions. vision=True → derived modalities ["chat", "vision"].
+            return Capabilities(
+                tool_calling=True,
+                structured_output=True,
+                vision=True,
+                reasoning=reasoning,
+                max_context=max_context,
             )
         return Capabilities(
             tool_calling=True,
@@ -246,6 +275,14 @@ class LlamaCppLauncher:
             # llama-server serves /v1/embeddings once embeddings mode is on. Pooling must not be
             # `none` for the OpenAI endpoint (it returns one vector per input) → `mean`.
             cmd += ["--embeddings", "--pooling", "mean"]
+        elif binding.modality == "vision":
+            # Vision is the same binary with a multimodal projector: llama-server accepts image_url
+            # content on /v1/chat/completions once an mmproj is loaded. The projector is a separate
+            # file — take an explicit `params.mmproj`, else the one sitting next to the weights;
+            # absent both, `--mmproj-auto` lets llama-server fetch it (hf source) or use an
+            # embedded one, so a projector-less repo degrades to a clear error, not a silent run.
+            mmproj = binding.params.get("mmproj") or locate_llama_mmproj(binding)
+            cmd += ["--mmproj", mmproj] if mmproj else ["--mmproj-auto"]
         return cmd
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
@@ -708,6 +745,123 @@ class MlxVlmLauncher:
             self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
         )
         return MlxVlmHandle(proc, base_url, model=binding.model, source=binding.source)
+
+
+# ── image generation (text → image, the `images.generation` modality) ───
+# The local diffusion generators are CLIs with NO server of their own (stable-diffusion.cpp's
+# `sd-cli`, `mflux-generate`) — the one modality with no ready OpenAI upstream to launch. So a small
+# sibling server bundled in this package (`image_server`) wraps whichever CLI a request needs and IS
+# the OpenAI upstream the `(engine, images.generation)` key dispatches to, exactly like the
+# transcription server. One launcher, two CLI engines chosen by the binding: `sdcpp` (the ggml
+# family — the `llamacpp` engine) and `mflux` (FLUX on Apple Silicon — the `mlx` engine).
+
+
+def locate_image_model(binding: ManagedBinding) -> str:
+    """The diffusion weights the wrapper hands its CLI.
+
+    ``sd-cli`` takes a single weights FILE (a catalog install lands a directory — pick the one
+    ``*.gguf``/``*.safetensors`` inside), so for a local ``sdcpp`` binding we resolve to that file.
+    ``mflux`` instead accepts a base-model name (``schnell``/``dev``), an hf repo, or a path
+    directly, so its model rides through untouched. Ambiguity/absence for the file case raises
+    loudly — a guessed weights file is a silent wrong-model bug.
+    """
+    model, source = binding.model, binding.source
+    if source != "local-path":
+        # hf / url: hand the reference through — mflux resolves an hf repo itself; for sdcpp the
+        # wrapper's CLI surfaces a clear "no such file" if the reference isn't a local path.
+        return model
+    if os.path.isfile(model):
+        return model
+    candidates = sorted(
+        glob.glob(os.path.join(model, "*.gguf")) + glob.glob(os.path.join(model, "*.safetensors"))
+    )
+    if not candidates:
+        raise RuntimeError(
+            f"no diffusion weights (*.gguf / *.safetensors) found for {model!r} — install the "
+            "model locally first"
+        )
+    if len(candidates) == 1:
+        return candidates[0]
+    raise RuntimeError(
+        f"ambiguous diffusion weights for {model!r}: {[os.path.basename(c) for c in candidates]} — "
+        "point the binding at the exact file"
+    )
+
+
+class ImageServerHandle(_SubprocessHandle):
+    async def capabilities(self) -> Capabilities:
+        # A generation server serves exactly one task; nothing chat-shaped is probed (image
+        # generation is its own endpoint, never derived from a chat flag).
+        return Capabilities(modalities=["images.generation"], approximate=True)
+
+
+class ImageServerLauncher:
+    """Spawns the bundled ``image_server`` OpenAI wrapper around a local diffusion CLI.
+
+    ``cli_engine`` selects the generator the wrapper shells out to per request: ``sdcpp``
+    (stable-diffusion.cpp's ``sd-cli``, dispatched under the ``llamacpp`` engine) or ``mflux``
+    (``mflux-generate``, under ``mlx``). The wrapper is a module in THIS package, so it is spawned
+    with the plane's own interpreter (``sys.executable -m …``) and inherits the venv; the CLI itself
+    is resolved once here (env var → PATH) so a missing generator surfaces as ``/readyz`` not-ready,
+    never a 500 at first generation, and the resolved path is handed to the wrapper via ``--bin``.
+    """
+
+    _ENV_VARS: ClassVar[dict[str, str]] = {
+        "sdcpp": "THEYGENT_SDCPP_BIN",
+        "mflux": "THEYGENT_MFLUX_BIN",
+    }
+    _EXE: ClassVar[dict[str, str]] = {"sdcpp": "sd-cli", "mflux": "mflux-generate"}
+    _HINT: ClassVar[dict[str, str]] = {
+        "sdcpp": "build stable-diffusion.cpp and put `sd-cli` on PATH (or set THEYGENT_SDCPP_BIN)",
+        "mflux": "install mflux (e.g. `uv tool install mflux`) so `mflux-generate` is on PATH",
+    }
+
+    def __init__(self, cli_engine: str, *, startup_timeout: float = 60.0) -> None:
+        self._engine = cli_engine
+        self._startup_timeout = startup_timeout
+        env = os.environ.get(self._ENV_VARS[cli_engine])
+        self._binary: str | None = env or shutil.which(self._EXE[cli_engine])
+        self._reason: str | None = (
+            None
+            if self._binary
+            else f"{self._EXE[cli_engine]} not found — {self._HINT[cli_engine]}"
+        )
+
+    @property
+    def ready(self) -> bool:
+        return self._binary is not None
+
+    @property
+    def not_ready_reason(self) -> str | None:
+        return self._reason
+
+    def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
+        assert self._binary is not None
+        return [
+            sys.executable,
+            "-m",
+            "theygent_inference_plane.image_server",
+            "--engine",
+            self._engine,
+            "--model",
+            locate_image_model(binding),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--bin",
+            self._binary,
+        ]
+
+    async def launch(self, binding: ManagedBinding) -> EngineHandle:
+        if self._binary is None:
+            raise EngineBinaryNotFound(self._reason or f"{self._EXE[self._engine]} unavailable")
+        port = _free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = await _spawn_openai_server(
+            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+        )
+        return ImageServerHandle(proc, base_url)
 
 
 # ── engine dispatch (keeps EngineManager engine-agnostic) ───────────────

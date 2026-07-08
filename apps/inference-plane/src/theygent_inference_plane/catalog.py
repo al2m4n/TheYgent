@@ -60,6 +60,7 @@ _PIPELINE_MODALITY: dict[str, Modality] = {
     "sentence-similarity": "embeddings",
     "automatic-speech-recognition": "audio.transcription",
     "text-to-speech": "audio.speech",
+    "text-to-image": "images.generation",
 }
 
 
@@ -78,6 +79,7 @@ MODALITY_PIPELINES: dict[Modality, tuple[str, ...]] = {
     "embeddings": ("feature-extraction", "sentence-similarity"),
     "audio.transcription": ("automatic-speech-recognition",),
     "audio.speech": ("text-to-speech",),
+    "images.generation": ("text-to-image",),
 }
 
 

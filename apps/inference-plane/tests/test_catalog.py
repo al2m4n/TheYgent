@@ -561,20 +561,20 @@ def _nomic_embed_gguf() -> FakeModelInfo:
 @pytest.mark.parametrize(
     ("pipeline_tag", "expected"),
     [
-        # the five frozen Modality keys, each mapped from exactly one HF pipeline_tag
+        # the frozen non-chat Modality keys, each mapped from exactly one HF pipeline_tag
         ("image-text-to-text", "vision"),
         ("feature-extraction", "embeddings"),
         ("sentence-similarity", "embeddings"),
         ("automatic-speech-recognition", "audio.transcription"),
         ("text-to-speech", "audio.speech"),
+        ("text-to-image", "images.generation"),
         # the dominant case + the catch-all: text-generation / unknown / missing → chat
         ("text-generation", "chat"),
         ("text-generation-inference", "chat"),
         (None, "chat"),
         ("", "chat"),
-        # RESERVED / non-runnable tasks must NOT be silently mis-mapped onto a non-chat key — they
-        # fall to the chat catch-all (listing-level exclusion of these is a deferred refinement).
-        ("text-to-image", "chat"),
+        # an unmapped/non-runnable task must NOT be silently mis-mapped onto a non-chat key — it
+        # falls to the chat catch-all (listing-level exclusion is a deferred refinement).
         ("image-classification", "chat"),
     ],
 )
@@ -585,8 +585,15 @@ def test_modality_for_pipeline_maps_only_the_frozen_vocab(
 
     mod = _modality_for_pipeline(pipeline_tag)
     assert mod == expected
-    # whatever it returns is always one of the five frozen keys (never an out-of-vocab string)
-    assert mod in {"chat", "vision", "embeddings", "audio.transcription", "audio.speech"}
+    # whatever it returns is always one of the frozen keys (never an out-of-vocab string)
+    assert mod in {
+        "chat",
+        "vision",
+        "embeddings",
+        "audio.transcription",
+        "audio.speech",
+        "images.generation",
+    }
 
 
 def test_install_plan_derives_vision_modality_for_vlm() -> None:

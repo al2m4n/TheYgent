@@ -38,6 +38,7 @@ from theygent_ir import (
     GuardrailConfig,
     HttpTool,
     HumanConfig,
+    ImagineConfig,
     IRDocument,
     LlmConfig,
     LoopConfig,
@@ -93,6 +94,7 @@ from theygent_control_plane.walker import (
     evaluate_guardrail_rule,
     execute_guardrail_model,
     execute_http_tool,
+    execute_imagine,
     execute_llm,
     execute_mcp_connection_tool,
     execute_mcp_tool,
@@ -546,6 +548,24 @@ async def _speak_step(
         model_id=model_id,
         params=params,
         text=text,
+        extra_headers={"x-theygent-run-id": run_id},
+    )
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
+async def _imagine_step(
+    run_id: str, node_id: str, model_id: str, params: dict[str, Any], prompt: str
+) -> dict[str, Any]:
+    """The ``imagine`` activity as a durable step: text → image REFERENCE (the bytes are an
+    artifact, not journaled — so a resumed run replays the ref, not the image)."""
+    res = _res()
+    out = await execute_imagine(
+        res.gateway,
+        res.artifacts,
+        model_id=model_id,
+        params=params,
+        prompt=prompt,
         extra_headers={"x-theygent-run-id": run_id},
     )
     return {"ok": out.ok, "value": out.value}
@@ -1133,6 +1153,23 @@ async def _durable_walk(
                         model_id,
                         {**binding_params, **scfg.params},
                         text_val if isinstance(text_val, str) else json.dumps(text_val),
+                    )
+                    _bind_outcome(
+                        node,
+                        ActivityOutcome(ok=step_out["ok"], value=step_out["value"]),
+                        values,
+                        live_handles,
+                    )
+                elif node.type == "imagine":  # text → image reference
+                    icfg = ImagineConfig.model_validate(node.config)
+                    model_id, binding_params = resolve_model_key(ir, icfg.model)
+                    prompt_val = _single_in_value(ports, node)
+                    step_out = await _imagine_step(
+                        run_id,
+                        node.id,
+                        model_id,
+                        {**binding_params, **icfg.params},
+                        prompt_val if isinstance(prompt_val, str) else json.dumps(prompt_val),
                     )
                     _bind_outcome(
                         node,

@@ -17,6 +17,7 @@ import {
   Eye,
   Flame,
   FlaskConical,
+  ImagePlus,
   Loader2,
   Lock,
   MessageSquare,
@@ -753,6 +754,7 @@ type CapKey = (typeof CAP_FILTERS)[number]["key"];
 const TASK_CHIPS = [
   { value: "chat", label: "Chat", icon: MessageSquare },
   { value: "vision", label: "Vision", icon: Eye },
+  { value: "images.generation", label: "Image generation", icon: ImagePlus },
   { value: "embeddings", label: "Embeddings", icon: Waypoints },
   { value: "audio.transcription", label: "Speech-to-text", icon: Mic },
   { value: "audio.speech", label: "Text-to-speech", icon: Volume2 },
@@ -766,6 +768,7 @@ const TASK_OF_PIPELINE: Record<string, string> = {
   "sentence-similarity": "embeddings",
   "automatic-speech-recognition": "speech-to-text",
   "text-to-speech": "text-to-speech",
+  "text-to-image": "image generation",
 };
 
 function BrowsePanel() {

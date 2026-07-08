@@ -42,6 +42,7 @@ from theygent_inference_plane.gateway import Gateway, merge_params
 from theygent_inference_plane.launcher import (
     EngineLauncher,
     EngineUnavailableError,
+    ImageServerLauncher,
     LlamaCppLauncher,
     ManagedLauncherSet,
     MlxAudioLauncher,
@@ -89,6 +90,16 @@ class SpeechRequest(BaseModel):
     model: str
     input: str
     voice: str | None = None
+
+
+class ImagesRequest(BaseModel):
+    # The OpenAI image-generation shape. `model` is a LOGICAL id; `prompt` is the text to render.
+    # `size`/`n`/`response_format` and any engine knob (`steps`) ride through as generation params.
+    # The response is the OpenAI images shape ({data: [{b64_json}]}).
+    model_config = ConfigDict(extra="allow")
+
+    model: str
+    prompt: str
 
 
 # Map an OpenAI `response_format` to the audio MIME type for the TTS response body.
@@ -168,13 +179,23 @@ def create_app(
         {
             ("llamacpp", "chat"): _llamacpp,
             ("llamacpp", "embeddings"): _llamacpp,
+            # Vision is the SAME llama-server + a multimodal projector (image_url on
+            # /v1/chat/completions) — one binary, many modalities via flags, so it shares the
+            # llama.cpp launcher instance, like embeddings.
+            ("llamacpp", "vision"): _llamacpp,
             # Speech-to-text is the ggml family's OTHER program (whisper-server), dispatched by
             # the modality key exactly like mlx vision — same engine name, different server.
             ("llamacpp", "audio.transcription"): WhisperCppLauncher(),
+            # Image generation is the one modality with no ready OpenAI server — the local diffusion
+            # generators are CLIs. A bundled wrapper server shells out to stable-diffusion.cpp's
+            # sd-cli (the ggml family, under the llamacpp engine).
+            ("llamacpp", "images.generation"): ImageServerLauncher("sdcpp"),
             ("mlx", "chat"): MlxLauncher(),
             ("mlx", "vision"): MlxVlmLauncher(),
             # Text-to-speech is MLX's other program (mlx_audio.server), same dispatch pattern.
             ("mlx", "audio.speech"): MlxAudioLauncher(),
+            # Image generation on Apple Silicon is mflux (FLUX), wrapped the same way as sd-cli.
+            ("mlx", "images.generation"): ImageServerLauncher("mflux"),
             ("vllm", "chat"): VllmLauncher(),
         }
     )
@@ -776,6 +797,20 @@ def create_app(
             return Response(
                 content=audio, media_type=_AUDIO_MIME.get(fmt, "application/octet-stream")
             )
+        except Exception as exc:
+            mapped = _data_plane_error(exc, req.model)
+            if mapped is None:
+                raise
+            return mapped
+
+    @app.post("/v1/images/generations")
+    async def images_generations(req: ImagesRequest) -> Response:
+        try:
+            async with _lease_for(req.model) as (binding, upstream):
+                params = merge_params(binding.params, req.model_dump())
+                params.pop("prompt", None)
+                result = await gateway.generate_image(upstream, req.prompt, params)
+            return JSONResponse(result)
         except Exception as exc:
             mapped = _data_plane_error(exc, req.model)
             if mapped is None:

@@ -29,6 +29,7 @@ deterministic.
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import time
@@ -41,6 +42,10 @@ FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 # The inline-think modes' thinking text — importable so tests assert the reasoning stream verbatim.
 INLINE_THINKING = "deep thoughts"
+# A 1x1 PNG — the smallest valid image, returned by the fake image-generation endpoint.
+_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+)
 
 
 def _build_app(
@@ -81,6 +86,18 @@ def _build_app(
         captured["audio_hit"] = True
         captured["audio_model"] = body.get("model")
         return Response(content=b"FAKE_AUDIO_BYTES", media_type="audio/mpeg")
+
+    # The image-generation data-plane endpoint (the control-plane's imagine node calls THIS —
+    # proving the bytes come from the inference base URL, never a control-plane route). Returns a
+    # tiny valid PNG in the OpenAI images shape (base64), like a real diffusion wrapper.
+    @app.post("/v1/images/generations")
+    async def images(request: Request):
+        body = await request.json()
+        captured["image_hit"] = True
+        captured["image_model"] = body.get("model")
+        captured["image_prompt"] = body.get("prompt")
+        png = base64.b64encode(_TINY_PNG).decode()
+        return JSONResponse({"created": 0, "data": [{"b64_json": png}]})
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
@@ -343,6 +360,9 @@ class FakeInference:
             "audio_hit": False,
             "audio_model": None,
             "audio_bytes_in": 0,
+            "image_hit": False,
+            "image_model": None,
+            "image_prompt": None,
         }
         app = _build_app(mode, self.captured, response, tool_name, tool_args)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

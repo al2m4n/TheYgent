@@ -76,16 +76,23 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
     agentNodes?.find((n) => n.type === nodeType)?.config?.modality ?? "text";
   const agentAudioIn = kind === "agent" && boundaryModality("input") === "audio";
   const agentAudioOut = kind === "agent" && boundaryModality("output") === "audio";
+  const agentImageIn = kind === "agent" && boundaryModality("input") === "image";
+  const agentImageOut = kind === "agent" && boundaryModality("output") === "image";
 
-  // The registered modality decides the transport: chat/vision talk through control-plane runs;
-  // a voice model talks straight to the data plane (there is no run path for audio).
+  // The registered modality decides a model's transport. Voice and VISION models talk straight to
+  // the inference data plane (like the bench): a voice model has no run path, and a vision model
+  // needs image content parts the direct transport already builds. A plain chat model runs through
+  // the control plane. (Vision rides /v1/chat/completions — it's a chat sub-capability.)
   const modality = modelView?.binding.modality ?? "chat";
   const isVoice = kind === "model" && VOICE_MODALITIES.has(modality);
+  const isVision = kind === "model" && modality === "vision";
+  const isImageGen = kind === "model" && modality === "images.generation";
   const isEmbeddings = kind === "model" && modality === "embeddings";
+  const useDirect = isVoice || isVision || isImageGen;
 
   const runTarget: RunChatTarget | null =
     kind === "model"
-      ? model && !isVoice && !isEmbeddings
+      ? model && !useDirect && !isEmbeddings
         ? { kind: "model", model }
         : null
       : agent
@@ -96,6 +103,8 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
     placeholder: kind === "agent" ? "Message the agent…" : "Send a message…",
     audioInput: agentAudioIn,
     audioOutput: agentAudioOut,
+    imageInput: agentImageIn,
+    imageOutput: agentImageOut,
     disabledNote:
       kind === "agent"
         ? "No saved agents yet — build one on the canvas first."
@@ -103,14 +112,17 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
           ? "Embeddings models don't chat — bench them from Registries."
           : "No models registered yet — install one under Registries first.",
   });
-  const voiceChat = useInferenceChat({
+  const directChat = useInferenceChat({
     logicalId: model,
-    modality: (isVoice ? modality : "chat") as InferenceChatModality,
+    // Voice + image-generation ride their own modality; vision rides the chat modality with image
+    // attach turned on by caps.vision.
+    modality: (isVoice || isImageGen ? modality : "chat") as InferenceChatModality,
+    caps: isVision ? { vision: true } : undefined,
     params: {},
     sessionKind: "chat",
   });
 
-  const chat = isVoice ? voiceChat : runChat;
+  const chat = useDirect ? directChat : runChat;
   const started = chat.messages.length > 0;
 
   return (
@@ -184,6 +196,8 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
         {kind === "agent" && (agentAudioIn || agentAudioOut) && (
           <Badge tone="violet">{agentAudioIn && agentAudioOut ? "voice" : "audio"}</Badge>
         )}
+        {kind === "agent" && agentImageIn && <Badge tone="violet">vision</Badge>}
+        {kind === "agent" && agentImageOut && <Badge tone="violet">image</Badge>}
         {started && (
           <Button variant="ghost" onClick={onNewChat}>
             New chat

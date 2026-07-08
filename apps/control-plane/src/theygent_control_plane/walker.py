@@ -53,6 +53,7 @@ from theygent_ir import (
     GuardrailConfig,
     GuardrailRule,
     HttpTool,
+    ImagineConfig,
     IRDocument,
     LlmConfig,
     McpTool,
@@ -235,15 +236,18 @@ def llm_models(ir: IRDocument) -> list[tuple[Node, str, dict[str, Any]]]:
 
 
 def audio_model_nodes(ir: IRDocument) -> list[tuple[Node, str, dict[str, Any]]]:
-    """Every ``transcribe``/``speak`` node with its resolved (model id, params) — the control-plane
-    rejects an engine-name binding before the ``Run`` (the logical-id-only guard, extended to
-    audio). Resolution raises :class:`EngineNameNotAllowed`, mirroring ``llm_models``."""
+    """Every media model-call node (``transcribe``/``speak``/``imagine``) with its resolved (model
+    id, params) — the control-plane rejects an engine-name binding before the ``Run`` (the
+    logical-id-only guard, extended to the non-chat modalities). Resolution raises
+    :class:`EngineNameNotAllowed`, mirroring ``llm_models``."""
     out: list[tuple[Node, str, dict[str, Any]]] = []
     for node in ir.nodes:
         if node.type == "transcribe":
             cfg: Any = TranscribeConfig.model_validate(node.config)
         elif node.type == "speak":
             cfg = SpeakConfig.model_validate(node.config)
+        elif node.type == "imagine":
+            cfg = ImagineConfig.model_validate(node.config)
         else:
             continue
         model_id, params = resolve_model_key(ir, cfg.model)
@@ -937,6 +941,41 @@ async def execute_speak(
     except Exception as exc:
         return ActivityOutcome(ok=False, value=f"speak failed: {exc}")
     ref = await artifacts.put(audio, _AUDIO_FORMAT_MIME.get(fmt, "application/octet-stream"))
+    return ActivityOutcome(ok=True, value=ref)
+
+
+# ── image-generation model-call activity (imagine) ───────────────────────────
+#
+# The image analog of ``speak``: text in → an image REFERENCE out, mapping 1:1 to
+# ``POST /v1/images/generations``. It routes to a binding whose ``capabilities.modalities`` includes
+# ``images.generation``; the produced bytes are an artifact (never journaled), so a resumed durable
+# run replays the ref, not the image. The bytes go to the inference base URL (the user's trust
+# domain), never a control-plane route.
+
+_IMAGE_MIME = "image/png"
+
+
+async def execute_imagine(
+    gateway: GatewayClient,
+    artifacts: Any,
+    *,
+    model_id: str,
+    params: dict[str, Any],
+    prompt: str,
+    extra_headers: Mapping[str, str],
+) -> ActivityOutcome:
+    """Run an ``imagine`` activity — text in → image-REFERENCE out. Calls
+    ``POST /v1/images/generations`` (logical-id), then stores the produced bytes as an artifact and
+    returns the REFERENCE. ``size``/``n``/``steps`` ride through as generation params."""
+    if artifacts is None:
+        return ActivityOutcome(ok=False, value="imagine: no artifact store configured")
+    try:
+        image = await gateway.generate_image(
+            model=model_id, prompt=prompt, params=params, extra_headers=extra_headers
+        )
+    except Exception as exc:
+        return ActivityOutcome(ok=False, value=f"imagine failed: {exc}")
+    ref = await artifacts.put(image, _IMAGE_MIME)
     return ActivityOutcome(ok=True, value=ref)
 
 
@@ -1847,6 +1886,8 @@ async def walk(
                     await _walk_transcribe(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "speak":
                     await _walk_speak(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "imagine":
+                    await _walk_imagine(node, ir, ctx, values, skipped, live_handles)
                 else:
                     # agent / rag / retriever / memory / code — deferred.
                     raise NotImplementedError(
@@ -2441,6 +2482,31 @@ async def _walk_speak(
         model_id=model_id,
         params={**binding_params, **config.params},
         text=text if isinstance(text, str) else _stringify(text),
+        extra_headers=ctx.extra_headers,
+    )
+    _bind_outcome(node, outcome, values, live_handles)
+
+
+async def _walk_imagine(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Run an ``imagine`` node: the text in-port value → an image REFERENCE (the bytes are a stored
+    artifact, not journaled). Binds the ref to the success handle(s), an err to err."""
+    config = ImagineConfig.model_validate(node.config)
+    model_id, binding_params = resolve_model_key(ir, config.model)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    prompt = _single_in_value(ports, node)
+    outcome = await execute_imagine(
+        ctx.gateway,
+        ctx.artifacts,
+        model_id=model_id,
+        params={**binding_params, **config.params},
+        prompt=prompt if isinstance(prompt, str) else _stringify(prompt),
         extra_headers=ctx.extra_headers,
     )
     _bind_outcome(node, outcome, values, live_handles)

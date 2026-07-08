@@ -22,11 +22,15 @@ SourceName = Literal["hf", "local-path", "url"]
 #: The frozen modality vocabulary. The bench's tester panels are keyed on these — a new modality is
 #: a new key + a panel registered against it, never a hardcoded ``if vision … else if stt …`` tree.
 #: ``vision`` is a sub-capability of ``chat``: a vision model reports ``["chat", "vision"]`` and
-#: runs on ``/v1/chat/completions``. ``images.generation`` and ``rerank`` are RESERVED/DEFERRED
+#: runs on ``/v1/chat/completions``. ``images.generation`` is the inverse — text in, an image out —
+#: and unlike ``vision`` it is its own task on its own endpoint (``/v1/images/generations``), so it
+#: is declared explicitly and never derived from a chat flag. ``rerank`` stays RESERVED/DEFERRED
 #: (named, not implemented).
-Modality = Literal["chat", "vision", "embeddings", "audio.transcription", "audio.speech"]
+Modality = Literal[
+    "chat", "vision", "embeddings", "audio.transcription", "audio.speech", "images.generation"
+]
 MODALITIES: frozenset[str] = frozenset(
-    {"chat", "vision", "embeddings", "audio.transcription", "audio.speech"}
+    {"chat", "vision", "embeddings", "audio.transcription", "audio.speech", "images.generation"}
 )
 
 #: Engines whose lifecycle the inference plane owns (spawn / warm / evict).

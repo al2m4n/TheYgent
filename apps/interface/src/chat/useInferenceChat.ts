@@ -9,7 +9,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { speak, streamChat, transcribe } from "../bench/dataplane";
+import { generateImage, speak, streamChat, transcribe } from "../bench/dataplane";
 import {
   type BenchMetrics,
   type ChatSample,
@@ -23,7 +23,11 @@ import { ThinkParser } from "./think";
 import type { Attachment, ChatController, ChatMessage, ComposerCaps } from "./types";
 import { messageId } from "./types";
 
-export type InferenceChatModality = "chat" | "audio.transcription" | "audio.speech";
+export type InferenceChatModality =
+  | "chat"
+  | "audio.transcription"
+  | "audio.speech"
+  | "images.generation";
 
 /** One finished exchange, in the shape the bench needs to record a result. */
 export interface CompletedTurn {
@@ -232,6 +236,20 @@ export function useInferenceChat(opts: InferenceChatOptions): ChatController {
           return;
         }
 
+        if (modality === "images.generation") {
+          setMessages((cur) => [...cur, userMsg, assistant]);
+          const { blob, totalMs } = await generateImage(logicalId, text, params);
+          const metrics = { latencyMs: Math.round(totalMs) };
+          patchMessage(assistantId, {
+            streaming: false,
+            metrics,
+            attachments: [{ kind: "image", url: URL.createObjectURL(blob), blob, name: "image" }],
+          });
+          onTurn?.(assistantId, { modality, output: "", metrics, params });
+          await finishTurn(text, attachments, "[generated image]");
+          return;
+        }
+
         // chat / vision — streaming, with the reasoning split.
         const history = [...messages, userMsg];
         setMessages((cur) => [...cur, userMsg, assistant]);
@@ -306,6 +324,7 @@ export function useInferenceChat(opts: InferenceChatOptions): ChatController {
       return { audio: true, audioRequired: true, textDisabled: true };
     }
     if (modality === "audio.speech") return { placeholder: "Text to speak…" };
+    if (modality === "images.generation") return { placeholder: "Describe an image to generate…" };
     return { images: Boolean(caps?.vision), placeholder: "Ask something…" };
   }, [opts]);
 

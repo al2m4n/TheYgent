@@ -123,6 +123,12 @@ _ENGINE_NAMES = frozenset({"mlx", "vllm", "llamacpp"})
 # "not implemented yet" a builder hit when running a human/approval graph interactively).
 _DURABLE_ONLY_TYPES = frozenset({"human", "subgraph", "loop", "map"})
 
+# How long graph-run priming waits for the first walker delta (or a pre-stream error) before it
+# concludes the first step is a long, delta-less activity and starts the keepalive-wrapped stream.
+# Fast pre-stream errors surface in well under a second; this only bounds the header latency when a
+# graph's first step is itself a slow generation (an imagine/speak node with no llm ahead of it).
+_GRAPH_PRIME_TIMEOUT = 15.0
+
 _RUN_ID_HEADER = "x-theygent-run-id"
 
 # The synthetic single node a plain ``/runs`` prompt run is traced as. ``/runs`` has no
@@ -1433,7 +1439,7 @@ def create_app(
         # is created or sent — the logical-id invariant on the graph path.
         try:
             llms = llm_models(ir)
-            # transcribe/speak are logical-id-only too — reject an engine-name binding
+            # transcribe/speak/imagine are logical-id-only too — reject an engine-name binding
             # up front, exactly like an llm node.
             audio_model_nodes(ir)
             # A model guardrail resolves a binding at step time too — reject an engine-name
@@ -1606,12 +1612,25 @@ def create_app(
         # Prime the walker before committing to a 200 SSE response: a pre-stream error (a 503/404
         # from the llm node's open_stream, or a RouterError from a router that runs before any
         # llm) surfaces as a clean status, never a 200-then-broken-stream (mirrors /runs).
+        # But priming must not BLOCK the response headers on a long, delta-less FIRST step (an
+        # imagine/speak node that yields nothing until it finishes): race it against a short timeout
+        # so such a step starts the stream promptly (the keepalive-wrapped relay then covers it and
+        # its own failure surfaces as a mid-stream failed frame) instead of stalling headers for the
+        # whole generation. Fast pre-stream errors still surface well within the window as clean
+        # HTTP statuses (every real error path and test returns in well under a second).
         result = WalkResult()
         walker = walk(ir, user_input, ctx, result)
+        first: asyncio.Task[Any] = asyncio.ensure_future(anext(walker))
+        carry: asyncio.Task[Any] | None = None
         try:
-            primed = [await anext(walker)]
+            primed = [await asyncio.wait_for(asyncio.shield(first), _GRAPH_PRIME_TIMEOUT)]
         except StopAsyncIteration:
             primed = []
+        except (
+            TimeoutError
+        ):  # a slow, delta-less first step is still running — relay it (keepalived)
+            primed = []
+            carry = first
         except APIStatusError as exc:
             status, code, message = _map_inference_error(exc)
             async with tx() as s:
@@ -1661,8 +1680,11 @@ def create_app(
                 yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
                 for delta in primed:
                     yield _graph_delta_sse(run.id, delta)
-                async for delta in walker:
-                    yield _graph_delta_sse(run.id, delta)
+                # Keepalive-wrapped: a delta-less activity (a slow image/audio generation) must not
+                # idle the SSE connection out and read as a client disconnect. `carry` is the
+                # first step handed over from a timed-out priming.
+                async for sse in _relay_walker_sse(walker, run.id, first=carry):
+                    yield sse
                 # Success: complete the run AND append the turn pair in ONE transaction. The
                 # assistant turn is the run's canonical output (the output node's value), which
                 # equals the streamed llm text for a trivial graph but may be a tool result.
@@ -2725,6 +2747,51 @@ def _graph_delta_sse(run_id: str, delta: Any) -> str:
     if kind == "tool_call":
         return _sse("tool_call", {"runId": run_id, "toolCall": delta.content})
     return _sse("delta", {"runId": run_id, "delta": delta.content})
+
+
+async def _relay_walker_sse(
+    walker: AsyncIterator[Any],
+    run_id: str,
+    *,
+    first: asyncio.Task[Any] | None = None,
+    keepalive_interval: float = 15.0,
+) -> AsyncIterator[str]:
+    """Relay a walker's ``Delta`` stream as SSE, emitting a keepalive comment during any gap
+    longer than ``keepalive_interval``.
+
+    A node that produces no deltas until it finishes (a slow image/audio generation, a slow tool)
+    leaves the SSE connection silent for the whole step; a proxy or browser reads that idle as a
+    disconnect and aborts the run. Racing each next-delta against a keepalive timeout keeps the
+    connection alive without touching the walk. The in-flight step is *shielded* from the timeout
+    (so a keepalive never cancels it) and cancelled only if the client actually goes away (the
+    generator is closed).
+
+    ``first`` is an already-in-flight ``anext(walker)`` task handed over from priming: a graph whose
+    FIRST step is a long delta-less activity is started during priming and, rather than stalling the
+    response headers, resumed here so the keepalive covers it too."""
+    it = walker.__aiter__()
+    pending: asyncio.Task[Any] | None = first
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.ensure_future(it.__anext__())
+            try:
+                delta = await asyncio.wait_for(asyncio.shield(pending), keepalive_interval)
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            except StopAsyncIteration:
+                pending = None
+                return
+            pending = None
+            yield _graph_delta_sse(run_id, delta)
+    finally:
+        # Client disconnected: cancel the shielded in-flight step so the underlying inference call
+        # stops instead of running on detached.
+        if pending is not None and not pending.done():
+            pending.cancel()
+            with contextlib.suppress(BaseException):
+                await pending
 
 
 def _empty_output_reason(output: str, finish_reason: str | None) -> str | None:

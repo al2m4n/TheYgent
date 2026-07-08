@@ -56,6 +56,7 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     # audio model-call types + the gate seam (all activities)
     "transcribe": "activity",  # POST /v1/audio/transcriptions
     "speak": "activity",  # POST /v1/audio/speech
+    "imagine": "activity",  # POST /v1/images/generations (text -> image ref)
     "ratelimit": "activity",  # per-key counter (I/O)
     "quota": "activity",  # accumulated-usage read (I/O)
     # ``guardrail`` is the first PER-INSTANCE kind: rule⇒orchestration, model⇒activity.
@@ -97,9 +98,10 @@ EXECUTABLE_TYPES: frozenset[str] = frozenset(
         "subgraph",
         "loop",
         "map",
-        # the node palette — audio/gate/transform types
+        # the node palette — audio/image/gate/transform types
         "transcribe",
         "speak",
+        "imagine",
         "guardrail",
         "ratelimit",
         "quota",
@@ -627,6 +629,18 @@ class SpeakConfig(_Wire):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class ImagineConfig(_Wire):
+    """``imagine`` activity node config — text in → image-ref out, mapping 1:1 to
+    ``POST /v1/images/generations``. The image analog of ``speak``: ``model`` names a ``models``
+    key whose binding advertises the ``images.generation`` modality; ``params`` carries
+    ``size``/``n``/``steps``. The step's return value is a REFERENCE to the produced image (bytes
+    are an artifact, never journaled); it feeds an ``output`` (``modality:image``) or an action
+    ``tool``."""
+
+    model: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class GuardrailRule(_Wire):
     """A deterministic guardrail check backend (``check.type == "rule"``). ``kind`` selects the
     predicate; ``spec`` carries its knob (the regex, the min/max length, the json schema, the
@@ -713,9 +727,10 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "subgraph": SubgraphConfig,
     "loop": LoopConfig,
     "map": MapConfig,
-    # node palette — audio/gate/transform types
+    # node palette — audio/image/gate/transform types
     "transcribe": TranscribeConfig,
     "speak": SpeakConfig,
+    "imagine": ImagineConfig,
     "guardrail": GuardrailConfig,
     "ratelimit": RateLimitConfig,
     "quota": QuotaConfig,
@@ -790,9 +805,9 @@ def _expected_kind(node: Node, cfg: _Wire | None) -> NodeKind | None:
 
 def _model_refs(cfg: _Wire | None) -> list[str]:
     """Every ``models`` key a node's config references — so each is checked against ``ir.models``
-    up front. ``llm``/``transcribe``/``speak`` name one model directly; a ``model`` guardrail names
-    one in ``check.model.model``. Anything else references no model."""
-    if isinstance(cfg, LlmConfig | TranscribeConfig | SpeakConfig):
+    up front. ``llm``/``transcribe``/``speak``/``imagine`` name one model directly; a ``model``
+    guardrail names one in ``check.model.model``. Anything else references no model."""
+    if isinstance(cfg, LlmConfig | TranscribeConfig | SpeakConfig | ImagineConfig):
         return [cfg.model]
     if isinstance(cfg, GuardrailConfig) and cfg.check.type == "model" and cfg.check.model:
         return [cfg.check.model.model]

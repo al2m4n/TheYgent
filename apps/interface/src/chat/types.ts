@@ -7,8 +7,11 @@ export type ChatRole = "user" | "assistant";
 
 export interface ImageAttachment {
   kind: "image";
-  /** http(s) URL or a data: URI (base64-inline) — both pass to the engine unchanged. */
+  /** http(s) URL, a data: URI (base64-inline), or an object URL — all pass to the engine or
+   *  <img> unchanged. */
   url: string;
+  /** The raw bytes, kept for a generated image the user may save (an object-URL blob). */
+  blob?: Blob;
   name?: string;
 }
 
