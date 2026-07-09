@@ -32,6 +32,39 @@ from openai.types.chat import ChatCompletion, ChatCompletionChunk
 # collide with our explicit kwargs, so we drop them defensively.
 _RESERVED = frozenset({"model", "messages", "stream", "extra_headers"})
 
+# OpenAI-standard chat generation params — passed as named kwargs to ``chat.completions.create``.
+# Anything else (an engine knob like ``chat_template_kwargs``, which toggles a model's hidden
+# thinking phase on servers that gate it in the chat template) goes through ``extra_body`` so the
+# SDK doesn't reject it — the SDK validates named kwargs against the OpenAI schema, exactly the
+# constraint ``generate_image`` already handles this way.
+_OPENAI_CHAT_PARAMS = frozenset(
+    {
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "max_completion_tokens",
+        "stop",
+        "n",
+        "presence_penalty",
+        "frequency_penalty",
+        "seed",
+        "user",
+        "logit_bias",
+        "logprobs",
+        "top_logprobs",
+        "response_format",
+        "parallel_tool_calls",
+        "reasoning_effort",
+        "stream_options",
+        "metadata",
+        "modalities",
+        "audio",
+        "prediction",
+        "service_tier",
+        "store",
+    }
+)
+
 # OpenAI-standard image-generation params — passed as named kwargs to ``images.generate``. Anything
 # else (an engine knob like ``steps``) goes through ``extra_body`` so the SDK doesn't reject it.
 _OPENAI_IMAGE_PARAMS = frozenset(
@@ -48,6 +81,22 @@ def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any]:
     if not params:
         return {}
     return {k: v for k, v in params.items() if k not in _RESERVED}
+
+
+def _chat_kwargs(params: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Split chat params into OpenAI-standard named kwargs + an ``extra_body`` for everything
+    else, so a non-standard engine param rides the request body instead of raising a
+    ``TypeError`` on the SDK's typed ``create``. A caller-supplied ``extra_body`` dict is
+    merged (its keys win over loose extras of the same name)."""
+    clean = _clean_params(params)
+    supplied = clean.pop("extra_body", None)
+    standard = {k: v for k, v in clean.items() if k in _OPENAI_CHAT_PARAMS}
+    extra = {k: v for k, v in clean.items() if k not in _OPENAI_CHAT_PARAMS}
+    if isinstance(supplied, Mapping):
+        extra.update(supplied)
+    if extra:
+        standard["extra_body"] = extra
+    return standard
 
 
 def _tool_kwargs(tools: list[dict[str, Any]] | None, tool_choice: Any) -> dict[str, Any]:
@@ -126,7 +175,7 @@ class GatewayClient:
             extra_headers=dict(extra_headers) if extra_headers else None,
             **({"stream_options": {"include_usage": True}} if include_usage else {}),
             **_tool_kwargs(tools, tool_choice),
-            **_clean_params(params),
+            **_chat_kwargs(params),
         )
 
     async def complete(
@@ -147,7 +196,7 @@ class GatewayClient:
             stream=False,
             extra_headers=dict(extra_headers) if extra_headers else None,
             **_tool_kwargs(tools, tool_choice),
-            **_clean_params(params),
+            **_chat_kwargs(params),
         )
 
     async def embed(

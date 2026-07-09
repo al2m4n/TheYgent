@@ -13,9 +13,21 @@ vi.mock("../src/lib/api", () => ({
   ApiError: class ApiError extends Error {
     code?: string;
   },
+  // The interactive Run streams like every chat: reasoning frames, then answer deltas. The
+  // frames carry an empty runId so the trace/canvas block is skipped (keeps the test light) and
+  // the post-stream canonical-output lookup is not taken (the streamed text IS the result).
+  streamRun: vi.fn(async () => ({
+    events: (async function* () {
+      yield { event: "run", data: JSON.stringify({ runId: "", status: "streaming" }) };
+      yield { event: "reasoning", data: JSON.stringify({ runId: "", reasoning: "thinking hard" }) };
+      yield { event: "delta", data: JSON.stringify({ runId: "", delta: "The answer " }) };
+      yield { event: "delta", data: JSON.stringify({ runId: "", delta: "is **42**" }) };
+      yield { event: "run", data: JSON.stringify({ runId: "", status: "completed" }) };
+      yield { event: "message", data: "[DONE]" };
+    })(),
+    abort: vi.fn(),
+  })),
   api: {
-    // empty runId → the trace/canvas block is skipped (keeps the test light).
-    runAgent: vi.fn(async () => ({ runId: "", output: "done" })),
     runAgentDurable: vi.fn(async () => ({ run_id: "run_dur_1" })),
     getRun: vi.fn(async () => ({ id: "run_dur_1", status: "completed", output: "5", error: null })),
     getAgentVersion: vi.fn(async () => ({ ir: { id: "agent.docker", models: {} } })),
@@ -25,7 +37,7 @@ vi.mock("../src/lib/api", () => ({
 }));
 
 import { AgentBench } from "../src/bench/AgentBench";
-import { type AgentDetail, api } from "../src/lib/api";
+import { type AgentDetail, api, streamRun } from "../src/lib/api";
 
 function withQuery(node: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -63,7 +75,7 @@ const agent: AgentDetail = {
 describe("AgentBench version pin", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("defaults the pin to the latest version and runs it", async () => {
+  it("defaults the pin to the latest version and runs it (streamed, chat-style result)", async () => {
     withQuery(<AgentBench agent={agent} />);
     const pin = screen.getByRole("combobox", { name: "Version" }) as HTMLSelectElement;
     expect(pin.value).toBe("0.1.2"); // latest, not the older llama-3.2 version
@@ -72,7 +84,29 @@ describe("AgentBench version pin", () => {
     await runButtonReady();
     fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
-      expect(api.runAgent).toHaveBeenCalledWith("agent.docker", { input: "hi", version: "0.1.2" }),
+      expect(streamRun).toHaveBeenCalledWith("/agents/agent.docker/runs", {
+        input: "hi",
+        stream: true,
+        version: "0.1.2",
+      }),
+    );
+    // The result presents like a chat answer: the thinking block + the markdown-rendered answer.
+    expect(await screen.findByText("Thinking")).toBeTruthy();
+    expect((await screen.findByText("42")).tagName).toBe("STRONG"); // **42** rendered as markdown
+  });
+
+  it("Enter in the input runs, like the chat composer sends", async () => {
+    withQuery(<AgentBench agent={agent} />);
+    const box = screen.getByPlaceholderText("Run input…");
+    fireEvent.change(box, { target: { value: "hi" } });
+    await runButtonReady();
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() =>
+      expect(streamRun).toHaveBeenCalledWith("/agents/agent.docker/runs", {
+        input: "hi",
+        stream: true,
+        version: "0.1.2",
+      }),
     );
   });
 
@@ -86,8 +120,9 @@ describe("AgentBench version pin", () => {
     await runButtonReady();
     fireEvent.click(screen.getByRole("button", { name: "Run" })); // the split button runs directly
     await waitFor(() =>
-      expect(api.runAgent).toHaveBeenLastCalledWith("agent.docker", {
+      expect(streamRun).toHaveBeenLastCalledWith("/agents/agent.docker/runs", {
         input: "hi",
+        stream: true,
         version: "0.1.1",
       }),
     );
@@ -109,7 +144,7 @@ describe("AgentBench version pin", () => {
       }),
     );
     // the normal Run path was NOT taken.
-    expect(api.runAgent).not.toHaveBeenCalled();
+    expect(streamRun).not.toHaveBeenCalled();
   });
 
   it("JSON input mode parses loudly and sends the parsed object", async () => {
@@ -127,8 +162,9 @@ describe("AgentBench version pin", () => {
     await runButtonReady();
     fireEvent.click(screen.getByRole("button", { name: "Run" }));
     await waitFor(() =>
-      expect(api.runAgent).toHaveBeenCalledWith("agent.docker", {
+      expect(streamRun).toHaveBeenCalledWith("/agents/agent.docker/runs", {
         input: { path: "/tmp/x", question: "q" },
+        stream: true,
         version: "0.1.2",
       }),
     );

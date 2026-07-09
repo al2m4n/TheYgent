@@ -26,6 +26,7 @@ import {
 import { api } from "../lib/api";
 import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
+import { ModelParamsSection } from "./ModelParamsPanel";
 import { NodeCodeEditor } from "./NodeCodeEditor";
 import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 import { Checkbox } from "./ui/checkbox";
@@ -36,6 +37,13 @@ const IconPickerGrid = lazy(() => import("./IconPickerGrid"));
 
 // node types whose config composes a saved, pinned agent (the `agent` field is an agent-id picker).
 const PINNED_BODY_TYPES = new Set(["subgraph", "loop", "map"]);
+
+// The model-calling audio nodes: their `model` gets the binding picker (options narrowed to the
+// matching modality) and their `params` gets the schema-driven form instead of a raw JSON box.
+const AUDIO_MODEL_TYPES: Record<string, "audio.transcription" | "audio.speech"> = {
+  transcribe: "audio.transcription",
+  speak: "audio.speech",
+};
 
 interface Props {
   ir: IRDocument;
@@ -184,13 +192,46 @@ function NodePanel({
               }
               // Specialized pickers for reference fields — populated from the live registries instead
               // of free text, so you pick a real value (and the validator catches a dangling ref).
+              // The llm's model field pairs the picker with the binding's generation params
+              // (temperature, max tokens, reasoning, …) — the values the runtime forwards on
+              // every call through this binding.
               if (node.type === "llm" && key === "model") {
+                return (
+                  <div key={`${node.id}:${key}`} className="space-y-3">
+                    <ModelPicker ir={ir} nodeId={node.id} onChange={onChange} />
+                    <BindingParams
+                      ir={ir}
+                      bindingKey={config.model as string | undefined}
+                      onChange={onChange}
+                    />
+                  </div>
+                );
+              }
+              // The audio model nodes get the same picker (narrowed to their modality) and a real
+              // params form in place of the raw JSON box.
+              if (AUDIO_MODEL_TYPES[node.type] && key === "model") {
                 return (
                   <ModelPicker
                     key={`${node.id}:${key}`}
                     ir={ir}
                     nodeId={node.id}
+                    modality={AUDIO_MODEL_TYPES[node.type]}
                     onChange={onChange}
+                  />
+                );
+              }
+              if (AUDIO_MODEL_TYPES[node.type] && key === "params") {
+                const bindingKey = config.model as string | undefined;
+                const binding = bindingKey
+                  ? ir.models?.[bindingKey as keyof typeof ir.models]
+                  : undefined;
+                return (
+                  <ModelParamsSection
+                    key={`${node.id}:${key}`}
+                    modality={AUDIO_MODEL_TYPES[node.type]}
+                    logicalId={(binding as { model?: string } | undefined)?.model}
+                    params={(config.params as Record<string, unknown>) ?? {}}
+                    onChange={(p) => setConfigKey("params", p)}
                   />
                 );
               }
@@ -1160,16 +1201,20 @@ function ListPicker({
   );
 }
 
-/** The llm `model` field: pick a declared graph binding OR an inference-plane logical model. Picking
- * an inference model that isn't declared yet auto-creates the graph binding and selects it,
- * so you go from "registered upstream model" → "usable in this node" in one step. */
+/** The model-node `model` field: pick a declared graph binding OR an inference-plane logical
+ * model. Picking an inference model that isn't declared yet auto-creates the graph binding and
+ * selects it, so you go from "registered upstream model" → "usable in this node" in one step.
+ * `modality` narrows the inference-plane options to models registered for that task (an audio
+ * node offers audio models); declared bindings always stay offered. */
 function ModelPicker({
   ir,
   nodeId,
+  modality,
   onChange,
 }: {
   ir: IRDocument;
   nodeId: string;
+  modality?: string;
   onChange: (ir: IRDocument) => void;
 }) {
   const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
@@ -1183,7 +1228,9 @@ function ModelPicker({
     retry: false,
     staleTime: 30_000,
   });
-  const inferenceIds = (models ?? []).map((m) => m.logicalId);
+  const inferenceIds = (models ?? [])
+    .filter((m) => !modality || (m.binding.modality ?? "chat") === modality)
+    .map((m) => m.logicalId);
   const options = [...new Set([...declared, ...inferenceIds])];
 
   const pick = (v: string) => {
@@ -1223,6 +1270,49 @@ function ModelPicker({
       hint={hint}
       placeholder="pick a binding or inference model…"
       onChange={pick}
+    />
+  );
+}
+
+/** The selected binding's generation params (temperature, max tokens, reasoning, …), edited in
+ * place on `ir.models[key].params` — hashed agent content, forwarded on every call through the
+ * binding. Rendered only once a declared binding is selected (params live on the binding, so
+ * there is nothing to edit before then). */
+function BindingParams({
+  ir,
+  bindingKey,
+  onChange,
+}: {
+  ir: IRDocument;
+  bindingKey: string | undefined;
+  onChange: (ir: IRDocument) => void;
+}) {
+  if (!bindingKey) return null;
+  const models = (ir.models ?? {}) as Record<
+    string,
+    { model?: string; params?: Record<string, unknown> } & object
+  >;
+  const binding = models[bindingKey];
+  if (!binding) {
+    return (
+      <p className="text-[10px] text-slate-600">
+        Params live on the model binding — declare the binding (pick a registered model above) to
+        set temperature, max tokens, and the other generation knobs.
+      </p>
+    );
+  }
+  return (
+    <ModelParamsSection
+      modality="chat"
+      logicalId={binding.model}
+      params={binding.params ?? {}}
+      onChange={(p) =>
+        onChange({
+          ...ir,
+          models: { ...models, [bindingKey]: { ...binding, params: p } },
+        } as IRDocument)
+      }
+      note={`Stored on the '${bindingKey}' binding as literal values — every llm node using this binding shares them. Empty fields send nothing (engine defaults apply).`}
     />
   );
 }
