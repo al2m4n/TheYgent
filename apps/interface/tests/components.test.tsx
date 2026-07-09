@@ -221,8 +221,9 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
       )?.messages as { role: string; content: string }[];
 
     // The turn renders as a structured row, not raw JSON: a role dropdown + a text box (value "$in").
+    // (Queried by name — the llm panel also hosts the binding-params selects.)
     expect(screen.getByDisplayValue("$in")).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toHaveValue("user");
+    expect(screen.getByRole("combobox", { name: "Message role" })).toHaveValue("user");
 
     // The "insert input ($in)" helper splices the token into the text box → content grows by 3.
     fireEvent.click(screen.getByRole("button", { name: /Insert input/ }));
@@ -257,7 +258,7 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
 
     // Add a turn (appends a user turn at index 1), then flip its role to "system".
     fireEvent.click(screen.getByRole("button", { name: /Add message/ }));
-    const roleSelects = screen.getAllByRole("combobox");
+    const roleSelects = screen.getAllByRole("combobox", { name: "Message role" });
     fireEvent.change(roleSelects[1], { target: { value: "system" } });
 
     // The system turn floats to the top; the original user turn follows.

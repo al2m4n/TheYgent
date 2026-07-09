@@ -1,0 +1,47 @@
+{
+  "ir": {
+    "schemaVersion": "1.0", "id": "agt_hybrid_route", "name": "hybrid-route", "version": "0.1.0",
+    "models": {
+      "triage": { "binding": "mlx", "model": "qwen-3.5", "params": { "temperature": 0.0, "maxTokens": 256, "chat_template_kwargs": { "enable_thinking": false } } },
+      "local":  { "binding": "mlx", "model": "qwen-3.5", "params": { "temperature": 0.3, "maxTokens": 512, "chat_template_kwargs": { "enable_thinking": false } } },
+      "remote": { "binding": "openai-compatible", "model": "claude-sonnet-5", "params": { "maxTokens": 1024 } }
+    },
+    "tools": {},
+    "nodes": [
+      { "id": "n_in", "type": "input", "kind": "boundary", "ports": { "in": [], "out": [{"id":"out"}] } },
+      { "id": "n_triage", "type": "llm", "kind": "activity",
+        "config": { "model": "triage", "messages": [
+          { "role": "system", "content": "You are a routing classifier. Decide which model should answer the user request:\n- \"local\": greetings, short factual questions, simple rewrites, casual chat\n- \"remote\": coding, multi-step reasoning, analysis, long-form writing, anything hard\nRespond with ONLY minified JSON, nothing else, exactly this shape:\n{\"route\":\"local\",\"question\":\"<the user request copied verbatim>\"}" },
+          { "role": "user", "content": "$in" }
+        ] },
+        "ports": { "in": [{"id":"in"}], "out": [{"id":"ok"},{"id":"err","type":"error"}] } },
+      { "id": "n_route", "type": "router", "kind": "orchestration",
+        "config": { "select": "$in.in.route" },
+        "ports": { "in": [{"id":"in"}], "out": [{"id":"local"},{"id":"remote"}] } },
+      { "id": "n_llm_local", "type": "llm", "kind": "activity",
+        "config": { "model": "local", "messages": [
+          { "role": "system", "content": "Answer briefly and directly." },
+          { "role": "user", "content": "$in.in.question" }
+        ] },
+        "ports": { "in": [{"id":"in"}], "out": [{"id":"ok"},{"id":"err","type":"error"}] } },
+      { "id": "n_llm_remote", "type": "llm", "kind": "activity",
+        "config": { "model": "remote", "messages": [
+          { "role": "system", "content": "You are a capable assistant. Give a thorough, correct answer." },
+          { "role": "user", "content": "$in.in.question" }
+        ] },
+        "ports": { "in": [{"id":"in"}], "out": [{"id":"ok"},{"id":"err","type":"error"}] } },
+      { "id": "n_out_local",  "type": "output", "kind": "boundary", "ports": { "in": [{"id":"in"}], "out": [] } },
+      { "id": "n_out_remote", "type": "output", "kind": "boundary", "ports": { "in": [{"id":"in"}], "out": [] } }
+    ],
+    "edges": [
+      { "id":"e1","source":"n_in","sourceHandle":"out","target":"n_triage","targetHandle":"in","channel":"data" },
+      { "id":"e2","source":"n_triage","sourceHandle":"ok","target":"n_route","targetHandle":"in","channel":"data" },
+      { "id":"e3","source":"n_route","sourceHandle":"local","target":"n_llm_local","targetHandle":"in","channel":"data" },
+      { "id":"e4","source":"n_route","sourceHandle":"remote","target":"n_llm_remote","targetHandle":"in","channel":"data" },
+      { "id":"e5","source":"n_llm_local","sourceHandle":"ok","target":"n_out_local","targetHandle":"in","channel":"data" },
+      { "id":"e6","source":"n_llm_remote","sourceHandle":"ok","target":"n_out_remote","targetHandle":"in","channel":"data" }
+    ]
+  },
+  "input": "hey, how is it going?",
+  "stream": false
+}

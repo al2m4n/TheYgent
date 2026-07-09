@@ -1,5 +1,6 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
+import { ThinkingBlock } from "../chat/ThinkingBlock";
 import { ResumePanel } from "../components/ResumePanel";
 import { TimeAgo } from "../components/TimeAgo";
 import { ErrorBanner, NoteBanner, Page, Spinner, StatusBadge, linkClass } from "../components/ui";
@@ -153,25 +154,9 @@ export function RunDetail() {
           <ErrorBanner error={run.error} />
         ))}
 
-      {reasoning && (
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              Thinking
-              {isStreaming && (
-                <span className="text-xs font-normal text-amber-600 dark:text-amber-400">
-                  reasoning…
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="mono whitespace-pre-wrap break-words text-sm text-muted-foreground">
-              {reasoning}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
+      {/* The same collapsible thinking block every chat renders — open and following its live
+          edge while the model reasons, folding away once the answer lands. */}
+      {reasoning && <ThinkingBlock reasoning={reasoning} streaming={isStreaming} />}
 
       <Card>
         <CardHeader className="border-b">

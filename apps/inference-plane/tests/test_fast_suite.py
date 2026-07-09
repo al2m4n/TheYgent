@@ -173,6 +173,105 @@ def test_reachable_passthrough_with_local_credential(
         asyncio.run(upstream.terminate())
 
 
+# Commit-before-dispatch: an upstream that REJECTS a streaming request (e.g. an
+# unsupported generation param) must get a structured 4xx BEFORE the 200/text-event-stream
+# header is committed — never a 200 followed by a torn stream that hides the real message.
+def test_streaming_upstream_reject_returns_structured_error(client: TestClient) -> None:
+    client.put("/admin/models/triage-fast", json=managed_payload())
+    r = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "triage-fast",
+            "messages": [{"role": "user", "content": "__force_upstream_400__"}],
+            "stream": True,
+        },
+    )
+    assert r.status_code == 400
+    assert r.headers["content-type"].startswith("application/json")
+    err = r.json()["error"]
+    assert err["code"] == "upstream_error"
+    assert "temperature" in err["message"]  # the upstream's own message survives
+
+
+# Same guarantee for a reachable (hosted openai-compatible) binding — the path a
+# remote provider's param rejection actually travels.
+def test_streaming_reachable_reject_returns_structured_error(client: TestClient) -> None:
+    import asyncio
+
+    from _fake_upstream import FakeUpstreamHandle
+    from theygent_ir import Capabilities
+
+    upstream = FakeUpstreamHandle(Capabilities())
+    try:
+        client.put(
+            "/admin/models/hosted", json=reachable_payload(base_url=f"{upstream.base_url}/v1")
+        )
+        r = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "hosted",
+                "messages": [{"role": "user", "content": "__force_upstream_400__"}],
+                "stream": True,
+            },
+        )
+        assert r.status_code == 400
+        err = r.json()["error"]
+        assert err["code"] == "upstream_error"
+        assert "temperature" in err["message"]
+    finally:
+        asyncio.run(upstream.terminate())
+
+
+# An upstream that dies AFTER chunks started flowing can't un-send the 200 — the relay
+# must end the stream with a structured error frame (SDK clients raise it with the cause),
+# never a torn connection, and the engine lease must still release.
+def test_streaming_midstream_abort_emits_error_frame(client: TestClient, app: FastAPI) -> None:
+    client.put("/admin/models/triage-fast", json=managed_payload())
+    frames: list[dict] = []
+    with client.stream(
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "triage-fast",
+            "messages": [{"role": "user", "content": "__abort_mid_stream__"}],
+            "stream": True,
+        },
+    ) as r:
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        for line in r.iter_lines():
+            payload = line[len("data:") :].strip() if line.startswith("data:") else ""
+            if payload and payload != "[DONE]":
+                frames.append(json.loads(payload))
+    assert frames, "expected at least the error frame"
+    error = frames[-1].get("error")
+    assert error is not None, f"last frame should be a structured error, got {frames[-1]}"
+    assert error["code"] == "upstream_error"
+    assert app.state.manager.state("triage-fast")["inflight"] == 0  # lease released
+
+
+# A lease that loses the capacity race AFTER warm succeeded (two requests racing one
+# slot) must still map to a clean 503 — not escape the endpoint as an opaque 500.
+def test_streaming_lease_capacity_race_maps_clean_503(
+    client: TestClient, app: FastAPI, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+
+    from theygent_inference_plane.manager import NoCapacityError
+
+    client.put("/admin/models/triage-fast", json=managed_payload())
+
+    @contextlib.asynccontextmanager
+    async def raced_out(logical_id: str):
+        raise NoCapacityError("no capacity: all resident engines are busy")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(app.state.manager, "lease", raced_out)
+    r = client.post("/v1/chat/completions", json=_chat("triage-fast", stream=True))
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "no_capacity"
+
+
 # Commit-before-spawn: a STREAMING request that can't be spawned must get a clean
 # 503 BEFORE the 200/text-event-stream header is committed — never a 200 with the
 # error buried in the SSE body. max_resident=0 refuses every spawn deterministically.

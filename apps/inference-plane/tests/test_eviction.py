@@ -261,3 +261,42 @@ async def test_error_midstream_releases_lease() -> None:
 
     await mgr.evict("a")
     assert mgr.state("a")["resident"] is False
+
+
+# A client disconnecting mid-stream cancels the response task, and the server keeps
+# re-delivering that cancellation at every suspension until the task dies. If the release
+# can be killed while waiting on a contended manager lock (a concurrent cold spawn holds
+# it for seconds), the inflight decrement is lost and the engine is pinned non-evictable
+# forever — eviction and reap only ever consider inflight == 0. The release is shielded,
+# so it must complete even under repeated cancellation.
+async def test_lease_release_survives_repeated_cancellation() -> None:
+    reg, clock = Registry(), ManualClock()
+    launcher = _NoopLauncher(launch_delay=0.2)  # a slow spawn holds the manager lock
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
+    _register(reg, "a")
+    _register(reg, "b")
+
+    await mgr.warm("a")  # spawn "a" up front so its lease is instant
+    parked = asyncio.Event()
+
+    async def leased_forever() -> None:
+        async with mgr.lease("a"):
+            parked.set()
+            await asyncio.Event().wait()  # parked mid-lease until cancelled
+
+    task = asyncio.create_task(leased_forever())
+    await parked.wait()
+    assert mgr.state("a")["inflight"] == 1
+
+    # Contend the lock with a cold spawn of "b", then cancel like the server does:
+    # repeatedly, so every suspension of the dying task gets its own cancellation.
+    warm_task = asyncio.create_task(mgr.warm("b"))
+    await asyncio.sleep(0.01)  # let warm() take the manager lock
+    for _ in range(10):
+        task.cancel()
+        await asyncio.sleep(0.01)
+    await warm_task
+    await asyncio.sleep(0.05)  # lock is free — the shielded release completes now
+
+    assert task.done()
+    assert mgr.state("a")["inflight"] == 0  # the slot was released, never leaked

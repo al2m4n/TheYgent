@@ -5,16 +5,19 @@
 // The tune→ship loop: apply a saved preset's LITERAL params to a binding and save a new version
 // through the registry (the server hashes; the preset name never enters the IR).
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { ChevronDown } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Selection } from "../adapter";
 import { ChatView } from "../chat/ChatView";
+import { Markdown } from "../chat/Markdown";
+import { ThinkingBlock } from "../chat/ThinkingBlock";
 import { useRunChat } from "../chat/useRunChat";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { ResumePanel, parseTyped } from "../components/ResumePanel";
 import { Button, Card, ErrorBanner, Field, Input, NoteBanner, Select } from "../components/ui";
+import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,10 +25,11 @@ import {
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { RunWaterfall } from "../components/waterfall";
-import { type AgentDetail, ApiError, api } from "../lib/api";
+import { type AgentDetail, ApiError, api, streamRun } from "../lib/api";
 import { isDurableOnly } from "../lib/durable";
 import { shortId } from "../lib/format";
-import { useRun } from "../queries";
+import type { DeltaFrame, ReasoningFrame, RunFrame } from "../lib/runtypes";
+import { keys, useRun } from "../queries";
 import { applyPresetToBinding } from "./preset";
 
 export function AgentBench({ agent }: { agent: AgentDetail }) {
@@ -46,15 +50,20 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   // An agent whose graph drills `$in.in.<field>` takes an OBJECT input: JSON mode parses the text
   // client-side (loudly — an unparsable payload never leaves the tab as a look-alike string).
   const [inputMode, setInputMode] = useState<"text" | "json">("text");
-  const [result, setResult] = useState<{ runId: string; output?: string; error?: string } | null>(
-    null,
-  );
+  const [result, setResult] = useState<{
+    runId: string;
+    output?: string;
+    reasoning?: string;
+    error?: string;
+    streaming?: boolean;
+  } | null>(null);
   // The durable path enqueues a run and polls its id (the endpoint returns no terminal result).
   const [durableRunId, setDurableRunId] = useState<null | string>(null);
   // Set when a durable run is attempted but the server isn't in durable mode (400 durable_required).
   const [durableUnavailable, setDurableUnavailable] = useState(false);
   const [highlight, setHighlight] = useState<Selection>(null);
   const [running, setRunning] = useState(false);
+  const queryClient = useQueryClient();
 
   const ir = stored.data?.ir as IRDocument | undefined;
   // A durable-only agent (loop/map/subgraph/human) can ONLY run durably. Any other agent can run
@@ -77,6 +86,18 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
 
   const typedInput = parseTyped(inputMode, input);
 
+  // Leaving the modal mid-stream must abort the request — the server cancels the run on
+  // disconnect; an orphaned reader would keep a local engine generating with no Stop control left.
+  const abortRef = useRef<(() => void) | null>(null);
+  const stoppedRef = useRef(false);
+  useEffect(
+    () => () => {
+      stoppedRef.current = true;
+      abortRef.current?.();
+    },
+    [],
+  );
+
   async function run(durable: boolean) {
     if (!typedInput.ok) return;
     setRunning(true);
@@ -84,6 +105,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     setDurableRunId(null);
     setDurableUnavailable(false);
     setHighlight(null);
+    stoppedRef.current = false;
     try {
       if (durable) {
         const { run_id } = await api.runAgentDurable(agent.id, {
@@ -92,7 +114,75 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
         });
         setDurableRunId(run_id);
       } else {
-        setResult(await api.runAgent(agent.id, { input: typedInput.value, version }));
+        // The interactive Run STREAMS, exactly like every chat surface: the model's thinking
+        // arrives as `reasoning` frames and the answer as `delta` frames, so the result renders
+        // live through the same thinking-block + markdown presentation instead of a silent wait
+        // for the terminal payload.
+        const handle = await streamRun(`/agents/${encodeURIComponent(agent.id)}/runs`, {
+          input: typedInput.value,
+          stream: true,
+          version,
+        });
+        abortRef.current = handle.abort;
+        let content = "";
+        let reasoning = "";
+        let runId = "";
+        let failed: string | undefined;
+        let stopped = false;
+        try {
+          for await (const ev of handle.events) {
+            if (ev.data === "[DONE]") continue;
+            let payload: RunFrame | DeltaFrame | ReasoningFrame;
+            try {
+              payload = JSON.parse(ev.data);
+            } catch {
+              continue;
+            }
+            runId = payload.runId ?? runId;
+            if (ev.event === "delta") {
+              content += (payload as DeltaFrame).delta;
+            } else if (ev.event === "reasoning") {
+              reasoning += (payload as ReasoningFrame).reasoning;
+            } else if (ev.event === "run") {
+              const frame = payload as RunFrame;
+              if (frame.status === "failed") failed = frame.error ?? "run failed";
+            }
+            setResult({
+              runId,
+              output: content || undefined,
+              reasoning: reasoning || undefined,
+              streaming: true,
+            });
+          }
+        } catch (e) {
+          // A deliberate Stop aborts the fetch mid-read — a stop, not a failure.
+          if (stoppedRef.current) stopped = true;
+          else throw e;
+        }
+        // The persisted run row carries the CANONICAL output — a graph whose answer comes from a
+        // non-streaming node (tool/router-terminal) emits no deltas at all, and even an llm graph's
+        // output node may post-process the streamed text. Prefer it; the streamed text was the
+        // live preview. It also carries the honest empty-output note (run.error on `completed`).
+        if (!stopped && runId) {
+          try {
+            const run = await api.getRun(runId);
+            if (run.output) content = run.output;
+            if (run.status === "failed") failed = failed ?? run.error ?? "run failed";
+            else if (!content && run.error) failed = failed ?? run.error;
+          } catch {
+            /* keep the streamed view — the run row will still show it under Runs */
+          }
+        }
+        setResult({
+          runId,
+          output: content || undefined,
+          reasoning: reasoning || undefined,
+          error: failed ?? (stopped ? "stopped" : undefined),
+          streaming: false,
+        });
+        // The waterfall's live polling stops with the stream; one invalidation pulls the trace
+        // as persisted at terminal (the final spans can land just after the last live poll).
+        if (runId) queryClient.invalidateQueries({ queryKey: keys.trace(runId) });
       }
     } catch (e) {
       // Only the durable endpoint's 400 means "server isn't in durable mode" — surface that as an
@@ -103,24 +193,31 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
         setResult({ runId: "", error: e instanceof Error ? e.message : String(e) });
       }
     } finally {
+      abortRef.current = null;
       setRunning(false);
     }
   }
 
-  // One result view over both paths: the interactive terminal result, or the durable poll's Run.
+  // One result view over both paths: the interactive stream (live content + reasoning), or the
+  // durable poll's Run (no streaming — the durable queue journals results, it doesn't relay
+  // tokens, so a durable run has output only).
   const view = durableRunId
     ? {
         runId: durableRunId,
         status: durableRun?.status as string | undefined,
         output: durableRun?.output ?? undefined,
+        reasoning: undefined as string | undefined,
         error: durableRun?.error ?? undefined,
+        streaming: false,
       }
     : result
       ? {
           runId: result.runId,
           status: undefined as string | undefined,
           output: result.output,
+          reasoning: result.reasoning,
           error: result.error,
+          streaming: Boolean(result.streaming),
         }
       : null;
   // A durable run keeps the buttons busy until the poll reaches a terminal status — except while
@@ -168,6 +265,14 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
             onChange={(e) => setInput(e.target.value)}
             placeholder={inputMode === "json" ? '{"field": "value"}' : "Run input…"}
             className="flex-1"
+            onKeyDown={(e) => {
+              // Enter runs, exactly like the chat composer sends. A durable-only agent's only
+              // path is durable; anything else takes the normal streaming run.
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && !runDisabled) {
+                e.preventDefault();
+                void run(durableOnly);
+              }
+            }}
           />
         </div>
       </Field>
@@ -188,6 +293,17 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
           // normal streaming path immediately, the caret opens a menu with the durable choice
           // (which checkpoints each step and resumes after a crash).
           <RunMenu busy={busy} disabled={runDisabled} onRun={run} />
+        )}
+        {result?.streaming && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              stoppedRef.current = true;
+              abortRef.current?.();
+            }}
+          >
+            Stop
+          </Button>
         )}
       </div>
 
@@ -212,10 +328,18 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
         />
       )}
       {view?.error && <ErrorBanner error={view.error} />}
+      {/* The result presents exactly like a chat answer everywhere: the model's thinking in the
+          collapsible block (open while it streams), then the answer as markdown. */}
+      {view?.reasoning && (
+        <ThinkingBlock reasoning={view.reasoning} streaming={view.streaming && !view.output} />
+      )}
       {view?.output && (
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-slate-800 bg-[var(--c-surface)] p-3 text-sm text-slate-200">
-          {view.output}
-        </pre>
+        <Bubble variant="secondary" className="max-w-full">
+          <BubbleContent className="max-h-64 overflow-y-auto">
+            <Markdown text={view.output} />
+            {view.streaming && <span className="animate-pulse text-muted-foreground">▍</span>}
+          </BubbleContent>
+        </Bubble>
       )}
       {view?.runId && (
         <div className="space-y-3">
@@ -223,8 +347,8 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
             runId={view.runId}
             // A durable run mounts the waterfall the moment it is enqueued — keep it live (1s
             // trace poll + the /trace/stream overlay) until the poll reaches a terminal status.
-            // An interactive run only lands here with its terminal result, so it is never live.
-            isLive={Boolean(durableRunId) && !durableTerminal}
+            // An interactive run now streams too, so it is live until its stream ends.
+            isLive={(Boolean(durableRunId) && !durableTerminal) || Boolean(view.streaming)}
             onHoverNode={(id) => setHighlight(id ? { kind: "node", id } : null)}
           />
           {ir && (

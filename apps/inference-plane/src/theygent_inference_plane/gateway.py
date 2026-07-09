@@ -81,6 +81,12 @@ class Gateway:
     async def stream(
         self, upstream: Upstream, messages: list[dict[str, Any]], params: dict[str, Any]
     ) -> AsyncIterator[str]:
+        # The dispatch call is awaited HERE, not inside the returned generator. An async
+        # generator runs nothing until its first __anext__ — by then the endpoint has already
+        # committed a 200 SSE header, so an upstream rejection (bad param, bad credential,
+        # unknown upstream model) could only surface as a torn stream with the real cause
+        # lost. Raising from this await lets the endpoint map the error to the same
+        # structured JSON as the non-stream path.
         resp = await litellm.acompletion(
             model=f"openai/{upstream.model}",
             api_base=upstream.api_base,
@@ -89,6 +95,11 @@ class Gateway:
             stream=True,
             **params,
         )
+        return self._sse_lines(resp, upstream, params)
+
+    async def _sse_lines(
+        self, resp: Any, upstream: Upstream, params: dict[str, Any]
+    ) -> AsyncIterator[str]:
         if upstream.needs_tool_parse and tool_parse.has_tools(params):
             # Buffer + rewrite the MLX text tool call into synthetic structured tool_calls chunks;
             # a normal answer still streams (the rewriter flushes once it can't be a tool call).
