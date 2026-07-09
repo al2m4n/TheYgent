@@ -47,7 +47,7 @@ INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
-.PHONY: help install engines migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint
+.PHONY: help install engines migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint docs-serve docs-build
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -192,3 +192,9 @@ smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plan
 
 logs: ## Tail the logs of all services
 	@tail -n +1 -f $(RUN_DIR)/inference-plane.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log
+
+docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:8000)
+	uv run --project docs/user-docs mkdocs serve -f docs/user-docs/mkdocs.yml
+
+docs-build: ## Build the user docs site (strict — broken links fail the build)
+	uv run --project docs/user-docs mkdocs build --strict -f docs/user-docs/mkdocs.yml
