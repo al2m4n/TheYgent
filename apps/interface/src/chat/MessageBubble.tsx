@@ -1,12 +1,16 @@
-// One chat message: user turns right-aligned on the blue accent, assistant turns left on the
-// surface ramp. The assistant side composes the pieces every transport can produce — thinking
-// block, markdown answer, attachments (image thumbs, playable audio), a degraded-turn note, and
-// caller-provided extras (the bench mounts per-turn metrics + save here).
+// One chat message, composed from the message + bubble primitives: user turns right-aligned in
+// the primary bubble, assistant turns left on the secondary surface. The assistant side composes
+// the pieces every transport can produce — thinking block, markdown answer, attachments (image
+// thumbs, playable audio), a degraded-turn note, and caller-provided extras (the bench mounts
+// per-turn metrics + save here).
 
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import { Bubble, BubbleContent } from "../components/ui/bubble";
+import { Message, MessageContent, MessageFooter, MessageHeader } from "../components/ui/message";
 import { shortId } from "../lib/format";
 import { Markdown } from "./Markdown";
+import { RunTraceBlock } from "./RunTraceBlock";
 import { ThinkingBlock } from "./ThinkingBlock";
 import type { Attachment, ChatMessage } from "./types";
 
@@ -16,7 +20,7 @@ function AttachmentView({ attachment }: { attachment: Attachment }) {
       <img
         src={attachment.url}
         alt={attachment.name ?? "attached image"}
-        className="max-h-48 max-w-full rounded-md border border-slate-800 object-contain"
+        className="max-h-48 max-w-full rounded-xl border object-contain"
       />
     );
   }
@@ -25,7 +29,7 @@ function AttachmentView({ attachment }: { attachment: Attachment }) {
       {/* biome-ignore lint/a11y/useMediaCaption: user-recorded / synthesized audio, no caption source */}
       <audio controls src={attachment.url} className="h-9 w-full min-w-56" />
       {(attachment.name || attachment.durationSec) && (
-        <span className="text-[10px] text-slate-500">
+        <span className="text-[10px] text-muted-foreground">
           {attachment.name}
           {attachment.durationSec ? ` · ${attachment.durationSec.toFixed(1)}s` : ""}
         </span>
@@ -37,26 +41,23 @@ function AttachmentView({ attachment }: { attachment: Attachment }) {
 export function MessageBubble({ message, extras }: { message: ChatMessage; extras?: ReactNode }) {
   const isUser = message.role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        className={`max-w-[85%] space-y-2 rounded-lg border px-3 py-2 ${
-          isUser ? "border-blue-500/30 bg-blue-500/10" : "border-slate-800 bg-[var(--c-surface-2)]"
-        }`}
-      >
-        <div className="flex items-baseline gap-2 text-[10px] uppercase tracking-wide text-slate-500">
-          <span>{message.role}</span>
+    <Message align={isUser ? "end" : "start"}>
+      <MessageContent>
+        <MessageHeader className="gap-2">
+          <span>{isUser ? "You" : "Assistant"}</span>
           {message.runId && (
             <Link
               to="/runs/$runId"
               params={{ runId: message.runId }}
-              className="lowercase text-blue-600 hover:text-blue-500 dark:text-blue-400"
+              className="font-normal text-blue-600 hover:text-blue-500 dark:text-blue-400"
             >
               run {shortId(message.runId)}
             </Link>
           )}
-        </div>
+        </MessageHeader>
         {message.attachments && message.attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2">
+          // data-slot so the row follows the message alignment (end-aligned on user turns).
+          <div data-slot="message-attachments" className="flex max-w-[80%] flex-wrap gap-2">
             {message.attachments.map((a, i) => (
               <AttachmentView key={`${a.url}-${i}`} attachment={a} />
             ))}
@@ -70,24 +71,33 @@ export function MessageBubble({ message, extras }: { message: ChatMessage; extra
         )}
         {isUser ? (
           message.content && (
-            <pre className="whitespace-pre-wrap break-words font-sans text-sm text-slate-200">
-              {message.content}
-            </pre>
+            <Bubble variant="default">
+              <BubbleContent>
+                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              </BubbleContent>
+            </Bubble>
           )
         ) : message.content ? (
-          <div>
-            <Markdown text={message.content} />
-            {message.streaming && <span className="animate-pulse text-slate-400">▍</span>}
-          </div>
+          <Bubble variant="secondary">
+            <BubbleContent>
+              <Markdown text={message.content} />
+              {message.streaming && <span className="animate-pulse text-muted-foreground">▍</span>}
+            </BubbleContent>
+          </Bubble>
         ) : (
           message.streaming &&
-          !message.reasoning && <span className="animate-pulse text-slate-500">▍</span>
+          !message.reasoning && <span className="animate-pulse px-3 text-muted-foreground">▍</span>
         )}
         {message.error && (
-          <p className="text-xs text-amber-700 dark:text-amber-300">{message.error}</p>
+          <p className="px-3 text-xs text-amber-700 dark:text-amber-300">{message.error}</p>
         )}
-        {extras}
-      </div>
-    </div>
+        {/* The run behind this turn, inspectable in place — folded by default; only turns the
+            control-plane ran carry a runId (direct data-plane turns have no run to trace). */}
+        {!isUser && message.runId && (
+          <RunTraceBlock runId={message.runId} streaming={message.streaming} />
+        )}
+        {extras && <MessageFooter className="flex-col items-start gap-1">{extras}</MessageFooter>}
+      </MessageContent>
+    </Message>
   );
 }

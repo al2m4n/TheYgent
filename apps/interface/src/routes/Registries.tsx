@@ -22,8 +22,11 @@ import {
   Lock,
   MessageSquare,
   Mic,
+  PackageOpen,
   Plus,
   Search,
+  SearchX,
+  ServerOff,
   Snowflake,
   Star,
   Trash2,
@@ -31,38 +34,71 @@ import {
   Waypoints,
   Wrench,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ModelBench } from "../bench/ModelBench";
 import { CategoryBadge, FilterBar } from "../components/Filters";
+import { TimeAgo } from "../components/TimeAgo";
 import {
-  Badge,
-  Button,
-  Card,
   ConfirmDialog,
-  Empty,
   ErrorBanner,
   Field,
   Input,
   Modal,
   NoteBanner,
   Page,
-  Select,
-  Spinner,
-  Table,
-  Td,
-  Th,
+  Textarea,
   linkClass,
 } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../components/ui/empty";
+import { Item, ItemActions, ItemContent } from "../components/ui/item";
+import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
+import { Skeleton } from "../components/ui/skeleton";
+import { Spinner } from "../components/ui/spinner";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api } from "../lib/api";
-import { countBy, engineTone, toggle } from "../lib/categories";
+import { countBy, engineTone, toggle, toneOf } from "../lib/categories";
 import { formatBytes, relativeTime } from "../lib/format";
 import { notify, trackDownload } from "../lib/notify";
 import { useInView } from "../lib/useInView";
+import { cn } from "../lib/utils";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 const ENGINE_LABEL: Record<string, string> = { mlx: "MLX", llamacpp: "llama.cpp", vllm: "vLLM" };
 const engineLabel = (e: string) => ENGINE_LABEL[e] ?? e;
+
+// A badge tinted by the shared category tone system (lib/categories), so a capability or fit reads
+// the same colour here as anywhere else in the app.
+function ToneBadge({
+  tone = "slate",
+  children,
+}: {
+  tone?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Badge variant="secondary" className={cn(toneOf(tone).badge)}>
+      {children}
+    </Badge>
+  );
+}
 
 // Hub timestamps can be years old, so this wraps the shared relativeTime (identical output for
 // anything under a month — one formatter app-wide) and only adds coarse month/year buckets on top.
@@ -166,10 +202,12 @@ export function Registries() {
     <Page>
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold text-slate-100">Registries</h1>
-          <p className="text-xs text-slate-500">Models registered in your inference plane.</p>
+          <h1 className="text-lg font-semibold text-foreground">Registries</h1>
+          <p className="text-xs text-muted-foreground">
+            Models registered in your inference plane.
+          </p>
         </div>
-        <Button variant="primary" onClick={() => setAdding(true)}>
+        <Button onClick={() => setAdding(true)}>
           <Plus size={14} /> Add model
         </Button>
       </div>
@@ -217,7 +255,9 @@ function AddModelPanel({
 
   return (
     <div className="space-y-3">
-      <div className="flex rounded-md border border-slate-700 p-0.5 text-sm">
+      {/* A tabs-styled segmented switch. Real <button>s (not tab-role triggers) because the two
+          panes are alternate FORMS, and callers/tests address them as plain buttons. */}
+      <div className="inline-flex h-8 w-fit items-center justify-center rounded-lg bg-muted p-[3px] text-muted-foreground">
         {(
           [
             ["hf", "Hugging Face"],
@@ -228,9 +268,12 @@ function AddModelPanel({
             key={k}
             type="button"
             onClick={() => setSource(k)}
-            className={`rounded px-3 py-1 ${
-              source === k ? "bg-slate-700 text-slate-100" : "text-slate-400 hover:text-slate-200"
-            }`}
+            className={cn(
+              "inline-flex h-[calc(100%-1px)] items-center justify-center rounded-md border border-transparent px-3 py-0.5 text-sm font-medium whitespace-nowrap transition-all",
+              source === k
+                ? "bg-background text-foreground shadow-sm dark:border-input dark:bg-input/30"
+                : "text-foreground/60 hover:text-foreground dark:text-muted-foreground dark:hover:text-foreground",
+            )}
           >
             {label}
           </button>
@@ -252,11 +295,15 @@ function AddModelPanel({
                 />
               </Field>
             </div>
-            <Button disabled={!paste.trim()} onClick={() => setResolved(parseHfRef(paste))}>
+            <Button
+              variant="outline"
+              disabled={!paste.trim()}
+              onClick={() => setResolved(parseHfRef(paste))}
+            >
               Add
             </Button>
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-muted-foreground">
             or{" "}
             <button type="button" onClick={onBrowse} className={`${linkClass} hover:underline`}>
               Browse Hugging Face →
@@ -264,10 +311,10 @@ function AddModelPanel({
             to search the hub in a pop-up.
           </div>
           {resolved && (
-            <Card className="overflow-hidden">
-              <div className="border-b border-slate-800 px-4 py-2">
-                <div className="mono truncate text-[11px] text-slate-400">{resolved}</div>
-              </div>
+            <Card className="gap-0 py-0">
+              <CardHeader className="px-4 py-2">
+                <CardDescription className="mono truncate text-[11px]">{resolved}</CardDescription>
+              </CardHeader>
               <ModelDetail entry={minimalEntry(resolved)} onStarted={onClose} />
             </Card>
           )}
@@ -308,6 +355,10 @@ function InstalledPanel() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // The per-model bench opens in a modal (no separate page) — test/benchmark right here.
   const [benchModel, setBenchModel] = useState<ModelView | null>(null);
+  // Clicking a row opens the registration itself: hub installs (source=hf) reopen the catalog
+  // detail; everything else gets an editable settings form. Buttons inside the row keep their own
+  // actions — the row handler ignores clicks that land on any button.
+  const [inspectModel, setInspectModel] = useState<ModelView | null>(null);
 
   // Filters: by engine (the model's binding — the category) and by resident/cold state, plus a
   // free-text search over the logical id + underlying model. Counts come from the full list.
@@ -371,8 +422,8 @@ function InstalledPanel() {
   return (
     <div className="space-y-4">
       {engines && (
-        <p className="text-xs text-slate-400">
-          Resident Models: <span className="text-slate-200">{residentCount}</span> /{" "}
+        <p className="text-xs text-muted-foreground">
+          Resident Models: <span className="text-foreground">{residentCount}</span> /{" "}
           {engines.maxResident}
         </p>
       )}
@@ -384,9 +435,21 @@ function InstalledPanel() {
         }
       />
       {isLoading ? (
-        <Spinner />
+        <div className="space-y-2">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
       ) : error ? null : list.length === 0 ? (
-        <Empty>No models registered yet. Use “Add model” above.</Empty>
+        <Empty className="border border-dashed">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <PackageOpen />
+            </EmptyMedia>
+            <EmptyTitle>No models registered yet</EmptyTitle>
+            <EmptyDescription>Use “Add model” above.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : (
         <>
           <FilterBar
@@ -403,112 +466,130 @@ function InstalledPanel() {
             }}
           />
           {filtered.length === 0 ? (
-            <Empty>No models match the current filters.</Empty>
+            <Empty className="border border-dashed py-8">
+              <EmptyDescription>No models match the current filters.</EmptyDescription>
+            </Empty>
           ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Logical id</Th>
-                  <Th>Engine</Th>
-                  <Th>Model</Th>
-                  <Th>State</Th>
-                  <Th>Capabilities</Th>
-                  <Th>Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((m: ModelView) => {
-                  const st = isResident(m) ? "resident" : "cold";
-                  return (
-                    <tr key={m.logicalId} className="align-top hover:bg-slate-800/30">
-                      <Td className="mono text-slate-100">{m.logicalId}</Td>
-                      <Td>
-                        <CategoryBadge
-                          tone={engineTone(m.binding.binding)}
-                          active={engineSel.includes(m.binding.binding)}
-                          onClick={() => setEngineSel((s) => toggle(s, m.binding.binding))}
-                          title={`Filter by ${engineLabel(m.binding.binding)}`}
-                        >
-                          {engineLabel(m.binding.binding)}
-                        </CategoryBadge>
-                      </Td>
-                      <Td className="mono text-slate-300">
-                        {(() => {
-                          const { text, full } = modelDisplay(m.binding);
-                          return (
-                            <span className="block max-w-[220px] truncate" title={full}>
-                              {text}
-                            </span>
-                          );
-                        })()}
-                      </Td>
-                      <Td>
-                        <CategoryBadge
-                          tone={st === "resident" ? "green" : "slate"}
-                          active={stateSel.includes(st)}
-                          onClick={() => setStateSel((s) => toggle(s, st))}
-                          title={`Filter by ${st}`}
-                        >
-                          {st}
-                        </CategoryBadge>
-                      </Td>
-                      <Td>
-                        <CapabilitiesCell logicalId={m.logicalId} />
-                      </Td>
-                      <Td>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="primary"
-                            aria-label="Bench"
-                            title="Test & benchmark this model"
-                            onClick={() => setBenchModel(m)}
+            <div className="overflow-hidden rounded-lg border">
+              <Table>
+                <TableHeader className="bg-muted/50">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Logical id</TableHead>
+                    <TableHead>Engine</TableHead>
+                    <TableHead>Model</TableHead>
+                    <TableHead>State</TableHead>
+                    <TableHead>Capabilities</TableHead>
+                    <TableHead>Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((m: ModelView) => {
+                    const st = isResident(m) ? "resident" : "cold";
+                    return (
+                      <TableRow
+                        key={m.logicalId}
+                        className="cursor-pointer"
+                        onClick={(e) => {
+                          // Badges, the probe, and the action buttons are all <button>s — let them
+                          // keep their own click; anything else on the row opens the registration.
+                          if ((e.target as HTMLElement).closest("button")) return;
+                          setInspectModel(m);
+                        }}
+                      >
+                        <TableCell className="mono text-foreground">{m.logicalId}</TableCell>
+                        <TableCell>
+                          <CategoryBadge
+                            tone={engineTone(m.binding.binding)}
+                            active={engineSel.includes(m.binding.binding)}
+                            onClick={() => setEngineSel((s) => toggle(s, m.binding.binding))}
+                            title={`Filter by ${engineLabel(m.binding.binding)}`}
                           >
-                            <FlaskConical size={14} />
-                          </Button>
-                          <Button
-                            aria-label="Warm"
-                            title="Warm — load the model into the engine"
-                            disabled={warm.isPending}
-                            onClick={() => warm.mutate(m.logicalId)}
+                            {engineLabel(m.binding.binding)}
+                          </CategoryBadge>
+                        </TableCell>
+                        <TableCell className="mono text-muted-foreground">
+                          {(() => {
+                            const { text, full } = modelDisplay(m.binding);
+                            return (
+                              <span className="block max-w-[220px] truncate" title={full}>
+                                {text}
+                              </span>
+                            );
+                          })()}
+                        </TableCell>
+                        <TableCell>
+                          <CategoryBadge
+                            tone={st === "resident" ? "green" : "slate"}
+                            active={stateSel.includes(st)}
+                            onClick={() => setStateSel((s) => toggle(s, st))}
+                            title={`Filter by ${st}`}
                           >
-                            {warm.isPending && warm.variables === m.logicalId ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <Flame size={14} />
-                            )}
-                          </Button>
-                          <Button
-                            aria-label="Evict"
-                            title="Evict — unload the model from memory"
-                            disabled={evict.isPending}
-                            onClick={() => evict.mutate(m.logicalId)}
-                          >
-                            {evict.isPending && evict.variables === m.logicalId ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <Snowflake size={14} />
-                            )}
-                          </Button>
-                          <Button
-                            variant="danger"
-                            aria-label="Delete"
-                            title="Delete — unregister this model"
-                            disabled={remove.isPending}
-                            onClick={() => setConfirmDelete(m.logicalId)}
-                          >
-                            {remove.isPending && remove.variables === m.logicalId ? (
-                              <Loader2 size={14} className="animate-spin" />
-                            ) : (
-                              <Trash2 size={14} />
-                            )}
-                          </Button>
-                        </div>
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
+                            {st}
+                          </CategoryBadge>
+                        </TableCell>
+                        <TableCell className="whitespace-normal">
+                          <CapabilitiesCell logicalId={m.logicalId} />
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1">
+                            <Button
+                              size="icon-sm"
+                              aria-label="Bench"
+                              title="Test & benchmark this model"
+                              onClick={() => setBenchModel(m)}
+                            >
+                              <FlaskConical size={14} />
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="Warm"
+                              title="Warm — load the model into the engine"
+                              disabled={warm.isPending}
+                              onClick={() => warm.mutate(m.logicalId)}
+                            >
+                              {warm.isPending && warm.variables === m.logicalId ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Flame size={14} />
+                              )}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon-sm"
+                              aria-label="Evict"
+                              title="Evict — unload the model from memory"
+                              disabled={evict.isPending}
+                              onClick={() => evict.mutate(m.logicalId)}
+                            >
+                              {evict.isPending && evict.variables === m.logicalId ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Snowflake size={14} />
+                              )}
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="icon-sm"
+                              aria-label="Delete"
+                              title="Delete — unregister this model"
+                              disabled={remove.isPending}
+                              onClick={() => setConfirmDelete(m.logicalId)}
+                            >
+                              {remove.isPending && remove.variables === m.logicalId ? (
+                                <Loader2 size={14} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={14} />
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </>
       )}
@@ -521,6 +602,33 @@ function InstalledPanel() {
           <ModelBench model={benchModel} />
         </Modal>
       )}
+      {inspectModel &&
+        (inspectModel.binding.source === "hf" && inspectModel.binding.model ? (
+          // A hub install: reopen the same catalog detail the browse/paste flows use — the hub ref
+          // is the binding's `model`, and the entry is marked installed under this logical id.
+          <Modal
+            title={inspectModel.logicalId}
+            width="max-w-2xl"
+            onClose={() => setInspectModel(null)}
+          >
+            <Card className="gap-0 py-0">
+              <CardHeader className="px-4 py-2">
+                <CardDescription className="mono truncate text-[11px]">
+                  {inspectModel.binding.model}
+                </CardDescription>
+              </CardHeader>
+              <ModelDetail
+                entry={{
+                  ...minimalEntry(inspectModel.binding.model),
+                  installed: true,
+                  installedAs: inspectModel.logicalId,
+                }}
+              />
+            </Card>
+          </Modal>
+        ) : (
+          <RegistrationSettingsModal model={inspectModel} onClose={() => setInspectModel(null)} />
+        ))}
       {confirmDelete && (
         <ConfirmDialog
           title={`Delete ${confirmDelete}?`}
@@ -561,6 +669,8 @@ function CapabilitiesCell({ logicalId }: { logicalId: string }) {
   if (!show) {
     return (
       <Button
+        variant="outline"
+        size="icon-sm"
         aria-label="Probe capabilities"
         title="Probe capabilities — loads the model into the engine"
         onClick={() => setShow(true)}
@@ -569,25 +679,25 @@ function CapabilitiesCell({ logicalId }: { logicalId: string }) {
       </Button>
     );
   }
-  if (isFetching) return <span className="text-xs text-slate-500">Probing…</span>;
+  if (isFetching) return <span className="text-xs text-muted-foreground">Probing…</span>;
   if (error) {
     return (
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-xs text-rose-700 dark:text-rose-300">{(error as Error).message}</span>
-        <Button variant="ghost" onClick={() => refetch()}>
+        <span className="text-xs text-destructive">{(error as Error).message}</span>
+        <Button variant="ghost" size="sm" onClick={() => refetch()}>
           Retry
         </Button>
       </div>
     );
   }
-  if (!data) return <span className="text-xs text-slate-500">—</span>;
+  if (!data) return <span className="text-xs text-muted-foreground">—</span>;
 
   return (
     <div className="flex flex-wrap items-center gap-1">
       {hasAnyCaps(data) ? (
         <CapabilityBadges caps={data} />
       ) : (
-        <span className="text-xs text-slate-500">none reported</span>
+        <span className="text-xs text-muted-foreground">none reported</span>
       )}
     </div>
   );
@@ -629,7 +739,7 @@ function ManualRegisterForm({
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-muted-foreground">
         Register a hosted API (OpenAI-compatible) or a model whose weights are already on disk.
       </p>
       <div className="grid grid-cols-2 gap-3">
@@ -641,12 +751,16 @@ function ManualRegisterForm({
           />
         </Field>
         <Field label="Binding">
-          <Select value={binding} onChange={(e) => setBinding(e.target.value)}>
-            <option value="openai-compatible">openai-compatible</option>
-            <option value="mlx">mlx</option>
-            <option value="vllm">vllm</option>
-            <option value="llamacpp">llamacpp</option>
-          </Select>
+          <NativeSelect
+            className="w-full"
+            value={binding}
+            onChange={(e) => setBinding(e.target.value)}
+          >
+            <NativeSelectOption value="openai-compatible">openai-compatible</NativeSelectOption>
+            <NativeSelectOption value="mlx">mlx</NativeSelectOption>
+            <NativeSelectOption value="vllm">vllm</NativeSelectOption>
+            <NativeSelectOption value="llamacpp">llamacpp</NativeSelectOption>
+          </NativeSelect>
         </Field>
         <Field label={reachable ? "Model (upstream id)" : "Model (path to weights on disk)"}>
           <Input
@@ -672,7 +786,8 @@ function ManualRegisterForm({
                   onChange={(e) => setCredentialRef(e.target.value)}
                 />
               ) : (
-                <Select
+                <NativeSelect
+                  className="w-full"
                   value={credentialRef}
                   onChange={(e) => {
                     if (e.target.value === "__custom__") {
@@ -681,19 +796,19 @@ function ManualRegisterForm({
                     } else setCredentialRef(e.target.value);
                   }}
                 >
-                  <option value="">— no credential —</option>
+                  <NativeSelectOption value="">— no credential —</NativeSelectOption>
                   {(creds ?? []).map((c) => (
-                    <option key={c.name} value={`secret://${c.name}`}>
+                    <NativeSelectOption key={c.name} value={`secret://${c.name}`}>
                       {c.name}
-                    </option>
+                    </NativeSelectOption>
                   ))}
-                  <option value="__custom__">Custom ref…</option>
-                </Select>
+                  <NativeSelectOption value="__custom__">Custom ref…</NativeSelectOption>
+                </NativeSelect>
               )}
             </Field>
           </>
         ) : (
-          <div className="col-span-2 text-[11px] leading-relaxed text-slate-500">
+          <div className="col-span-2 text-[11px] leading-relaxed text-muted-foreground">
             Registers with <span className="mono">source: local-path</span> — point “Model” at
             weights already on disk (a GGUF for <span className="mono">llamacpp</span>, an MLX model
             directory for <span className="mono">mlx</span>). To download a model, use the Hugging
@@ -702,20 +817,260 @@ function ManualRegisterForm({
         )}
       </div>
       {reachable && (
-        <p className="text-[11px] leading-relaxed text-slate-500">
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
           Credentials resolve on your machine (<span className="mono">secret://NAME</span>) and
           never leave it. Add or edit them in Settings → Local credentials.
         </p>
       )}
       <ErrorBanner error={error} />
-      <Button
-        variant="primary"
-        disabled={!logicalId.trim() || !model.trim() || pending}
-        onClick={submit}
-      >
+      <Button disabled={!logicalId.trim() || !model.trim() || pending} onClick={submit}>
         {pending ? "Registering…" : "Register"}
       </Button>
     </div>
+  );
+}
+
+// ── registration settings (row-click on a non-hub registration) ──────────────
+
+// The registered task vocabulary a binding can declare. `images.generation` is legal on the wire
+// but not offered here (generation models register through their own flow); an out-of-vocabulary
+// current value is kept as an extra option so opening + saving never silently rewrites it.
+const MODALITY_OPTIONS = ["chat", "vision", "embeddings", "audio.transcription", "audio.speech"];
+
+// Editable settings for a registration that ISN'T a hub install: reachable (openai-compatible)
+// APIs and managed models pointing at local weights. PUT /admin/models/{id} is an upsert, so save
+// overlays the edited fields onto the binding exactly as fetched (same camelCase wire shape,
+// nothing stripped) and re-registers under the same logical id. Renaming is deliberately not
+// offered — a different logical id is a new registration, not an edit.
+function RegistrationSettingsModal({
+  model,
+  onClose,
+}: {
+  model: ModelView;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const binding = model.binding;
+  const reachable = binding.binding === "openai-compatible";
+
+  const originalModality = binding.modality ?? "";
+  const originalCredentialRef =
+    typeof binding.credentialRef === "string" ? binding.credentialRef : "";
+  const [modelField, setModelField] = useState(binding.model ?? "");
+  const [source, setSource] = useState(binding.source ?? "local-path");
+  const [modality, setModality] = useState(originalModality);
+  const [baseUrl, setBaseUrl] = useState(
+    typeof binding.baseUrl === "string" ? binding.baseUrl : "",
+  );
+  const [credentialRef, setCredentialRef] = useState(originalCredentialRef);
+  // Guarded JSON: params must stay a JSON object — the error shows inline and blocks Save.
+  const [paramsText, setParamsText] = useState(() => JSON.stringify(binding.params ?? {}, null, 2));
+  const [paramsError, setParamsError] = useState<string | null>(null);
+
+  // Lifecycle controls render only when the fetched binding carries a lifecycle block (managed
+  // registrations do; reachable ones never will).
+  const lifecycle =
+    binding.lifecycle && typeof binding.lifecycle === "object"
+      ? (binding.lifecycle as { keepWarm?: boolean; idleTimeoutSec?: number } & Record<
+          string,
+          unknown
+        >)
+      : null;
+  const [keepWarm, setKeepWarm] = useState(Boolean(lifecycle?.keepWarm));
+  const [idleTimeout, setIdleTimeout] = useState(
+    lifecycle?.idleTimeoutSec != null ? String(lifecycle.idleTimeoutSec) : "",
+  );
+
+  // Reachable bindings pick a stored credential (a secret://NAME ref) from the user-side store.
+  const { data: creds } = useQuery({
+    queryKey: ["credentials"],
+    queryFn: () => api.listCredentials(),
+    enabled: reachable,
+  });
+  const credOptions = (creds ?? []).map((c) => `secret://${c.name}`);
+
+  function parseParams(): Record<string, unknown> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(paramsText.trim() || "{}");
+    } catch {
+      throw new Error("params is not valid JSON");
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("params must be a JSON object");
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  const save = useMutation({
+    mutationFn: () => {
+      // Start from the binding as fetched and overlay only the edited fields — the wire shape
+      // (camelCase, all keys) goes back exactly as it came. An empty modality means "let the
+      // plane default it": the key is left out entirely rather than sent as null.
+      const { modality: _current, ...kept } = binding;
+      const next: Record<string, unknown> = { ...kept, model: modelField.trim() };
+      if (modality) next.modality = modality;
+      if (reachable) {
+        next.baseUrl = baseUrl.trim();
+        next.credentialRef = credentialRef || null;
+        next.params = parseParams();
+      } else {
+        next.source = source;
+        if (lifecycle) {
+          const idle = Number.parseInt(idleTimeout, 10);
+          next.lifecycle = {
+            ...lifecycle,
+            keepWarm,
+            ...(Number.isFinite(idle) ? { idleTimeoutSec: idle } : {}),
+          };
+        }
+      }
+      return api.putModel(model.logicalId, next);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["models"] });
+      notify.success(`Updated ${model.logicalId}`);
+      onClose();
+    },
+  });
+
+  const invalid = !modelField.trim() || (reachable && (!baseUrl.trim() || Boolean(paramsError)));
+
+  return (
+    <Modal title={model.logicalId} width="max-w-2xl" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Logical id (read-only)">
+            <Input value={model.logicalId} readOnly disabled />
+          </Field>
+          <Field label="Binding">
+            <Input value={binding.binding} readOnly disabled />
+          </Field>
+          <Field label={reachable ? "Model (upstream id)" : "Model (path or hub repo)"}>
+            <Input
+              value={modelField}
+              placeholder={reachable ? "gpt-4o-mini" : "/path/to/model"}
+              onChange={(e) => setModelField(e.target.value)}
+            />
+          </Field>
+          {reachable ? (
+            <Field label="Base URL">
+              <Input
+                value={baseUrl}
+                placeholder="https://api.openai.com/v1"
+                onChange={(e) => setBaseUrl(e.target.value)}
+              />
+            </Field>
+          ) : (
+            <Field label="Source">
+              <NativeSelect
+                className="w-full"
+                value={source}
+                onChange={(e) => setSource(e.target.value)}
+              >
+                <NativeSelectOption value="hf">hf</NativeSelectOption>
+                <NativeSelectOption value="local-path">local-path</NativeSelectOption>
+                <NativeSelectOption value="url">url</NativeSelectOption>
+              </NativeSelect>
+            </Field>
+          )}
+          <Field label="Modality">
+            <NativeSelect
+              className="w-full"
+              value={modality}
+              onChange={(e) => setModality(e.target.value)}
+            >
+              <NativeSelectOption value="">— default (chat) —</NativeSelectOption>
+              {MODALITY_OPTIONS.map((m) => (
+                <NativeSelectOption key={m} value={m}>
+                  {m}
+                </NativeSelectOption>
+              ))}
+              {originalModality && !MODALITY_OPTIONS.includes(originalModality) && (
+                <NativeSelectOption value={originalModality}>{originalModality}</NativeSelectOption>
+              )}
+            </NativeSelect>
+          </Field>
+          {reachable && (
+            <Field label="Credential (resolved locally)">
+              <NativeSelect
+                className="w-full"
+                value={credentialRef}
+                onChange={(e) => setCredentialRef(e.target.value)}
+              >
+                <NativeSelectOption value="">— no credential —</NativeSelectOption>
+                {credOptions.map((ref) => (
+                  <NativeSelectOption key={ref} value={ref}>
+                    {ref.replace(/^secret:\/\//, "")}
+                  </NativeSelectOption>
+                ))}
+                {originalCredentialRef && !credOptions.includes(originalCredentialRef) && (
+                  <NativeSelectOption value={originalCredentialRef}>
+                    {originalCredentialRef}
+                  </NativeSelectOption>
+                )}
+              </NativeSelect>
+            </Field>
+          )}
+          {!reachable && lifecycle && (
+            <>
+              <Field label="Idle timeout (seconds)">
+                <Input
+                  type="number"
+                  min={0}
+                  value={idleTimeout}
+                  onChange={(e) => setIdleTimeout(e.target.value)}
+                />
+              </Field>
+              <label className="flex items-center gap-2 self-end pb-1.5 text-sm text-foreground">
+                <Checkbox checked={keepWarm} onCheckedChange={(v) => setKeepWarm(v === true)} />
+                Keep warm (never auto-evict)
+              </label>
+            </>
+          )}
+          {reachable && (
+            <div className="col-span-2">
+              <Field label="Params (JSON object)">
+                <Textarea
+                  rows={4}
+                  spellCheck={false}
+                  className={cn("mono text-xs", paramsError && "border-destructive")}
+                  value={paramsText}
+                  onChange={(e) => {
+                    const text = e.target.value;
+                    setParamsText(text);
+                    try {
+                      const parsed = JSON.parse(text.trim() || "{}");
+                      setParamsError(
+                        parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+                          ? null
+                          : "must be a JSON object",
+                      );
+                    } catch (err) {
+                      setParamsError((err as Error).message);
+                    }
+                  }}
+                />
+              </Field>
+              {paramsError && <p className="mt-1 text-[11px] text-destructive">{paramsError}</p>}
+            </div>
+          )}
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">
+          Renaming isn't an edit — register under a new logical id instead. Saving re-registers{" "}
+          <span className="mono">{model.logicalId}</span> with the updated binding.
+        </p>
+        <ErrorBanner error={save.error} />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={invalid || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -821,7 +1176,7 @@ function BrowsePanel() {
       {canLoadMore && <div ref={loadMoreRef} aria-hidden className="h-px" />}
       {isFetching && data && (
         <div className="flex justify-center py-2">
-          <Spinner />
+          <Spinner className="text-muted-foreground" />
         </div>
       )}
     </>
@@ -866,28 +1221,28 @@ function BrowsePanel() {
         </div>
         <div className="w-44">
           <Field label="Size">
-            <Select value={size} onChange={(e) => setSize(e.target.value)}>
+            <NativeSelect className="w-full" value={size} onChange={(e) => setSize(e.target.value)}>
               {SIZE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <NativeSelectOption key={o.value} value={o.value}>
                   {o.label}
-                </option>
+                </NativeSelectOption>
               ))}
-            </Select>
+            </NativeSelect>
           </Field>
         </div>
         <div className="w-40">
           <Field label="Sort">
-            <Select value={sort} onChange={(e) => setSort(e.target.value)}>
-              <option value="trending">Trending</option>
-              <option value="downloads">Most downloaded</option>
-              <option value="likes">Most liked</option>
-            </Select>
+            <NativeSelect className="w-full" value={sort} onChange={(e) => setSort(e.target.value)}>
+              <NativeSelectOption value="trending">Trending</NativeSelectOption>
+              <NativeSelectOption value="downloads">Most downloaded</NativeSelectOption>
+              <NativeSelectOption value="likes">Most liked</NativeSelectOption>
+            </NativeSelect>
           </Field>
         </div>
       </div>
 
       {ready.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <span>Engines:</span>
           {ready.map((e) => {
             const on = engineSel.length === 0 || engineSel.includes(e);
@@ -906,7 +1261,7 @@ function BrowsePanel() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <span>Filter:</span>
         {/* Task chips (violet) — single-select, server-side: a model has ONE task, and this narrows
             the listing query itself. */}
@@ -939,7 +1294,9 @@ function BrowsePanel() {
           );
         })}
         {capsFilter.length > 0 && (
-          <span className="text-[11px] text-slate-600">· capabilities filter the loaded list</span>
+          <span className="text-[11px] text-muted-foreground/70">
+            · capabilities filter the loaded list
+          </span>
         )}
       </div>
 
@@ -948,20 +1305,37 @@ function BrowsePanel() {
       />
 
       {noEngine ? (
-        <Empty>
-          No local engine is ready. Install MLX (
-          <code className="mono">uv tool install mlx-lm</code>) or llama.cpp, then refresh —
-          discovery only shows models you can actually run.
+        <Empty className="border border-dashed">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <ServerOff />
+            </EmptyMedia>
+            <EmptyTitle>No local engine is ready</EmptyTitle>
+            <EmptyDescription>
+              Install MLX (<code className="mono">uv tool install mlx-lm</code>) or llama.cpp, then
+              refresh — discovery only shows models you can actually run.
+            </EmptyDescription>
+          </EmptyHeader>
         </Empty>
       ) : isFetching && !data ? (
         <SkeletonList />
       ) : !data || data.entries.length === 0 ? (
-        <Empty>No matching models. Try a different search.</Empty>
+        <Empty className="border border-dashed">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX />
+            </EmptyMedia>
+            <EmptyTitle>No matching models</EmptyTitle>
+            <EmptyDescription>Try a different search.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : shownEntries.length === 0 ? (
         <>
-          <Empty>
-            None of the {data.entries.length} loaded models match the capability filter — keep
-            scrolling to load more, or clear the filter.
+          <Empty className="border border-dashed py-8">
+            <EmptyDescription>
+              None of the {data.entries.length} loaded models match the capability filter — keep
+              scrolling to load more, or clear the filter.
+            </EmptyDescription>
           </Empty>
           {moreSentinel}
         </>
@@ -987,12 +1361,9 @@ function SkeletonList() {
   return (
     <div className="space-y-2">
       {[0, 1, 2, 3, 4].map((i) => (
-        <div
-          key={i}
-          className="animate-pulse rounded-lg border border-slate-800 bg-[var(--c-surface-2)] px-4 py-3"
-        >
-          <div className="h-3.5 w-1/3 rounded bg-slate-800" />
-          <div className="mt-2 h-2.5 w-1/2 rounded bg-slate-800/70" />
+        <div key={i} className="space-y-2 rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10">
+          <Skeleton className="h-3.5 w-1/3" />
+          <Skeleton className="h-2.5 w-1/2" />
         </div>
       ))}
     </div>
@@ -1027,18 +1398,20 @@ function CapabilityBadges({
   if (!hasAnyCaps(caps)) return null;
   return (
     <>
-      {caps.reasoning && <Badge tone="blue">reasoning</Badge>}
-      {caps.toolCalling && <Badge tone="green">tools</Badge>}
-      {caps.structuredOutput && <Badge tone="green">structured</Badge>}
-      {caps.vision && <Badge tone="green">vision</Badge>}
+      {caps.reasoning && <ToneBadge tone="blue">reasoning</ToneBadge>}
+      {caps.toolCalling && <ToneBadge tone="green">tools</ToneBadge>}
+      {caps.structuredOutput && <ToneBadge tone="green">structured</ToneBadge>}
+      {caps.vision && <ToneBadge tone="green">vision</ToneBadge>}
       {/* Context windows are powers of two (32768 = 32k), so divide by 1024, not 1000. */}
-      {caps.maxContext ? <Badge>{`${Math.round(caps.maxContext / 1024)}k ctx`}</Badge> : null}
+      {caps.maxContext ? (
+        <Badge variant="secondary">{`${Math.round(caps.maxContext / 1024)}k ctx`}</Badge>
+      ) : null}
       {showApprox ? (
         <span title="static hint from model metadata — the probe confirms it on install">
-          <Badge tone="amber">approx</Badge>
+          <ToneBadge tone="amber">approx</ToneBadge>
         </span>
       ) : caps.approximate ? (
-        <Badge tone="amber">approx</Badge>
+        <ToneBadge tone="amber">approx</ToneBadge>
       ) : null}
     </>
   );
@@ -1055,55 +1428,67 @@ function ModelCard({
 }) {
   const updated = coarseRelativeTime(entry.updatedAt);
   return (
-    <Card className="overflow-hidden">
+    <Card className="gap-0 py-0">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-800/30"
+        aria-expanded={expanded}
+        className="w-full text-left transition-colors hover:bg-muted/50"
       >
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium text-slate-100">{entry.title}</span>
-            {entry.installed && <Badge tone="green">✓ installed</Badge>}
+        <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <CardTitle className="truncate text-sm">{entry.title}</CardTitle>
+              {entry.installed && <ToneBadge tone="green">✓ installed</ToneBadge>}
+            </div>
+            <CardDescription className="mono truncate text-[11px]">{entry.ref}</CardDescription>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+              {entry.params && <span className="text-foreground">{entry.params}</span>}
+              {entry.gated && (
+                <span
+                  title="needs a Hugging Face token"
+                  className="inline-flex items-center gap-0.5"
+                >
+                  <Lock size={11} className="shrink-0" /> gated
+                </span>
+              )}
+              {entry.license && <span>{entry.license}</span>}
+              {updated && (
+                <span>
+                  updated <TimeAgo iso={entry.updatedAt} label={updated} />
+                </span>
+              )}
+            </div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1">
+              {/* Non-chat tasks wear their modality — it's what the install will register. */}
+              {typeof entry.badges.pipelineTag === "string" &&
+                TASK_OF_PIPELINE[entry.badges.pipelineTag] && (
+                  <ToneBadge tone="violet">{TASK_OF_PIPELINE[entry.badges.pipelineTag]}</ToneBadge>
+                )}
+              <CapabilityBadges caps={entry} />
+            </div>
           </div>
-          <div className="mono truncate text-[11px] text-slate-500">{entry.ref}</div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
-            {entry.params && <span className="text-slate-300">{entry.params}</span>}
-            {entry.gated && (
-              <span title="needs a Hugging Face token" className="inline-flex items-center gap-0.5">
-                <Lock size={11} className="shrink-0" /> gated
+          <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+            {entry.engines.map((e) => (
+              <Badge key={e} variant="secondary">
+                {engineLabel(e)}
+              </Badge>
+            ))}
+            {typeof entry.badges.downloads === "number" && (
+              <span title="downloads" className="inline-flex items-center gap-0.5">
+                <Download size={12} className="shrink-0" /> {compact(entry.badges.downloads)}
               </span>
             )}
-            {entry.license && <span>{entry.license}</span>}
-            {updated && <span>updated {updated}</span>}
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1">
-            {/* Non-chat tasks wear their modality — it's what the install will register. */}
-            {typeof entry.badges.pipelineTag === "string" &&
-              TASK_OF_PIPELINE[entry.badges.pipelineTag] && (
-                <Badge tone="violet">{TASK_OF_PIPELINE[entry.badges.pipelineTag]}</Badge>
-              )}
-            <CapabilityBadges caps={entry} />
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 text-[11px] text-slate-400">
-          {entry.engines.map((e) => (
-            <Badge key={e}>{engineLabel(e)}</Badge>
-          ))}
-          {typeof entry.badges.downloads === "number" && (
-            <span title="downloads" className="inline-flex items-center gap-0.5">
-              <Download size={12} className="shrink-0" /> {compact(entry.badges.downloads)}
+            {typeof entry.badges.likes === "number" && (
+              <span title="stars / likes" className="inline-flex items-center gap-0.5">
+                <Star size={12} className="shrink-0" /> {compact(entry.badges.likes)}
+              </span>
+            )}
+            <span className="text-muted-foreground/70">
+              {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </span>
-          )}
-          {typeof entry.badges.likes === "number" && (
-            <span title="stars / likes" className="inline-flex items-center gap-0.5">
-              <Star size={12} className="shrink-0" /> {compact(entry.badges.likes)}
-            </span>
-          )}
-          <span className="text-slate-600">
-            {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </span>
-        </div>
+          </div>
+        </CardHeader>
       </button>
       {expanded && <ModelDetail entry={entry} />}
     </Card>
@@ -1130,7 +1515,7 @@ function ModelDetail({
     data?.description && data.description !== entry.description ? data.description : null;
 
   return (
-    <div className="space-y-3 border-t border-slate-800 px-4 py-3">
+    <CardContent className="space-y-3 border-t py-3">
       <div className="flex items-center justify-between gap-3">
         {entry.installed ? (
           <span className="text-[11px] text-emerald-700 dark:text-emerald-300">
@@ -1148,21 +1533,26 @@ function ModelDetail({
           View on Hugging Face ↗
         </a>
       </div>
-      {blurb && <p className="text-xs leading-relaxed text-slate-400">{blurb}</p>}
+      {blurb && <p className="text-xs leading-relaxed text-muted-foreground">{blurb}</p>}
       {data && hasAnyCaps(data) && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span className="text-[10px] uppercase tracking-wide text-slate-500">Capabilities</span>
+          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            Capabilities
+          </span>
           <CapabilityBadges caps={data} showApprox />
-          <span className="text-[10px] text-slate-600">
+          <span className="text-[10px] text-muted-foreground/70">
             from model metadata — the probe confirms these once installed
           </span>
         </div>
       )}
       <ErrorBanner error={error} />
       {isLoading ? (
-        <Spinner label="Loading variants…" />
+        <div className="space-y-1.5">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
       ) : !data || data.variants.length === 0 ? (
-        <p className="text-xs text-slate-500">No installable variants for your engines.</p>
+        <p className="text-xs text-muted-foreground">No installable variants for your engines.</p>
       ) : (
         <div className="space-y-1.5">
           {data.variants.map((v) => (
@@ -1186,29 +1576,35 @@ function ModelDetail({
           }}
         />
       )}
-    </div>
+    </CardContent>
   );
 }
 
 function VariantRow({ variant, onInstall }: { variant: CatalogVariant; onInstall: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded border border-slate-800 bg-[var(--c-surface)] px-3 py-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="mono text-sm text-slate-100">{variant.label}</span>
-        <Badge>{engineLabel(variant.engine)}</Badge>
-        {variant.recommended && <Badge tone="blue">recommended</Badge>}
-        {variant.quality && <span className="text-[11px] text-slate-500">{variant.quality}</span>}
-      </div>
-      <div className="flex shrink-0 items-center gap-3">
-        <span className="text-xs text-slate-400">{formatBytes(variant.sizeBytes)}</span>
+    <Item variant="outline" className="flex-nowrap gap-3 px-3 py-2">
+      <ItemContent className="min-w-0 flex-row flex-wrap items-center gap-2">
+        <span className="mono text-sm text-foreground">{variant.label}</span>
+        <Badge variant="secondary">{engineLabel(variant.engine)}</Badge>
+        {variant.recommended && <ToneBadge tone="blue">recommended</ToneBadge>}
+        {variant.quality && (
+          <span className="text-[11px] text-muted-foreground">{variant.quality}</span>
+        )}
+      </ItemContent>
+      <ItemActions className="shrink-0 gap-3">
+        <span className="text-xs text-muted-foreground">{formatBytes(variant.sizeBytes)}</span>
         <span title={variant.fitReason ?? undefined}>
-          <Badge tone={FIT_TONE[variant.fit]}>{FIT_LABEL[variant.fit]}</Badge>
+          <ToneBadge tone={FIT_TONE[variant.fit]}>{FIT_LABEL[variant.fit]}</ToneBadge>
         </span>
-        <Button variant={variant.fit === "too-large" ? "default" : "primary"} onClick={onInstall}>
+        <Button
+          size="sm"
+          variant={variant.fit === "too-large" ? "outline" : "default"}
+          onClick={onInstall}
+        >
           Install
         </Button>
-      </div>
-    </div>
+      </ItemActions>
+    </Item>
   );
 }
 
@@ -1254,7 +1650,7 @@ function InstallDialog({
   return (
     <Modal title="Install model" width="max-w-md" onClose={onClose}>
       <div className="space-y-4">
-        <p className="mono text-[11px] text-slate-500">
+        <p className="mono text-[11px] text-muted-foreground">
           {repo} · {variant.label} · {formatBytes(variant.sizeBytes)} ·{" "}
           {engineLabel(variant.engine)}
         </p>
@@ -1279,7 +1675,6 @@ function InstallDialog({
             Cancel
           </Button>
           <Button
-            variant="primary"
             disabled={!logicalId.trim() || install.isPending}
             onClick={() => install.mutate()}
           >

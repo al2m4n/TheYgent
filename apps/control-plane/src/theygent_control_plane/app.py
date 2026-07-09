@@ -138,6 +138,17 @@ _RUN_ID_HEADER = "x-theygent-run-id"
 _PROMPT_NODE = SimpleNamespace(id="llm", type="llm", kind="activity")
 
 
+def _prompt_outputs(output: str, reasoning: str) -> dict[str, Any]:
+    """The prompt run's captured outputs: the answer, plus the model's thinking under the
+    reserved ``reasoning`` entry when there was any — so the thinking stays inspectable per-run
+    after the live stream, subject to the same capture gating/caps as every other payload. It is
+    never part of ``run.output`` or a stored session turn."""
+    outputs: dict[str, Any] = {"output": output}
+    if reasoning.strip():
+        outputs["reasoning"] = reasoning
+    return outputs
+
+
 class RunRequest(BaseModel):
     input: str
     model: str
@@ -825,6 +836,7 @@ def create_app(
                     await store.set_status(s, run.id, "streaming")
                 yield _sse("run", {"runId": run.id, "status": "streaming", "model": run.model})
                 output = ""
+                reasoning_acc = ""  # accumulated thinking → the node's captured `reasoning` entry
                 finish_reason: str | None = None
                 first_token_ns: int | None = None
                 usage: dict[str, int] | None = None
@@ -849,14 +861,17 @@ def create_app(
                             continue
                         # A reasoning model streams its thinking before its answer. Forward the
                         # thinking as visible progress so it doesn't look frozen, but NEVER into
-                        # `output` — only the answer is the answer.
+                        # `output` — only the answer is the answer. It IS accumulated for the
+                        # node's captured outputs, so it stays inspectable after the stream.
                         reasoning = getattr(delta, "reasoning_content", None)
                         if reasoning:
+                            reasoning_acc += reasoning
                             yield _sse("reasoning", {"runId": run.id, "reasoning": reasoning})
                         content = getattr(delta, "content", None)
                         if content:
                             answer, thinking = splitter.push(content)
                             if thinking:
+                                reasoning_acc += thinking
                                 yield _sse("reasoning", {"runId": run.id, "reasoning": thinking})
                             if answer:
                                 if first_token_ns is None:
@@ -868,13 +883,17 @@ def create_app(
                     # blank for `_empty_output_reason`).
                     answer, thinking = splitter.flush()
                     if thinking:
+                        reasoning_acc += thinking
                         yield _sse("reasoning", {"runId": run.id, "reasoning": thinking})
                     if answer:
                         if first_token_ns is None:
                             first_token_ns = now_ns()
                         output += answer
                         yield _sse("delta", {"runId": run.id, "delta": answer})
-                    scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
+                    scope.set_io(
+                        inputs={"prompt": user_input},
+                        outputs=_prompt_outputs(output, reasoning_acc),
+                    )
                     attrs: dict[str, Any] = {"gen_ai.request.model": run.model}
                     if finish_reason:
                         attrs["gen_ai.response.finish_reason"] = finish_reason
@@ -956,11 +975,18 @@ def create_app(
                 choice = completion.choices[0] if completion.choices else None
                 raw_content = (choice.message.content if choice else "") or ""
                 # A raw-template server may leave the model's thinking inline as <think> tags;
-                # only the answer persists (parity with the separate-field shape, whose
-                # non-stream `reasoning_content` is progress, not the answer, and not stored).
-                output, _thinking = split_think(raw_content)
+                # only the answer becomes the output. The thinking — inline OR the separate
+                # `reasoning_content` message field — is captured into the node's outputs (same
+                # posture as the streaming path), never folded into the answer.
+                output, thinking = split_think(raw_content)
+                field_reasoning = (
+                    getattr(choice.message, "reasoning_content", None) or "" if choice else ""
+                )
+                reasoning = "\n\n".join(p for p in (field_reasoning, thinking) if p.strip())
                 finish_reason = choice.finish_reason if choice else None
-                scope.set_io(inputs={"prompt": user_input}, outputs={"output": output})
+                scope.set_io(
+                    inputs={"prompt": user_input}, outputs=_prompt_outputs(output, reasoning)
+                )
                 scope.set_attributes(
                     {
                         "gen_ai.request.model": run.model,

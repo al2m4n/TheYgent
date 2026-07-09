@@ -20,6 +20,9 @@ Selectable ``mode`` exercises the control-plane's error paths:
                                 (both forms in one stream)
   * ``inline_think_unclosed`` — the block never closes and no answer follows;
                                 ``finish_reason: length`` (all-thinking, inline form)
+  * ``tool_call_reasoning``   — ``tool_call`` plus a ``reasoning_content`` delta at the start of
+                                EACH turn (the model thinks before requesting the tool AND before
+                                answering — the multi-turn reasoning shape)
 
 An optional ``response`` overrides the streamed/returned content (default ``"hello world"``).
 The optional ``response`` override makes an ``llm`` node emit a deterministic routing decision
@@ -42,6 +45,9 @@ FULL_MESSAGE = "hello world"
 _CHUNKS = ["hello", " world"]
 # The inline-think modes' thinking text — importable so tests assert the reasoning stream verbatim.
 INLINE_THINKING = "deep thoughts"
+# The tool_call_reasoning mode's per-turn thinking — importable so tests assert the joined capture.
+TOOL_TURN_THINKING = "planning the tool call"
+ANSWER_TURN_THINKING = "composing the answer"
 # A 1x1 PNG — the smallest valid image, returned by the fake image-generation endpoint.
 _TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
@@ -150,7 +156,7 @@ def _build_app(
             return StreamingResponse(
                 _stream(
                     model,
-                    mode="tool_call" if mode in ("tool_call", "tool_loop") else mode,
+                    mode="tool_call" if mode == "tool_loop" else mode,
                     content=content,
                     tool_spec=(tool_name, tool_args, wants_answer),
                     include_usage=include_usage,
@@ -174,7 +180,7 @@ def _build_app(
         elif mode == "inline_think_unclosed":
             msg = {"role": "assistant", "content": f"<think>{INLINE_THINKING}"}
             finish = "length"
-        elif mode in ("tool_call", "tool_loop") and not wants_answer:
+        elif mode in ("tool_call", "tool_loop", "tool_call_reasoning") and not wants_answer:
             msg = {
                 "role": "assistant",
                 "content": None,
@@ -251,15 +257,23 @@ async def _stream(
         yield "data: [DONE]\n\n"
 
     # Tool-calling: stream a tool_call (fragmented arguments — proves the accumulator) on the
-    # first turn, then the final answer once the tool result is in the transcript.
-    if mode == "tool_call":
+    # first turn, then the final answer once the tool result is in the transcript. The
+    # ``tool_call_reasoning`` variant opens EACH turn with a reasoning_content delta (a reasoning
+    # model thinks before requesting the tool and again before answering).
+    if mode in ("tool_call", "tool_call_reasoning"):
         name, args, has_result = tool_spec
         if has_result:
+            if mode == "tool_call_reasoning":
+                yield _chunk(
+                    model, {"role": "assistant", "reasoning_content": ANSWER_TURN_THINKING}
+                )
             yield _chunk(model, {"role": "assistant", "content": content})
             yield _chunk(model, {}, finish="stop")
             for piece in _tail():
                 yield piece
             return
+        if mode == "tool_call_reasoning":
+            yield _chunk(model, {"role": "assistant", "reasoning_content": TOOL_TURN_THINKING})
         yield _chunk(
             model,
             {

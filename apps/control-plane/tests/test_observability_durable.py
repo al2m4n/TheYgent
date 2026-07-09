@@ -18,7 +18,7 @@ from _ir import _doc, _edge, _node, trivial_ir
 from theygent_control_plane import db
 from theygent_control_plane.durable.runtime import DurableRuntime
 from theygent_control_plane.mcp import McpManager
-from theygent_control_plane.observability import TraceStore, now_ns
+from theygent_control_plane.observability import NodeIoStore, TraceStore, now_ns
 from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 
 
@@ -147,6 +147,38 @@ async def test_durable_run_records_worker_attribution_and_queue_wait(pg_url: str
     assert gen_attrs["gen_ai.usage.total_tokens"] == 3
     assert gen_attrs["gen_ai.usage.input_tokens"] == 1
     assert gen_attrs["gen_ai.usage.output_tokens"] == 2
+
+
+async def test_durable_llm_node_io_captures_reasoning(pg_url: str) -> None:
+    # The journaled llm step carries the turn's thinking, and the durable walk records it into the
+    # node's captured outputs under the reserved `reasoning` entry — the same node_io shape the
+    # interactive walker writes (one wrapper, both runtimes), so a reasoning model's thinking is
+    # observable per-run regardless of which runtime ran the agent.
+    await reset_dbos_schema(pg_url)
+    ir = trivial_ir()
+    ir["id"] = "agt_obs_reasoning"
+    with FakeInference(mode="reasoning") as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, sm)
+        rt.launch()
+        try:
+            ref = {"agent_id": aid, "version": ver, "content_hash": None}
+            handle = await rt.enqueue_run(ref, "hi")
+            result = await handle.get_result()
+            assert result["status"] == "completed"
+            async with sm() as s:
+                io = await NodeIoStore().get_io(s, result["runId"], "n_llm")
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+    assert io is not None and io.outputs is not None
+    assert io.outputs["reasoning"] == "thinking step..."
+    assert "reasoning" not in (io.inputs or {})  # capture-only output, never an in-port
 
 
 def _model_guardrail_ir(agent_id: str) -> dict:

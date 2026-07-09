@@ -5,23 +5,39 @@
 // through the shared overlay (the same one a grounding VLM uses).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, Server } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ToolTester } from "../bench/ToolTester";
 import { CategoryBadge, FilterBar } from "../components/Filters";
+import { ConfirmDialog, ErrorBanner, Page, SectionHeading, Spinner } from "../components/ui";
+import { Button } from "../components/ui/button";
 import {
-  Button,
   Card,
-  ConfirmDialog,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/card";
+import {
   Empty,
-  ErrorBanner,
-  Field,
-  Input,
-  Page,
-  SectionHeading,
-  Spinner,
-  Textarea,
-} from "../components/ui";
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "../components/ui/field";
+import { Input } from "../components/ui/input";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemFooter,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "../components/ui/item";
+import { Textarea } from "../components/ui/textarea";
 import { type McpServerConfig, type McpServerSummary, api } from "../lib/api";
 import { countBy, toggle, transportTone } from "../lib/categories";
 
@@ -29,8 +45,8 @@ export function Mcp() {
   return (
     <Page className="space-y-4">
       <div>
-        <h1 className="text-lg font-semibold text-slate-100">MCP servers</h1>
-        <p className="text-xs text-slate-500">
+        <h1 className="text-lg font-semibold text-foreground">MCP servers</h1>
+        <p className="text-xs text-muted-foreground">
           Define the external tools your agents can call. Servers run locally in your trust domain.
         </p>
       </div>
@@ -103,7 +119,7 @@ function ServerList() {
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <SectionHeading>Registered</SectionHeading>
-        <Button variant="primary" onClick={() => setAdding((a) => !a)}>
+        <Button onClick={() => setAdding((a) => !a)}>
           {adding ? (
             "Close"
           ) : (
@@ -128,8 +144,16 @@ function ServerList() {
       {servers.isLoading ? (
         <Spinner label="Loading MCP servers…" />
       ) : list.length === 0 ? (
-        <Empty>
-          No MCP servers yet. Define one above (e.g. a filesystem or YOLO/SAM CV server).
+        <Empty className="border py-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Server />
+            </EmptyMedia>
+            <EmptyTitle>No MCP servers yet</EmptyTitle>
+            <EmptyDescription>
+              Define one above (e.g. a filesystem or YOLO/SAM CV server).
+            </EmptyDescription>
+          </EmptyHeader>
         </Empty>
       ) : (
         <>
@@ -147,9 +171,11 @@ function ServerList() {
             }}
           />
           {filtered.length === 0 ? (
-            <Empty>No servers match the current filters.</Empty>
+            <Empty className="border py-10">
+              <EmptyDescription>No servers match the current filters.</EmptyDescription>
+            </Empty>
           ) : (
-            <div className="space-y-2">
+            <ItemGroup className="gap-2">
               {filtered.map((s) => (
                 <ServerRow
                   key={s.name}
@@ -166,7 +192,7 @@ function ServerList() {
                   removing={remove.isPending && remove.variables === s.name}
                 />
               ))}
-            </div>
+            </ItemGroup>
           )}
         </>
       )}
@@ -175,7 +201,7 @@ function ServerList() {
           title="Delete MCP server"
           message={
             <>
-              Delete <span className="font-medium text-slate-100">{confirmRemove}</span>? Its
+              Delete <span className="font-medium text-foreground">{confirmRemove}</span>? Its
               command, args, and env config cannot be recovered.
             </>
           }
@@ -226,62 +252,80 @@ function ServerRow({
   // While any action on this row is in flight, disable all three so warm/close/delete can't race.
   const busy = warming || closing || removing;
   return (
-    <Card className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-slate-100">{server.name}</span>
-        <CategoryBadge
-          tone={transportTone(server.transport)}
-          active={transportSel.includes(server.transport)}
-          onClick={() => onToggleTransport(server.transport)}
-          title={`Filter by ${server.transport}`}
-        >
-          {server.transport}
-        </CategoryBadge>
-        <CategoryBadge
-          tone={server.connected ? "green" : "slate"}
-          active={statusSel.includes(st)}
-          onClick={() => onToggleStatus(st)}
-          title={`Filter by ${st}`}
-        >
-          {st}
-        </CategoryBadge>
-        <div className="ml-auto flex items-center gap-1">
-          <Button onClick={() => setShowTools((v) => !v)} aria-pressed={showTools}>
-            {showTools ? "Hide tools" : "Tools"}
-          </Button>
-          <Button onClick={onWarm} disabled={busy} title="Start the server process and connect">
-            {warming ? "Warming…" : "Warm"}
-          </Button>
-          <Button
-            onClick={onClose}
-            disabled={busy}
-            title="Stop the server process (config is kept)"
+    <Item variant="outline" className="bg-card">
+      <ItemMedia variant="icon">
+        <Server />
+      </ItemMedia>
+      <ItemContent>
+        <ItemTitle>{server.name}</ItemTitle>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <CategoryBadge
+            tone={transportTone(server.transport)}
+            active={transportSel.includes(server.transport)}
+            onClick={() => onToggleTransport(server.transport)}
+            title={`Filter by ${server.transport}`}
           >
-            {closing ? "Closing…" : "Close"}
-          </Button>
-          <Button variant="danger" onClick={onRemove} disabled={busy}>
-            {removing ? "Deleting…" : "Delete"}
-          </Button>
+            {server.transport}
+          </CategoryBadge>
+          <CategoryBadge
+            tone={server.connected ? "green" : "slate"}
+            active={statusSel.includes(st)}
+            onClick={() => onToggleStatus(st)}
+            title={`Filter by ${st}`}
+          >
+            {st}
+          </CategoryBadge>
         </div>
-      </div>
+      </ItemContent>
+      <ItemActions>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowTools((v) => !v)}
+          aria-pressed={showTools}
+        >
+          {showTools ? "Hide tools" : "Tools"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onWarm}
+          disabled={busy}
+          title="Start the server process and connect"
+        >
+          {warming ? "Warming…" : "Warm"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onClose}
+          disabled={busy}
+          title="Stop the server process (config is kept)"
+        >
+          {closing ? "Closing…" : "Close"}
+        </Button>
+        <Button variant="destructive" size="sm" onClick={onRemove} disabled={busy}>
+          {removing ? "Deleting…" : "Delete"}
+        </Button>
+      </ItemActions>
       {showTools && (
-        <div className="border-t border-slate-800 pt-2">
+        <ItemFooter className="flex-col items-stretch justify-start gap-1 border-t pt-2">
           {tools.isLoading && <Spinner label="Connecting…" />}
           {tools.error && <ErrorBanner error={tools.error} />}
           {tools.data && tools.data.length === 0 && (
-            <p className="text-xs text-slate-500">No tools reported.</p>
+            <p className="text-xs text-muted-foreground">No tools reported.</p>
           )}
           <ul className="space-y-1">
             {tools.data?.map((t) => (
               <li key={t.name} className="text-xs">
-                <span className="mono text-slate-200">{t.name}</span>
-                {t.description && <span className="text-slate-500"> — {t.description}</span>}
+                <span className="mono text-foreground">{t.name}</span>
+                {t.description && <span className="text-muted-foreground"> — {t.description}</span>}
               </li>
             ))}
           </ul>
-        </div>
+        </ItemFooter>
       )}
-    </Card>
+    </Item>
   );
 }
 
@@ -313,41 +357,75 @@ function RegisterForm({ onDone, onCancel }: { onDone: () => void; onCancel: () =
   });
 
   return (
-    <Card className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="filesystem" />
-        </Field>
-        <Field label="Command">
-          <Input value={command} onChange={(e) => setCommand(e.target.value)} placeholder="npx" />
-        </Field>
-      </div>
-      <Field label="Args (whitespace-separated)">
-        <Input
-          value={args}
-          onChange={(e) => setArgs(e.target.value)}
-          placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
-        />
-      </Field>
-      <Field label="Env (KEY=value per line, stays local)">
-        <Textarea
-          value={env}
-          onChange={(e) => setEnv(e.target.value)}
-          rows={2}
-          placeholder={"API_KEY=…\nMODEL_PATH=…"}
-          className="mono"
-        />
-      </Field>
-      <Field label="Working dir (optional)">
-        <Input value={cwd} onChange={(e) => setCwd(e.target.value)} placeholder="/path/to/cwd" />
-      </Field>
-      <ErrorBanner error={save.error} />
-      <div className="flex items-center gap-2">
+    <Card size="sm">
+      <CardHeader className="border-b">
+        <CardTitle>Define server</CardTitle>
+        <CardDescription>
+          The server runs as a local subprocess; its config stays on this machine.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <FieldGroup className="gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel htmlFor="mcp-name">Name</FieldLabel>
+              <Input
+                id="mcp-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="filesystem"
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="mcp-command">Command</FieldLabel>
+              <Input
+                id="mcp-command"
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="npx"
+              />
+            </Field>
+          </div>
+          <Field>
+            <FieldLabel htmlFor="mcp-args">Args</FieldLabel>
+            <Input
+              id="mcp-args"
+              value={args}
+              onChange={(e) => setArgs(e.target.value)}
+              placeholder="-y @modelcontextprotocol/server-filesystem /tmp"
+            />
+            <FieldDescription>Whitespace-separated.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="mcp-env">Env</FieldLabel>
+            <Textarea
+              id="mcp-env"
+              value={env}
+              onChange={(e) => setEnv(e.target.value)}
+              placeholder={"API_KEY=…\nMODEL_PATH=…"}
+              className="mono"
+            />
+            <FieldDescription>
+              One KEY=value per line — passed into the spawned process, values never logged.
+            </FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="mcp-cwd">Working dir (optional)</FieldLabel>
+            <Input
+              id="mcp-cwd"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+              placeholder="/path/to/cwd"
+            />
+          </Field>
+        </FieldGroup>
+        <ErrorBanner error={save.error} />
+      </CardContent>
+      <CardFooter className="justify-end gap-2">
         <Button variant="ghost" onClick={onCancel}>
           Cancel
         </Button>
         <Button
-          variant="primary"
           disabled={!name.trim() || !command.trim() || save.isPending}
           onClick={() =>
             save.mutate({
@@ -364,7 +442,7 @@ function RegisterForm({ onDone, onCancel }: { onDone: () => void; onCancel: () =
         >
           {save.isPending ? "Saving…" : "Save server"}
         </Button>
-      </div>
+      </CardFooter>
     </Card>
   );
 }

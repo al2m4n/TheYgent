@@ -8,28 +8,24 @@
 import { useQuery } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { ChevronDown } from "lucide-react";
-import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import type { Selection } from "../adapter";
 import { ChatView } from "../chat/ChatView";
 import { useRunChat } from "../chat/useRunChat";
 import { GraphCanvas } from "../components/GraphCanvas";
 import { ResumePanel, parseTyped } from "../components/ResumePanel";
+import { Button, Card, ErrorBanner, Field, Input, NoteBanner, Select } from "../components/ui";
 import {
-  Button,
-  Card,
-  ErrorBanner,
-  Field,
-  Input,
-  NoteBanner,
-  Select,
-  buttonClass,
-} from "../components/ui";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
+import { RunWaterfall } from "../components/waterfall";
 import { type AgentDetail, ApiError, api } from "../lib/api";
 import { isDurableOnly } from "../lib/durable";
 import { shortId } from "../lib/format";
 import { useRun } from "../queries";
-import { TraceWaterfall } from "./TraceWaterfall";
 import { applyPresetToBinding } from "./preset";
 
 export function AgentBench({ agent }: { agent: AgentDetail }) {
@@ -139,12 +135,13 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-slate-200">{agent.name}</span>
-        <Field label="Pin">
+        <Field label="Version">
           <Select
             value={version}
             onChange={(e) => setPicked(e.target.value)}
             className="w-48"
-            aria-label="Version pin"
+            aria-label="Version"
+            title="Which saved version to run — new runs use the version picked here"
           >
             {agent.versions.map((v) => (
               <option key={v.version} value={v.version}>
@@ -222,7 +219,14 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       )}
       {view?.runId && (
         <div className="space-y-3">
-          <TraceWaterfall runId={view.runId} onHover={setHighlight} />
+          <RunWaterfall
+            runId={view.runId}
+            // A durable run mounts the waterfall the moment it is enqueued — keep it live (1s
+            // trace poll + the /trace/stream overlay) until the poll reaches a terminal status.
+            // An interactive run only lands here with its terminal result, so it is never live.
+            isLive={Boolean(durableRunId) && !durableTerminal}
+            onHoverNode={(id) => setHighlight(id ? { kind: "node", id } : null)}
+          />
           {ir && (
             <div className="h-64 overflow-hidden rounded-md border border-slate-800">
               <GraphCanvas
@@ -278,9 +282,9 @@ function AgentChat({
 
 // The Run split button: the primary segment runs the normal streaming path IMMEDIATELY; the caret
 // segment opens a menu with the durable choice. Used for agents that can run either way (a
-// durable-only agent gets a single button). The menu is PORTALED to the body with fixed positioning
-// so the scrollable bench modal (overflow-auto) can't clip it. Focus moves into the menu on open,
-// arrow keys cycle the items, and Escape/selection hand focus back to the caret.
+// durable-only agent gets a single button). The menu is a dropdown primitive: it portals and
+// positions itself (so the scrollable bench modal can't clip it), owns focus/arrow-key/Escape
+// handling, and composes with the dialog's layer stack — clicking it never dismisses the modal.
 function RunMenu({
   busy,
   disabled,
@@ -290,83 +294,8 @@ function RunMenu({
   disabled: boolean;
   onRun: (durable: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const caretRef = useRef<HTMLButtonElement>(null);
-  const firstItemRef = useRef<HTMLButtonElement>(null);
-
-  const toggle = () => {
-    const r = wrapRef.current?.getBoundingClientRect();
-    if (r) setPos({ left: r.left, top: r.bottom + 4 });
-    setOpen((o) => !o);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (wrapRef.current?.contains(t) || menuRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setOpen(false);
-        caretRef.current?.focus();
-      }
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    // A fixed-positioned menu can't follow scroll/resize — close it rather than let it drift.
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [open]);
-
-  // Keyboard users land in the menu, not past the portal at the end of <body>.
-  useEffect(() => {
-    if (open) firstItemRef.current?.focus();
-  }, [open]);
-
-  // Roving focus between the menu items (wrapping); Enter/Space activate natively.
-  const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-    );
-    if (items.length === 0) return;
-    const i = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      items[(i + 1) % items.length]?.focus();
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      items[(i - 1 + items.length) % items.length]?.focus();
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      items[0]?.focus();
-    } else if (e.key === "End") {
-      e.preventDefault();
-      items[items.length - 1]?.focus();
-    }
-  };
-
-  const pick = (durable: boolean) => {
-    setOpen(false);
-    caretRef.current?.focus();
-    onRun(durable);
-  };
-  const item =
-    "block w-full px-3 py-1.5 text-left text-sm text-slate-200 hover:bg-[var(--c-hover)]";
-
   return (
-    <div ref={wrapRef} className="inline-flex">
+    <div className="inline-flex">
       <Button
         variant="primary"
         className="rounded-r-none"
@@ -376,52 +305,32 @@ function RunMenu({
       >
         {busy ? "Running…" : "Run"}
       </Button>
-      {/* A raw <button> (Button doesn't forward refs) so focus can return here on menu close. */}
-      <button
-        ref={caretRef}
-        type="button"
-        className={buttonClass("primary", "rounded-l-none border-l-blue-400 px-1.5")}
-        onClick={toggle}
-        disabled={disabled}
-        aria-label="Run options"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <ChevronDown size={14} aria-hidden />
-      </button>
-      {open &&
-        pos &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="primary"
+            className="rounded-l-none border-l-blue-400 px-1.5"
+            disabled={disabled}
             aria-label="Run options"
-            onKeyDown={onMenuKey}
-            style={{ position: "fixed", left: pos.left, top: pos.top, zIndex: 60 }}
-            className="min-w-[168px] overflow-hidden rounded-md border border-slate-700 bg-[var(--c-elev)] py-1 shadow-xl"
           >
-            <button
-              ref={firstItemRef}
-              type="button"
-              role="menuitem"
-              onClick={() => pick(false)}
-              title="A normal, streaming run on the interactive path"
-              className={item}
-            >
-              Run
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => pick(true)}
-              title="Runs on the durable runtime — checkpoints each step so it resumes after a crash (no token streaming)"
-              className={item}
-            >
-              Run durably
-            </button>
-          </div>,
-          document.body,
-        )}
+            <ChevronDown size={14} aria-hidden />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          <DropdownMenuItem
+            onSelect={() => onRun(false)}
+            title="A normal, streaming run on the interactive path"
+          >
+            Run
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onSelect={() => onRun(true)}
+            title="Runs on the durable runtime — checkpoints each step so it resumes after a crash (no token streaming)"
+          >
+            Run durably
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

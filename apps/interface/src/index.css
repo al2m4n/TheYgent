@@ -1,4 +1,7 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
 
 /* Drive the `dark:` variant off our explicit `.dark` class (set by lib/theme on <html>), not the OS
    media query — so `dark:`/light pairs follow the in-app theme switch. Used for SEMANTIC colours
@@ -44,14 +47,13 @@ html.light {
   --color-slate-950: #f8fafc;
 }
 
+/* Background, text colour, and font-family come from the component-library base layer below
+   (bg-background / text-foreground / font-sans), which resolves to the same palette. Only the
+   shell geometry is set here — an unlayered rule would silently out-cascade the base layer. */
 html,
 body {
   margin: 0;
   height: 100%;
-  background-color: var(--c-bg);
-  color: var(--color-slate-100);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
 }
 
 /* The app is a fixed shell: the document itself never scrolls. Scroll lives inside the content
@@ -121,6 +123,15 @@ body {
   border: 1px solid var(--c-bg);
 }
 
+/* Keep toasts interactive while a modal dialog is open. The dialog primitive sets
+   pointer-events:none on <body> for the duration; the notification center (download progress,
+   cancel buttons) is designed to stay usable above modals — re-enabling pointer events on the
+   toaster subtree restores that, and the Modal wrapper's outside-click guard makes sure clicking
+   a toast doesn't dismiss the dialog. */
+[data-sonner-toaster] {
+  pointer-events: auto;
+}
+
 /* Transient highlight: pulse the node/edge an issue (or other UI affordance) points at, so hovering
    a list item flashes "this is the part" on the canvas. Pure styling — applied via React Flow's
    node/edge `className` in GraphCanvas, never stored on the IR. */
@@ -140,4 +151,120 @@ body {
 .react-flow__edge.theygent-flash .react-flow__edge-path {
   stroke: #60a5fa !important;
   stroke-width: 3 !important;
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Geist Variable", sans-serif;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/* ── Component-library tokens, mapped onto the app palette ──────────────────
+   The semantic tokens the generated components consume (--background, --primary, --border, …)
+   resolve FROM the app's own theme: surfaces chain to the --c-* variables (which `html.light`
+   already overrides, so those flip for free), and text/border colours get an explicit light
+   value below — the same dark-default / `html.light`-override convention as the --c-* block.
+   Dark is the default (no class), matching lib/theme. */
+:root,
+html.dark {
+  --background: var(--c-bg);
+  --foreground: #f1f5f9;
+  --card: var(--c-surface-2);
+  --card-foreground: #f1f5f9;
+  --popover: var(--c-elev);
+  --popover-foreground: #e2e8f0;
+  /* The app accent: blue-600 with white text, identical in both themes. */
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: var(--c-elev);
+  --secondary-foreground: #e2e8f0;
+  /* Muted must CONTRAST with card/background (progress tracks, hover tints paint bg-muted on
+     card surfaces) — the hover tint is the one surface step visibly distinct in both themes. */
+  --muted: var(--c-hover);
+  --muted-foreground: #64748b;
+  --accent: var(--c-hover);
+  --accent-foreground: #e2e8f0;
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: #1e293b;
+  --input: #334155;
+  --ring: #3b82f6;
+  --chart-1: #3b82f6;
+  --chart-2: #22d3ee;
+  --chart-3: #a78bfa;
+  --chart-4: #fbbf24;
+  --chart-5: #f472b6;
+  /* 0.5rem lands radius-md at 0.4rem / radius-lg at 0.5rem — the button/card rounding the
+     app already uses. */
+  --radius: 0.5rem;
+  --sidebar: var(--c-surface);
+  --sidebar-foreground: #f1f5f9;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--c-hover);
+  --sidebar-accent-foreground: #e2e8f0;
+  --sidebar-border: #1e293b;
+  --sidebar-ring: #3b82f6;
+}
+
+html.light {
+  --foreground: #0f172a;
+  --card-foreground: #0f172a;
+  --popover-foreground: #1e293b;
+  --secondary-foreground: #1e293b;
+  --accent-foreground: #1e293b;
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: #dde3ec;
+  --input: #cbd5e1;
+  --sidebar-foreground: #0f172a;
+  --sidebar-accent-foreground: #1e293b;
+  --sidebar-border: #dde3ec;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

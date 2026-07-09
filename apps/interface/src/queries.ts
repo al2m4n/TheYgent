@@ -37,10 +37,6 @@ export function flattenPages<T extends { id: string }>(data: { pages: T[][] } | 
 
 export const keys = {
   run: (id: string) => ["run", id] as const,
-  // NB: keyed "run-trace", NOT "trace" — the bench's TraceWaterfall already caches ["trace", runId]
-  // as the FULL {runId,status,spans} envelope, while this surface resolves api.getTrace to a bare
-  // Span[]. Same backend route, same QueryClient → a shared ["trace", id] entry would hand one
-  // surface the other's shape (an envelope into mergeSpans' for…of → crash). Distinct key isolates it.
   trace: (id: string) => ["run-trace", id] as const,
   nodeIo: (id: string, nodeId: string) => ["node-io", id, nodeId] as const,
   sessions: () => ["sessions"] as const,
@@ -113,12 +109,15 @@ export function useRun(id: string, opts: { live?: boolean; enabled?: boolean } =
 
 // The run waterfall's persisted spans. Polls while the run is live so node bars appear as
 // nodes complete (each span is written on close); the live in-flight bars are overlaid from the
-// /trace/stream SSE in the Waterfall component. Stops polling when the run is terminal.
+// /trace/stream SSE in useRunSpans. Stops polling when the run is terminal. retry is off because
+// observability may be absent entirely — the waterfall degrades to a note instead of hammering.
 export function useTrace(id: string, opts: { live?: boolean } = {}) {
   return useQuery({
     queryKey: keys.trace(id),
     queryFn: () => api.getTrace(id),
+    enabled: Boolean(id),
     refetchInterval: opts.live ? 1000 : false,
+    retry: false,
   });
 }
 

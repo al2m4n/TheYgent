@@ -6,26 +6,29 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Plus } from "lucide-react";
+import { Bot, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentBench } from "../bench/AgentBench";
 import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
 import { FilterBar } from "../components/Filters";
 import { GraphPreview } from "../components/GraphPreview";
+import { TimeAgo } from "../components/TimeAgo";
+import { ErrorBanner, Modal, Page, Spinner, buttonClass } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardFooter } from "../components/ui/card";
 import {
-  Badge,
-  Button,
   Empty,
-  ErrorBanner,
-  Modal,
-  Page,
-  Select,
-  Spinner,
-  buttonClass,
-} from "../components/ui";
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../components/ui/empty";
+import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
+import { Skeleton } from "../components/ui/skeleton";
 import { fromStoredVersion } from "../lib/agent";
 import { type AgentDetail, type AgentSummary, api } from "../lib/api";
-import { relativeTime } from "../lib/format";
 import { useInView } from "../lib/useInView";
 import { flattenPages, useAgentsInfinite } from "../queries";
 
@@ -69,8 +72,8 @@ export function Home() {
     <Page className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-slate-100">Agents</h1>
-          <p className="text-xs text-slate-500">
+          <h1 className="text-lg font-semibold text-foreground">Agents</h1>
+          <p className="text-xs text-muted-foreground">
             Your saved agents — open one on the canvas, bench it, or create a new one.
           </p>
         </div>
@@ -89,18 +92,25 @@ export function Home() {
       />
 
       {!isLoading && !error && agents.length === 0 && (
-        <Empty>
-          <p>No saved agents yet.</p>
-          <p className="mt-1 text-xs text-slate-600">
-            Create one on the canvas and save it to see it here.
-          </p>
-          <Link
-            to="/editor"
-            search={{ agent: undefined, version: undefined }}
-            className={buttonClass("primary", "mt-4")}
-          >
-            <Plus size={14} /> New agent
-          </Link>
+        <Empty className="border py-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Bot />
+            </EmptyMedia>
+            <EmptyTitle>No saved agents yet</EmptyTitle>
+            <EmptyDescription>
+              Create one on the canvas and save it to see it here.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Link
+              to="/editor"
+              search={{ agent: undefined, version: undefined }}
+              className={buttonClass("primary")}
+            >
+              <Plus size={14} /> New agent
+            </Link>
+          </EmptyContent>
         </Empty>
       )}
 
@@ -114,25 +124,27 @@ export function Home() {
             shown={shown.length}
             onClear={q ? () => setQ("") : undefined}
             trailing={
-              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 Sort
-                <Select
+                <NativeSelect
+                  size="sm"
                   value={sort}
                   onChange={(e) => setSort(e.target.value as Sort)}
-                  className="!w-auto"
                 >
                   {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
-                    <option key={s} value={s}>
+                    <NativeSelectOption key={s} value={s}>
                       {SORT_LABEL[s]}
-                    </option>
+                    </NativeSelectOption>
                   ))}
-                </Select>
+                </NativeSelect>
               </label>
             }
           />
 
           {shown.length === 0 ? (
-            <Empty>No agents match the current filters.</Empty>
+            <Empty className="border py-10">
+              <EmptyDescription>No agents match the current filters.</EmptyDescription>
+            </Empty>
           ) : (
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
               {shown.map((a) => (
@@ -173,37 +185,42 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
   const showIdenticon = !ir && !loadingGraph; // no version, or the IR fetch failed
 
   return (
-    <div className="group relative flex flex-col overflow-hidden rounded-lg border border-slate-800 bg-[var(--c-surface-2)] transition-colors hover:border-slate-600">
+    <Card className="group relative gap-0 py-0 transition hover:ring-foreground/25">
       <Link
         to="/editor"
         search={{ agent: agent.id, version: agent.latest_version ?? undefined }}
         className="flex flex-1 flex-col"
       >
-        <div className="aspect-[16/10] w-full overflow-hidden border-b border-slate-800/60">
+        <div className="aspect-[16/10] w-full overflow-hidden border-b border-border/60">
           {ir ? (
             <GraphPreview ir={ir} className="h-full w-full" />
           ) : loadingGraph ? (
-            <div className="h-full w-full animate-pulse bg-[var(--c-surface)]" />
+            <Skeleton className="h-full w-full rounded-none" />
           ) : (
             <AgentThumbnail seed={seed} className="h-full w-full" />
           )}
         </div>
         <div className="flex flex-1 flex-col gap-1 p-3">
           <div className="flex items-start justify-between gap-2">
-            <span className="truncate text-sm font-medium text-slate-100" title={agent.name}>
+            <span className="truncate text-sm font-medium text-foreground" title={agent.name}>
               {agent.name}
             </span>
             {agent.latest_version && (
-              <Badge tone="blue">
-                <span className="mono">v{agent.latest_version}</span>
+              <Badge
+                variant="secondary"
+                className="mono shrink-0 bg-primary/10 text-[11px] text-primary"
+              >
+                v{agent.latest_version}
               </Badge>
             )}
           </div>
-          <div className="mono truncate text-[11px] text-slate-600" title={agent.id}>
+          <div className="mono truncate text-[11px] text-muted-foreground/70" title={agent.id}>
             {agent.id}
           </div>
-          <div className="mt-auto flex flex-wrap items-center gap-x-1.5 pt-1 text-[11px] text-slate-500">
-            <span>Updated {relativeTime(agent.updated_at)}</span>
+          <div className="mt-auto flex flex-wrap items-center gap-x-1.5 pt-1 text-[11px] text-muted-foreground">
+            <span>
+              Updated <TimeAgo iso={agent.updated_at} />
+            </span>
             <span>·</span>
             <span>
               {agent.version_count} version{agent.version_count === 1 ? "" : "s"}
@@ -231,18 +248,13 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
         </button>
       )}
 
-      <div className="flex items-center justify-between border-t border-slate-800/60 px-3 py-2">
-        <span className="text-[11px] text-slate-500">By me</span>
-        <Button
-          variant="primary"
-          disabled={!hasVersion}
-          onClick={onBench}
-          className="!px-2 !py-1 text-xs"
-        >
-          Bench
+      <CardFooter className="justify-between border-t px-3 py-2">
+        <span className="text-[11px] text-muted-foreground">By me</span>
+        <Button size="sm" disabled={!hasVersion} onClick={onBench}>
+          Run
         </Button>
-      </div>
-    </div>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -255,13 +267,13 @@ function BenchModal({ agentId, onClose }: { agentId: string; onClose: () => void
   });
   const agent = data as AgentDetail | undefined;
   return (
-    <Modal title={agent ? `Bench · ${agent.name}` : "Bench"} width="max-w-5xl" onClose={onClose}>
+    <Modal title={agent ? `Run · ${agent.name}` : "Run"} width="max-w-5xl" onClose={onClose}>
       {error ? (
         <ErrorBanner error={error} />
       ) : isLoading || !agent ? (
         <Spinner />
       ) : agent.versions.length === 0 ? (
-        <p className="text-sm text-slate-500">This agent has no versions yet.</p>
+        <p className="text-sm text-muted-foreground">This agent has no versions yet.</p>
       ) : (
         <AgentBench agent={agent} />
       )}

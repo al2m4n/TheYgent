@@ -1,3 +1,4 @@
+import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
@@ -7,6 +8,13 @@ import { defineConfig } from "vite";
 // the control-plane directly; the control-plane CORS allows both dev origins.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    // `@/` → `src/` — the import convention the component generator writes against
+    // (mirrored in tsconfig `paths` so tsc resolves the same specifiers).
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   // Serve `static/` at the site root (brand artwork, favicons) — referenced by literal path
   // (e.g. `/logo/…`) rather than imported, so the same URL resolves in dev and in the build.
   publicDir: "static",

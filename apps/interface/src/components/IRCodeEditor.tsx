@@ -231,24 +231,24 @@ export function IRCodeEditor({ ir, onChange, onValidityChange }: Props) {
         </span>
         <div className="ml-auto flex gap-2">
           <Button
-            className="!py-1 text-xs"
+            className="h-7 text-xs"
             onClick={() => viewRef.current && foldAll(viewRef.current)}
             title="Collapse every object/array"
           >
             Fold all
           </Button>
           <Button
-            className="!py-1 text-xs"
+            className="h-7 text-xs"
             onClick={() => viewRef.current && unfoldAll(viewRef.current)}
             title="Expand everything"
           >
             Unfold all
           </Button>
-          <Button className="!py-1 text-xs" onClick={format} title="Re-indent the JSON">
+          <Button className="h-7 text-xs" onClick={format} title="Re-indent the JSON">
             Format
           </Button>
           <div className="relative">
-            <Button className="!py-1 text-xs" onClick={copy} title="Copy the IR to the clipboard">
+            <Button className="h-7 text-xs" onClick={copy} title="Copy the IR to the clipboard">
               Copy
             </Button>
             {copied && (

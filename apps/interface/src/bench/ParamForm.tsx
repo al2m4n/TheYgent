@@ -4,6 +4,7 @@
 // bounded numeric param (min+max) renders as a slider + number input bound together.
 
 import { Field, Input, Select } from "../components/ui";
+import { Slider } from "../components/ui/slider";
 import type { ParamSpec } from "./params";
 
 interface Props {
@@ -25,19 +26,17 @@ function SliderNumber({
   const sliderValue = value === "" ? (spec.min ?? 0) : Number(value);
   return (
     <div className="flex items-center gap-2">
-      <input
-        type="range"
+      <Slider
         min={spec.min}
         max={spec.max}
         step={spec.step}
-        value={sliderValue}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-1.5 flex-1 cursor-pointer accent-blue-500"
+        value={[sliderValue]}
+        onValueChange={(vals) => onChange(String(vals[0] ?? ""))}
+        className="flex-1"
         aria-label={spec.label}
       />
-      {/* The wrapping Field <label> associates with the range input (the first labelable child),
-          so the paired number box needs its own accessible name; sharing the label string is fine —
-          assistive tech disambiguates the two by role. */}
+      {/* The slider names its thumb via aria-label; the paired number box carries the same
+          string — assistive tech disambiguates the two by role. */}
       <Input
         type="number"
         min={spec.min}
@@ -55,7 +54,9 @@ function SliderNumber({
 
 export function ParamForm({ specs, values, onChange }: Props) {
   if (specs.length === 0) {
-    return <p className="text-xs text-slate-500">This model advertises no tunable params.</p>;
+    return (
+      <p className="text-xs text-muted-foreground">This model advertises no tunable params.</p>
+    );
   }
   return (
     <div className="grid grid-cols-2 gap-3">

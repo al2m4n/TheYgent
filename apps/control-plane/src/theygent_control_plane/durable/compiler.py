@@ -63,6 +63,7 @@ from theygent_control_plane.mcp import McpManager
 from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
+    _NODE_REASONING_KEY,
     ActivityOutcome,
     EngineNameNotAllowed,
     RouterError,
@@ -303,6 +304,10 @@ async def _llm_step(
         # re-metering (and a resumed run never loses a completed turn's accounting). None when the
         # upstream reported nothing; readers use .get() so pre-usage journal entries replay fine.
         "usage": out.usage,
+        # The turn's thinking journals too, so a replayed step re-reports the same reasoning for
+        # the node_io capture instead of losing it (tokens are not re-streamed on replay). None
+        # when there was none; readers use .get() so pre-reasoning journal entries replay fine.
+        "reasoning": out.reasoning,
     }
 
 
@@ -924,6 +929,8 @@ async def _durable_walk(
                     final_output = ""
                     final_finish: str | None = None
                     usage_acc: dict[str, int] | None = None
+                    # Per-turn thinking → the node's captured `reasoning` entry.
+                    reasoning_parts: list[str] = []
                     truncated = False
                     capped = False
                     async with gen_cm as gen_scope:
@@ -942,6 +949,8 @@ async def _durable_walk(
                             # Node total across tool-loop turns (.get: pre-usage journal entries
                             # replay without the key).
                             usage_acc = merge_usage(usage_acc, res.get("usage"))
+                            if res.get("reasoning"):
+                                reasoning_parts.append(res["reasoning"])
                             calls = [
                                 _ToolCall(id=c["id"], name=c["name"], arguments=c["arguments"])
                                 for c in res.get("tool_calls", [])
@@ -998,6 +1007,11 @@ async def _durable_walk(
                         truncated_empty_nodes.append(node.id)
                     if scope is not None:
                         scope.set_attributes({"gen_ai.request.model": model_id})
+                    # The model's thinking, joined across tool-loop turns, recorded under the
+                    # reserved key so the node_io capture persists it alongside the answer —
+                    # never a dataflow handle.
+                    if reasoning_parts:
+                        values[(node.id, _NODE_REASONING_KEY)] = "\n\n".join(reasoning_parts)
                     live_handles[node.id] = _success_handles(node)
                     for handle in live_handles[node.id]:
                         values[(node.id, handle)] = final_output

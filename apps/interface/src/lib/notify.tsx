@@ -10,11 +10,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Toaster, toast } from "sonner";
+import { toast } from "sonner";
 import { Badge, ProgressBar } from "../components/ui";
+import { Toaster } from "../components/ui/sonner";
 import { type DownloadJob, api } from "./api";
 import { formatBytes, formatDuration } from "./format";
-import { useTheme } from "./theme";
 
 // Thin re-export so call sites read `notify.success(...)` / `notify.error(...)`. Anything sonner's
 // `toast` exposes (loading, promise, dismiss, …) is available here too.
@@ -156,10 +156,9 @@ function DownloadToast({
   );
 }
 
-// The mountable center. Renders sonner's Toaster (bottom-right, follows the app theme) and, once on
-// mount, re-attaches a progress card to any install still running in the plane.
+// The mountable center. Renders the themed Toaster (bottom-right, follows the app theme) and, once
+// on mount, re-attaches a progress card to any install still running in the plane.
 export function NotificationCenter() {
-  const { resolved } = useTheme();
   useEffect(() => {
     let active = true;
     api
@@ -176,14 +175,5 @@ export function NotificationCenter() {
     };
   }, []);
 
-  return (
-    <Toaster
-      position="bottom-right"
-      theme={resolved}
-      expand
-      richColors
-      closeButton
-      visibleToasts={6}
-    />
-  );
+  return <Toaster position="bottom-right" expand richColors closeButton visibleToasts={6} />;
 }

@@ -902,6 +902,16 @@ def test_schedule_fires_against_real_mlx_on_its_own() -> None:
         )
         with TestClient(app) as client:
             agent_id = client.post("/agents", json={"ir": ir}).json()["id"]
+            # Warm the engine BEFORE registering the schedule: the first data-plane call pays the
+            # full engine spawn + model load, and the poll window below must absorb up to ~60s of
+            # cron-boundary wait already — a cold start on top of that blows the deadline on a
+            # loaded runner. What this test proves is unattended firing, not cold-start latency.
+            warm = client.post(
+                f"/agents/{agent_id}/runs",
+                json={"input": "Say hello in one word.", "stream": False},
+            )
+            assert warm.status_code == 200, warm.text
+            assert warm.json()["status"] == "completed"
             trig = client.post(
                 "/triggers",
                 json={

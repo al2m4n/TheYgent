@@ -2,8 +2,9 @@
 // the model is still thinking (visible progress — a long reasoning phase must not look frozen),
 // folding away once the answer lands; the reader can always reopen it.
 
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { Brain, ChevronRight } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 
 export function ThinkingBlock({
   reasoning,
@@ -19,27 +20,25 @@ export function ThinkingBlock({
   }, [streaming]);
 
   if (!reasoning) return null;
-  const Chevron = open ? ChevronDown : ChevronRight;
   return (
-    <div className="rounded-md border border-slate-800 bg-[var(--c-surface)]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs text-slate-500 hover:text-slate-300"
-        aria-expanded={open}
-        onClick={() => {
-          pinnedRef.current = true;
-          setOpen((o) => !o);
-        }}
-      >
+    <Collapsible
+      open={open}
+      onOpenChange={(next) => {
+        pinnedRef.current = true;
+        setOpen(next);
+      }}
+      className="rounded-lg border bg-card"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-xs text-muted-foreground hover:text-foreground [&[data-state=open]>svg:last-child]:rotate-90">
         <Brain size={13} />
         <span className="font-medium">{streaming ? "Thinking…" : "Thinking"}</span>
-        <Chevron size={13} className="ml-auto" />
-      </button>
-      {open && (
-        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words border-t border-slate-800 px-2.5 py-2 text-xs leading-relaxed text-slate-400">
+        <ChevronRight size={13} className="ml-auto transition-transform" />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words border-t px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
           {reasoning}
         </pre>
-      )}
-    </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

@@ -28,6 +28,7 @@ import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { NodeCodeEditor } from "./NodeCodeEditor";
 import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
+import { Checkbox } from "./ui/checkbox";
 
 // The full-icon search grid is lazy: its ~1,700-icon set (iconsFull) loads only when a user actually
 // opens the icon picker, so the main editor bundle stays lean.
@@ -451,7 +452,7 @@ function EdgePanel({
         <div className="mt-2">
           <Button
             variant="danger"
-            className="!py-1 text-xs"
+            className="h-7 text-xs"
             onClick={() => {
               onChange(deleteEdges(ir, [edge.id]));
               onSelect(null);
@@ -487,7 +488,7 @@ function EdgePanel({
                   <Button
                     key={c}
                     variant={channel === c ? "primary" : "default"}
-                    className="!py-1 text-xs"
+                    className="h-7 text-xs"
                     onClick={() => onChange(updateEdge(ir, edge.id, { channel: c }))}
                   >
                     {c}
@@ -597,12 +598,8 @@ function ConfigField({
   }
   if (kind === "boolean") {
     return (
-      <label className="flex items-center gap-2 text-sm text-slate-300">
-        <input
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={(e) => onChange(e.target.checked)}
-        />
+      <label className="flex items-center gap-2 text-sm text-foreground">
+        <Checkbox checked={Boolean(value)} onCheckedChange={(next) => onChange(next === true)} />
         {label}
       </label>
     );
@@ -867,7 +864,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
           ))}
         </div>
       )}
-      <Button className="!py-1 text-xs" onClick={addRow}>
+      <Button className="h-7 text-xs" onClick={addRow}>
         <Plus size={14} aria-hidden /> Add message
       </Button>
       <p className="text-[10px] text-slate-600">
@@ -2062,7 +2059,7 @@ function ConnectionsPanel() {
       )}
 
       <div className="mt-1.5 flex gap-2">
-        <Button className="!py-1 text-xs" onClick={() => setOpen((o) => !o)}>
+        <Button className="h-7 text-xs" onClick={() => setOpen((o) => !o)}>
           {open ? (
             "Cancel"
           ) : (
@@ -2107,7 +2104,7 @@ function ConnectionsPanel() {
           {err && <ErrorBanner error={err} />}
           <Button
             variant="primary"
-            className="!py-1 text-xs"
+            className="h-7 text-xs"
             onClick={() => create.mutate()}
             disabled={!name || create.isPending}
           >
