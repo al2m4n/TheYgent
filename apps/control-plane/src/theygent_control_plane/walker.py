@@ -673,6 +673,10 @@ class LlmActivityResult:
     # This turn's token usage as the server reported it ({prompt,completion,total}_tokens), or
     # None when the upstream didn't report any — the caller aggregates turns onto the node span.
     usage: dict[str, int] | None = None
+    # The think-stripped reasoning the model produced this turn (the separate delta field and/or
+    # the inline think block), or None when there was none — so callers can persist the thinking
+    # into the node's captured outputs after the live stream is gone. Never part of ``output``.
+    reasoning: str | None = None
 
 
 async def execute_llm(
@@ -699,7 +703,9 @@ async def execute_llm(
     forwarded as-is, and inline ``<think>…</think>`` spans left in ``delta.content`` by
     raw-template servers are routed through a :class:`~reasoning.ThinkSplitter` — so the
     thinking reaches ``on_delta`` as ``"reasoning"`` either way and NEVER accumulates into
-    the returned output (see ``reasoning.py`` for the engine variance)."""
+    the returned output (see ``reasoning.py`` for the engine variance). It IS accumulated onto
+    the result's ``reasoning`` field, so callers can persist it into the node's captured
+    outputs — without it the thinking would exist only on the live stream."""
 
     upstream = await gateway.open_stream(
         model=model_id,
@@ -711,6 +717,7 @@ async def execute_llm(
         include_usage=True,  # the final chunk carries token usage → the node span / quota gate
     )
     output = ""
+    reasoning_acc = ""
     finish_reason: str | None = None
     usage: dict[str, int] | None = None
     tool_acc: dict[int, dict[str, Any]] = {}
@@ -721,12 +728,16 @@ async def execute_llm(
             finish_reason = parsed.finish_reason
         if parsed.usage:
             usage = parsed.usage
-        if parsed.reasoning and on_delta is not None:
-            on_delta(parsed.reasoning, "reasoning")
+        if parsed.reasoning:
+            reasoning_acc += parsed.reasoning
+            if on_delta is not None:
+                on_delta(parsed.reasoning, "reasoning")
         if parsed.content:
             answer, thinking = splitter.push(parsed.content)
-            if thinking and on_delta is not None:
-                on_delta(thinking, "reasoning")
+            if thinking:
+                reasoning_acc += thinking
+                if on_delta is not None:
+                    on_delta(thinking, "reasoning")
             if answer:
                 output += answer
                 if on_delta is not None:
@@ -737,8 +748,10 @@ async def execute_llm(
     # text; an unclosed think block stays reasoning — the all-thinking case then leaves the
     # output honestly blank for the empty-output reason).
     answer, thinking = splitter.flush()
-    if thinking and on_delta is not None:
-        on_delta(thinking, "reasoning")
+    if thinking:
+        reasoning_acc += thinking
+        if on_delta is not None:
+            on_delta(thinking, "reasoning")
     if answer:
         output += answer
         if on_delta is not None:
@@ -750,6 +763,7 @@ async def execute_llm(
         truncated_empty=truncated_empty,
         tool_calls=tuple(_finalize_tool_calls(tool_acc)),
         usage=usage,
+        reasoning=reasoning_acc if reasoning_acc.strip() else None,
     )
 
 
@@ -1728,6 +1742,12 @@ def _error_handles(node: Node) -> set[str]:
 # empty-output reason can name the CAUSE instead of letting the error message vanish.
 _DROPPED_ERROR_KEY = "__dropped_error__"
 
+# The reserved key an llm node's accumulated thinking is recorded under, surfaced in the node's
+# captured outputs as the ``reasoning`` entry. Never a declared handle, so no edge can read it —
+# reasoning is observability payload (persisted via node_io, same capture gating/caps as every
+# other port), never graph-visible dataflow.
+_NODE_REASONING_KEY = "__reasoning__"
+
 
 def _bind_outcome(
     node: Node,
@@ -2055,8 +2075,14 @@ def _io_output_snapshot(
 ) -> dict[str, Any]:
     """The node's emitted per-out-handle values, for ``node_io.outputs``. A router/tool emits on
     exactly the taken handle(s); an llm/input on its success handle(s); an output node emits nothing
-    (its input IS the run output, captured as the input snapshot)."""
-    return {handle: values.get((node.id, handle)) for handle in live_handles.get(node.id, set())}
+    (its input IS the run output, captured as the input snapshot). An llm node that produced
+    thinking also carries it under the reserved ``reasoning`` entry — capture-only (it rides the
+    same per-port gating/caps), never a handle a downstream edge can read."""
+    out = {handle: values.get((node.id, handle)) for handle in live_handles.get(node.id, set())}
+    reasoning = values.get((node.id, _NODE_REASONING_KEY))
+    if reasoning is not None:
+        out["reasoning"] = reasoning
+    return out
 
 
 def _node_span_status(node: Node, live_handles: dict[str, set[str]]) -> str:
@@ -2159,6 +2185,7 @@ async def _walk_llm(
     final_output = ""
     final_finish: str | None = None
     usage_acc: dict[str, int] | None = None
+    reasoning_parts: list[str] = []  # per-turn thinking → the node's captured `reasoning` entry
     truncated = False
     capped = False
     async with gen_cm as gen_scope:
@@ -2217,6 +2244,8 @@ async def _walk_llm(
 
             final_finish = turn.finish_reason
             usage_acc = merge_usage(usage_acc, turn.usage)  # node total across tool-loop turns
+            if turn.reasoning:
+                reasoning_parts.append(turn.reasoning)
             # No tool calls (or the node has no tools — legacy or capability) → answer is final.
             if not (turn.tool_calls and has_tools):
                 final_output = turn.output
@@ -2287,6 +2316,11 @@ async def _walk_llm(
     # answer, must not bind a green blank.
     if result is not None and (truncated or (capped and _is_blank(final_output))):
         result.truncated_empty_nodes.append(node.id)
+
+    # The model's thinking, joined across tool-loop turns, recorded under the reserved key so the
+    # node_io capture persists it alongside the answer — never a dataflow handle.
+    if reasoning_parts:
+        values[(node.id, _NODE_REASONING_KEY)] = "\n\n".join(reasoning_parts)
 
     # Activate the success handles and bind the final text, so downstream data edges pick it by
     # ``sourceHandle`` (e.g. "ok"). An llm error raises mid-stream (failed run) — it never binds.

@@ -15,8 +15,14 @@ import { useEffect, useState } from "react";
 import { ChatView } from "../chat/ChatView";
 import { type InferenceChatModality, useInferenceChat } from "../chat/useInferenceChat";
 import { type RunChatTarget, useRunChat } from "../chat/useRunChat";
-import { Badge, Button, Card, ErrorBanner, Page, Select, linkClass } from "../components/ui";
+import { SearchableSelect } from "../components/SearchableSelect";
+import { ErrorBanner, Page, linkClass } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { api } from "../lib/api";
+import { toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
 import { useModels } from "../queries";
 
@@ -29,6 +35,14 @@ interface AgentBoundaryNode {
 }
 
 const VOICE_MODALITIES = new Set<string>(["audio.transcription", "audio.speech"]);
+
+// A combobox option whose displayed label differs from the selected value (agent name vs id,
+// version label vs version string). The `{ value, label }` shape is what the combobox filters
+// and displays natively.
+interface PickItem {
+  value: string;
+  label: string;
+}
 
 function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
   const models = useModels();
@@ -125,81 +139,114 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
   const chat = useDirect ? directChat : runChat;
   const started = chat.messages.length > 0;
 
+  // Searchable picker options. Models select by logical id (which is also the label); agents and
+  // versions carry a label distinct from the selected value.
+  const modelItems = (models.data ?? []).map((m) => m.logicalId);
+  const agentItems: PickItem[] = (agents.data ?? []).map((a) => ({ value: a.id, label: a.name }));
+  const versionItems: PickItem[] = versions.map((v, i) => ({
+    value: v.version,
+    label: `v${v.version}${i === 0 ? " · latest" : ""} · ${shortId(v.content_hash, 10)}`,
+  }));
+
   return (
-    <div className="space-y-4">
+    // Full-height chat layout: the picker header shrinks to content, the conversation card owns
+    // the rest, and the composer stays pinned at the bottom of the card.
+    <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold text-slate-100">New Chat</h1>
+        <h1 className="text-lg font-semibold text-foreground">New Chat</h1>
         {/* What to talk to. Both pins freeze once the conversation starts (the session's target
             is fixed); "New chat" starts over. */}
-        <Select
+        <ToggleGroup
+          type="single"
+          size="sm"
+          variant="outline"
           value={kind}
-          onChange={(e) => setKind(e.target.value as TargetKind)}
+          onValueChange={(next) => {
+            // Re-clicking the active item reports "" — the chat always has a target kind.
+            if (next) setKind(next as TargetKind);
+          }}
           disabled={started}
           aria-label="Target kind"
-          className="w-28"
         >
-          <option value="model">Model</option>
-          <option value="agent">Agent</option>
-        </Select>
+          <ToggleGroupItem
+            value="model"
+            className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+          >
+            Model
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="agent"
+            className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+          >
+            Agent
+          </ToggleGroupItem>
+        </ToggleGroup>
         {kind === "model" ? (
           <>
-            <Select
+            <SearchableSelect
+              options={modelItems.map((id) => ({ value: id, label: id }))}
               value={model}
-              onChange={(e) => setPickedModel(e.target.value)}
-              disabled={started}
-              aria-label="Model"
+              onChange={setPickedModel}
+              placeholder="Select a model…"
+              searchPlaceholder="Search models…"
+              emptyText="No matching models."
               className="w-64"
+              disabled={started}
+              ariaLabel="Model"
               title={started ? "The model is pinned once the conversation starts" : undefined}
-            >
-              {(models.data ?? []).map((m) => (
-                <option key={m.logicalId} value={m.logicalId}>
-                  {m.logicalId}
-                </option>
-              ))}
-            </Select>
-            {modality !== "chat" && <Badge tone="violet">{modality}</Badge>}
+            />
+            {modality !== "chat" && (
+              <Badge variant="secondary" className={toneOf("violet").badge}>
+                {modality}
+              </Badge>
+            )}
           </>
         ) : (
-          <Select
+          <SearchableSelect
+            options={agentItems}
             value={agent?.id ?? ""}
-            onChange={(e) => setPickedAgent(e.target.value)}
-            disabled={started}
-            aria-label="Agent"
+            onChange={setPickedAgent}
+            placeholder="Select an agent…"
+            searchPlaceholder="Search agents…"
+            emptyText="No matching agents."
             className="w-64"
+            disabled={started}
+            ariaLabel="Agent"
             title={started ? "The agent is pinned once the conversation starts" : undefined}
-          >
-            {(agents.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         {/* Which version to test — defaults to latest; pinned once the conversation starts. */}
         {kind === "agent" && versions.length > 0 && (
-          <Select
+          <SearchableSelect
+            options={versionItems}
             value={version}
-            onChange={(e) => setPickedVersion(e.target.value)}
+            onChange={(v) => setPickedVersion(v)}
+            placeholder="Version…"
+            searchPlaceholder="Search versions…"
+            emptyText="No matching versions."
+            className="w-56"
             disabled={started}
-            aria-label="Version"
-            className="w-44"
+            ariaLabel="Version"
             title={started ? "The version is pinned once the conversation starts" : undefined}
-          >
-            {versions.map((v, i) => (
-              <option key={v.version} value={v.version}>
-                v{v.version}
-                {i === 0 ? " · latest" : ""} · {shortId(v.content_hash, 10)}
-              </option>
-            ))}
-          </Select>
+          />
         )}
         {kind === "agent" && (agentAudioIn || agentAudioOut) && (
-          <Badge tone="violet">{agentAudioIn && agentAudioOut ? "voice" : "audio"}</Badge>
+          <Badge variant="secondary" className={toneOf("violet").badge}>
+            {agentAudioIn && agentAudioOut ? "voice" : "audio"}
+          </Badge>
         )}
-        {kind === "agent" && agentImageIn && <Badge tone="violet">vision</Badge>}
-        {kind === "agent" && agentImageOut && <Badge tone="violet">image</Badge>}
+        {kind === "agent" && agentImageIn && (
+          <Badge variant="secondary" className={toneOf("violet").badge}>
+            vision
+          </Badge>
+        )}
+        {kind === "agent" && agentImageOut && (
+          <Badge variant="secondary" className={toneOf("violet").badge}>
+            image
+          </Badge>
+        )}
         {started && (
-          <Button variant="ghost" onClick={onNewChat}>
+          <Button type="button" variant="ghost" onClick={onNewChat}>
             New chat
           </Button>
         )}
@@ -215,12 +262,10 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
       </div>
       {models.error && kind === "model" && <ErrorBanner error={models.error} />}
       {agents.error && kind === "agent" && <ErrorBanner error={agents.error} />}
-      <Card className="p-4">
-        <ChatView
-          controller={chat}
-          listClassName="max-h-[calc(100vh-320px)] min-h-40"
-          emptyHint={null}
-        />
+      <Card className="flex min-h-0 flex-1 flex-col overflow-visible">
+        <CardContent className="flex min-h-0 flex-1 flex-col py-4">
+          <ChatView controller={chat} listClassName="min-h-24 flex-1" emptyHint={null} />
+        </CardContent>
       </Card>
     </div>
   );
@@ -230,7 +275,7 @@ export function Chat() {
   // Remount the surface to start a fresh conversation (new session, clean transcript).
   const [nonce, setNonce] = useState(0);
   return (
-    <Page className="space-y-4">
+    <Page className="flex h-full min-h-0 flex-col">
       <ChatSurface key={nonce} onNewChat={() => setNonce((n) => n + 1)} />
     </Page>
   );

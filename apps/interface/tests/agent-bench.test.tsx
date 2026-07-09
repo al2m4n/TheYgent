@@ -5,6 +5,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -64,7 +65,7 @@ describe("AgentBench version pin", () => {
 
   it("defaults the pin to the latest version and runs it", async () => {
     withQuery(<AgentBench agent={agent} />);
-    const pin = screen.getByRole("combobox", { name: "Version pin" }) as HTMLSelectElement;
+    const pin = screen.getByRole("combobox", { name: "Version" }) as HTMLSelectElement;
     expect(pin.value).toBe("0.1.2"); // latest, not the older llama-3.2 version
 
     fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "hi" } });
@@ -77,7 +78,7 @@ describe("AgentBench version pin", () => {
 
   it("honors a deliberately picked older version", async () => {
     withQuery(<AgentBench agent={agent} />);
-    const pin = screen.getByRole("combobox", { name: "Version pin" }) as HTMLSelectElement;
+    const pin = screen.getByRole("combobox", { name: "Version" }) as HTMLSelectElement;
     fireEvent.change(pin, { target: { value: "0.1.1" } });
     expect(pin.value).toBe("0.1.1");
 
@@ -96,10 +97,11 @@ describe("AgentBench version pin", () => {
     withQuery(<AgentBench agent={agent} />);
     fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "5" } });
     await runButtonReady();
-    // The split button's caret opens a menu with both paths.
-    fireEvent.click(screen.getByRole("button", { name: "Run options" }));
-    expect(screen.getByRole("menuitem", { name: "Run" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("menuitem", { name: "Run durably" }));
+    // The split button's caret opens a menu with both paths. The menu primitive opens on a real
+    // pointer sequence, so drive it with userEvent rather than a bare click event.
+    await userEvent.click(screen.getByRole("button", { name: "Run options" }));
+    expect(await screen.findByRole("menuitem", { name: "Run" })).toBeTruthy();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Run durably" }));
     await waitFor(() =>
       expect(api.runAgentDurable).toHaveBeenCalledWith("agent.docker", {
         input: "5",
@@ -142,8 +144,8 @@ describe("AgentBench version pin", () => {
     });
     withQuery(<AgentBench agent={agent} />);
     await runButtonReady();
-    fireEvent.click(screen.getByRole("button", { name: "Run options" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Run durably" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run options" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Run durably" }));
 
     // The poll reports "waiting" → the resume panel names the node and offers a Resume box.
     await waitFor(() => expect(screen.getByText("n_gate")).toBeTruthy());

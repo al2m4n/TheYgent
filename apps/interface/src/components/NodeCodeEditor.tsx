@@ -107,11 +107,11 @@ export function NodeCodeEditor({
           </span>
         )}
         <div className="ml-auto flex gap-1.5">
-          <Button className="!py-1 text-xs" onClick={format} title="Re-indent the JSON">
+          <Button className="h-7 text-xs" onClick={format} title="Re-indent the JSON">
             Format
           </Button>
           <div className="relative">
-            <Button className="!py-1 text-xs" onClick={copy} title="Copy the node to the clipboard">
+            <Button className="h-7 text-xs" onClick={copy} title="Copy the node to the clipboard">
               Copy
             </Button>
             {copied && (

@@ -1,19 +1,25 @@
 import { Link } from "@tanstack/react-router";
+import { MessagesSquare } from "lucide-react";
 import { useMemo, useState } from "react";
 import { FilterBar } from "../components/Filters";
+import { TimeAgo } from "../components/TimeAgo";
+import { Badge, ErrorBanner, Page, Spinner, buttonClass, linkClass } from "../components/ui";
 import {
-  Badge,
   Empty,
-  ErrorBanner,
-  Page,
-  Spinner,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "../components/ui/empty";
+import { Skeleton } from "../components/ui/skeleton";
+import {
   Table,
-  Td,
-  Th,
-  buttonClass,
-  linkClass,
-} from "../components/ui";
-import { relativeTime } from "../lib/format";
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import type { SessionSummary } from "../lib/runtypes";
 import { useInView } from "../lib/useInView";
 import { flattenPages, useSessionsInfinite } from "../queries";
@@ -26,6 +32,55 @@ function targetOf(s: SessionSummary): string | null {
   if (typeof meta.agent_id === "string") return "agent";
   if (typeof meta.model === "string") return String(meta.model);
   return null;
+}
+
+// The header row is shared by the loaded table and the loading skeleton so the columns never jump.
+function SessionsTableHeader() {
+  return (
+    <TableHeader>
+      <TableRow>
+        <TableHead>Session</TableHead>
+        <TableHead>Target</TableHead>
+        <TableHead>Messages</TableHead>
+        <TableHead>First message</TableHead>
+        <TableHead>Last activity</TableHead>
+      </TableRow>
+    </TableHeader>
+  );
+}
+
+// Static keys: skeleton rows are pure placeholders with no identity of their own.
+const SKELETON_ROWS = ["s1", "s2", "s3", "s4", "s5"];
+
+function SessionsTableSkeleton() {
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card">
+      <Table>
+        <SessionsTableHeader />
+        <TableBody>
+          {SKELETON_ROWS.map((k) => (
+            <TableRow key={k}>
+              <TableCell>
+                <Skeleton className="h-4 w-56" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-28" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-10" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-64" />
+              </TableCell>
+              <TableCell>
+                <Skeleton className="h-4 w-16" />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
 }
 
 export function SessionsList() {
@@ -47,21 +102,29 @@ export function SessionsList() {
     <Page className="space-y-4">
       {/* The page reads "Chats"; the rows themselves stay sessions (the stored unit). */}
       <div className="flex items-center gap-3">
-        <h1 className="text-lg font-semibold text-slate-100">Chats</h1>
+        <h1 className="text-lg font-semibold text-foreground">Chats</h1>
         <Link to="/chat" className={buttonClass("primary", "ml-auto")}>
           New chat
         </Link>
       </div>
       <ErrorBanner error={error} />
       {isLoading ? (
-        <Spinner />
+        <SessionsTableSkeleton />
       ) : !sessions || sessions.length === 0 ? (
-        <Empty>
-          No sessions yet. Start a{" "}
-          <Link to="/chat" className={linkClass}>
-            new chat →
-          </Link>{" "}
-          or bench a model from Registries — every conversation lands here.
+        <Empty className="border py-10">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <MessagesSquare />
+            </EmptyMedia>
+            <EmptyTitle>No sessions yet</EmptyTitle>
+            <EmptyDescription>
+              Start a{" "}
+              <Link to="/chat" className={linkClass}>
+                new chat →
+              </Link>{" "}
+              or bench a model from Registries — every conversation lands here.
+            </EmptyDescription>
+          </EmptyHeader>
         </Empty>
       ) : (
         <>
@@ -74,45 +137,44 @@ export function SessionsList() {
             onClear={() => setQ("")}
           />
           {filtered.length === 0 ? (
-            <Empty>No sessions match the current filters.</Empty>
+            <Empty className="border py-10">
+              <EmptyHeader>
+                <EmptyTitle>No matching sessions</EmptyTitle>
+                <EmptyDescription>No sessions match the current filters.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
-            <Table>
-              <thead>
-                <tr>
-                  <Th>Session</Th>
-                  <Th>Target</Th>
-                  <Th>Messages</Th>
-                  <Th>First message</Th>
-                  <Th>Last activity</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((t) => {
-                  const target = targetOf(t);
-                  return (
-                    <tr key={t.id} className="hover:bg-slate-800/30">
-                      <Td className="whitespace-nowrap">
-                        <Link
-                          to="/sessions/$sessionId"
-                          params={{ sessionId: t.id }}
-                          className={`mono ${linkClass}`}
-                        >
-                          {t.id}
-                        </Link>
-                      </Td>
-                      <Td className="whitespace-nowrap">
-                        {target ? <Badge tone="blue">{target}</Badge> : "—"}
-                      </Td>
-                      <Td className="text-slate-300">{t.message_count}</Td>
-                      <Td className="max-w-md truncate text-slate-400">{t.preview ?? "—"}</Td>
-                      <Td className="whitespace-nowrap text-slate-400">
-                        {relativeTime(t.last_activity)}
-                      </Td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </Table>
+            <div className="overflow-hidden rounded-xl border bg-card">
+              <Table>
+                <SessionsTableHeader />
+                <TableBody>
+                  {filtered.map((t) => {
+                    const target = targetOf(t);
+                    return (
+                      <TableRow key={t.id}>
+                        <TableCell>
+                          <Link
+                            to="/sessions/$sessionId"
+                            params={{ sessionId: t.id }}
+                            className={`mono ${linkClass}`}
+                          >
+                            {t.id}
+                          </Link>
+                        </TableCell>
+                        <TableCell>{target ? <Badge tone="blue">{target}</Badge> : "—"}</TableCell>
+                        <TableCell>{t.message_count}</TableCell>
+                        <TableCell className="max-w-md truncate text-muted-foreground">
+                          {t.preview ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          <TimeAgo iso={t.last_activity} />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
 
           {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}

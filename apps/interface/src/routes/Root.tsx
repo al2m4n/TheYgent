@@ -1,10 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
   Bot,
   Boxes,
-  ChevronDown,
   ChevronRight,
   Database,
   type LucideIcon,
@@ -21,17 +19,41 @@ import {
   Sun,
   User,
 } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../components/ui";
-import { api } from "../lib/api";
+import { Avatar, AvatarFallback } from "../components/ui/avatar";
+import { Badge } from "../components/ui/badge";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarSeparator,
+  SidebarTrigger,
+  useSidebar,
+} from "../components/ui/sidebar";
+import { Spinner } from "../components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import { TooltipProvider } from "../components/ui/tooltip";
 import { shortId } from "../lib/format";
 import { NotificationCenter } from "../lib/notify";
 import type { SessionSummary } from "../lib/runtypes";
 import { type ThemePref, useTheme } from "../lib/theme";
+import { useInView } from "../lib/useInView";
+import { flattenPages, useSessionsInfinite } from "../queries";
 
 // The shell: a collapsible LEFT sidebar + the routed view. The interface is canvas-first, so chrome
-// stays quiet and out of the way; collapsing the rail hands the canvas the full width. Each entry is
-// one Lucide icon + a label; collapsed, only the icon shows and the label moves to a hover tooltip.
+// stays quiet and out of the way; collapsing the rail to its icon mode hands the canvas the full
+// width. Each entry is one Lucide icon + a label; collapsed, only the icon shows and the label moves
+// to a hover tooltip.
 
 interface NavEntry {
   to: string;
@@ -110,52 +132,80 @@ export function Root() {
   };
 
   return (
-    <div className="flex h-full">
-      <aside
-        className={`flex h-full shrink-0 flex-col border-r border-slate-800 bg-[var(--c-surface)] transition-[width] duration-200 ${
-          effectiveCollapsed ? "w-14" : "w-56"
-        }`}
+    <TooltipProvider delayDuration={0}>
+      {/* The sidebar open state is controlled from here (not the component's cookie) so the existing
+          collapse preference keeps persisting to localStorage and the editor auto-collapse works. */}
+      <SidebarProvider
+        className="h-full min-h-0"
+        open={!effectiveCollapsed}
+        onOpenChange={(open) => setRailCollapsed(!open)}
       >
-        {/* Rail head: brand + the collapse/expand control. */}
-        <Brand
-          collapsed={effectiveCollapsed}
-          onExpand={() => setRailCollapsed(false)}
-          onCollapse={() => setRailCollapsed(true)}
-        />
+        <AppSidebar onOpenSettings={() => setSettingsOpen(true)} />
 
-        {/* Primary navigation: build/observe · chat · configuration · recents. */}
-        <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 py-2">
-          {NAV_MAIN.map((item) => (
-            <NavItem key={item.to} item={item} collapsed={effectiveCollapsed} />
-          ))}
-          <NavSeparator />
-          {NAV_CHAT.map((item) => (
-            <NavItem key={item.to} item={item} collapsed={effectiveCollapsed} />
-          ))}
-          <NavSeparator />
-          <ConfigGroup collapsed={effectiveCollapsed} />
-          <RecentSessions collapsed={effectiveCollapsed} />
-        </nav>
+        {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
 
-        {/* Bottom: the user/profile entry — USER settings (identity, theme), not app settings. */}
-        <div className="shrink-0 space-y-1 border-t border-slate-800 px-2 py-2">
-          <ProfileButton collapsed={effectiveCollapsed} onClick={() => setSettingsOpen(true)} />
-        </div>
-      </aside>
+        {/* The single scroll region: the document never scrolls (body is overflow-hidden), so the
+            sidebar stays fixed while a long page scrolls here. Routes that own their height (the
+            canvas Editor) sit exactly h-full and never overflow. */}
+        <SidebarInset className="min-h-0 min-w-0 overflow-y-auto">
+          {/* On narrow viewports the rail lives in an off-canvas sheet, so surface a trigger. */}
+          <div className="flex shrink-0 items-center border-b border-border p-1.5 md:hidden">
+            <SidebarTrigger />
+          </div>
+          <Outlet />
+        </SidebarInset>
 
-      {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
+        {/* The one central place for messages + live download progress, bottom-right, above every
+            page and persistent across navigation. */}
+        <NotificationCenter />
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}
 
-      {/* The single scroll region: the document never scrolls (body is overflow-hidden), so the
-          sidebar stays fixed while a long page scrolls here. Routes that own their height (the
-          canvas Editor) sit exactly h-full and never overflow. */}
-      <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <Outlet />
-      </main>
+// The rail itself: brand head, the three nav groups + recents, and the profile footer. In icon
+// mode every entry collapses to its icon and the label moves into the menu button's tooltip.
+function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return (
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="border-b border-sidebar-border p-0">
+        <Brand />
+      </SidebarHeader>
 
-      {/* The one central place for messages + live download progress, bottom-right, above every
-          page and persistent across navigation. */}
-      <NotificationCenter />
-    </div>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV_MAIN.map((item) => (
+                <NavItem key={item.to} item={item} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarSeparator />
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV_CHAT.map((item) => (
+                <NavItem key={item.to} item={item} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarSeparator />
+        <ConfigGroup />
+        <RecentSessions />
+      </SidebarContent>
+
+      {/* Bottom: the user/profile entry — USER settings (identity, theme), not app settings. */}
+      <SidebarFooter className="border-t border-sidebar-border">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <ProfileButton onClick={onOpenSettings} />
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
+    </Sidebar>
   );
 }
 
@@ -164,30 +214,23 @@ export function Root() {
 // shows the mark alone — resting on it swaps the mark for the expand control, so the logo doubles as
 // the affordance to reopen the rail. The mark artwork is theme-aware: a light-on-dark set for the dark
 // theme, a dark-on-light set for the light theme (served from the static logo folder).
-function Brand({
-  collapsed,
-  onExpand,
-  onCollapse,
-}: {
-  collapsed: boolean;
-  onExpand: () => void;
-  onCollapse: () => void;
-}) {
+function Brand() {
+  const { state, toggleSidebar } = useSidebar();
   const { resolved } = useTheme();
   const dark = resolved === "dark";
   const mark = dark ? "/logo/TheYgent-logo-dark.svg" : "/logo/TheYgent-logo.svg";
 
-  if (collapsed) {
+  if (state === "collapsed") {
     // The whole head is the expand control: the mark shows at rest and fades out on hover/focus while
     // the expand glyph fades in — one target, so there's no click ambiguity between logo and button.
     return (
       <button
         type="button"
-        onClick={onExpand}
+        onClick={toggleSidebar}
         aria-label="Expand sidebar"
         aria-expanded={false}
         title="Expand sidebar"
-        className="group/brand relative flex h-11 w-full shrink-0 items-center justify-center border-b border-slate-800 transition-colors hover:bg-slate-800/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+        className="group/brand relative flex h-11 w-full shrink-0 items-center justify-center transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring"
       >
         {/* Decorative: the button's aria-label already names the control, so the mark is hidden from
             the a11y tree (empty alt) to avoid a duplicate announcement. */}
@@ -198,29 +241,29 @@ function Brand({
         />
         <PanelLeftOpen
           size={17}
-          className="absolute text-slate-400 opacity-0 transition-opacity group-hover/brand:opacity-100 group-focus-visible/brand:opacity-100"
+          className="absolute text-muted-foreground opacity-0 transition-opacity group-hover/brand:opacity-100 group-focus-visible/brand:opacity-100"
         />
       </button>
     );
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-800 px-2.5">
+    <div className="flex h-11 shrink-0 items-center gap-2 px-2.5">
       <Link to="/" aria-label="TheYgent — home" className="flex min-w-0 items-center gap-2">
         {/* The mark is decorative (empty alt) — the link's aria-label + the visible wordmark carry
             the accessible name. The wordmark is real text, so it re-colors with the theme. */}
         <img src={mark} alt="" className="h-6 w-auto shrink-0" />
-        <span className="truncate text-[15px] font-semibold tracking-tight text-slate-100">
+        <span className="truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
           TheYgent
         </span>
       </Link>
       <button
         type="button"
-        onClick={onCollapse}
+        onClick={toggleSidebar}
         aria-label="Collapse sidebar"
         aria-expanded={true}
         title="Collapse sidebar"
-        className="ml-auto rounded p-1 text-slate-500 transition-colors hover:bg-slate-800 hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+        className="ml-auto rounded-md p-1 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
       >
         <PanelLeftClose size={16} />
       </button>
@@ -228,59 +271,66 @@ function Brand({
   );
 }
 
-// A row that shows label-to-the-right when collapsed (a delayed hover tooltip, so resting on the icon
-// reveals it). Lives outside any scroll/overflow container so it can extend past the rail's edge.
-function CollapsedTip({ label }: { label: string }) {
-  return (
-    <span className="pointer-events-none absolute top-1/2 left-full z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 opacity-0 shadow-lg transition-opacity delay-300 group-hover/item:opacity-100 group-focus-visible/item:opacity-100 group-focus-visible/item:delay-0">
-      {label}
-    </span>
-  );
-}
-
-const itemClass = (collapsed: boolean) =>
-  `group/item relative flex items-center gap-3 rounded-md px-2.5 py-2 text-sm transition-colors ${
-    collapsed ? "justify-center" : ""
-  }`;
-
-function NavItem({ item, collapsed }: { item: NavEntry; collapsed: boolean }) {
+// One nav row: a menu button wrapping the router Link. Active state is computed here (exact for
+// the home entry, prefix for the rest — mirroring the router's fuzzy matching) because the menu
+// button styles via data-active, not the router's `.active` class. The label doubles as the
+// tooltip, which the menu button only shows while the rail is collapsed to icons.
+function NavItem({ item }: { item: NavEntry }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isActive = item.exact
+    ? pathname === item.to
+    : pathname === item.to || pathname.startsWith(`${item.to}/`);
   const Icon = item.icon;
   return (
-    <Link
-      to={item.to}
-      activeOptions={item.exact ? { exact: true } : undefined}
-      aria-label={item.label}
-      className={`${itemClass(collapsed)} text-slate-400 hover:bg-slate-800/60 hover:text-slate-100 [&.active]:bg-slate-800 [&.active]:text-slate-100`}
-    >
-      <Icon size={18} strokeWidth={2} className="shrink-0" />
-      {!collapsed && <span className="truncate">{item.label}</span>}
-      {collapsed && <CollapsedTip label={item.label} />}
-    </Link>
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+        <Link
+          to={item.to}
+          activeOptions={item.exact ? { exact: true } : undefined}
+          aria-label={item.label}
+        >
+          <Icon />
+          <span>{item.label}</span>
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
-// The most recent sessions, right under the primary nav — one click back into any conversation.
+// The recent sessions, right under the primary nav — one click back into any conversation.
 // Every chat surface (the chat page, a model bench, an agent chat) records into a session, so
-// this is the "continue where I left off" list. Hidden while the rail is collapsed (the Sessions
-// nav item stays as the icon-sized entry point).
-function RecentSessions({ collapsed }: { collapsed: boolean }) {
-  const recent = useQuery({
-    queryKey: ["sessions", "recent"],
-    queryFn: () => api.listSessions({ limit: 8 }),
-    refetchInterval: 30_000,
-    // The rail must never surface a scary error — an unreachable control plane just means no list.
-    retry: false,
-  });
-  if (collapsed || !recent.data || recent.data.length === 0) return null;
+// this is the "continue where I left off" list. It shares the Chats page's infinite query (same
+// key → same cache), fills the rest of the rail's height, and scroll-loads older pages inside its
+// own scroll region — the nav groups above stay pinned. Freshness comes from the chat surfaces'
+// ["sessions"] invalidations (every send/new-session reaches this key by prefix), not a poll.
+// Hidden while the rail is collapsed to icons (the Chats nav item stays as the icon-sized entry
+// point).
+function RecentSessions() {
+  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useSessionsInfinite();
+  const sessions = useMemo(() => flattenPages(data), [data]);
+  const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
+  // The rail must never surface a scary error — an unreachable control plane just means no list.
+  if (sessions.length === 0) return null;
   return (
-    <div className="mt-3 border-t border-slate-800 pt-2">
-      <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-        Recents
-      </p>
-      {recent.data.map((s) => (
-        <RecentItem key={s.id} session={s} />
-      ))}
-    </div>
+    // flex-1 min-h-0: this group takes whatever height the pinned groups above leave, and the
+    // group content scrolls internally — so only Recents scrolls, never the whole rail.
+    <SidebarGroup className="min-h-0 flex-1 group-data-[collapsible=icon]:hidden">
+      <SidebarGroupLabel className="uppercase tracking-wide">Recents</SidebarGroupLabel>
+      <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
+        <SidebarMenu>
+          {sessions.map((s) => (
+            <RecentItem key={s.id} session={s} />
+          ))}
+        </SidebarMenu>
+        {/* Scroll sentinel: pulls the next (older) page as it nears view — no button. */}
+        {hasNextPage && <div ref={loadMoreRef} aria-hidden className="h-px" />}
+        {isFetchingNextPage && (
+          <div className="flex justify-center py-2">
+            <Spinner className="text-muted-foreground" />
+          </div>
+        )}
+      </SidebarGroupContent>
+    </SidebarGroup>
   );
 }
 
@@ -299,49 +349,45 @@ function recentLabel(s: SessionSummary): string {
 }
 
 function RecentItem({ session }: { session: SessionSummary }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const Icon = session.metadata?.kind === "bench.agent" ? Bot : MessageSquare;
   return (
-    <Link
-      to="/sessions/$sessionId"
-      params={{ sessionId: session.id }}
-      title={session.preview ?? session.id}
-      className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-slate-400 transition-colors hover:bg-slate-800/60 hover:text-slate-100 [&.active]:bg-slate-800 [&.active]:text-slate-100"
-    >
-      <Icon size={13} className="shrink-0" />
-      <span className="truncate">{recentLabel(session)}</span>
-    </Link>
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        asChild
+        size="sm"
+        isActive={pathname === `/sessions/${session.id}`}
+        className="text-muted-foreground"
+      >
+        <Link
+          to="/sessions/$sessionId"
+          params={{ sessionId: session.id }}
+          title={session.preview ?? session.id}
+        >
+          <Icon />
+          <span>{recentLabel(session)}</span>
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
-// A quiet horizontal rule between nav groups.
-function NavSeparator() {
-  return <div aria-hidden className="mx-1 my-2 border-t border-slate-800" />;
-}
-
 // The reserved retrieval slot: visible so the IA already has its place, inert until it ships.
-function RagPlaceholder({ collapsed }: { collapsed: boolean }) {
+function RagPlaceholder() {
   return (
-    <div
-      aria-disabled
-      title={collapsed ? undefined : "Coming soon"}
-      className={`${itemClass(collapsed)} cursor-default text-slate-600`}
-    >
-      <Database size={18} strokeWidth={2} className="shrink-0" />
-      {!collapsed && (
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate">RAG</span>
-          <span className="rounded bg-slate-800/70 px-1.5 py-0.5 text-[10px] text-slate-500">
-            soon
-          </span>
-        </span>
-      )}
-      {collapsed && <CollapsedTip label="RAG — soon" />}
-    </div>
+    <SidebarMenuItem>
+      <SidebarMenuButton disabled title="Coming soon" tooltip="RAG — soon">
+        <Database />
+        <span>RAG</span>
+        <Badge variant="secondary">soon</Badge>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
 // The collapsible Configuration group. Expanded rail: a disclosure header over the entries;
-// collapsed rail: the entries render as plain icons (a hidden dropdown would strand them).
+// icon rail: the entries render as plain icons regardless of the disclosure (a hidden group
+// would strand them — the header itself hides via the group-label icon-mode rule).
 // The open preference persists like the rail width does.
 const CONFIG_OPEN_KEY = "theygent.ui.configOpen";
 
@@ -353,8 +399,9 @@ function readConfigOpen(): boolean {
   }
 }
 
-function ConfigGroup({ collapsed }: { collapsed: boolean }) {
+function ConfigGroup() {
   const [open, setOpen] = useState(readConfigOpen);
+  const { state } = useSidebar();
   useEffect(() => {
     try {
       localStorage.setItem(CONFIG_OPEN_KEY, open ? "1" : "0");
@@ -363,62 +410,53 @@ function ConfigGroup({ collapsed }: { collapsed: boolean }) {
     }
   }, [open]);
 
-  const items = (
-    <>
-      {NAV_CONFIG_HEAD.map((item) => (
-        <NavItem key={item.to} item={item} collapsed={collapsed} />
-      ))}
-      <RagPlaceholder collapsed={collapsed} />
-      <NavItem item={NAV_SETTINGS} collapsed={collapsed} />
-    </>
-  );
-
-  if (collapsed) return items;
-
-  const Chevron = open ? ChevronDown : ChevronRight;
   return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className={`${itemClass(false)} w-full text-slate-500 hover:bg-slate-800/60 hover:text-slate-300`}
-      >
-        <Settings2 size={18} strokeWidth={2} className="shrink-0" />
-        <span className="truncate text-xs font-semibold uppercase tracking-wide">
-          Configuration
-        </span>
-        <Chevron size={14} className="ml-auto shrink-0" />
-      </button>
-      {open && <div className="mt-1 space-y-1">{items}</div>}
-    </div>
+    <SidebarGroup>
+      <SidebarGroupLabel asChild className="group-data-[collapsible=icon]:hidden">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="w-full gap-2 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        >
+          <Settings2 />
+          <span className="truncate font-semibold uppercase tracking-wide">Configuration</span>
+          <ChevronRight
+            className={`ml-auto transition-transform ${open ? "rotate-90" : ""}`}
+            aria-hidden
+          />
+        </button>
+      </SidebarGroupLabel>
+      {(open || state === "collapsed") && (
+        <SidebarGroupContent>
+          <SidebarMenu>
+            {NAV_CONFIG_HEAD.map((item) => (
+              <NavItem key={item.to} item={item} />
+            ))}
+            <RagPlaceholder />
+            <NavItem item={NAV_SETTINGS} />
+          </SidebarMenu>
+        </SidebarGroupContent>
+      )}
+    </SidebarGroup>
   );
 }
 
 // The user/profile entry — an avatar chip that opens the settings modal. Expanded shows the
 // (placeholder) identity; collapsed is the avatar alone with a hover tooltip.
-function ProfileButton({
-  collapsed,
-  onClick,
-}: { collapsed: boolean; onClick?: () => void }): ReactNode {
+function ProfileButton({ onClick }: { onClick?: () => void }) {
   return (
-    <button
-      type="button"
-      aria-label="Open settings"
-      onClick={onClick}
-      className={`${itemClass(collapsed)} w-full text-slate-300 hover:bg-slate-800/60`}
-    >
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-blue-600/80 text-white">
-        <User size={14} strokeWidth={2} />
+    <SidebarMenuButton size="lg" aria-label="Open settings" tooltip="Profile" onClick={onClick}>
+      <Avatar size="sm">
+        <AvatarFallback className="bg-primary text-primary-foreground">
+          <User />
+        </AvatarFallback>
+      </Avatar>
+      <span className="flex min-w-0 flex-col text-left leading-tight">
+        <span className="truncate text-sm text-sidebar-foreground">Local user</span>
+        <span className="truncate text-[11px] text-muted-foreground">single-user</span>
       </span>
-      {!collapsed && (
-        <span className="flex min-w-0 flex-col text-left leading-tight">
-          <span className="truncate text-sm text-slate-200">Local user</span>
-          <span className="truncate text-[11px] text-slate-500">single-user</span>
-        </span>
-      )}
-      {collapsed && <CollapsedTip label="Profile" />}
-    </button>
+    </SidebarMenuButton>
   );
 }
 
@@ -437,42 +475,44 @@ function UserSettingsModal({ onClose }: { onClose: () => void }) {
       <div className="flex min-h-[160px] flex-col">
         {/* Identity + placeholder for the user configuration to come. */}
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-600/80 text-white">
-            <User size={18} strokeWidth={2} />
-          </span>
+          <Avatar size="lg">
+            <AvatarFallback className="bg-primary text-primary-foreground">
+              <User size={18} strokeWidth={2} />
+            </AvatarFallback>
+          </Avatar>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-slate-100">Local user</div>
-            <div className="text-xs text-slate-500">single-user · localhost</div>
+            <div className="text-sm font-medium text-foreground">Local user</div>
+            <div className="text-xs text-muted-foreground">single-user · localhost</div>
           </div>
         </div>
 
         {/* Theme switch — icon-only buttons pinned to the bottom-right corner. */}
-        <div className="mt-auto flex items-center justify-between border-t border-slate-800 pt-3">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        <div className="mt-auto flex items-center justify-between border-t border-border pt-3">
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             Theme
           </span>
-          <div className="flex items-center gap-1">
-            {THEME_OPTIONS.map(({ pref: p, icon: Icon, label }) => {
-              const active = pref === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setTheme(p)}
-                  aria-label={`${label} theme`}
-                  aria-pressed={active}
-                  title={`${label} theme`}
-                  className={`flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
-                    active
-                      ? "border-blue-500 bg-blue-500/15 text-blue-700 dark:text-blue-300"
-                      : "border-slate-700 text-slate-400 hover:bg-slate-800 hover:text-slate-200"
-                  }`}
-                >
-                  <Icon size={16} strokeWidth={2} />
-                </button>
-              );
-            })}
-          </div>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            value={pref}
+            onValueChange={(next) => {
+              // Radix reports "" when the active item is re-clicked — a theme is never unset.
+              if (next) setTheme(next as ThemePref);
+            }}
+            aria-label="Theme"
+          >
+            {THEME_OPTIONS.map(({ pref: p, icon: Icon, label }) => (
+              <ToggleGroupItem
+                key={p}
+                value={p}
+                aria-label={`${label} theme`}
+                title={`${label} theme`}
+                className="data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
+              >
+                <Icon size={16} strokeWidth={2} />
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
         </div>
       </div>
     </Modal>

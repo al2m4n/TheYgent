@@ -21,6 +21,7 @@ import { Inspector } from "../components/Inspector";
 import { Palette } from "../components/Palette";
 import { ResizeHandle } from "../components/ResizeHandle";
 import { Badge, Button, ErrorBanner, Input, Modal, Spinner } from "../components/ui";
+import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { blankGraph, fromStoredVersion } from "../lib/agent";
 import { ApiError, api } from "../lib/api";
 import { sameHashedContent } from "../lib/canonical";
@@ -358,7 +359,7 @@ export function Editor() {
           <label className="flex items-center gap-2 text-[11px] text-slate-500">
             id
             <Input
-              className="!w-44 mono !py-1 text-xs"
+              className="!w-44 mono h-7 text-xs"
               value={ir.id}
               disabled={existsRef.current}
               onChange={(e) => patchEnvelope({ id: e.target.value })}
@@ -367,7 +368,7 @@ export function Editor() {
           <label className="flex items-center gap-2 text-[11px] text-slate-500">
             name
             <Input
-              className="!w-44 !py-1 text-xs"
+              className="!w-44 h-7 text-xs"
               value={ir.name}
               onChange={(e) => patchEnvelope({ name: e.target.value })}
             />
@@ -375,7 +376,7 @@ export function Editor() {
           <label className="flex items-center gap-2 text-[11px] text-slate-500">
             version
             <Input
-              className="!w-24 mono !py-1 text-xs"
+              className="!w-24 mono h-7 text-xs"
               value={ir.version}
               onChange={(e) => patchEnvelope({ version: e.target.value })}
             />
@@ -384,21 +385,27 @@ export function Editor() {
 
         <div className="ml-auto flex items-center gap-3">
           {/* Visual ⇄ Code: two views over the one IR */}
-          <div className="flex items-center rounded-md border border-slate-700 p-0.5">
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={mode}
+            onValueChange={(next) => {
+              // Radix reports "" when the active item is re-clicked — the editor always has a mode.
+              if (next) setMode(next as "visual" | "code");
+            }}
+            aria-label="Editor view"
+          >
             {(["visual", "code"] as const).map((m) => {
               // Switching away from an unparseable code edit would silently destroy the typed
               // text (the code view only commits valid JSON upward) — block it until it parses.
               const blockedByInvalidJson = m === "visual" && mode === "code" && !codeValid;
               return (
-                <button
+                <ToggleGroupItem
                   key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
+                  value={m}
                   disabled={blockedByInvalidJson}
-                  aria-pressed={mode === m}
-                  className={`rounded px-2 py-0.5 text-xs font-medium capitalize transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    mode === m ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"
-                  }`}
+                  className="capitalize data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
                   title={
                     blockedByInvalidJson
                       ? "Fix the invalid JSON before switching back to Visual"
@@ -408,10 +415,10 @@ export function Editor() {
                   }
                 >
                   {m}
-                </button>
+                </ToggleGroupItem>
               );
             })}
-          </div>
+          </ToggleGroup>
           {savedHash && (
             <span
               className="mono max-w-[260px] truncate text-[11px] text-slate-500"

@@ -13,9 +13,21 @@ import type { SessionKind } from "../chat/session";
 import type { ChatMessage } from "../chat/types";
 import { type InferenceChatModality, useInferenceChat } from "../chat/useInferenceChat";
 import { type RunChatTarget, useRunChat } from "../chat/useRunChat";
-import { Badge, Button, ConfirmDialog, ErrorBanner, Page, Spinner } from "../components/ui";
+import { TimeAgo } from "../components/TimeAgo";
+import { ConfirmDialog, ErrorBanner, Page, Spinner } from "../components/ui";
+import { Badge } from "../components/ui/badge";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "../components/ui/breadcrumb";
+import { Button } from "../components/ui/button";
 import { api } from "../lib/api";
-import { relativeTime, shortId } from "../lib/format";
+import { toneOf } from "../lib/categories";
+import { shortId } from "../lib/format";
 import { notify } from "../lib/notify";
 import type { SessionDetail as SessionDetailWire } from "../lib/runtypes";
 import { useSession } from "../queries";
@@ -77,7 +89,7 @@ function SessionChat({ detail }: { detail: SessionDetailWire }) {
   return (
     <ChatView
       controller={chat}
-      listClassName="max-h-[62vh]"
+      listClassName="flex-1"
       emptyHint="No messages in this session yet — say something below."
     />
   );
@@ -112,18 +124,34 @@ export function SessionDetail() {
 
   const label = targetLabel(session.metadata);
   return (
-    <Page className="space-y-4">
+    // Full-height chat layout: header shrinks to content, the conversation owns the rest, and the
+    // composer stays pinned at the bottom — the page itself never scrolls behind it.
+    <Page className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/sessions" className="text-sm text-slate-400 hover:text-slate-200">
-          ← Chats
-        </Link>
-        <h1 className="mono text-sm font-semibold text-slate-100">{session.id}</h1>
-        {label && <Badge tone="blue">{label}</Badge>}
-        <span className="text-xs text-slate-500">
-          {session.messages.length} messages · created {relativeTime(session.created_at)}
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <Link to="/sessions">Chats</Link>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage className="mono break-all font-semibold">{session.id}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        {label && (
+          <Badge variant="secondary" className={toneOf("blue").badge}>
+            {label}
+          </Badge>
+        )}
+        <span className="text-xs text-muted-foreground">
+          {session.messages.length} messages · created <TimeAgo iso={session.created_at} />
         </span>
         <Button
-          variant="danger"
+          type="button"
+          variant="destructive"
           className="ml-auto shrink-0"
           onClick={() => setConfirmDelete(true)}
         >
@@ -131,7 +159,9 @@ export function SessionDetail() {
         </Button>
       </div>
 
-      <SessionChat key={session.id} detail={session} />
+      <div className="min-h-0 flex-1">
+        <SessionChat key={session.id} detail={session} />
+      </div>
 
       {confirmDelete && (
         <ConfirmDialog

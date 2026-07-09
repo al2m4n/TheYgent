@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import json
 
-from _fake_inference import FakeInference
+from _fake_inference import (
+    ANSWER_TURN_THINKING,
+    FULL_MESSAGE,
+    INLINE_THINKING,
+    TOOL_TURN_THINKING,
+    FakeInference,
+)
 from _ir import llm_ir, trivial_ir, two_input_llm_ir
 from fastapi.testclient import TestClient
 from theygent_control_plane.app import create_app
@@ -128,6 +134,93 @@ def test_prompt_run_is_traced_too(client: TestClient) -> None:
     io = client.get(f"/runs/{run_id}/nodes/llm/io").json()
     assert io["inputs"]["prompt"] == "what is 2+2"  # the prompt, captured as input
     assert io["outputs"]["output"]  # the answer, captured as output
+
+
+# ── reasoning capture (the reserved `reasoning` outputs entry) ──
+
+
+def test_llm_node_io_captures_reasoning(pg_url: str) -> None:
+    # A reasoning model's thinking (the separate reasoning_content field) persists into the llm
+    # node's captured outputs under the reserved `reasoning` entry — observable per-run after the
+    # live stream is gone — while the ok handle (and run.output) stay think-free.
+    with FakeInference(mode="reasoning") as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            run_id = _graph_run(client, llm_ir("$in"))
+            io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert io["outputs"]["reasoning"] == "thinking step..."
+    assert io["outputs"]["ok"] == FULL_MESSAGE
+
+
+def test_llm_node_io_captures_inline_think_reasoning(pg_url: str) -> None:
+    # The inline <think> form (a raw-template server) lands in the same `reasoning` entry — the
+    # capture is engine-agnostic, like the live reasoning stream it mirrors.
+    with FakeInference(mode="inline_think") as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            run_id = _graph_run(client, llm_ir("$in"))
+            io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert io["outputs"]["reasoning"] == INLINE_THINKING
+    assert io["outputs"]["ok"] == FULL_MESSAGE
+
+
+def test_llm_node_io_no_reasoning_entry_when_model_did_not_think(client: TestClient) -> None:
+    # No thinking → no entry at all (never an empty-string placeholder).
+    run_id = _graph_run(client, trivial_ir())
+    io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert "reasoning" not in io["outputs"]
+
+
+def test_llm_tool_loop_reasoning_joins_turns(pg_url: str) -> None:
+    # A multi-turn tool loop is ONE llm node: each turn's thinking joins with a blank line into
+    # the node's single captured `reasoning` entry.
+    with FakeInference(
+        mode="tool_call_reasoning",
+        tool_name="echo",
+        tool_args={"value": "hi"},
+        response="answer after tool",
+    ) as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            ir = llm_ir("$in")
+            ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+            ir["nodes"][1]["config"]["tools"] = ["echo"]
+            run_id = _graph_run(client, ir)
+            io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert io["outputs"]["reasoning"] == f"{TOOL_TURN_THINKING}\n\n{ANSWER_TURN_THINKING}"
+    assert io["outputs"]["ok"] == "answer after tool"
+
+
+def test_prompt_run_stream_captures_reasoning(pg_url: str) -> None:
+    # The /runs streaming path relays the thinking live (event: reasoning) AND captures it into
+    # the synthetic llm node's outputs, so it survives the stream.
+    with FakeInference(mode="reasoning") as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            with client.stream(
+                "POST", "/runs", json={"input": "hi", "model": "triage-fast", "stream": True}
+            ) as resp:
+                text = "".join(resp.iter_text())
+            first = next(line for line in text.splitlines() if line.startswith("data:"))
+            run_id = json.loads(first[len("data:") :])["runId"]
+            io = client.get(f"/runs/{run_id}/nodes/llm/io").json()
+    assert io["outputs"]["reasoning"] == "thinking step..."
+    assert io["outputs"]["output"] == FULL_MESSAGE
+
+
+def test_prompt_run_non_stream_captures_reasoning(pg_url: str) -> None:
+    # The non-stream completion used to DISCARD the split-out thinking; both the inline <think>
+    # form and the separate reasoning_content message field now land in the captured outputs.
+    for mode, expected in (("inline_think", INLINE_THINKING), ("reasoning", "thinking step...")):
+        with FakeInference(mode=mode) as server:
+            app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+            with TestClient(app) as client:
+                body = client.post(
+                    "/runs", json={"input": "hi", "model": "triage-fast", "stream": False}
+                ).json()
+                io = client.get(f"/runs/{body['runId']}/nodes/llm/io").json()
+        assert io["outputs"]["reasoning"] == expected, mode
+        assert io["outputs"]["output"] == FULL_MESSAGE
 
 
 # ── live SSE ──

@@ -1,46 +1,31 @@
 // The chat composer: text plus whatever the target's modality allows — image attach (upload or
 // camera) for vision, audio attach (upload or microphone) for transcription. Enter sends,
 // Shift+Enter breaks the line. Attachments stage as removable chips above the input so what is
-// about to be sent is always visible.
+// about to be sent is always visible. The input is an input-group: a growing textarea with the
+// media buttons and the send control on a rail beneath it.
 
-import { Camera, CircleStop, ImagePlus, Mic, Paperclip, Send, Square, X } from "lucide-react";
+import { AudioLines, Camera, CircleStop, ImagePlus, Mic, Send, Square, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { Button, Textarea } from "../components/ui";
+import {
+  AttachmentAction,
+  AttachmentActions,
+  Attachment as AttachmentChip,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "../components/ui/attachment";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupTextarea,
+} from "../components/ui/input-group";
 import { notify } from "../lib/notify";
 import { CameraModal } from "./CameraModal";
 import { audioDurationSec, fileToDataUrl, useRecorder } from "./media";
 import type { Attachment, ComposerCaps } from "./types";
-
-function IconButton({
-  label,
-  onClick,
-  disabled,
-  active,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  active?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      title={label}
-      aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`rounded-md border p-2 disabled:opacity-50 ${
-        active
-          ? "border-red-500/50 bg-red-500/10 text-red-600 dark:text-red-400"
-          : "border-slate-700 bg-[var(--c-elev)] text-slate-400 hover:bg-[var(--c-hover)] hover:text-slate-200"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
 
 export function Composer({
   caps,
@@ -121,7 +106,7 @@ export function Composer({
 
   if (disabled) {
     return (
-      <p className="rounded-md border border-dashed border-slate-700 px-3 py-2 text-xs text-slate-500">
+      <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
         {disabledNote ?? "This conversation can't be continued."}
       </p>
     );
@@ -130,97 +115,52 @@ export function Composer({
   return (
     <div className="space-y-2">
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <AttachmentGroup>
           {attachments.map((a, i) => (
-            <span
-              key={`${a.url}-${i}`}
-              className="flex items-center gap-2 rounded-md border border-slate-700 bg-[var(--c-elev)] px-2 py-1 text-xs text-slate-300"
-            >
-              {a.kind === "image" ? (
-                <img
-                  src={a.url}
-                  alt={a.name ?? "attachment"}
-                  className="h-8 w-8 rounded object-cover"
-                />
-              ) : (
-                // biome-ignore lint/a11y/useMediaCaption: staged voice clip, no caption source
-                <audio controls src={a.url} className="h-8 w-44" />
-              )}
-              <span className="max-w-32 truncate">
-                {a.name}
-                {a.kind === "audio" && a.durationSec ? ` · ${a.durationSec.toFixed(1)}s` : ""}
-              </span>
-              <button
-                type="button"
-                aria-label="Remove attachment"
-                className="text-slate-500 hover:text-slate-200"
-                onClick={() => {
-                  // A discarded clip's object URL would pin the blob for the page lifetime.
-                  if (a.kind === "audio" && a.url.startsWith("blob:")) URL.revokeObjectURL(a.url);
-                  setAttachments((cur) => cur.filter((_, j) => j !== i));
-                }}
-              >
-                <X size={13} />
-              </button>
-            </span>
+            <AttachmentChip key={`${a.url}-${i}`} size="sm">
+              <AttachmentMedia variant={a.kind === "image" ? "image" : "icon"}>
+                {a.kind === "image" ? (
+                  <img src={a.url} alt={a.name ?? "attachment"} />
+                ) : (
+                  <AudioLines aria-hidden />
+                )}
+              </AttachmentMedia>
+              <AttachmentContent>
+                <AttachmentTitle>{a.name ?? a.kind}</AttachmentTitle>
+                {a.kind === "audio" ? (
+                  <>
+                    {/* biome-ignore lint/a11y/useMediaCaption: staged voice clip, no caption source */}
+                    <audio controls src={a.url} className="mt-1 h-8 w-44" />
+                    {a.durationSec ? (
+                      <AttachmentDescription>{a.durationSec.toFixed(1)}s</AttachmentDescription>
+                    ) : null}
+                  </>
+                ) : null}
+              </AttachmentContent>
+              <AttachmentActions>
+                <AttachmentAction
+                  aria-label="Remove attachment"
+                  onClick={() => {
+                    // A discarded clip's object URL would pin the blob for the page lifetime.
+                    if (a.kind === "audio" && a.url.startsWith("blob:")) URL.revokeObjectURL(a.url);
+                    setAttachments((cur) => cur.filter((_, j) => j !== i));
+                  }}
+                >
+                  <X />
+                </AttachmentAction>
+              </AttachmentActions>
+            </AttachmentChip>
           ))}
-        </div>
+        </AttachmentGroup>
       )}
-      {recorder.error && <p className="text-xs text-red-500">{recorder.error}</p>}
-      <div className="flex items-end gap-2">
-        {caps.images && (
-          <>
-            <IconButton label="Attach image" onClick={() => imageInputRef.current?.click()}>
-              <ImagePlus size={16} />
-            </IconButton>
-            <IconButton label="Capture from camera" onClick={() => setCameraOpen(true)}>
-              <Camera size={16} />
-            </IconButton>
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onPickImage(f);
-                e.target.value = "";
-              }}
-            />
-          </>
-        )}
-        {caps.audio && (
-          <>
-            <IconButton
-              label={recorder.recording ? "Stop recording" : "Record from microphone"}
-              onClick={() => void toggleMic()}
-              active={recorder.recording}
-            >
-              {recorder.recording ? <Square size={16} /> : <Mic size={16} />}
-            </IconButton>
-            <IconButton label="Attach audio file" onClick={() => audioInputRef.current?.click()}>
-              <Paperclip size={16} />
-            </IconButton>
-            <input
-              ref={audioInputRef}
-              type="file"
-              accept="audio/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onPickAudio(f);
-                e.target.value = "";
-              }}
-            />
-          </>
-        )}
+      {recorder.error && <p className="text-xs text-destructive">{recorder.error}</p>}
+      <InputGroup>
         {!caps.textDisabled ? (
-          <Textarea
-            rows={2}
+          <InputGroupTextarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder={caps.placeholder ?? "Send a message…"}
-            className="flex-1"
+            className="max-h-40"
             onKeyDown={(e) => {
               // isComposing: an IME Enter commits the composition candidate, it doesn't send.
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -230,22 +170,102 @@ export function Composer({
             }}
           />
         ) : (
-          <p className="flex-1 self-center text-xs text-slate-500">
+          <p className="w-full px-3 pt-2 text-xs text-muted-foreground">
             {recorder.recording
               ? "Recording… stop to stage the clip."
               : (caps.placeholder ?? "Record or attach audio, then send.")}
           </p>
         )}
-        {busy && onStop ? (
-          <Button onClick={onStop} title="Stop generating">
-            <CircleStop size={16} />
-          </Button>
-        ) : (
-          <Button variant="primary" disabled={!sendable} onClick={() => void submit()} title="Send">
-            <Send size={16} />
-          </Button>
-        )}
-      </div>
+        <InputGroupAddon align="block-end" className="gap-1">
+          {caps.images && (
+            <>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Attach image"
+                title="Attach image"
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <ImagePlus />
+              </InputGroupButton>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Capture from camera"
+                title="Capture from camera"
+                onClick={() => setCameraOpen(true)}
+              >
+                <Camera />
+              </InputGroupButton>
+              <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onPickImage(f);
+                  e.target.value = "";
+                }}
+              />
+            </>
+          )}
+          {caps.audio && (
+            <>
+              <InputGroupButton
+                size="icon-xs"
+                variant={recorder.recording ? "destructive" : "ghost"}
+                aria-label={recorder.recording ? "Stop recording" : "Record from microphone"}
+                title={recorder.recording ? "Stop recording" : "Record from microphone"}
+                onClick={() => void toggleMic()}
+              >
+                {recorder.recording ? <Square /> : <Mic />}
+              </InputGroupButton>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Attach audio file"
+                title="Attach audio file"
+                onClick={() => audioInputRef.current?.click()}
+              >
+                <AudioLines />
+              </InputGroupButton>
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void onPickAudio(f);
+                  e.target.value = "";
+                }}
+              />
+            </>
+          )}
+          {busy && onStop ? (
+            <InputGroupButton
+              className="ml-auto"
+              size="icon-sm"
+              variant="secondary"
+              aria-label="Stop generating"
+              title="Stop generating"
+              onClick={onStop}
+            >
+              <CircleStop />
+            </InputGroupButton>
+          ) : (
+            <InputGroupButton
+              className="ml-auto"
+              size="icon-sm"
+              variant="default"
+              aria-label="Send"
+              title="Send"
+              disabled={!sendable}
+              onClick={() => void submit()}
+            >
+              <Send />
+            </InputGroupButton>
+          )}
+        </InputGroupAddon>
+      </InputGroup>
       {cameraOpen && (
         <CameraModal
           onClose={() => setCameraOpen(false)}

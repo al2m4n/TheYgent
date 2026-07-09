@@ -1,5 +1,8 @@
-// A tiny set of inline primitives (mirrors the cockpit: Tailwind, no component library). Five
-// small building blocks for the chrome around the canvas — buttons, inputs, badges.
+// The app-facing primitive set. The public API (and every call site) predates the component
+// library underneath: these wrappers keep the app's compact geometry and tone system while the
+// look, focus handling, and overlay behaviour come from the generated components in ./ui/*.
+// New code can compose ./ui/* directly; existing surfaces go through these so a restyle stays
+// a one-file change.
 
 import {
   type ButtonHTMLAttributes,
@@ -12,21 +15,44 @@ import {
 } from "react";
 import { toneOf } from "../lib/categories";
 import { statusClass } from "../lib/format";
+import { cn } from "../lib/utils";
+import { Alert, AlertDescription } from "./ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
+import { Badge as BaseBadge } from "./ui/badge";
+import { Button as BaseButton, buttonVariants } from "./ui/button";
+import { Card as BaseCard } from "./ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Empty as BaseEmpty, EmptyDescription } from "./ui/empty";
+import { Input as BaseInput } from "./ui/input";
+import { Progress } from "./ui/progress";
+import { Spinner as SpinnerIcon } from "./ui/spinner";
+import { Table as BaseTable, TableCell, TableHead } from "./ui/table";
+import { Textarea as BaseTextarea } from "./ui/textarea";
 
 type Variant = "primary" | "default" | "ghost" | "danger";
 
-const VARIANT: Record<Variant, string> = {
-  primary: "bg-blue-600 hover:bg-blue-500 text-white border-blue-500",
-  default: "bg-[var(--c-elev)] hover:bg-[var(--c-hover)] text-slate-200 border-slate-700",
-  ghost: "bg-transparent hover:bg-[var(--c-hover)] text-slate-300 border-transparent",
-  danger:
-    "bg-transparent text-red-600 border-red-200 hover:bg-red-50 dark:text-red-300 dark:border-red-900 dark:hover:bg-red-950",
+// The app's historical variant names, mapped onto the component library's: `primary` is the one
+// blue action, `default` is the bordered neutral button, `danger` the soft-red destructive.
+const VARIANT: Record<Variant, "default" | "outline" | "ghost" | "destructive"> = {
+  primary: "default",
+  default: "outline",
+  ghost: "ghost",
+  danger: "destructive",
 };
 
 // The button look as a class string, for elements that must stay real links (<Link>/<a>) but read
 // as buttons — one source of truth with <Button>, so the two can never drift.
 export function buttonClass(variant: Variant = "default", className = ""): string {
-  return `inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${VARIANT[variant]} ${className}`;
+  return cn(buttonVariants({ variant: VARIANT[variant] }), className);
 }
 
 // The one link color, paired for both themes (blue is semantic — it does not ride the inverted
@@ -37,39 +63,47 @@ export const linkClass =
 export function Button({
   variant = "default",
   className = "",
+  type = "button",
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
-  return <button type="button" className={buttonClass(variant, className)} {...props} />;
+  return <BaseButton type={type} variant={VARIANT[variant]} className={className} {...props} />;
 }
-
-// Shared field look — including a visible disabled treatment so a locked field never masquerades
-// as editable.
-const FIELD_CLASS =
-  "w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-50";
 
 export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={`${FIELD_CLASS} ${className}`} {...props} />;
+  return <BaseInput className={className} {...props} />;
 }
 
+// A native <select> (callers drive it with value/onChange and plain <option>s), dressed in the
+// same field chrome as Input so mixed forms read as one family.
 export function Select({ className = "", ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={`${FIELD_CLASS} ${className}`} {...props} />;
+  return (
+    <select
+      data-slot="select"
+      className={cn(
+        "h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export function Textarea({
   className = "",
   ...props
 }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={`${FIELD_CLASS} ${className}`} {...props} />;
+  // Fixed sizing: callers drive height with `rows` and expect internal scroll. The generated base
+  // uses content-driven sizing (field-sizing-content + min-h-16), which makes `rows` inert and
+  // grows the element without bound as text accumulates — wrong for composers and param forms.
+  return <BaseTextarea className={cn("field-sizing-fixed min-h-0", className)} {...props} />;
 }
 
 // The run status pill (Runs list + run detail) — completed green, failed red, streaming amber.
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <span
-      className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium ${statusClass(status)}`}
-    >
+    <BaseBadge variant="outline" className={cn("rounded-full", statusClass(status))}>
       {status}
-    </span>
+    </BaseBadge>
   );
 }
 
@@ -77,11 +111,9 @@ export function Badge({ children, tone = "slate" }: { children: ReactNode; tone?
   // The tone palette is centralized in lib/categories so a Badge, a filter chip, and a table cell
   // all paint the same category the same colour. Unknown tones fall back to slate.
   return (
-    <span
-      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${toneOf(tone).badge}`}
-    >
+    <BaseBadge variant="secondary" className={cn("rounded px-1.5 text-[11px]", toneOf(tone).badge)}>
       {children}
-    </span>
+    </BaseBadge>
   );
 }
 
@@ -91,7 +123,12 @@ export function SectionHeading({
   className = "",
 }: { children: ReactNode; className?: string }) {
   return (
-    <h2 className={`text-xs font-semibold uppercase tracking-wide text-slate-500 ${className}`}>
+    <h2
+      className={cn(
+        "text-xs font-semibold uppercase tracking-wide text-muted-foreground",
+        className,
+      )}
+    >
       {children}
     </h2>
   );
@@ -100,7 +137,7 @@ export function SectionHeading({
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block space-y-1">
-      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
       {children}
@@ -117,70 +154,86 @@ export function Page({ children, className = "" }: { children: ReactNode; classN
   return <div className={`w-full px-4 py-6 sm:px-6 lg:px-8 ${className}`}>{children}</div>;
 }
 
-// ── Registries primitives (mirrors the cockpit's ui.tsx, in this app's palette) ──
-
+// A plain container in the card surface. Call sites own their internal layout and padding, so the
+// stacked flex/gap/padding defaults are zeroed out here; `overflow-visible` keeps menus and
+// popovers inside a card from being clipped. The edge is a real border (not the base ring) so
+// call sites can recolour it with border-* utilities — the io drawer's blue accent depends on it.
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-lg border border-slate-800 bg-[var(--c-surface-2)] ${className}`}>
+    <BaseCard
+      className={cn("block gap-0 overflow-visible rounded-lg border py-0 ring-0", className)}
+    >
       {children}
-    </div>
+    </BaseCard>
   );
 }
 
 export function Table({ children }: { children: ReactNode }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-800">
-      <table className="w-full border-collapse text-left text-sm">{children}</table>
+    <div className="overflow-x-auto rounded-lg border">
+      <BaseTable className="border-collapse text-left">{children}</BaseTable>
     </div>
   );
 }
 
 export function Th({ children }: { children: ReactNode }) {
   return (
-    <th className="border-b border-slate-800 bg-[var(--c-surface)] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+    <TableHead className="h-auto border-b bg-[var(--c-surface)] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
       {children}
-    </th>
+    </TableHead>
   );
 }
 
 export function Td({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <td className={`border-b border-slate-800/60 px-3 py-2 ${className}`}>{children}</td>;
+  return (
+    <TableCell className={cn("whitespace-normal border-b border-border/60 px-3 py-2", className)}>
+      {children}
+    </TableCell>
+  );
 }
 
 export function ErrorBanner({ error }: { error: unknown }) {
   if (!error) return null;
   const msg = error instanceof Error ? error.message : String(error);
   return (
-    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-200">
-      {msg}
-    </div>
+    <Alert variant="destructive" className="border-destructive/30 bg-destructive/5">
+      <AlertDescription>{msg}</AlertDescription>
+    </Alert>
   );
 }
 
 // The amber sibling of ErrorBanner — an informational note ("this run is paused", "durable runtime
-// unavailable"), not a failure.
+// unavailable"), not a failure. Children go through AlertDescription as ONE child — the Alert
+// surface is a grid, so bare mixed inline children (text + <span>) would each become their own
+// stacked row instead of flowing as a sentence.
 export function NoteBanner({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
-      {children}
-    </div>
+    <Alert className="border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+      <AlertDescription className="text-inherit">{children}</AlertDescription>
+    </Alert>
   );
 }
 
 export function Empty({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-slate-800 px-6 py-10 text-center text-sm text-slate-500">
-      {children}
-    </div>
+    <BaseEmpty className="rounded-lg border border-dashed px-6 py-10">
+      <EmptyDescription>{children}</EmptyDescription>
+    </BaseEmpty>
   );
 }
 
 export function Spinner({ label = "Loading…" }: { label?: string }) {
-  return <div className="px-3 py-8 text-center text-sm text-slate-500">{label}</div>;
+  return (
+    <div className="flex items-center justify-center gap-2 px-3 py-8 text-sm text-muted-foreground">
+      <SpinnerIcon />
+      {label}
+    </div>
+  );
 }
 
-// A centered modal dialog (the shared overlay the bench + browse flows open into). Backdrop click
-// and Escape both close it. `width` is a Tailwind max-w-* class so callers size to content.
+// A centered modal dialog (the shared overlay the bench + browse flows open into). Escape and
+// backdrop click both close it (the dialog primitive owns focus trapping). `width` is a Tailwind
+// max-w-* class so callers size to content.
 export function Modal({
   title,
   onClose,
@@ -192,56 +245,55 @@ export function Modal({
   children: ReactNode;
   width?: string;
 }) {
+  // Restore focus to the opener on close. The dialog is controlled with no Trigger element, and
+  // without one the primitive's close-autofocus has nothing to focus (its preventDefault also
+  // suppresses the fallback), silently dropping keyboard users at <body>.
+  const previouslyFocused = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  // Move focus into the dialog on open and hand it back on close, so keyboard/AT users land inside
-  // the modal instead of on whatever sits (inertly) behind the backdrop.
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    panelRef.current?.focus();
-    return () => previous?.focus();
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
   }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* The backdrop is a real button → keyboard-accessible close, no a11y lint. The panel is a
-          sibling above it (relative > absolute), so panel clicks never reach the backdrop. */}
-      <button
-        type="button"
-        aria-label="Close dialog"
-        className="absolute inset-0 h-full w-full cursor-default bg-black/60"
-        onClick={onClose}
-      />
-      {/* biome-ignore lint/a11y/useSemanticElements: an app-level modal panel, not a native <dialog> (no showModal) */}
-      <div
-        role="dialog"
-        aria-modal="true"
-        ref={panelRef}
-        tabIndex={-1}
-        className={`relative flex max-h-[90vh] w-full ${width} flex-col overflow-hidden rounded-lg border border-slate-700 bg-[var(--c-surface)] shadow-xl outline-none`}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        // No description element exists, so opt out of the auto-wired aria-describedby — otherwise
+        // every modal carries an idref that resolves to nothing.
+        aria-describedby={undefined}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          previouslyFocused.current?.focus();
+        }}
+        // Dismiss ONLY when the pointer lands on the backdrop itself. While a modal layer is open
+        // the primitive turns off pointer events on <body>; surfaces that deliberately stay
+        // interactive above it (the notification toaster re-enables its own pointer events) must
+        // not count as "outside" clicks that close the dialog — that was the pre-dialog behaviour.
+        onPointerDownOutside={(e) => {
+          const target = e.target as Element | null;
+          if (!target?.closest?.('[data-slot="dialog-overlay"]')) e.preventDefault();
+        }}
+        // w cap keeps a 16px viewport gutter at any size; `width` (max-w-*) merges over the base
+        // max-w, so without the cap a wide dialog would sit flush against a narrow viewport.
+        className={cn(
+          "flex max-h-[90vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-lg p-0 shadow-xl",
+          width,
+        )}
       >
-        <header className="flex shrink-0 items-center justify-between border-b border-slate-800 px-4 py-3">
-          <h2 className="text-sm font-semibold text-slate-100">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded px-2 text-lg leading-none text-slate-500 hover:text-slate-200"
-            aria-label="Close"
-          >
-            ✕
-          </button>
-        </header>
+        {/* pr clears the absolutely-positioned close button so long titles never run under it */}
+        <DialogHeader className="shrink-0 border-b py-3 pr-12 pl-4">
+          <DialogTitle className="text-sm font-semibold">{title}</DialogTitle>
+        </DialogHeader>
         <div className="min-h-0 flex-1 overflow-auto p-4">{children}</div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 // The shared confirmation step for irreversible actions (deleting a server, a model, a credential).
-// Renders as a small Modal so every destructive flow asks the same way.
+// Renders as an alert dialog so every destructive flow asks the same way.
 export function ConfirmDialog({
   title,
   message,
@@ -255,18 +307,37 @@ export function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  // Same opener-restore as Modal: a controlled root has no Trigger for the primitive to hand
+  // focus back to.
+  const previouslyFocused = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    previouslyFocused.current = document.activeElement as HTMLElement | null;
+  }, []);
   return (
-    <Modal title={title} width="max-w-sm" onClose={onCancel}>
-      <div className="space-y-4">
-        <div className="text-sm text-slate-300">{message}</div>
-        <div className="flex justify-end gap-2">
-          <Button onClick={onCancel}>Cancel</Button>
-          <Button variant="danger" onClick={onConfirm}>
+    <AlertDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onCancel();
+      }}
+    >
+      <AlertDialogContent
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          previouslyFocused.current?.focus();
+        }}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{message}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
+          <AlertDialogAction variant="destructive" onClick={onConfirm}>
             {confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </Modal>
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -282,13 +353,9 @@ export function ProgressBar({
 }) {
   const pct = max && max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
   return (
-    <div className="h-2 w-full overflow-hidden rounded bg-slate-800">
-      <div
-        className={`h-full bg-blue-500 transition-[width] duration-300 ${
-          indeterminate ? "animate-pulse" : ""
-        }`}
-        style={{ width: indeterminate ? "40%" : `${pct}%` }}
-      />
-    </div>
+    <Progress
+      value={indeterminate ? 40 : pct}
+      className={cn("h-2", indeterminate && "[&_[data-slot=progress-indicator]]:animate-pulse")}
+    />
   );
 }

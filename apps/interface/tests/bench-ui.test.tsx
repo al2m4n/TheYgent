@@ -24,9 +24,11 @@ describe("Modal", () => {
     );
     expect(screen.getByText("My modal")).toBeInTheDocument();
     expect(screen.getByText("body content")).toBeInTheDocument();
-    fireEvent.click(screen.getByLabelText("Close"));
+    // The close button's accessible name comes from its visually-hidden text.
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledTimes(1);
-    fireEvent.keyDown(window, { key: "Escape" });
+    // The dialog primitive listens for Escape on the document, not the window.
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 });
@@ -36,10 +38,16 @@ describe("slider param control", () => {
     const specs = paramsForModality("chat", {}).filter((s) => s.key === "temperature");
     const onChange = vi.fn();
     render(<ParamForm specs={specs} values={{}} onChange={onChange} />);
-    // bounded (min 0, max 2) → a range slider is present alongside the number input
+    // bounded (min 0, max 2) → a slider is present alongside the number input. The slider is a
+    // keyboard-driven primitive (no native change event): ArrowRight steps up from the current
+    // value (unset → min 0) by one step (0.1).
     const slider = screen.getByRole("slider", { name: /temperature/i });
     expect(slider).toBeInTheDocument();
-    fireEvent.change(slider, { target: { value: "0.7" } });
+    fireEvent.keyDown(slider, { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith("temperature", "0.1");
+    // the paired number input drives the same param
+    const num = screen.getByLabelText(/temperature/i, { selector: "input" });
+    fireEvent.change(num, { target: { value: "0.7" } });
     expect(onChange).toHaveBeenCalledWith("temperature", "0.7");
   });
 });

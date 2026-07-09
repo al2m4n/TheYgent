@@ -1,26 +1,26 @@
 import { Link, useParams } from "@tanstack/react-router";
 import { type ReactNode, useEffect } from "react";
 import { ResumePanel } from "../components/ResumePanel";
-import { Waterfall } from "../components/Waterfall";
+import { TimeAgo } from "../components/TimeAgo";
+import { ErrorBanner, NoteBanner, Page, Spinner, StatusBadge, linkClass } from "../components/ui";
 import {
-  Card,
-  ErrorBanner,
-  NoteBanner,
-  Page,
-  SectionHeading,
-  Spinner,
-  StatusBadge,
-  linkClass,
-} from "../components/ui";
-import { relativeTime } from "../lib/format";
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "../components/ui/breadcrumb";
+import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { RunWaterfall } from "../components/waterfall";
 import { useLiveRun } from "../lib/live";
 import { useRun, useSession } from "../queries";
 
 function Detail({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div>
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mono break-all text-sm text-slate-200">{value}</div>
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="mono break-all text-sm text-foreground">{value}</div>
     </div>
   );
 }
@@ -94,35 +94,46 @@ export function RunDetail() {
 
   return (
     <Page className="space-y-4">
-      <div className="flex items-center gap-3">
-        <Link to="/runs" className="text-sm text-slate-400 hover:text-slate-200">
-          ← Runs
-        </Link>
-        <h1 className="mono text-sm font-semibold text-slate-100">{run.id}</h1>
+      <div className="flex flex-wrap items-center gap-3">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink asChild>
+                <Link to="/runs">Runs</Link>
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage className="mono break-all font-semibold">{run.id}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
         <StatusBadge status={status} />
       </div>
 
-      <Card className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-3">
-        <Detail label="Model" value={run.model || "—"} />
-        <Detail
-          label="Graph"
-          value={run.graph_id ? `${run.graph_id} @ ${run.graph_version}` : "—"}
-        />
-        <Detail
-          label="Session"
-          value={
-            sessionId ? (
-              <Link to="/sessions/$sessionId" params={{ sessionId }} className={linkClass}>
-                {sessionId}
-              </Link>
-            ) : (
-              "—"
-            )
-          }
-        />
-        <Detail label="Created" value={relativeTime(run.created_at)} />
-        <Detail label="Updated" value={relativeTime(run.updated_at)} />
-        {run.content_hash && <Detail label="Content hash" value={run.content_hash} />}
+      <Card>
+        <CardContent className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <Detail label="Model" value={run.model || "—"} />
+          <Detail
+            label="Graph"
+            value={run.graph_id ? `${run.graph_id} @ ${run.graph_version}` : "—"}
+          />
+          <Detail
+            label="Session"
+            value={
+              sessionId ? (
+                <Link to="/sessions/$sessionId" params={{ sessionId }} className={linkClass}>
+                  {sessionId}
+                </Link>
+              ) : (
+                "—"
+              )
+            }
+          />
+          <Detail label="Created" value={<TimeAgo iso={run.created_at} />} />
+          <Detail label="Updated" value={<TimeAgo iso={run.updated_at} />} />
+          {run.content_hash && <Detail label="Content hash" value={run.content_hash} />}
+        </CardContent>
       </Card>
 
       {status === "waiting" && (
@@ -143,54 +154,58 @@ export function RunDetail() {
         ))}
 
       {reasoning && (
-        <section className="space-y-2">
-          <SectionHeading>
-            Thinking
-            {isStreaming && (
-              <span className="ml-2 normal-case tracking-normal text-amber-600 dark:text-amber-400">
-                reasoning…
-              </span>
-            )}
-          </SectionHeading>
-          <Card className="p-4">
-            <pre className="mono whitespace-pre-wrap break-words text-sm text-slate-400">
+        <Card>
+          <CardHeader className="border-b">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              Thinking
+              {isStreaming && (
+                <span className="text-xs font-normal text-amber-600 dark:text-amber-400">
+                  reasoning…
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="mono whitespace-pre-wrap break-words text-sm text-muted-foreground">
               {reasoning}
             </pre>
-          </Card>
-        </section>
+          </CardContent>
+        </Card>
       )}
 
-      <section className="space-y-2">
-        <SectionHeading>
-          {isStreaming ? "Live output" : "Output"}
-          {isStreaming && (
-            <span className="ml-2 normal-case tracking-normal text-amber-600 dark:text-amber-400">
-              streaming…
-            </span>
-          )}
-        </SectionHeading>
-        <Card className="p-4">
+      <Card>
+        <CardHeader className="border-b">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            {isStreaming ? "Live output" : "Output"}
+            {isStreaming && (
+              <span className="text-xs font-normal text-amber-600 dark:text-amber-400">
+                streaming…
+              </span>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
           {output ? (
-            <pre className="mono whitespace-pre-wrap break-words text-sm text-slate-100">
+            <pre className="mono whitespace-pre-wrap break-words text-sm text-foreground">
               {output}
               {isStreaming && (
                 <span className="animate-pulse text-amber-600 dark:text-amber-400">▌</span>
               )}
             </pre>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               {isNote
                 ? "The model returned no answer (see the note above)."
                 : "No output recorded for this run."}
             </p>
           )}
-        </Card>
-      </section>
+        </CardContent>
+      </Card>
 
       {/* The run waterfall — timing bars, gaps, worker attribution, click-through per-node I/O —
           reads the persisted span tree plus the live /trace/stream overlay (not the SSE event
           stream). */}
-      <Waterfall runId={run.id} isLive={isStreaming} />
+      <RunWaterfall runId={run.id} isLive={isStreaming} />
     </Page>
   );
 }
