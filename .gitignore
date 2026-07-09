@@ -178,6 +178,8 @@ cython_debug/
 *.bin
 *.mlx
 models/
+# …but the user-docs "Models" section is prose, not weights — keep it tracked.
+!docs/user-docs/content/models/
 
 # Node / pnpm (TS apps)
 node_modules/
