@@ -49,7 +49,45 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
         captured["authorization"] = request.headers.get("authorization")
         body = await request.json()
         model = body.get("model", "fake")
+        last_content = (body.get("messages") or [{}])[-1].get("content")
+        # A provider that rejects the request outright (e.g. an unsupported generation
+        # param) — the error must reach the caller as a structured 4xx even on a stream.
+        if last_content == "__force_upstream_400__":
+            return JSONResponse(
+                {
+                    "error": {
+                        "message": "`temperature` is deprecated for this model.",
+                        "type": "invalid_request_error",
+                    }
+                },
+                status_code=400,
+            )
         if body.get("stream"):
+            # A stream that fails AFTER chunks started flowing — by then the 200 is
+            # committed on every hop. Real engines report this as an in-band SSE error
+            # frame (e.g. a context overflow mid-generation), which the dispatch layer
+            # re-raises mid-iteration.
+            if last_content == "__abort_mid_stream__":
+
+                async def broken():
+                    chunk = {
+                        "id": "chatcmpl-fake",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": "hel"},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {_dumps(chunk)}\n\n"
+                    err = {"error": {"message": "engine died mid-generation"}}
+                    yield f"data: {_dumps(err)}\n\n"
+
+                return StreamingResponse(broken(), media_type="text/event-stream")
 
             async def gen():
                 for i, piece in enumerate(_CHUNKS):

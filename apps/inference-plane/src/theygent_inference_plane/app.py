@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
+from starlette.background import BackgroundTask
 from theygent_ir import Capabilities, ManagedBinding, Modality, parse_registration
 
 from theygent_inference_plane.catalog import (
@@ -124,6 +126,38 @@ def _engine_unavailable(exc: Exception) -> JSONResponse:
     # The model is registered but its engine isn't installed/ready on this host
     # (e.g. an `mlx` model on a box without mlx-lm, or `vllm` without CUDA).
     return _openai_error(str(exc), status=503, type_="server_error", code="engine_unavailable")
+
+
+async def _guarded_sse(lines: Any, model: str, close: Any = None):
+    """Relay SSE lines, converting a mid-stream failure into a final structured error
+    frame. Once the body runs, the 200 header is committed — raising here can only tear
+    the connection, and the caller would see a transport error ("incomplete chunked
+    read") with the real cause lost. An OpenAI-style ``{"error": ...}`` data frame
+    instead ends the stream honestly: SDK clients raise it as an API error carrying the
+    upstream's message. ``close`` releases the engine lease (managed bindings) and runs
+    even when the client disconnects mid-stream."""
+    try:
+        async for line in lines:
+            yield line
+    except Exception as exc:
+        status = getattr(exc, "status_code", None)
+        message = getattr(exc, "message", None) or str(exc)
+        kind = (
+            "invalid_request_error"
+            if isinstance(status, int) and 400 <= status < 500
+            else "server_error"
+        )
+        frame = {
+            "error": {
+                "message": f"the stream for {model!r} aborted upstream: {message}",
+                "type": kind,
+                "code": "upstream_error",
+            }
+        }
+        yield f"data: {json.dumps(frame)}\n\n"
+    finally:
+        if close is not None:
+            await close()
 
 
 def _cockpit_cors_origins() -> list[str]:
@@ -594,16 +628,20 @@ def create_app(
 
         params = merge_params(binding.params, req.model_dump())
 
-        # A non-stream upstream error (litellm raising inside gateway.complete) must map to a clean
-        # OpenAI-style error, not an opaque 500. Warm/capacity failures are already handled inside
-        # the serve helpers (they RETURN responses, not raise). Streaming mid-run errors are out of
-        # scope here — the 200 SSE header has already flushed (the generator owns them).
+        # Every error from the first dispatch call must map to a clean OpenAI-style error,
+        # not an opaque 500 — and that now covers streams too: gateway.stream awaits the upstream
+        # call BEFORE the serve helpers commit the SSE response, so a rejected request (bad param,
+        # bad credential) raises here instead of tearing an already-started stream. The full
+        # data-plane mapper also covers a lease acquired at this level failing capacity/engine
+        # checks that warm passed a moment earlier (two requests racing one slot). Errors after
+        # the stream body has begun are the guarded relay's job — a final structured error frame
+        # (see _guarded_sse).
         try:
             if isinstance(binding, ManagedBinding):
                 return await _serve_managed(req, params)
             return await _serve_reachable(binding, req, params)
         except Exception as exc:
-            mapped = _upstream_error(exc, req.model)
+            mapped = _data_plane_error(exc, req.model)
             if mapped is None:
                 raise
             return mapped
@@ -625,17 +663,28 @@ def create_app(
             )
 
         if req.stream:
-
-            async def gen():
-                # The lease finds the warmed engine resident (no re-spawn) and holds
-                # the in-flight slot for the whole stream; on exit a draining engine
-                # is torn down. An engine that dies mid-stream propagates the error,
-                # but the lease still releases (inflight -> 0) so the slot never leaks.
-                async with manager.lease(req.model) as upstream:
-                    async for line in gateway.stream(upstream, req.messages, params):
-                        yield line
-
-            return StreamingResponse(gen(), media_type="text/event-stream")
+            # The lease finds the warmed engine resident (no re-spawn) and holds the
+            # in-flight slot for the whole stream; it lives on an exit stack because it
+            # must span both the eager upstream call below AND the response body. On
+            # close a draining engine is torn down. Three close paths, because aclose is
+            # idempotent: a rejected request closes here; a consumed stream closes in the
+            # relay's finally; and the response background task covers the edge where the
+            # committed body generator is never iterated at all (a client gone before the
+            # first body step) — a never-started generator's finally never runs.
+            stack = contextlib.AsyncExitStack()
+            upstream = await stack.enter_async_context(manager.lease(req.model))
+            try:
+                # Awaited BEFORE the SSE response is committed — an upstream rejection
+                # raises to the endpoint's error mapping instead of tearing the stream.
+                lines = await gateway.stream(upstream, req.messages, params)
+            except BaseException:
+                await stack.aclose()
+                raise
+            return StreamingResponse(
+                _guarded_sse(lines, req.model, close=stack.aclose),
+                media_type="text/event-stream",
+                background=BackgroundTask(stack.aclose),
+            )
 
         async with manager.lease(req.model) as upstream:
             result = await gateway.complete(upstream, req.messages, params)
@@ -650,12 +699,11 @@ def create_app(
             )
         upstream = Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
         if req.stream:
-
-            async def gen():
-                async for line in gateway.stream(upstream, req.messages, params):
-                    yield line
-
-            return StreamingResponse(gen(), media_type="text/event-stream")
+            # Awaited BEFORE the SSE response is committed — a hosted API rejecting the
+            # request (an unsupported param, a bad key) raises to the endpoint's error
+            # mapping with its real message instead of tearing an already-started stream.
+            lines = await gateway.stream(upstream, req.messages, params)
+            return StreamingResponse(_guarded_sse(lines, req.model), media_type="text/event-stream")
         result = await gateway.complete(upstream, req.messages, params)
         return JSONResponse(result)
 
@@ -697,8 +745,9 @@ def create_app(
             return _openai_error(
                 f"the engine serving {model!r} returned 404 for this endpoint — it likely does "
                 "not support this modality (managed mlx_lm / llama.cpp text engines serve chat "
-                "only; embeddings/audio need a model whose engine supports them, or a reachable "
-                f"openai-compatible binding). upstream: {upstream_msg}",
+                "only; embeddings/audio need a model whose engine supports them), or, for a "
+                "reachable openai-compatible binding, the baseUrl may be missing its API prefix "
+                f"(hosted APIs usually need a trailing /v1). upstream: {upstream_msg}",
                 status=404,
                 type_="invalid_request_error",
                 code="modality_not_supported",

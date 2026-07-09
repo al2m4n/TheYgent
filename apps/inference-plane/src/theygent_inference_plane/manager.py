@@ -125,7 +125,12 @@ class EngineManager:
         try:
             yield self._upstream_for(eng)
         finally:
-            await self._release(eng)
+            # Shielded: a client disconnecting mid-stream cancels the response task, and
+            # the server keeps re-delivering that cancellation at every suspension — an
+            # unshielded release dies waiting on a contended manager lock BEFORE the
+            # inflight decrement, pinning the engine non-evictable forever. The shield
+            # lets the release task run to completion even after the caller is cancelled.
+            await asyncio.shield(self._release(eng))
 
     async def reap(self) -> None:
         """Tear down idle, non-pinned engines. Driven by the app's background loop
