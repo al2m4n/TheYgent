@@ -1,0 +1,92 @@
+name: docs
+
+# User-docs pipeline:
+#   - PRs touching the docs: strict build (broken links/nav fail the check).
+#   - Pushes to main: publish a rolling "dev" version.
+#   - Releases: publish the tagged version, point "latest" at it, and attach the
+#     built site to the GitHub release.
+# Versions are managed by mike on the gh-pages branch; the whole version tree is
+# then deployed to Cloudflare Pages (secrets: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
+
+on:
+  pull_request:
+    paths:
+      - "docs/user-docs/**"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/user-docs/**"
+      - ".github/workflows/docs.yml"
+  release:
+    types: [published]
+
+concurrency:
+  group: docs-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+env:
+  CF_PAGES_PROJECT: theygent-docs
+
+jobs:
+  build:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --project docs/user-docs mkdocs build --strict -f docs/user-docs/mkdocs.yml
+
+  publish:
+    if: github.event_name == 'push' || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # mike commits the built site to gh-pages; release upload
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # mike reads and extends the gh-pages branch history
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Configure git identity for mike
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Publish rolling dev docs (push to main)
+        if: github.event_name == 'push'
+        run: uv run --project docs/user-docs mike deploy --push -F docs/user-docs/mkdocs.yml dev
+
+      - name: Publish versioned docs (release)
+        if: github.event_name == 'release'
+        run: |
+          uv run --project docs/user-docs mike deploy --push --update-aliases \
+            -F docs/user-docs/mkdocs.yml "${{ github.event.release.tag_name }}" latest
+          uv run --project docs/user-docs mike set-default --push \
+            -F docs/user-docs/mkdocs.yml latest
+
+      - name: Check out the built version tree
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: _site
+
+      - name: Attach built docs to the GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tar czf "theygent-docs-$TAG.tar.gz" -C "_site/$TAG" .
+          gh release upload "$TAG" "theygent-docs-$TAG.tar.gz" --clobber
+
+      - name: Strip git metadata from the deploy tree
+        run: rm -rf _site/.git
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy _site --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true

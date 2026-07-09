@@ -1,0 +1,15 @@
+# Standalone docs project — deliberately NOT a uv-workspace member (the root workspace
+# only globs apps/* and packages/*). Keeps the docs toolchain and its lock isolated from
+# the application dependency graph.
+[project]
+name = "theygent-user-docs"
+version = "0.1.0"
+description = "Theygent user documentation site (MkDocs Material, versioned with mike)"
+requires-python = ">=3.12"
+dependencies = [
+    "mkdocs-material>=9.5",
+    "mike>=2.1",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,128 @@
+site_name: TheYgent Docs
+site_description: >-
+  User documentation for TheYgent — a local-first platform for building and
+  running AI agents with a visual editor and your choice of inference engine.
+site_url: https://theygent-docs.pages.dev/
+docs_dir: content
+strict: true
+
+repo_url: https://github.com/al2m4n/theygent
+repo_name: al2m4n/theygent
+edit_uri: edit/main/docs/user-docs/content/
+
+theme:
+  name: material
+  logo: assets/logo/theygent-mark-white.svg
+  favicon: assets/logo/favicon.svg
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search
+
+extra:
+  version:
+    provider: mike
+    default: latest
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - Running Theygent: getting-started/running.md
+      - Your First Chat: getting-started/first-chat.md
+      - Your First Agent: getting-started/first-agent.md
+  - Concepts:
+      - concepts/index.md
+      - Agents & Graphs: concepts/agents-and-graphs.md
+      - Nodes, Ports & Edges: concepts/nodes-ports-edges.md
+      - Models & Engines: concepts/models-and-engines.md
+      - Runs & Sessions: concepts/runs-and-sessions.md
+      - Agent Versioning: concepts/versioning.md
+  - Building Agents:
+      - The Editor: building/editor.md
+      - Referencing Inputs: building/input-references.md
+      - Node Reference:
+          - building/nodes/index.md
+          - Input & Output: building/nodes/input-output.md
+          - LLM: building/nodes/llm.md
+          - Tools: building/nodes/tools.md
+          - MCP Tools: building/nodes/mcp.md
+          - Router: building/nodes/router.md
+          - Transform: building/nodes/transform.md
+          - Guardrail: building/nodes/guardrail.md
+          - Rate Limit & Quota: building/nodes/ratelimit-quota.md
+          - Human Approval: building/nodes/human.md
+          - Subgraph, Loop & Map: building/nodes/orchestration.md
+          - Audio & Images: building/nodes/media.md
+      - Saving Agents: building/saving-agents.md
+  - Chat:
+      - chat/index.md
+      - Voice: chat/voice.md
+      - Vision & Images: chat/vision-and-images.md
+  - Models:
+      - models/index.md
+      - Installing Local Models: models/installing.md
+      - Remote Models: models/remote.md
+      - Engines: models/engines.md
+  - Running Agents:
+      - running/index.md
+      - Durable Runs: running/durable.md
+      - Human-in-the-Loop: running/human-in-the-loop.md
+      - Triggers & Webhooks: running/triggers.md
+      - Observability: running/observability.md
+      - The Bench: running/bench.md
+  - Reference:
+      - API Reference: reference/api.md
+      - Environment Variables: reference/environment.md
+      - Glossary: reference/glossary.md
+      - Troubleshooting: reference/troubleshooting.md
