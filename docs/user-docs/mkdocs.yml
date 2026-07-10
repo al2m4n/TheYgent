@@ -2,7 +2,7 @@ site_name: TheYgent Docs
 site_description: >-
   User documentation for TheYgent — a local-first platform for building and
   running AI agents with a visual editor and your choice of inference engine.
-site_url: https://theygent-docs.pages.dev/
+site_url: https://docs.theygent.ai/
 docs_dir: content
 strict: true
 
