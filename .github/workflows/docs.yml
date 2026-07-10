@@ -56,7 +56,19 @@ jobs:
 
       - name: Publish rolling dev docs (push to main)
         if: github.event_name == 'push'
-        run: uv run --project docs/user-docs mike deploy --push -F docs/user-docs/mkdocs.yml dev
+        # Deploy the rolling "dev" version, then make sure the site root actually
+        # redirects somewhere — mike only writes the root index.html when a default
+        # version is set. Once a release exists we keep the root pinned to the
+        # stable "latest"; before the first release there is only "dev", so point
+        # the root there instead of leaving it a 404.
+        run: |
+          uv run --project docs/user-docs mike deploy --push -F docs/user-docs/mkdocs.yml dev
+          if uv run --project docs/user-docs mike list -F docs/user-docs/mkdocs.yml | grep -qw latest; then
+            default=latest
+          else
+            default=dev
+          fi
+          uv run --project docs/user-docs mike set-default --push -F docs/user-docs/mkdocs.yml "$default"
 
       - name: Publish versioned docs (release)
         if: github.event_name == 'release'
