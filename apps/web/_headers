@@ -1,0 +1,11 @@
+# Cloudflare Pages headers for the marketing site.
+# Fingerprint-free static assets change with the repo, so cache them long but let HTML revalidate.
+
+/assets/*
+  Cache-Control: public, max-age=604800
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: geolocation=(), microphone=(), camera=()
