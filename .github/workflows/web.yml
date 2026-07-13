@@ -1,0 +1,60 @@
+name: web
+
+# Marketing site pipeline (apps/web — a static, no-build HTML/CSS/JS site served at theygent.ai):
+#   - PRs touching the site: validate that every local asset reference resolves, then deploy a
+#     per-branch Cloudflare Pages *preview* so the change can be eyeballed before merge.
+#   - Pushes to main: deploy the production site.
+# There is no build step — the folder is uploaded as-is. Reuses the same Cloudflare Pages secrets
+# as the docs pipeline (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID); only the Pages project differs.
+
+on:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/web.yml"
+
+concurrency:
+  group: web-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
+  cancel-in-progress: false
+
+env:
+  CF_PAGES_PROJECT: theygent-web
+  SITE_DIR: apps/web
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # No framework, no bundler — the only thing that can silently break is a relative path to a
+      # local asset (logo, stylesheet, script). Fail the check if any local href/src/url() target
+      # is missing, so a broken preview never merges.
+      - name: Check local asset references resolve
+        run: python3 .github/scripts/check_web_assets.py "$SITE_DIR"
+
+      - name: Deploy preview to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=${{ github.head_ref }} --commit-dirty=true
+
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare Pages (production)
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true

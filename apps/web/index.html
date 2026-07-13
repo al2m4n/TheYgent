@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TheYgent — Build agents on a canvas. Run them where you point.</title>
+    <meta
+      name="description"
+      content="TheYgent is a no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop."
+    />
+    <link rel="canonical" href="https://theygent.ai/" />
+    <meta name="theme-color" content="#0b0e14" />
+    <meta name="color-scheme" content="dark light" />
+
+    <!-- Open Graph / social -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://theygent.ai/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta
+      property="og:description"
+      content="A no-code, local-first studio for building and running AI agents. Local engines or any OpenAI-compatible API, chosen per agent and per call. You own every hop."
+    />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta
+      name="twitter:description"
+      content="A no-code, local-first studio for building and running AI agents. You own every hop."
+    />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <!-- Set the theme before first paint so a stored light preference doesn't flash dark. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- The faceted mark, defined once and re-used. Gradient stops are CSS-driven so a theme flip re-ramps every instance. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <defs>
+        <linearGradient id="tyRamp" x1="191" y1="46" x2="191" y2="380" gradientUnits="userSpaceOnUse">
+          <stop class="ms1" offset="0" />
+          <stop class="ms2" offset="0.4" />
+          <stop class="ms3" offset="0.72" />
+          <stop class="ms4" offset="1" />
+        </linearGradient>
+        <symbol id="ty-mark" viewBox="28 36 326 356">
+          <g fill="url(#tyRamp)">
+            <polygon points="38,46 63,46 63,71 38,71" />
+            <polygon points="87,67 106,68 105,87 87,87" />
+            <polygon points="56,94 81,94 82,120 56,120" />
+            <polygon points="115,85 310,85 341,120 115,120" />
+            <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184" />
+            <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="TheYgent home">
+          <svg class="brand-mark" viewBox="28 36 326 356" role="img" aria-hidden="true"><use href="#ty-mark" /></svg>
+          <span class="brand-word">The<span class="ramp-text">Y</span>gent</span>
+        </a>
+
+        <nav class="nav-links" aria-label="Primary">
+          <a href="#build-visually">Build</a>
+          <a href="#multi-engine">Engines</a>
+          <a href="#capabilities">Capabilities</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+
+        <div class="nav-actions">
+          <button
+            class="theme-toggle"
+            id="themeToggle"
+            type="button"
+            aria-label="Toggle color theme"
+            title="Toggle theme"
+          >
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/theygent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="#build-visually">Build</a>
+        <a href="#multi-engine">Engines</a>
+        <a href="#capabilities">Capabilities</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ─────────────────────────── HERO ─────────────────────────── -->
+      <section class="hero" aria-labelledby="hero-h">
+        <svg class="ghost-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow mono"><i class="dia"></i>local-first · fair-code · you own every hop</p>
+            <h1 id="hero-h">
+              Build agents on a canvas.<br />
+              <span class="ramp-text">Run them where you point.</span>
+            </h1>
+            <p class="lede">
+              A no-code, local-first studio for building and running AI agents. Inference runs on your machine —
+              <span class="tok">llama.cpp</span>, <span class="tok">MLX</span>, or <span class="tok">vLLM</span> — or any
+              OpenAI-compatible API you register, chosen per agent and per call by a logical id like
+              <span class="pill mono">triage-fast</span>. TheYgent never proxies your prompts, payloads, or weights.
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="https://github.com/al2m4n/theygent" rel="noopener">
+                <svg class="gh" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                  <path
+                    fill="currentColor"
+                    d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+                  />
+                </svg>
+                Star on GitHub
+              </a>
+              <a class="btn btn-ghost" href="https://docs.theygent.ai/" rel="noopener">Read the docs&nbsp;→</a>
+            </div>
+            <ul class="runs-on mono" aria-label="Supported engines">
+              <li><i class="dia"></i>llama.cpp</li>
+              <li><i class="dia"></i>MLX</li>
+              <li><i class="dia"></i>vLLM</li>
+              <li><i class="dia"></i>openai-compatible</li>
+            </ul>
+          </div>
+
+          <div class="hero-visual">
+            <!-- Builder panel: the real product surface. -->
+            <div class="panel builder cut-card" role="img" aria-label="An agent graph in the visual builder: input flows to an LLM and an MCP tool, into a router, then to output.">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">triage-router.graph · v3 · content-addressed</span>
+                <span class="run-pill mono"><span class="run-dot"></span>running</span>
+              </div>
+              <div class="panel-body graph-body">
+                <svg class="graph" viewBox="0 0 560 340" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                  <!-- edges -->
+                  <g class="edges" fill="none" stroke-linecap="round">
+                    <path id="e1" d="M132,180 C158,180 150,100 176,100" />
+                    <path id="e2" d="M132,180 C158,180 150,262 176,262" />
+                    <path id="e3" d="M288,100 C316,100 306,180 332,180" />
+                    <path id="e4" d="M288,262 C316,262 306,180 332,180" />
+                    <path id="e5" d="M444,180 L452,180" />
+                  </g>
+                  <g class="comets" fill="none" stroke-linecap="round">
+                    <use href="#e1" class="comet" style="animation-delay: 0s" />
+                    <use href="#e2" class="comet" style="animation-delay: -1.1s" />
+                    <use href="#e3" class="comet" style="animation-delay: -0.5s" />
+                    <use href="#e4" class="comet" style="animation-delay: -1.6s" />
+                    <use href="#e5" class="comet" style="animation-delay: -0.9s" />
+                  </g>
+
+                  <!-- nodes: g.node with rect, diamond icon, title, type -->
+                  <g class="node" transform="translate(28,155)">
+                    <rect class="node-box" width="104" height="50" rx="9" />
+                    <rect class="ic ic-slate" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
+                    <text class="node-title" x="36" y="22">Input</text>
+                    <text class="node-type mono" x="36" y="36">input</text>
+                    <circle class="port port-slate" cx="104" cy="25" r="4" />
+                  </g>
+
+                  <g class="node" transform="translate(176,75)">
+                    <rect class="node-box" width="112" height="50" rx="9" />
+                    <rect class="ic ic-accent" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
+                    <text class="node-title" x="36" y="22">LLM</text>
+                    <text class="node-type mono" x="36" y="36">triage-fast</text>
+                    <circle class="port port-slate" cx="0" cy="25" r="4" />
+                    <circle class="port port-accent" cx="112" cy="25" r="4" />
+                  </g>
+
+                  <g class="node" transform="translate(176,237)">
+                    <rect class="node-box" width="112" height="50" rx="9" />
+                    <rect class="ic ic-violet" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
+                    <text class="node-title" x="36" y="22">MCP tool</text>
+                    <text class="node-type mono" x="36" y="36">mcp_tool</text>
+                    <circle class="port port-slate" cx="0" cy="25" r="4" />
+                    <circle class="port port-violet" cx="112" cy="25" r="4" />
+                  </g>
+
+                  <g class="node" transform="translate(332,155)">
+                    <rect class="node-box" width="112" height="50" rx="9" />
+                    <rect class="ic ic-slate" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
+                    <text class="node-title" x="36" y="22">Router</text>
+                    <text class="node-type mono" x="36" y="36">router</text>
+                    <circle class="port port-accent" cx="0" cy="15" r="4" />
+                    <circle class="port port-violet" cx="0" cy="35" r="4" />
+                    <circle class="port port-slate" cx="112" cy="25" r="4" />
+                  </g>
+
+                  <g class="node" transform="translate(452,155)">
+                    <rect class="node-box node-out" width="80" height="50" rx="9" />
+                    <rect class="ic ic-green" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
+                    <text class="node-title" x="34" y="22">Output</text>
+                    <text class="node-type mono" x="34" y="36">output</text>
+                    <circle class="port port-slate" cx="0" cy="25" r="4" />
+                  </g>
+                </svg>
+              </div>
+              <div class="panel-foot mono">
+                <span>5 nodes · 5 edges</span>
+                <span class="hash">contentHash 0x9f81c7…</span>
+                <span class="dur"><i class="dia dia-green"></i>durable</span>
+              </div>
+            </div>
+
+            <!-- Terminal: the three planes coming online. -->
+            <div class="panel term cut-card" aria-label="Terminal showing make up bringing the local services online">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">~/theygent — make up</span>
+              </div>
+              <pre class="term-body mono" aria-hidden="true"><code><span class="c-prompt">$</span> git clone github.com/al2m4n/theygent &amp;&amp; cd theygent
+<span class="c-prompt">$</span> make up
+<span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>  <span class="c-dim">mlx · vllm · llama.cpp</span>
+<span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>  <span class="c-dim">postgres :5432</span>
+<span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>  <span class="c-accent">→ http://localhost:5174</span>
+<span class="c-prompt">$</span> <span class="caret"> </span></code></pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- seam -->
+      <div class="seam" aria-hidden="true">
+        <svg viewBox="0 0 1440 40" preserveAspectRatio="none"><path d="M0,40 L360,8 L720,32 L1080,4 L1440,28 L1440,40 Z" /></svg>
+      </div>
+
+      <!-- ───────────────────── SOVEREIGNTY ───────────────────── -->
+      <section class="band section sovereignty" id="sovereignty" aria-labelledby="sov-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>02 — sovereignty, not surveillance</p>
+          <h2 id="sov-h" class="statement">You own <span class="ramp-text">every hop.</span></h2>
+          <p class="section-lede">
+            TheYgent is never the man-in-the-middle. No proxied prompts, no captured weights — every hop runs where you
+            point it.
+          </p>
+
+          <ul class="pointset">
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>never a middleman</span>
+              <span class="pt-v">The vendor is never an involuntary hop between you and your model.</span>
+            </li>
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>nothing proxied</span>
+              <span class="pt-v">Prompts, payloads, and weights are never routed through anyone's servers.</span>
+            </li>
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>per-agent, per-call</span>
+              <span class="pt-v">Your choice of engine for every node, every run — swap it without touching an edge.</span>
+            </li>
+          </ul>
+
+          <div class="swap-tip cut-chip">
+            <span class="swap-tip-k mono"><i class="dia"></i>the whole idea</span>
+            <span class="swap-tip-v mono">
+              swap the engine, keep the id — <span class="pill mono">triage-fast</span> → MLX, vLLM, or a hosted API
+            </span>
+          </div>
+
+          <p class="honesty">
+            You can register a hosted API whenever you want one; the promise is sovereignty and anti-lock-in — not
+            &ldquo;nothing ever leaves your machine.&rdquo; When something crosses the wire, it does so because you sent
+            it there.
+          </p>
+        </div>
+      </section>
+
+      <!-- ───────────────────── BUILD VISUALLY ───────────────────── -->
+      <section class="section build" id="build-visually" aria-labelledby="build-h">
+        <div class="wrap build-grid">
+          <div class="build-copy reveal">
+            <p class="eyebrow mono"><i class="dia"></i>03 — the builder</p>
+            <h2 id="build-h">Compose agents <span class="ramp-text">visually.</span></h2>
+            <p class="section-lede">
+              Drag nodes onto a canvas, wire them with edges, configure them in the inspector, and run — without writing
+              code. The graph <em>is</em> the agent; saving it mints a content-addressed version you can roll back to.
+            </p>
+            <ul class="node-legend mono">
+              <li><i class="dot d-slate"></i>input · output</li>
+              <li><i class="dot d-accent"></i>llm</li>
+              <li><i class="dot d-violet"></i>tool · mcp</li>
+              <li><i class="dot d-amber"></i>router · transform · guardrail</li>
+              <li><i class="dot d-green"></i>human · subgraph · loop · map</li>
+              <li><i class="dot d-slate"></i>audio · image</li>
+            </ul>
+          </div>
+
+          <div class="build-visual reveal">
+            <div class="panel editor cut-card">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">editor · palette + inspector</span>
+              </div>
+              <div class="panel-body editor-body">
+                <aside class="palette" aria-hidden="true">
+                  <span class="pal-h mono">nodes</span>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-slate"></i>Input</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-accent"></i>LLM</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-violet"></i>Tool</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-violet"></i>MCP</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-amber"></i>Router</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-amber"></i>Guardrail</button>
+                  <button class="pal-item is-active" type="button" tabindex="-1"><i class="dia dia-green"></i>Human</button>
+                  <button class="pal-item" type="button" tabindex="-1"><i class="dia dia-slate"></i>Output</button>
+                </aside>
+                <div class="mini-canvas" aria-hidden="true">
+                  <svg class="graph mini" viewBox="0 0 300 220" preserveAspectRatio="xMidYMid meet">
+                    <g class="edges" fill="none" stroke-linecap="round">
+                      <path d="M84,60 C112,60 108,110 136,110" />
+                      <path d="M84,160 C112,160 108,110 136,110" />
+                      <path d="M228,110 L244,110" />
+                    </g>
+                    <g class="node" transform="translate(14,38)">
+                      <rect class="node-box" width="70" height="44" rx="8" />
+                      <rect class="ic ic-slate" x="10" y="16" width="12" height="12" rx="2" transform="rotate(45 16 22)" />
+                      <text class="node-title sm" x="30" y="20">Input</text>
+                      <text class="node-type mono sm" x="30" y="32">input</text>
+                    </g>
+                    <g class="node" transform="translate(14,138)">
+                      <rect class="node-box" width="70" height="44" rx="8" />
+                      <rect class="ic ic-violet" x="10" y="16" width="12" height="12" rx="2" transform="rotate(45 16 22)" />
+                      <text class="node-title sm" x="30" y="20">Tool</text>
+                      <text class="node-type mono sm" x="30" y="32">http</text>
+                    </g>
+                    <g class="node is-selected" transform="translate(136,88)">
+                      <rect class="node-box" width="92" height="44" rx="8" />
+                      <rect class="ic ic-accent" x="10" y="16" width="12" height="12" rx="2" transform="rotate(45 16 22)" />
+                      <text class="node-title sm" x="30" y="20">LLM</text>
+                      <text class="node-type mono sm" x="30" y="32">triage-fast</text>
+                    </g>
+                    <g class="node" transform="translate(244,88)">
+                      <rect class="node-box node-out" width="46" height="44" rx="8" />
+                      <rect class="ic ic-green" x="9" y="16" width="12" height="12" rx="2" transform="rotate(45 15 22)" />
+                      <text class="node-type mono sm" x="26" y="26">out</text>
+                    </g>
+                  </svg>
+                </div>
+                <aside class="inspector" aria-hidden="true">
+                  <span class="pal-h mono">inspector · LLM</span>
+                  <label class="insp-row"><span class="mono">model</span><span class="insp-val mono pill">triage-fast</span></label>
+                  <label class="insp-row"><span class="mono">temperature</span><span class="insp-val mono">0.2</span></label>
+                  <label class="insp-row"><span class="mono">reasoning</span><span class="insp-val mono">on</span></label>
+                  <label class="insp-row"><span class="mono">tools</span><span class="insp-val mono">mcp_tool</span></label>
+                  <div class="insp-ports">
+                    <span class="mono">ports</span>
+                    <span class="port-chip mono"><i class="dot d-slate"></i>in</span>
+                    <span class="port-chip mono"><i class="dot d-accent"></i>out</span>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- seam -->
+      <div class="seam" aria-hidden="true">
+        <svg viewBox="0 0 1440 40" preserveAspectRatio="none"><path d="M0,40 L300,6 L680,30 L1020,6 L1440,30 L1440,40 Z" /></svg>
+      </div>
+
+      <!-- ───────────────────── MULTI-ENGINE (datasheet) ───────────────────── -->
+      <section class="band section engines" id="multi-engine" aria-labelledby="eng-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>04 — logical-id indirection</p>
+          <h2 id="eng-h">One id per call. <span class="ramp-text">Any engine underneath.</span></h2>
+          <p class="section-lede">
+            Give a model a logical id once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
+            API you register — and every edge on the canvas stays untouched.
+          </p>
+
+          <div class="datasheet cut-card">
+            <div class="ds-swap">
+              <span class="ds-swap-label mono">bind <span class="pill mono">triage-fast</span> to</span>
+              <div class="chips" role="radiogroup" aria-label="Engine binding for triage-fast">
+                <button class="chip mono is-on" type="button" role="radio" aria-checked="true" data-binding="mlx">mlx</button>
+                <button class="chip mono" type="button" role="radio" aria-checked="false" data-binding="vllm">vllm</button>
+                <button class="chip mono" type="button" role="radio" aria-checked="false" data-binding="llamacpp">llamacpp</button>
+                <button class="chip mono" type="button" role="radio" aria-checked="false" data-binding="openai-compatible">openai-compatible</button>
+              </div>
+            </div>
+
+            <div class="ds-scroll">
+              <table class="ds-table">
+              <thead>
+                <tr>
+                  <th scope="col" class="mono">logical id</th>
+                  <th scope="col" class="mono">binding</th>
+                  <th scope="col" class="mono">runs on</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="ds-live" aria-live="polite">
+                  <td class="mono"><span class="pill">triage-fast</span></td>
+                  <td class="mono"><span class="ds-binding" id="dsBinding">mlx</span></td>
+                  <td class="mono"><span class="ds-runson" id="dsRunson">Apple Silicon</span></td>
+                </tr>
+                <tr>
+                  <td class="mono">draft-large</td>
+                  <td class="mono">vllm</td>
+                  <td class="mono">an NVIDIA GPU</td>
+                </tr>
+                <tr>
+                  <td class="mono">extract-ocr</td>
+                  <td class="mono">llamacpp</td>
+                  <td class="mono">any machine</td>
+                </tr>
+                <tr>
+                  <td class="mono">reason-remote</td>
+                  <td class="mono">openai-compatible</td>
+                  <td class="mono">an API you register</td>
+                </tr>
+              </tbody>
+              </table>
+            </div>
+
+            <p class="ds-note" id="dsNote">MLX serves it on Apple Silicon — the Neural Engine and GPU.</p>
+            <p class="ds-enum mono">binding ∈ { mlx | vllm | llamacpp | openai-compatible } · source ∈ { hf | local-path | url }</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── CAPABILITIES ───────────────────── -->
+      <section class="section caps" id="capabilities" aria-labelledby="caps-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>05 — the runtime</p>
+          <h2 id="caps-h">Everything a real agent <span class="ramp-text">needs.</span></h2>
+          <p class="section-lede">
+            Chat, tools, automation, durability, and observability — one local runtime, no glue code.
+          </p>
+
+          <div class="card-grid">
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>chat</span>
+              <h3>Unified chat</h3>
+              <p>Streaming answers, a collapsible thinking view for reasoning models, and voice and image input — talk to any model or saved agent.</p>
+            </article>
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-violet"></i>tools</span>
+              <h3>Tools &amp; MCP</h3>
+              <p>Built-in tools, HTTP calls, and any MCP server over stdio or HTTP — running in your own trust domain.</p>
+            </article>
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-amber"></i>automation</span>
+              <h3>Triggers</h3>
+              <p>Deploy a saved agent behind a token-authed endpoint, an HMAC-signed webhook, or a cron schedule.</p>
+            </article>
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>durable</span>
+              <h3>Durable runs</h3>
+              <p>Checkpoint every step, survive a crash and resume from the last one, and pause for human approval.</p>
+            </article>
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>observability</span>
+              <h3>Observability</h3>
+              <p>A zoomable span waterfall with per-node inputs, outputs, and timing — plus optional OTLP export.</p>
+            </article>
+            <article class="cap cut-card reveal">
+              <span class="cap-kicker mono"><i class="dia dia-violet"></i>the bench</span>
+              <h3>The Bench</h3>
+              <p>Test and benchmark any model or agent: per-turn latency and token metrics, saved and compared side by side.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── QUICKSTART ───────────────────── -->
+      <section class="band section quickstart" id="quickstart" aria-labelledby="qs-h">
+        <div class="wrap qs-grid">
+          <div class="qs-copy">
+            <p class="eyebrow mono"><i class="dia"></i>06 — run it locally</p>
+            <h2 id="qs-h">Up in <span class="ramp-text">two commands.</span></h2>
+            <p class="section-lede">
+              Clone the repo and run <span class="pill mono">make up</span>. The interface, control plane, inference
+              plane, and Postgres come online locally; engines start lazily when a model is first called.
+            </p>
+            <ul class="qs-facts mono">
+              <li><i class="dia"></i>three local services + your Postgres</li>
+              <li><i class="dia"></i>bring your own models, or register an API</li>
+              <li><i class="dia"></i>no account, no sign-up, localhost by default</li>
+            </ul>
+          </div>
+
+          <div class="qs-term panel cut-card">
+            <div class="panel-bar">
+              <span class="dots"><i></i><i></i><i></i></span>
+              <span class="panel-file mono">quickstart</span>
+              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/theygent.git&#10;cd theygent&#10;make up">copy</button>
+            </div>
+            <pre class="term-body mono"><code><span class="c-prompt">$</span> git clone https://github.com/al2m4n/theygent.git
+<span class="c-prompt">$</span> cd theygent
+<span class="c-prompt">$</span> make up
+<span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>
+<span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>   <span class="c-dim">postgres :5432</span>
+<span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>
+<span class="c-dim"># open</span> <span class="c-accent">http://localhost:5174</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── TUTORIALS ───────────────────── -->
+      <section class="section tutorials" id="tutorials" aria-labelledby="tut-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>07 — walkthroughs</p>
+          <h2 id="tut-h">Watch it get <span class="ramp-text">built.</span></h2>
+          <p class="section-lede">Short walkthroughs, coming soon. Placeholders now — video links land here.</p>
+
+          <div class="card-grid tut-grid">
+            <article class="tut cut-card" aria-label="Tutorial coming soon: Your first agent in five minutes">
+              <div class="tut-thumb">
+                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
+                <span class="tut-badge mono">coming soon</span>
+                <span class="tut-num mono">01</span>
+              </div>
+              <div class="tut-meta">
+                <h3>Your first agent in five minutes</h3>
+                <p class="mono">input → llm → output, run &amp; save</p>
+              </div>
+            </article>
+            <article class="tut cut-card" aria-label="Tutorial coming soon: Swap a Mac for a GPU with one registration">
+              <div class="tut-thumb">
+                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
+                <span class="tut-badge mono">coming soon</span>
+                <span class="tut-num mono">02</span>
+              </div>
+              <div class="tut-meta">
+                <h3>Swap a Mac for a GPU, one registration</h3>
+                <p class="mono">one logical id, every edge untouched</p>
+              </div>
+            </article>
+            <article class="tut cut-card" aria-label="Tutorial coming soon: Wire an MCP tool with human approval">
+              <div class="tut-thumb">
+                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
+                <span class="tut-badge mono">coming soon</span>
+                <span class="tut-num mono">03</span>
+              </div>
+              <div class="tut-meta">
+                <h3>Wire an MCP tool + human approval</h3>
+                <p class="mono">tools, guardrails, durable pause</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- seam -->
+      <div class="seam" aria-hidden="true">
+        <svg viewBox="0 0 1440 40" preserveAspectRatio="none"><path d="M0,40 L400,10 L760,32 L1120,6 L1440,26 L1440,40 Z" /></svg>
+      </div>
+
+      <!-- ───────────────────── LICENSE ───────────────────── -->
+      <section class="band section license" id="license" aria-labelledby="lic-h">
+        <svg class="ghost-mark ghost-right" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>08 — the license</p>
+          <h2 id="lic-h">Open source, <span class="ramp-text">fair-code.</span></h2>
+          <p class="section-lede lic-lede">
+            Free to use, modify, and self-host under the Sustainable Use License. The one limit: you can&rsquo;t
+            repackage it as a competing hosted service. No CLA wall, no bait-and-switch — the core is the core.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/al2m4n/theygent" rel="noopener">
+              <svg class="gh" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+                />
+              </svg>
+              Star on GitHub
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">Read the license&nbsp;→</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="#top" aria-label="TheYgent home">
+            <svg class="brand-mark" viewBox="28 36 326 356" role="img" aria-hidden="true"><use href="#ty-mark" /></svg>
+            <span class="brand-word">The<span class="ramp-text">Y</span>gent</span>
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="#build-visually">Build</a>
+            <a href="#multi-engine">Engines</a>
+            <a href="#capabilities">Capabilities</a>
+            <a href="#quickstart">Quickstart</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="#tutorials">Tutorials</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · local-first · fair-code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
