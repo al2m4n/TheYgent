@@ -358,9 +358,64 @@ export interface RagQueryResult {
 }
 
 // ── inference-plane engines + capabilities (camelCase /admin/*) ──────────────
+// One currently-resident managed engine (the /admin/engines `resident` list). Count + priority,
+// not RAM/VRAM bytes (the plane arbitrates by count). `resident` stays typed `unknown` on
+// EnginesView so existing defensive readers keep compiling; `residentEngines()` narrows it.
+export interface ResidentEngine {
+  logicalId: string;
+  engine: string;
+  model: string;
+  baseUrl: string;
+  inflight: number;
+  draining: boolean;
+  priority: number;
+}
+
 export interface EnginesView {
   maxResident: number;
   resident: unknown;
+}
+
+// Narrow the loosely-typed `resident` payload to the engine rows, tolerating an unexpected shape.
+export function residentEngines(engines: EnginesView | undefined | null): ResidentEngine[] {
+  const r = engines?.resident;
+  return Array.isArray(r) ? (r as ResidentEngine[]) : [];
+}
+
+// A plane's liveness snapshot for the dashboard status widgets. Unlike request(), the probe does
+// NOT throw on a 503 not-ready: the not-ready body (status + reason) IS the signal we render, and a
+// network failure (the plane is unreachable) becomes `reachable: false` — the offline state.
+export interface PlaneHealth {
+  /** false = the plane could not be reached at all (network error / CORS / down). */
+  reachable: boolean;
+  /** "ready" | "not-ready" | "ok" | "offline" — the plane's own word, or our fallback. */
+  status: string;
+  reason?: string | null;
+  /** Control-plane /readyz echoes registered MCP servers; inference /readyz its per-engine readiness. */
+  mcp?: { servers?: Record<string, unknown> } | null;
+  engines?: Record<string, { ready: boolean; reason?: string | null }> | null;
+}
+
+async function probeReady(base: string): Promise<PlaneHealth> {
+  try {
+    // /readyz is unauthenticated on both planes; the header is harmless and keeps one code path.
+    const res = await fetch(`${base}/readyz`, { headers: authHeaders() });
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await res.json()) as Record<string, unknown>;
+    } catch {
+      // a non-JSON body (proxy error page, etc.) — fall back to the HTTP status below.
+    }
+    return {
+      reachable: true,
+      status: typeof body.status === "string" ? body.status : res.ok ? "ready" : "not-ready",
+      reason: typeof body.reason === "string" ? body.reason : null,
+      mcp: (body.mcp as PlaneHealth["mcp"]) ?? null,
+      engines: (body.engines as PlaneHealth["engines"]) ?? null,
+    };
+  } catch {
+    return { reachable: false, status: "offline", reason: null };
+  }
 }
 
 export interface Capabilities {
@@ -969,6 +1024,12 @@ export const api = {
   // Register / lifecycle / capabilities all on the user-controlled inference plane, called
   // directly (no new routes added here).
   getEngines: () => request<EnginesView>(INFERENCE_URL, "/admin/engines"),
+
+  // ── plane liveness (the dashboard status widgets) ───────────────────────────
+  // Each plane is probed on its OWN base URL (the two-plane split — the interface reaches both
+  // directly). A 503 not-ready is a status, not an error; only an unreachable plane is "offline".
+  controlHealth: () => probeReady(CONTROL_PLANE_URL),
+  inferenceHealth: () => probeReady(INFERENCE_URL),
 
   getModelCapabilities: (logicalId: string) =>
     request<Capabilities>(

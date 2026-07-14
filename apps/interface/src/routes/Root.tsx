@@ -1,10 +1,12 @@
 import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 import {
   Activity,
+  ArrowRight,
   Bot,
   Boxes,
   ChevronRight,
   Database,
+  LayoutDashboard,
   type LucideIcon,
   MessageSquare,
   MessagesSquare,
@@ -19,7 +21,7 @@ import {
   Sun,
   User,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Modal } from "../components/ui";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
 import {
@@ -32,22 +34,25 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarProvider,
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
 } from "../components/ui/sidebar";
-import { Spinner } from "../components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { statusTone, toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
 import { NotificationCenter } from "../lib/notify";
-import type { SessionSummary } from "../lib/runtypes";
+import type { Run, SessionSummary } from "../lib/runtypes";
 import { type ThemePref, useTheme } from "../lib/theme";
-import { useInView } from "../lib/useInView";
-import { flattenPages, useSessionsInfinite } from "../queries";
+import { flattenPages, useRunsInfinite, useSessionsInfinite } from "../queries";
 
 // The shell: a collapsible LEFT sidebar + the routed view. The interface is canvas-first, so chrome
 // stays quiet and out of the way; collapsing the rail to its icon mode hands the canvas the full
@@ -61,18 +66,15 @@ interface NavEntry {
   exact?: boolean;
 }
 
-// Three groups, separated in the rail: the build/observe surfaces (Agents/Runs), the
-// conversational surfaces (New Chat / Chats, with the recent sessions right below), and a
-// collapsible Configuration group (Registries, MCP, RAG, app Settings).
-const NAV_MAIN: NavEntry[] = [
-  { to: "/", label: "Agents", icon: Bot, exact: true },
-  { to: "/runs", label: "Runs", icon: Activity },
-];
-
-const NAV_CHAT: NavEntry[] = [
-  { to: "/chat", label: "New Chat", icon: SquarePen },
-  { to: "/sessions", label: "Chats", icon: MessagesSquare },
-];
+// The rail, top to bottom: Dashboard (the home overview), then the build/observe surfaces
+// (Agents + a collapsible Runs that previews recent runs), the conversational surfaces (New Chat +
+// a collapsible Chats that previews recent sessions), and a collapsible Configuration group
+// (Registries, MCP, RAG, app Settings). Each group is separated in the rail.
+const NAV_DASHBOARD: NavEntry = { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true };
+const NAV_AGENTS: NavEntry = { to: "/agents", label: "Agents", icon: Bot };
+const NAV_RUNS: NavEntry = { to: "/runs", label: "Runs", icon: Activity };
+const NAV_NEW_CHAT: NavEntry = { to: "/chat", label: "New Chat", icon: SquarePen };
+const NAV_CHATS: NavEntry = { to: "/sessions", label: "Chats", icon: MessagesSquare };
 
 const NAV_CONFIG_HEAD: NavEntry[] = [
   { to: "/registries", label: "Registries", icon: Boxes },
@@ -92,6 +94,28 @@ function readCollapsed(): boolean {
     return typeof localStorage !== "undefined" && localStorage.getItem(COLLAPSE_KEY) === "1";
   } catch {
     return false;
+  }
+}
+
+// The disclosure state of a collapsible nav group (Runs, Chats). Defaults OPEN so the recent
+// previews are visible out of the box; the toggle persists like the rail width does. Guarded for
+// non-DOM (test) environments.
+const RUNS_OPEN_KEY = "theygent.ui.runsOpen";
+const CHATS_OPEN_KEY = "theygent.ui.chatsOpen";
+
+function readOpenPref(key: string): boolean {
+  try {
+    return typeof localStorage === "undefined" || localStorage.getItem(key) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function writeOpenPref(key: string, open: boolean): void {
+  try {
+    localStorage.setItem(key, open ? "1" : "0");
+  } catch {
+    // no localStorage (tests) — the in-memory state still drives the UI this session.
   }
 }
 
@@ -172,28 +196,36 @@ function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </SidebarHeader>
 
       <SidebarContent>
+        {/* Dashboard — the home overview, on its own at the top. */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_MAIN.map((item) => (
-                <NavItem key={item.to} item={item} />
-              ))}
+              <NavItem item={NAV_DASHBOARD} />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarSeparator />
+        {/* Build / observe: Agents + a collapsible Runs that previews the latest runs. */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
-              {NAV_CHAT.map((item) => (
-                <NavItem key={item.to} item={item} />
-              ))}
+              <NavItem item={NAV_AGENTS} />
+              <RunsNav />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+        <SidebarSeparator />
+        {/* Converse: New Chat + a collapsible Chats that previews recent conversations. */}
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <NavItem item={NAV_NEW_CHAT} />
+              <ChatsNav />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
         <SidebarSeparator />
         <ConfigGroup />
-        <RecentSessions />
       </SidebarContent>
 
       {/* Bottom: the user/profile entry — USER settings (identity, theme), not app settings. */}
@@ -296,40 +328,152 @@ function NavItem({ item }: { item: NavEntry }) {
   );
 }
 
-// The recent sessions, right under the primary nav — one click back into any conversation.
-// Every chat surface (the chat page, a model bench, an agent chat) records into a session, so
-// this is the "continue where I left off" list. It shares the Chats page's infinite query (same
-// key → same cache), fills the rest of the rail's height, and scroll-loads older pages inside its
-// own scroll region — the nav groups above stay pinned. Freshness comes from the chat surfaces'
-// ["sessions"] invalidations (every send/new-session reaches this key by prefix), not a poll.
-// Hidden while the rail is collapsed to icons (the Chats nav item stays as the icon-sized entry
-// point).
-function RecentSessions() {
-  const { data, fetchNextPage, hasNextPage, isFetchingNextPage } = useSessionsInfinite();
-  const sessions = useMemo(() => flattenPages(data), [data]);
-  const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
-  // The rail must never surface a scary error — an unreachable control plane just means no list.
-  if (sessions.length === 0) return null;
+// A collapsible nav entry: the label navigates to the page; a chevron toggles a preview of recent
+// items right in the rail; and a "Show all" row at the bottom is a second, explicit way through to
+// the page. In icon mode the preview and chevron hide (built into the sub/action components) and the
+// icon-sized label stays the entry point. The disclosure state persists per group.
+function CollapsibleNav({
+  item,
+  storageKey,
+  showAllLabel,
+  emptyLabel,
+  hasItems,
+  loaded,
+  children,
+}: {
+  item: NavEntry;
+  storageKey: string;
+  showAllLabel: string;
+  emptyLabel: string;
+  hasItems: boolean;
+  /** The list query has resolved. Only then is an empty preview a genuine "nothing yet" — while the
+   *  query is still loading (or the control plane is unreachable) we show nothing, never a false
+   *  "No runs yet". */
+  loaded: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(() => readOpenPref(storageKey));
+  const { state } = useSidebar();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isActive = pathname === item.to || pathname.startsWith(`${item.to}/`);
+  const Icon = item.icon;
+
+  useEffect(() => writeOpenPref(storageKey, open), [storageKey, open]);
+
   return (
-    // flex-1 min-h-0: this group takes whatever height the pinned groups above leave, and the
-    // group content scrolls internally — so only Recents scrolls, never the whole rail.
-    <SidebarGroup className="min-h-0 flex-1 group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel className="uppercase tracking-wide">Recents</SidebarGroupLabel>
-      <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
-        <SidebarMenu>
-          {sessions.map((s) => (
-            <RecentItem key={s.id} session={s} />
-          ))}
-        </SidebarMenu>
-        {/* Scroll sentinel: pulls the next (older) page as it nears view — no button. */}
-        {hasNextPage && <div ref={loadMoreRef} aria-hidden className="h-px" />}
-        {isFetchingNextPage && (
-          <div className="flex justify-center py-2">
-            <Spinner className="text-muted-foreground" />
-          </div>
-        )}
-      </SidebarGroupContent>
-    </SidebarGroup>
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
+        <Link to={item.to} aria-label={item.label}>
+          <Icon />
+          <span>{item.label}</span>
+        </Link>
+      </SidebarMenuButton>
+      {/* The chevron toggles the preview; it sits apart from the label so a click on the label still
+          navigates. Hidden in icon mode (the sub-list has nowhere to render there). */}
+      <SidebarMenuAction
+        aria-label={open ? `Collapse ${item.label}` : `Expand ${item.label}`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="text-muted-foreground"
+      >
+        <ChevronRight className={`transition-transform ${open ? "rotate-90" : ""}`} />
+      </SidebarMenuAction>
+      {open && state !== "collapsed" && (
+        <SidebarMenuSub>
+          {children}
+          {hasItems ? (
+            <SidebarMenuSubItem>
+              <SidebarMenuSubButton asChild className="text-muted-foreground">
+                <Link to={item.to}>
+                  <span>{showAllLabel}</span>
+                  <ArrowRight className="ml-auto opacity-70" />
+                </Link>
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
+          ) : loaded ? (
+            <SidebarMenuSubItem>
+              <span className="flex h-7 items-center px-2 text-xs text-muted-foreground/70">
+                {emptyLabel}
+              </span>
+            </SidebarMenuSubItem>
+          ) : null}
+        </SidebarMenuSub>
+      )}
+    </SidebarMenuItem>
+  );
+}
+
+// How many recent items each collapsible previews — a short peek; "Show all" opens the full page.
+const RAIL_PREVIEW = 5;
+
+// Runs, collapsible: the label opens the Runs page; expanded, it previews the latest runs. Shares
+// the Runs page's infinite query (same cache) which already auto-refreshes, so the preview stays
+// live without its own poll.
+function RunsNav() {
+  const { data, isSuccess } = useRunsInfinite();
+  const runs = useMemo(() => flattenPages(data).slice(0, RAIL_PREVIEW), [data]);
+  return (
+    <CollapsibleNav
+      item={NAV_RUNS}
+      storageKey={RUNS_OPEN_KEY}
+      showAllLabel="Show all runs"
+      emptyLabel="No runs yet"
+      hasItems={runs.length > 0}
+      loaded={isSuccess}
+    >
+      {runs.map((r) => (
+        <RunSubItem key={r.id} run={r} />
+      ))}
+    </CollapsibleNav>
+  );
+}
+
+// A compact run row: a status dot + the run's model (or graph / id). The dot keeps a status legible
+// even truncated to the rail width.
+function runNavLabel(run: Run): string {
+  return run.model || (run.graph_id ? shortId(run.graph_id, 12) : shortId(run.id, 12));
+}
+
+function RunSubItem({ run }: { run: Run }) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  return (
+    <SidebarMenuSubItem>
+      <SidebarMenuSubButton
+        asChild
+        isActive={pathname === `/runs/${run.id}`}
+        className="text-muted-foreground"
+      >
+        <Link to="/runs/$runId" params={{ runId: run.id }} title={run.id}>
+          <span
+            className={`inline-block size-2 shrink-0 rounded-full ${toneOf(statusTone(run.status)).dot}`}
+            aria-hidden
+          />
+          <span>{runNavLabel(run)}</span>
+        </Link>
+      </SidebarMenuSubButton>
+    </SidebarMenuSubItem>
+  );
+}
+
+// Chats, collapsible: the label opens the Chats page; expanded, it previews recent conversations —
+// the "continue where I left off" list that used to sit under the nav as "Recents". Every chat
+// surface records into a session, so this covers the chat page, model benches, and agent chats.
+function ChatsNav() {
+  const { data, isSuccess } = useSessionsInfinite();
+  const sessions = useMemo(() => flattenPages(data).slice(0, RAIL_PREVIEW), [data]);
+  return (
+    <CollapsibleNav
+      item={NAV_CHATS}
+      storageKey={CHATS_OPEN_KEY}
+      showAllLabel="Show all chats"
+      emptyLabel="No chats yet"
+      hasItems={sessions.length > 0}
+      loaded={isSuccess}
+    >
+      {sessions.map((s) => (
+        <ChatSubItem key={s.id} session={s} />
+      ))}
+    </CollapsibleNav>
   );
 }
 
@@ -347,14 +491,13 @@ function recentLabel(s: SessionSummary): string {
   return title || s.preview?.trim() || target || shortId(s.id);
 }
 
-function RecentItem({ session }: { session: SessionSummary }) {
+function ChatSubItem({ session }: { session: SessionSummary }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const Icon = session.metadata?.kind === "bench.agent" ? Bot : MessageSquare;
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
+    <SidebarMenuSubItem>
+      <SidebarMenuSubButton
         asChild
-        size="sm"
         isActive={pathname === `/sessions/${session.id}`}
         className="text-muted-foreground"
       >
@@ -366,8 +509,8 @@ function RecentItem({ session }: { session: SessionSummary }) {
           <Icon />
           <span>{recentLabel(session)}</span>
         </Link>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
+      </SidebarMenuSubButton>
+    </SidebarMenuSubItem>
   );
 }
 

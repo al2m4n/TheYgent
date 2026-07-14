@@ -1,6 +1,7 @@
 import { Link, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { Empty, Page, linkClass } from "./components/ui";
 import { Chat } from "./routes/Chat";
+import { Dashboard } from "./routes/Dashboard";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
 import { Mcp } from "./routes/Mcp";
@@ -21,7 +22,7 @@ function NotFound() {
       <Empty>
         Page not found —{" "}
         <Link to="/" className={linkClass}>
-          back to Agents
+          back to the dashboard
         </Link>
       </Empty>
     </Page>
@@ -30,7 +31,18 @@ function NotFound() {
 
 const rootRoute = createRootRoute({ component: Root, notFoundComponent: NotFound });
 
-const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: Home });
+// The dashboard is the home page (`/`); the saved-agents grid moved to `/agents`.
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: Dashboard,
+});
+
+const agentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/agents",
+  component: Home,
+});
 
 // ── operator surface: chat, runs, sessions ──
 const chatRoute = createRoute({
@@ -99,7 +111,8 @@ const settingsRoute = createRoute({
 });
 
 const routeTree = rootRoute.addChildren([
-  homeRoute,
+  dashboardRoute,
+  agentsRoute,
   chatRoute,
   runsRoute,
   runDetailRoute,
