@@ -63,6 +63,11 @@ from theygent_control_plane.observability import (
     build_otlp_sink,
     now_ns,
 )
+from theygent_control_plane.rag import IngestService, RagRetriever, RagStore
+from theygent_control_plane.rag.ingest import IngestBusy
+from theygent_control_plane.rag.parse import supported_extension
+from theygent_control_plane.rag.retrieve import RetrievalError
+from theygent_control_plane.rag.store import RagSourceKind
 from theygent_control_plane.reasoning import ThinkSplitter, split_think
 from theygent_control_plane.run import _SECRETISH_CONFIG_KEYS as _SECRETISH_CONFIG_KEYS
 from theygent_control_plane.run import (
@@ -130,6 +135,10 @@ _DURABLE_ONLY_TYPES = frozenset({"human", "subgraph", "loop", "map"})
 _GRAPH_PRIME_TIMEOUT = 15.0
 
 _RUN_ID_HEADER = "x-theygent-run-id"
+
+# Raw-body document uploads buffer in memory before the background ingest parses them —
+# bound the buffer. Generous for real documents (a 500-page PDF is ~10 MiB).
+_RAG_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 # The synthetic single node a plain ``/runs`` prompt run is traced as. ``/runs`` has no
 # IR/walker (it is the one-shot chat call straight to the gateway), but a prompt run is
@@ -353,6 +362,31 @@ class UpdateConnectionRequest(BaseModel):
     enabled: bool | None = None
 
 
+class CreateRagSourceRequest(BaseModel):
+    # Create a retrieval source. ``embedding_model`` is a LOGICAL inference-plane id, pinned at
+    # creation (vectors from different models share no similarity space — switching models is an
+    # explicit re-ingest). ``config`` is the non-secret ingest config; for ``crawl``:
+    # root_url (required), max_pages, render_js, all validated below.
+    name: str
+    kind: RagSourceKind
+    embedding_model: str
+    config: dict[str, Any] = {}
+
+
+class UpdateRagSourceRequest(BaseModel):
+    # PATCH: rename / edit the ingest config. ``kind`` and ``embedding_model`` are immutable —
+    # changing the model would silently orphan every existing vector (create a new source instead).
+    name: str | None = None
+    config: dict[str, Any] | None = None
+
+
+class RagQueryRequest(BaseModel):
+    # Test/inspect retrieval against one source — the same backend the ``rag`` node calls.
+    query: str
+    top_k: int = Field(default=5, ge=1, le=50)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
 def _secret_keys_from_env() -> list[str] | None:
     """Resolve the Fernet key(s) for the secret store from ``THEYGENT_SECRET_KEY`` (comma-separated
     for rotation — first encrypts, all decrypt). ``None`` when unset (SecretStore then warns + uses
@@ -490,6 +524,7 @@ def create_app(
     agents = AgentStore()
     triggers = TriggerStore()
     bench = BenchStore()  # saved benchmark results + suites/cases + param presets
+    rag_store = RagStore()  # retrieval sources/documents/chunks + hybrid search
     # The tool/MCP auth seam. ``connections`` persists the (non-secret) bindings the IR's
     # ``tools`` block references by id; ``secrets`` encrypts the material behind each ``secret_ref``
     # (resolved server-side, inside the step — never in the IR/span/journal). Keys come from
@@ -549,12 +584,25 @@ def create_app(
         # in the user's trust domain; the bytes never journal). Injected into both runtimes.
         artifact_store = LocalArtifactStore()
         app.state.artifacts = artifact_store
+        # The retrieval seam. The retriever is the injected backend a ``rag`` node queries
+        # (embeds over the gateway with the source's logical model id, then hybrid-searches
+        # Postgres); the ingest service runs crawl/parse → chunk → embed as in-process background
+        # tasks with progress on the source row.
+        rag_retriever = RagRetriever(app.state.sessionmaker, gw, store=rag_store)
+        app.state.rag = rag_retriever
+        rag_ingest = IngestService(app.state.sessionmaker, gw, store=rag_store)
+        app.state.rag_ingest = rag_ingest
         # Sweep runs left non-terminal by a crash to `failed` before serving, so a
         # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
         async with app.state.sessionmaker() as session, session.begin():
             swept = await store.reconcile_orphaned_runs(session)
         if swept:
             logger.warning("run.reconciled_orphans", extra={"count": swept})
+        # Same honesty for retrieval ingests a restart interrupted.
+        async with app.state.sessionmaker() as session, session.begin():
+            rag_swept = await rag_store.reconcile_orphaned_sources(session)
+        if rag_swept:
+            logger.warning("rag.reconciled_orphans", extra={"count": rag_swept})
         # Rehydrate persisted MCP registrations into the in-memory manager so they
         # survive a restart. Registration only — connections stay lazy (re-established on next use).
         async with app.state.sessionmaker() as session:
@@ -587,6 +635,7 @@ def create_app(
                 tool_auth=tool_resolver,  # durable steps resolve connection auth too
                 gates=gate_backend,  # durable gate steps use the same backend
                 artifacts=artifact_store,  # durable audio steps use the same store
+                rag=rag_retriever,  # durable rag steps retrieve through the same backend
                 # A distinct executor identity per process role: launch-time recovery then claims
                 # only workflows a crashed API process left pending — never ones a healthy
                 # standalone worker is mid-step on (and vice versa).
@@ -644,6 +693,8 @@ def create_app(
         try:
             yield
         finally:
+            # Stop in-flight retrieval ingests first (they write through the sessionmaker).
+            await rag_ingest.shutdown()
             if app.state.dispatcher is not None:
                 await app.state.dispatcher.stop()  # cancel the in-process schedule loop
             if app.state.durable_runtime is not None:
@@ -1545,7 +1596,24 @@ def create_app(
                     code="mcp_tool_not_found",
                 )
 
-        # Node types the IR schema declares but NO runtime executes yet (e.g. code/rag/condition)
+        # rag nodes: the referenced source must exist (400, no Run) — mirroring tool/MCP
+        # membership. Its ingest state is NOT checked here: an empty/ingesting source binds an
+        # honest ``err`` at step time (state changes between create and run; a stale block here
+        # would be a lie).
+        rag_source_ids = sorted(
+            {str((n.config or {}).get("source") or "") for n in ir.nodes if n.type == "rag"}
+        )
+        if rag_source_ids:
+            async with app.state.sessionmaker() as rag_session:
+                for rag_source_id in rag_source_ids:
+                    if not await rag_store.source_exists(rag_session, rag_source_id):
+                        return _error(
+                            f"unknown rag source {rag_source_id!r}",
+                            status=400,
+                            code="rag_source_not_found",
+                        )
+
+        # Node types the IR schema declares but NO runtime executes yet (e.g. code/condition)
         # pass validate_graph — reject them up front with a clear 400 (before a Run), not the
         # walker's raw NotImplementedError mis-mapped to a 502 inference_error.
         unavailable_err = _reject_unexecutable_nodes(ir)
@@ -1629,6 +1697,7 @@ def create_app(
             tool_auth=app.state.tool_resolver,  # server-side connection auth resolution
             gates=app.state.gates,  # ratelimit/quota backend
             artifacts=app.state.artifacts,  # transcribe/speak audio reference store
+            rag=app.state.rag,  # retrieval backend for rag nodes/capabilities
         )
         if stream:
             return await _stream_graph(ir, run, input_value, ctx)
@@ -2409,6 +2478,248 @@ def create_app(
                 code="connection_not_found",
             )
         return Response(status_code=204)
+
+    # ── retrieval sources (/rag/*) ────────────────────────────────────────
+    # A source is a named document collection an agent's ``rag`` node queries. Ingestion
+    # (crawl or upload) runs as an in-process background job; the UI polls the source row for
+    # progress — the same polled-progress shape as model downloads. The IR references a source
+    # by its stable id (hashed content, like a connection id): re-ingesting never moves a hash.
+
+    def _validate_rag_config(kind: RagSourceKind, config: dict[str, Any]) -> JSONResponse | None:
+        if kind == "crawl":
+            root_url = str(config.get("root_url") or "").strip()
+            if not root_url.startswith(("http://", "https://")):
+                return _error(
+                    "crawl source config requires a 'root_url' (http/https)",
+                    status=400,
+                    code="invalid_rag_source",
+                )
+            max_pages = config.get("max_pages")
+            if max_pages is not None and (not isinstance(max_pages, int) or max_pages < 1):
+                return _error(
+                    "'max_pages' must be a positive integer",
+                    status=400,
+                    code="invalid_rag_source",
+                )
+        return None
+
+    @app.post("/rag/sources", status_code=201, dependencies=[Depends(require_auth)])
+    async def create_rag_source(req: CreateRagSourceRequest) -> Any:
+        if not req.name.strip():
+            return _error("source name must be non-empty", status=400, code="invalid_rag_source")
+        # The logical-id invariant, same as every model-carrying surface: an engine name is
+        # not a model id.
+        if req.embedding_model.strip() in _ENGINE_NAMES or not req.embedding_model.strip():
+            return _error(
+                f"embedding_model must be a logical model id, got {req.embedding_model!r}",
+                status=400,
+                code="engine_name_not_allowed",
+            )
+        invalid = _validate_rag_config(req.kind, req.config)
+        if invalid is not None:
+            return invalid
+        async with tx() as session:
+            source = await rag_store.create_source(
+                session,
+                name=req.name.strip(),
+                kind=req.kind,
+                config=req.config,
+                embedding_model=req.embedding_model.strip(),
+            )
+        logger.info("rag.source_created", extra={"source_id": source.id, "kind": source.kind})
+        return JSONResponse(source.public_dump(), status_code=201)
+
+    @app.get("/rag/sources", dependencies=[Depends(require_auth)])
+    async def list_rag_sources(
+        limit: int = Query(default=100, ge=1, le=200),
+        before: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        rows = await rag_store.list_sources(session, limit=limit, before=before)
+        return {"sources": [s.public_dump() for s in rows]}
+
+    @app.get("/rag/sources/{source_id}", dependencies=[Depends(require_auth)])
+    async def get_rag_source(source_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        source = await rag_store.get_source(session, source_id)
+        if source is None:
+            return _error(
+                f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+            )
+        return source.public_dump()
+
+    @app.get("/rag/sources/{source_id}/documents", dependencies=[Depends(require_auth)])
+    async def list_rag_documents(
+        source_id: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        source = await rag_store.get_source(session, source_id)
+        if source is None:
+            return _error(
+                f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+            )
+        docs = await rag_store.list_documents(session, source_id)
+        return {"documents": [d.public_dump() for d in docs]}
+
+    @app.patch("/rag/sources/{source_id}", dependencies=[Depends(require_auth)])
+    async def patch_rag_source(source_id: str, req: UpdateRagSourceRequest) -> Any:
+        async with tx() as session:
+            existing = await rag_store.get_source(session, source_id)
+            if existing is None:
+                return _error(
+                    f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+                )
+            if req.config is not None:
+                invalid = _validate_rag_config(existing.kind, req.config)
+                if invalid is not None:
+                    return invalid
+            updated = await rag_store.update_source(
+                session, source_id, name=req.name, config=req.config
+            )
+        assert updated is not None
+        return updated.public_dump()
+
+    @app.delete("/rag/sources/{source_id}", status_code=204, dependencies=[Depends(require_auth)])
+    async def delete_rag_source(source_id: str) -> Response:
+        # Stop any in-flight ingest first, then cascade-delete documents + chunks with the row.
+        app.state.rag_ingest.cancel(source_id)
+        async with tx() as session:
+            deleted = await rag_store.delete_source(session, source_id)
+        if not deleted:
+            return _error(
+                f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+            )
+        logger.info("rag.source_deleted", extra={"source_id": source_id})
+        return Response(status_code=204)
+
+    @app.post(
+        "/rag/sources/{source_id}:ingest", status_code=202, dependencies=[Depends(require_auth)]
+    )
+    async def ingest_rag_source(source_id: str) -> Any:
+        # Start (or re-run) the crawl. Idempotent economy: unchanged pages are hash-skipped,
+        # only new/changed content re-embeds. 202 + poll GET /rag/sources/{id} for progress.
+        async with tx() as session:
+            source = await rag_store.get_source(session, source_id)
+            if source is None:
+                return _error(
+                    f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+                )
+            if source.kind != "crawl":
+                return _error(
+                    "only a crawl source ingests on demand — upload sources ingest per "
+                    "uploaded document (POST /rag/sources/{id}/documents)",
+                    status=400,
+                    code="invalid_rag_source",
+                )
+            invalid = _validate_rag_config(source.kind, source.config)
+            if invalid is not None:
+                return invalid
+            # Flip the row before the task starts so the 202's immediate follow-up poll
+            # already reads ``ingesting`` (the task re-asserts it).
+            await rag_store.set_source_state(session, source_id, status="ingesting", error=None)
+        try:
+            app.state.rag_ingest.start_crawl(source)
+        except IngestBusy as exc:
+            return _error(str(exc), status=409, code="rag_ingest_busy")
+        logger.info("rag.crawl_started", extra={"source_id": source_id})
+        return JSONResponse({**source.public_dump(), "status": "ingesting"}, status_code=202)
+
+    @app.post("/rag/sources/{source_id}:cancel", dependencies=[Depends(require_auth)])
+    async def cancel_rag_ingest(
+        source_id: str, session: AsyncSession = Depends(get_session)
+    ) -> Any:
+        source = await rag_store.get_source(session, source_id)
+        if source is None:
+            return _error(
+                f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+            )
+        # Cancelling a settled source is a no-op, mirroring download cancel semantics.
+        app.state.rag_ingest.cancel(source_id)
+        return source.public_dump()
+
+    @app.post(
+        "/rag/sources/{source_id}/documents",
+        status_code=202,
+        dependencies=[Depends(require_auth)],
+    )
+    async def upload_rag_document(
+        source_id: str, request: Request, filename: str = Query(default="")
+    ) -> Any:
+        # Raw body upload, like /artifacts (Content-Type is the file's mime; no multipart, so a
+        # browser posts the File blob directly). ``filename`` carries the name + extension the
+        # parser dispatches on. Parsing/chunking/embedding run in the background; poll the source.
+        name = filename.strip()
+        if not name:
+            return _error(
+                "a 'filename' query parameter is required (the extension picks the parser)",
+                status=400,
+                code="invalid_rag_document",
+            )
+        if not supported_extension(name):
+            return _error(
+                f"unsupported document type for {name!r}",
+                status=422,
+                code="unsupported_document",
+            )
+        # Cheap gates BEFORE buffering the body: the source must exist, and the declared size
+        # must fit the cap (the post-read check below covers a lying/absent Content-Length —
+        # raw-body uploads buffer in memory, so unbounded input is a memory hazard).
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > _RAG_MAX_UPLOAD_BYTES:
+            return _error(
+                f"document exceeds the {_RAG_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB upload limit",
+                status=413,
+                code="document_too_large",
+            )
+        async with app.state.sessionmaker() as check_session:
+            if not await rag_store.source_exists(check_session, source_id):
+                return _error(
+                    f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+                )
+        data = await request.body()
+        if not data:
+            return _error("empty document body", status=400, code="invalid_rag_document")
+        if len(data) > _RAG_MAX_UPLOAD_BYTES:
+            return _error(
+                f"document exceeds the {_RAG_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB upload limit",
+                status=413,
+                code="document_too_large",
+            )
+        async with tx() as session:
+            source = await rag_store.get_source(session, source_id)
+            if source is None:
+                return _error(
+                    f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
+                )
+            await rag_store.set_source_state(session, source_id, status="ingesting")
+        try:
+            app.state.rag_ingest.start_upload(
+                source,
+                filename=name,
+                content_type=request.headers.get("content-type"),
+                data=data,
+            )
+        except IngestBusy as exc:
+            return _error(str(exc), status=409, code="rag_ingest_busy")
+        logger.info(
+            "rag.upload_started",
+            extra={"source_id": source_id, "uri": name, "bytes": len(data)},
+        )
+        return JSONResponse({**source.public_dump(), "status": "ingesting"}, status_code=202)
+
+    @app.post("/rag/sources/{source_id}/query", dependencies=[Depends(require_auth)])
+    async def query_rag_source(source_id: str, req: RagQueryRequest) -> Any:
+        # The same retrieval the ``rag`` node runs — exposed so a builder can inspect what the
+        # model would see before wiring the source into an agent.
+        try:
+            result = await app.state.rag.retrieve(
+                source_id=source_id,
+                query=req.query,
+                top_k=req.top_k,
+                min_similarity=req.min_similarity,
+            )
+        except RetrievalError as exc:
+            status = 404 if "unknown rag source" in str(exc) else 400
+            return _error(str(exc), status=status, code="rag_query_failed")
+        return result
 
     @app.post("/agents/{agent_id}/invoke", dependencies=[Depends(require_token)])
     async def invoke_agent(agent_id: str, req: InvokeRequest) -> Any:

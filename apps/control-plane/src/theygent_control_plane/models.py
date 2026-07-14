@@ -14,8 +14,20 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, String, Text, false
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Computed,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, TSVECTOR
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -513,3 +525,108 @@ class BenchPresetRow(Base):
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 
     __table_args__ = (Index("ix_bench_preset_modality", "modality"),)
+
+
+# ── Retrieval (RAG) rows ─────────────────────────────────────────────────────
+#
+# A retrieval *source* is a named, user-owned document collection an agent's ``rag`` node queries.
+# Vectors live in the SAME Postgres (pgvector) so chunks stay transactional with their source —
+# one backup, FK cascades, and hybrid (vector + full-text) search in one SQL statement. The
+# embedding model is a LOGICAL inference-plane id pinned per source at creation: mixing embeddings
+# from different models in one similarity space is meaningless, so switching models is an explicit
+# re-ingest, never a silent drift. ``embedding_dim`` is discovered from the first embedding
+# response (the control plane never imports an embedding library — the dim is whatever the
+# inference plane returned) and every chunk carries it so per-dimension partial indexes and the
+# mandatory dim predicate keep mixed-dimension rows out of one ANN comparison.
+
+
+class RagSourceRow(Base):
+    """One retrieval collection + the state of its ingest job. Ingestion (crawl/parse/chunk/embed)
+    runs as an in-process background task; its live counters land in ``progress`` (JSONB) and its
+    terminal outcome in ``status``/``error`` — the UI polls the row, mirroring how model downloads
+    report. A source interrupted by a restart is swept to ``failed`` on startup (the same honesty
+    net as orphaned runs — cheap mitigation, not resume)."""
+
+    __tablename__ = "rag_source"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``rag_<ulid>``
+    name: Mapped[str] = mapped_column(String)  # human label (the picker shows this)
+    kind: Mapped[str] = mapped_column(String)  # upload | crawl
+    # Non-secret ingest config. For ``crawl``: root_url, max_pages, render_js (opt into a headless
+    # browser for JS-rendered sites), include/exclude path prefixes. For ``upload``: unused.
+    config: Mapped[dict] = mapped_column(JSONB)
+    embedding_model: Mapped[str] = mapped_column(String)  # logical id (never an engine name)
+    # Discovered from the first embedding response; NULL until the first chunk embeds.
+    embedding_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String)  # empty|ingesting|ready|failed|cancelled
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    progress: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # live ingest counters
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("ix_rag_source_created", "created_at", "id"),)
+
+
+class RagDocumentRow(Base):
+    """One ingested document (a crawled page or an uploaded file). ``content_hash`` is the sha256
+    of the *extracted text*, so a re-crawl skips unchanged pages (and their embedding cost) instead
+    of re-embedding the whole site. ``uri`` is unique per source — re-ingesting a page replaces its
+    chunks rather than duplicating them."""
+
+    __tablename__ = "rag_document"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``rdoc_<ulid>``
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("rag_source.id", ondelete="CASCADE"), nullable=False
+    )
+    uri: Mapped[str] = mapped_column(Text)  # page url, or the uploaded filename
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String, nullable=True)  # sha256 of the text
+    status: Mapped[str] = mapped_column(String)  # pending|embedded|failed
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chars: Mapped[int] = mapped_column(Integer)  # extracted text length (ingest evidence)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_rag_document_source", "source_id"),
+        UniqueConstraint("source_id", "uri", name="uq_rag_document_source_uri"),
+    )
+
+
+class RagChunkRow(Base):
+    """One embedded chunk — the retrieval unit. ``embedding`` is deliberately an UNTYPED pgvector
+    column (no fixed dimension): sources pin different embedding models, so one typed column can't
+    hold them all. Every similarity query filters on ``dim`` and casts
+    ``embedding::vector(<dim>)`` — the exact expression the per-dimension partial HNSW index (built
+    by the ingest service once a dimension first appears; runtime DDL, deliberately outside
+    Alembic) is defined over, so the query planner can use it. ``tsv`` is the generated full-text
+    column for the keyword leg of hybrid search. ``source_id`` is denormalized off the document so
+    the hot query path (filter by source, order by distance) needs no join."""
+
+    __tablename__ = "rag_chunk"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``rchk_<ulid>``
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("rag_document.id", ondelete="CASCADE"), nullable=False
+    )
+    source_id: Mapped[str] = mapped_column(
+        ForeignKey("rag_source.id", ondelete="CASCADE"), nullable=False
+    )
+    position: Mapped[int] = mapped_column(Integer)  # chunk order within the document
+    text: Mapped[str] = mapped_column(Text)
+    # The heading path ("Install > macOS") — prepended at embed time (context) + shown in results.
+    heading: Mapped[str | None] = mapped_column(Text, nullable=True)
+    dim: Mapped[int] = mapped_column(Integer)  # embedding dimension (the index/query predicate)
+    embedding: Mapped[list[float]] = mapped_column(Vector())  # untyped — see class docstring
+    tsv: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('english', text)", persisted=True),
+    )
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("ix_rag_chunk_source", "source_id"),
+        Index("ix_rag_chunk_document", "document_id"),
+        Index("ix_rag_chunk_tsv", "tsv", postgresql_using="gin"),
+    )

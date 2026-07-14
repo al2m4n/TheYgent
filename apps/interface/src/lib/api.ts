@@ -199,6 +199,69 @@ export interface TriggerRecord {
   updated_at: string;
 }
 
+// ── retrieval sources (RAG — snake_case control-plane wire) ──────────────────
+// A named document collection agents retrieve from. Ingestion (a crawl or an upload batch) runs as
+// a background job server-side; the UI polls `getRagSource` while `status === "ingesting"` (the
+// same pattern as model-download polling). The `rag` node references a source by its STABLE id, so
+// re-ingesting never changes an agent's hash.
+export type RagSourceKind = "upload" | "crawl";
+export type RagSourceStatus = "empty" | "ingesting" | "ready" | "failed" | "cancelled";
+
+export interface RagIngestProgress {
+  pages?: number;
+  documents?: number;
+  chunks?: number;
+  unchanged?: number;
+}
+
+export interface RagSource {
+  id: string;
+  name: string;
+  kind: RagSourceKind;
+  config: Record<string, unknown>;
+  embedding_model: string;
+  embedding_dim: number | null;
+  status: RagSourceStatus;
+  error: string | null;
+  progress: RagIngestProgress | null;
+  documents: number;
+  chunks: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RagDocument {
+  id: string;
+  source_id: string;
+  uri: string;
+  title: string;
+  status: "pending" | "embedded" | "failed";
+  error: string | null;
+  chars: number;
+  chunks: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RagQueryMatch {
+  chunk_id: string;
+  document_id: string;
+  uri: string;
+  title: string | null;
+  heading: string | null;
+  position: number;
+  text: string;
+  score: number;
+  similarity: number | null;
+}
+
+export interface RagQueryResult {
+  source_id: string;
+  source_name: string;
+  query: string;
+  matches: RagQueryMatch[];
+}
+
 // ── inference-plane engines + capabilities (camelCase /admin/*) ──────────────
 export interface EnginesView {
   maxResident: number;
@@ -596,6 +659,75 @@ export const api = {
   // ── control plane: triggers (surfaced on the input node) ─────────────────────
   listTriggers: () =>
     request<{ triggers: TriggerRecord[] }>(CONTROL_PLANE_URL, "/triggers").then((r) => r.triggers),
+
+  // ── control plane: retrieval sources (RAG) ──────────────────────────────────
+  listRagSources: () =>
+    request<{ sources: RagSource[] }>(CONTROL_PLANE_URL, "/rag/sources").then((r) => r.sources),
+
+  getRagSource: (id: string) =>
+    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`),
+
+  createRagSource: (body: {
+    name: string;
+    kind: RagSourceKind;
+    embedding_model: string;
+    config?: Record<string, unknown>;
+  }) =>
+    request<RagSource>(CONTROL_PLANE_URL, "/rag/sources", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateRagSource: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
+    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  deleteRagSource: (id: string) =>
+    request<void>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  listRagDocuments: (id: string) =>
+    request<{ documents: RagDocument[] }>(
+      CONTROL_PLANE_URL,
+      `/rag/sources/${encodeURIComponent(id)}/documents`,
+    ).then((r) => r.documents),
+
+  // Start (or re-run) a crawl. Returns the source already flipped to "ingesting" — hand it to
+  // `trackIngest` so the global center polls it to completion.
+  ingestRagSource: (id: string) =>
+    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}:ingest`, {
+      method: "POST",
+    }),
+
+  cancelRagIngest: (id: string) =>
+    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}:cancel`, {
+      method: "POST",
+    }),
+
+  // Upload one document into an upload source. Raw body like uploadArtifact — the Content-Type is
+  // the file's mime, not multipart; the filename rides the query string.
+  uploadRagDocument: async (id: string, file: File): Promise<RagSource> => {
+    const res = await fetch(
+      `${CONTROL_PLANE_URL}/rag/sources/${encodeURIComponent(id)}/documents?filename=${encodeURIComponent(file.name)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream", ...authHeaders() },
+        body: file,
+      },
+    );
+    if (!res.ok) throw await toError(res);
+    return res.json();
+  },
+
+  // The query tester: retrieve top matches from one source (the same call a rag node makes).
+  queryRagSource: (id: string, body: { query: string; top_k?: number; min_similarity?: number }) =>
+    request<RagQueryResult>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}/query`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   // Control-plane registered MCP servers — to populate the mcp_tool `server` picker + the MCP page.
   listMcpServers: () =>

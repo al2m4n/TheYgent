@@ -31,6 +31,19 @@ dependencies = [
     # carries no secret and rotation never bumps a hash (secrets.py). Present transitively (via the
     # MCP/DBOS stacks); declared now that we depend on it directly. A real KMS is the deferred upgrade.
     "cryptography>=42",
+    # Retrieval storage: vector similarity lives in the SAME Postgres (pgvector), so chunks stay
+    # transactional with their source rows — no second storage engine. The package is the
+    # SQLAlchemy Vector type; the extension itself is created by migration 0015.
+    "pgvector>=0.5.0",
+    # Docs-site crawling for retrieval sources (rag/crawl.py). The beautifulsoup crawler is the
+    # static-fetch default; the playwright crawler serves sources that opt into JS rendering
+    # (browser binaries install on first use — `playwright install chromium`, never bundled).
+    "crawlee[beautifulsoup,playwright]>=1.8.2",
+    # Main-content extraction (boilerplate removal, HTML → markdown) for crawled pages.
+    "trafilatura>=2.1.0",
+    # Uploaded-document conversion (PDF/DOCX/PPTX/XLSX/HTML → markdown-ish text) for the
+    # retrieval ingest path. Deliberately the lightweight converter: no ML weights to bundle.
+    "markitdown[docx,pdf,pptx,xlsx]>=0.1.6",
 ]
 
 [project.scripts]

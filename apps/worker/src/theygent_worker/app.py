@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from theygent_control_plane import db
 from theygent_control_plane.durable import DurableRuntime
 from theygent_control_plane.mcp import McpManager
+from theygent_control_plane.rag import RagRetriever
 from theygent_control_plane.store import AgentStore, McpStore, RunStore, TriggerStore
 from theygent_gateway_client import GatewayClient
 
@@ -63,6 +64,9 @@ async def build_runtime(
         agents=AgentStore(),
         triggers=TriggerStore(),
         sessionmaker=sessionmaker,
+        # Retrieval backend for rag activities — embeds over the same gateway (logical ids),
+        # searches the shared Postgres. Same behavior as the control-plane's runtime.
+        rag=RagRetriever(sessionmaker, gateway),
         fast_polling=fast_polling,
         # A distinct, stable executor identity per process role: launch-time recovery then claims
         # only workflows THIS role's crashed process left pending, never ones the (healthy) API

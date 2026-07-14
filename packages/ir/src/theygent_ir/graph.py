@@ -106,6 +106,8 @@ EXECUTABLE_TYPES: frozenset[str] = frozenset(
         "ratelimit",
         "quota",
         "transform",
+        # retrieval over a saved control-plane source (step-mode or llm capability)
+        "rag",
     }
 )
 
@@ -641,6 +643,27 @@ class ImagineConfig(_Wire):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class RagConfig(_Wire):
+    """``rag`` activity node config — retrieve from a saved retrieval source.
+
+    ``source`` is the STABLE id of a control-plane retrieval source (``rag_<ulid>``) — the same
+    reference discipline as a connection id: the id is hashed content, the documents behind it
+    are not, so re-ingesting/re-crawling a source never bumps an agent's ``contentHash``. The
+    embedding model is pinned ON the source (control-plane side), deliberately NOT here — a
+    ``models`` key would weld an inference binding to retrieval identity.
+
+    Two wirings, like a tool node: as a STEP (``data`` edges), ``query`` is the query template
+    (``$in`` grammar; ``None`` = the default in-port's whole value); as a CAPABILITY (a ``tool``
+    edge into an llm's ``tools`` port), the model calls it with ``{query}`` and ``description``
+    is the "use this when…" hint — ``query`` is ignored there (the model supplies it)."""
+
+    source: str = Field(min_length=1)
+    query: str | None = None
+    top_k: int = Field(default=5, ge=1, le=50)
+    min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+    description: str | None = None
+
+
 class GuardrailRule(_Wire):
     """A deterministic guardrail check backend (``check.type == "rule"``). ``kind`` selects the
     predicate; ``spec`` carries its knob (the regex, the min/max length, the json schema, the
@@ -731,6 +754,7 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "transcribe": TranscribeConfig,
     "speak": SpeakConfig,
     "imagine": ImagineConfig,
+    "rag": RagConfig,
     "guardrail": GuardrailConfig,
     "ratelimit": RateLimitConfig,
     "quota": QuotaConfig,
@@ -1016,9 +1040,9 @@ def validate_graph(ir: IRDocument) -> None:
             continue
         src = node_by_id[edge.source]
         tgt = node_by_id[edge.target]
-        if src.type not in {"tool", "mcp_tool"}:
+        if src.type not in {"tool", "mcp_tool", "rag"}:
             raise GraphValidationError(
-                f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool node, "
+                f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool/rag node, "
                 f"not {src.type!r}"
             )
         if tgt.type != "llm":
@@ -1045,7 +1069,7 @@ def validate_graph(ir: IRDocument) -> None:
             )
 
     for node in ir.nodes:
-        if node.type not in {"tool", "mcp_tool"}:
+        if node.type not in {"tool", "mcp_tool", "rag"}:
             continue
         out_channels = {e.channel for e in ir.edges if e.source == node.id}
         is_capability = "tool" in out_channels

@@ -51,6 +51,8 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     # into an llm's `tools` port. The data `out`/`err` stay for STEP-mode (run as a graph step).
     "tool": {"in": ["in"], "out": ["out", "err", "use"]},
     "mcp_tool": {"in": ["in"], "out": ["out", "err", "use"]},
+    # rag follows the tool shape: step-mode out/err plus the `use` capability connector.
+    "rag": {"in": ["in"], "out": ["out", "err", "use"]},
     "router": {"in": ["in"], "out": ["out"]},
     "human": {"in": ["in"], "out": ["out"]},
     # A failed subgraph child binds its error to the node's error-typed out-port (the tool ok/err
@@ -77,6 +79,10 @@ _PORT_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     ("llm", "tools"): {"role": "tool", "required": False},
     ("tool", "use"): {"role": "tool"},
     ("mcp_tool", "use"): {"role": "tool"},
+    ("rag", "use"): {"role": "tool"},
+    # A rag node's `in` port is optional: step-mode may template `query` from config alone,
+    # and capability-mode receives the query from the model.
+    ("rag", "in"): {"required": False},
 }
 
 

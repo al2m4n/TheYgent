@@ -53,6 +53,23 @@ _TINY_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
 
+#: The fake embedding dimension — importable so tests assert the discovered source dim.
+EMBED_DIM = 8
+
+
+def embed_vector(text: str, dim: int = EMBED_DIM) -> list[float]:
+    """A deterministic bag-of-words embedding: each word hashes into one signed bucket, then the
+    vector normalizes. Texts sharing words land near each other — enough signal for ordering
+    assertions without any model."""
+    import hashlib as _hashlib
+
+    vec = [0.0] * dim
+    for word in text.lower().split():
+        digest = _hashlib.sha256(word.encode()).digest()
+        vec[digest[0] % dim] += 1.0 if digest[1] % 2 else -1.0
+    norm = sum(v * v for v in vec) ** 0.5 or 1.0
+    return [v / norm for v in vec]
+
 
 def _build_app(
     mode: str,
@@ -92,6 +109,43 @@ def _build_app(
         captured["audio_hit"] = True
         captured["audio_model"] = body.get("model")
         return Response(content=b"FAKE_AUDIO_BYTES", media_type="audio/mpeg")
+
+    # The embeddings data-plane endpoint (the control-plane's rag ingest/query calls THIS —
+    # embeddings cross the same HTTP seam as chat). Deterministic bag-of-words vectors: shared
+    # words → nearby vectors, so similarity ordering in tests is meaningful, and the same text
+    # always embeds identically (the re-ingest hash-skip economy is assertable).
+    @app.post("/v1/embeddings")
+    async def embeddings(request: Request):
+        body = await request.json()
+        if captured.get("embed_fail"):
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": {
+                        "message": "embedding engine not available",
+                        "type": "server_error",
+                        "code": "engine_unavailable",
+                    }
+                },
+            )
+        inputs = body.get("input")
+        if isinstance(inputs, str):
+            inputs = [inputs]
+        captured["embed_model"] = body.get("model")
+        captured["embed_calls"] = int(captured.get("embed_calls") or 0) + 1
+        captured["embed_inputs"] = inputs
+        data = [
+            {"object": "embedding", "index": i, "embedding": embed_vector(t)}
+            for i, t in enumerate(inputs)
+        ]
+        return JSONResponse(
+            {
+                "object": "list",
+                "data": data,
+                "model": body.get("model"),
+                "usage": {"prompt_tokens": 1, "total_tokens": 1},
+            }
+        )
 
     # The image-generation data-plane endpoint (the control-plane's imagine node calls THIS —
     # proving the bytes come from the inference base URL, never a control-plane route). Returns a
@@ -377,6 +431,11 @@ class FakeInference:
             "image_hit": False,
             "image_model": None,
             "image_prompt": None,
+            "embed_model": None,
+            "embed_calls": 0,
+            "embed_inputs": None,
+            # Flip to True mid-test to make /v1/embeddings return 503 (a transient outage).
+            "embed_fail": False,
         }
         app = _build_app(mode, self.captured, response, tool_name, tool_args)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

@@ -273,8 +273,11 @@ class LlamaCppLauncher:
         if binding.modality == "embeddings":
             # llama.cpp is the "one binary, many modalities via flags" engine: the SAME
             # llama-server serves /v1/embeddings once embeddings mode is on. Pooling must not be
-            # `none` for the OpenAI endpoint (it returns one vector per input) → `mean`.
-            cmd += ["--embeddings", "--pooling", "mean"]
+            # `none` for the OpenAI endpoint (it returns one vector per input). The default is
+            # `mean` (right for the BERT-family embedders); models that pool differently (e.g.
+            # last-token embedders) override per binding via `params.pooling`.
+            pooling = str(binding.params.get("pooling") or "mean")
+            cmd += ["--embeddings", "--pooling", pooling]
         elif binding.modality == "vision":
             # Vision is the same binary with a multimodal projector: llama-server accepts image_url
             # content on /v1/chat/completions once an mmproj is loaded. The projector is a separate

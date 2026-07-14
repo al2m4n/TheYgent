@@ -167,6 +167,10 @@ function NodePanel({
             // tool + mcp_tool are ONE node with a kind picker (builtin / REST / MCP) — the
             // kind chooses the binding shape and (for mcp) the underlying node type.
             <ToolNodePanel ir={ir} node={node} onChange={onChange} />
+          ) : node.type === "rag" ? (
+            // A rag node references a saved retrieval source by id — a picker over the live list
+            // plus the retrieval knobs, instead of the generic schema form.
+            <RagNodePanel ir={ir} node={node} onChange={onChange} />
           ) : node.type === "guardrail" ? (
             // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
             // node's kind, so it's edited through a dedicated panel rather than raw JSON.
@@ -712,7 +716,13 @@ function llmCapabilityTools(
     if (!n) continue;
     const cfg = (n.config ?? {}) as Record<string, unknown>;
     const kind =
-      n.type === "mcp_tool" ? "mcp" : cfg.connection || cfg.urlTemplate ? "http" : "builtin";
+      n.type === "rag"
+        ? "rag"
+        : n.type === "mcp_tool"
+          ? "mcp"
+          : cfg.connection || cfg.urlTemplate
+            ? "http"
+            : "builtin";
     out.push({ id: n.id, label: n.label || (cfg.tool as string) || n.id, kind });
   }
   return out;
@@ -1596,6 +1606,112 @@ function ConnectionSelect({
         <span className="text-[10px] text-slate-600">connections unreachable</span>
       ) : null}
     </Field>
+  );
+}
+
+// ── the rag node panel (retrieve from a saved retrieval source, as a step or a capability) ────────
+
+/** The one editor for a `rag` node. `config.source` holds the STABLE id of a control-plane
+ * retrieval source — the id is hashed agent content, the documents behind it are not, so
+ * re-ingesting the source never changes the agent's hash. The rest are the retrieval knobs the
+ * runtime forwards (`topK`, `minSimilarity`) plus the two capability/step texts. */
+function RagNodePanel({
+  ir,
+  node,
+  onChange,
+}: {
+  ir: IRDocument;
+  node: IRNode;
+  onChange: (ir: IRDocument) => void;
+}) {
+  const config = (node.config ?? {}) as Record<string, unknown>;
+  const setKey = (key: string, value: unknown) =>
+    onChange(updateNodeConfig(ir, node.id, { ...config, [key]: value }));
+
+  const { data: sources, isError } = useQuery({
+    queryKey: ["ragSources"],
+    queryFn: api.listRagSources,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const source = config.source as string | undefined;
+  const known = (sources ?? []).some((s) => s.id === source);
+  const topK = typeof config.topK === "number" ? (config.topK as number) : 5;
+
+  return (
+    <>
+      <Field label="source *">
+        <Select value={source ?? ""} onChange={(e) => setKey("source", e.target.value)}>
+          <option value="">— pick a retrieval source —</option>
+          {/* Keep an unknown saved id selectable (offline / a source created elsewhere). */}
+          {source && !known && <option value={source}>{source}</option>}
+          {(sources ?? []).map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.status})
+            </option>
+          ))}
+        </Select>
+        <span className="text-[10px] text-slate-600">
+          {isError
+            ? "sources unreachable — the saved id still applies at run time"
+            : "re-ingesting the source never changes the agent's hash"}
+        </span>
+      </Field>
+
+      <Field label="top k">
+        <Input
+          type="number"
+          min={1}
+          max={50}
+          value={topK}
+          onChange={(e) =>
+            setKey("topK", Math.min(50, Math.max(1, Math.round(Number(e.target.value) || 1))))
+          }
+        />
+      </Field>
+
+      <Field label="min similarity (optional)">
+        <Input
+          type="number"
+          min={0}
+          max={1}
+          step={0.05}
+          value={typeof config.minSimilarity === "number" ? String(config.minSimilarity) : ""}
+          placeholder="off"
+          onChange={(e) =>
+            setKey("minSimilarity", e.target.value === "" ? null : Number(e.target.value))
+          }
+        />
+      </Field>
+
+      <Field label="description (what the model sees)">
+        <textarea
+          spellCheck={false}
+          value={(config.description as string) ?? ""}
+          placeholder="what the model reads to decide when to retrieve"
+          onChange={(e) => setKey("description", e.target.value || null)}
+          className="mono h-16 w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none focus:border-blue-500"
+        />
+      </Field>
+
+      <Field label="query (optional)">
+        <Input
+          value={(config.query as string) ?? ""}
+          placeholder="e.g. context for: $in"
+          onChange={(e) => setKey("query", e.target.value || null)}
+        />
+        <span className="text-[10px] text-slate-600">
+          step-mode only: $in template; leave empty to use the in-port value
+        </span>
+      </Field>
+
+      <p className="text-[10px] text-slate-600">
+        Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
+        handle (top) into an llm's{" "}
+        <span className="text-violet-600 dark:text-violet-300">tools</span> port so the model can
+        retrieve on demand.
+      </p>
+    </>
   );
 }
 

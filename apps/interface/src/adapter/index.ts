@@ -431,6 +431,10 @@ export type ToolBinding = NonNullable<IRDocument["tools"]>[string];
  * runtime's `_capability_binding` (walker.py). `mcp_tool` → mcp; a `tool` with a connection/url →
  * http; else a builtin ref. Returns null for any other node type. */
 function toolBindingFromNode(n: IRNode): ToolBinding | null {
+  // A rag capability is dispatched by its NODE ID at runtime (the retrieval source lives in the
+  // node's own config) — it must never mint an ir.tools binding, or the registry would carry a
+  // shape the backend doesn't read.
+  if (n.type === "rag") return null;
   const cfg = (n.config ?? {}) as Record<string, unknown>;
   if (n.type === "mcp_tool") {
     const b: Record<string, unknown> = { kind: "mcp", tool: cfg.tool ?? "" };

@@ -9,11 +9,12 @@
 // to any still-active job on mount (see resumeDownloads), so progress is never lost.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Database } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge, ProgressBar } from "../components/ui";
 import { Toaster } from "../components/ui/sonner";
-import { type DownloadJob, api } from "./api";
+import { type DownloadJob, type RagSource, api } from "./api";
 import { formatBytes, formatDuration } from "./format";
 
 // Thin re-export so call sites read `notify.success(...)` / `notify.error(...)`. Anything sonner's
@@ -156,6 +157,156 @@ function DownloadToast({
   );
 }
 
+const ingestToastId = (sourceId: string) => `ingest:${sourceId}`;
+
+// Spawn (or update) the persistent progress card for one retrieval-source ingest (a crawl or an
+// upload batch). Idempotent exactly like trackDownload: the toast id is keyed on the source, so a
+// resume-on-mount racing a fresh ingest updates the one card instead of stacking a duplicate.
+export function trackIngest(source: Pick<RagSource, "id"> & Partial<RagSource>): void {
+  toast.custom(
+    (t) => <IngestToast sourceId={source.id} initial={source} dismiss={() => toast.dismiss(t)} />,
+    {
+      id: ingestToastId(source.id),
+      duration: Number.POSITIVE_INFINITY, // an ingest isn't transient — it stays until dismissed
+      unstyled: true, // the inner card draws its own chrome; no Toaster styling to double up on
+      // Same lifecycle rule as the download card: no swipe-dismiss while the job is live.
+      dismissible: false,
+    },
+  );
+}
+
+// One live ingest row — polls the source until it leaves "ingesting", then offers to dismiss. The
+// bar is indeterminate (a crawl has no known total); progress is the running counters as text.
+function IngestToast({
+  sourceId,
+  initial,
+  dismiss,
+}: {
+  sourceId: string;
+  initial?: Partial<RagSource>;
+  dismiss: () => void;
+}) {
+  const qc = useQueryClient();
+  const { data, isError } = useQuery({
+    queryKey: ["ragSource", sourceId],
+    queryFn: () => api.getRagSource(sourceId),
+    initialData: initial?.status ? (initial as RagSource) : undefined,
+    retry: 1,
+    // Stop on ANY error too (a deleted source 404s forever while the last data still says
+    // "ingesting" — without the error guard this card would poll and block dismissal forever).
+    refetchInterval: (q) =>
+      q.state.status !== "error" && q.state.data?.status === "ingesting" ? 750 : false,
+  });
+  const cancel = useMutation({
+    mutationFn: () => api.cancelRagIngest(sourceId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["ragSource", sourceId] }),
+  });
+
+  // Once the ingest settles, the source + document lists everywhere refresh
+  // (status + document/chunk counts + per-document rows).
+  const settled = isError || (data?.status && data.status !== "ingesting");
+  useEffect(() => {
+    if (settled) {
+      qc.invalidateQueries({ queryKey: ["ragSources"] });
+      qc.invalidateQueries({ queryKey: ["ragDocuments"] });
+    }
+  }, [settled, qc]);
+
+  if (isError) {
+    // The source is gone (deleted mid-ingest) — say so and let the card be dismissed.
+    return (
+      <div className="w-[360px] space-y-1.5 rounded-lg border border-border bg-card p-3 shadow-xl">
+        <div className="flex items-center justify-between gap-2 text-xs">
+          <div className="flex min-w-0 items-center gap-2">
+            <Database size={13} className="shrink-0 text-muted-foreground" aria-hidden />
+            <span className="mono truncate text-foreground">{data?.name ?? sourceId}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Badge tone="slate">gone</Badge>
+            <button
+              type="button"
+              onClick={dismiss}
+              aria-label="Dismiss"
+              className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          This source no longer exists (deleted while ingesting).
+        </p>
+      </div>
+    );
+  }
+  if (!data) return <span />;
+  const ready = data.status === "ready";
+  const failed = data.status === "failed";
+  const cancelled = data.status === "cancelled";
+  const active = data.status === "ingesting";
+
+  const p = data.progress ?? {};
+  const counters = [
+    p.pages != null && `${p.pages} pages`,
+    p.documents != null && `${p.documents} documents`,
+    p.chunks != null && `${p.chunks} chunks`,
+    p.unchanged != null && p.unchanged > 0 && `${p.unchanged} unchanged`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="w-[360px] space-y-1.5 rounded-lg border border-border bg-card p-3 shadow-xl">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <Database size={13} className="shrink-0 text-muted-foreground" aria-hidden />
+          <span className="mono truncate text-foreground">{data.name ?? sourceId}</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* Cancelled is user-initiated, not a failure — neutral slate, not alarm red. */}
+          <Badge tone={failed ? "red" : cancelled ? "slate" : ready ? "green" : "blue"}>
+            {data.status}
+          </Badge>
+          {active ? (
+            <button
+              type="button"
+              onClick={() => cancel.mutate()}
+              disabled={cancel.isPending}
+              aria-label="Cancel ingest"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              Cancel
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={dismiss}
+              aria-label="Dismiss"
+              className="rounded px-1.5 text-muted-foreground hover:text-foreground"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+      {failed ? (
+        <p className="text-[11px] text-destructive">{data.error}</p>
+      ) : cancelled ? (
+        <p className="text-[11px] text-muted-foreground">Cancelled.</p>
+      ) : (
+        <>
+          {/* No known total for a crawl — the bar animates; the counters carry the progress.
+              It fills only on the terminal ready state. */}
+          <ProgressBar value={ready ? 1 : 0} max={1} indeterminate={active} />
+          <p className="text-right text-[11px] text-muted-foreground">
+            {ready ? "Ingested ✓" : counters || "Starting…"}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
 // The mountable center. Renders the themed Toaster (bottom-right, follows the app theme) and, once
 // on mount, re-attaches a progress card to any install still running in the plane.
 export function NotificationCenter() {
@@ -167,6 +318,16 @@ export function NotificationCenter() {
         if (!active) return;
         for (const j of jobs ?? []) {
           if (j.status === "downloading" || j.status === "registering") trackDownload(j);
+        }
+      })
+      .catch(() => {});
+    // Ingests run in the control plane and also survive a page reload — re-attach their cards too.
+    api
+      .listRagSources()
+      .then((sources) => {
+        if (!active) return;
+        for (const s of sources ?? []) {
+          if (s.status === "ingesting") trackIngest(s);
         }
       })
       .catch(() => {});

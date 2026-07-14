@@ -22,7 +22,8 @@ async def truncate(url: str) -> None:
             "TRUNCATE message, run, chat_session, mcp_server, trigger, agent_version, agent, "
             "span, node_io, agent_io_policy, "
             "bench_run, bench_case, bench_suite, bench_preset, "
-            "connection, secret, gate_counter "
+            "connection, secret, gate_counter, "
+            "rag_chunk, rag_document, rag_source "
             "RESTART IDENTITY CASCADE"
         )
     finally:

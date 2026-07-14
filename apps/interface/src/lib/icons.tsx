@@ -123,6 +123,7 @@ export const DEFAULT_NODE_ICONS: Record<string, string> = {
   ratelimit: "gauge",
   quota: "chart-column",
   transform: "replace",
+  rag: "database",
 };
 
 /** Shown for any node `type` without a dedicated default (e.g. a future node type not yet registered). */

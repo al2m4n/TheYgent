@@ -156,8 +156,14 @@ jobs:
       - name: start Postgres (brew; macOS runners have no Docker for testcontainers)
         run: |
           brew install postgresql@16
-          brew services start postgresql@16
+          # pgvector, built against THIS Postgres — the migration chain runs CREATE EXTENSION
+          # vector, so a stock server fails `alembic upgrade head` (the brew pgvector bottle
+          # targets a different Postgres major, hence the small source build).
           PGBIN="$(brew --prefix postgresql@16)/bin"
+          git clone --depth 1 --branch v0.8.1 https://github.com/pgvector/pgvector.git /tmp/pgvector
+          make -C /tmp/pgvector PG_CONFIG="$PGBIN/pg_config"
+          make -C /tmp/pgvector install PG_CONFIG="$PGBIN/pg_config"
+          brew services start postgresql@16
           for i in $(seq 1 30); do
             if "$PGBIN/pg_isready" -h 127.0.0.1 -q; then break; fi
             sleep 1
