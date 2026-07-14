@@ -97,6 +97,7 @@ class DurableRuntime:
         tool_auth: Any = None,
         gates: Any = None,
         artifacts: Any = None,
+        rag: Any = None,
         executor_id: str | None = None,
     ) -> None:
         self._database_url = database_url
@@ -131,6 +132,7 @@ class DurableRuntime:
                 tool_auth=tool_auth,  # durable steps resolve connection auth too
                 gates=gates,  # durable gate steps use the same backend
                 artifacts=artifacts,  # durable audio steps use the same store
+                rag=rag,  # durable rag steps retrieve through the same backend
             )
         )
         self._launched = False

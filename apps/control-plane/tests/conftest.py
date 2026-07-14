@@ -42,7 +42,9 @@ def pg_url() -> Iterator[str]:
         pytest.skip("testcontainers not installed")
 
     try:
-        container = PostgresContainer("postgres:16", driver="asyncpg")
+        # The pgvector image IS postgres:16 plus the vector extension — migration 0015 runs
+        # CREATE EXTENSION vector, which the stock postgres image cannot satisfy.
+        container = PostgresContainer("pgvector/pgvector:pg16", driver="asyncpg")
         container.start()
     except Exception as exc:  # Docker not available locally — skip clean.
         pytest.skip(f"Docker/Postgres unavailable: {exc}")

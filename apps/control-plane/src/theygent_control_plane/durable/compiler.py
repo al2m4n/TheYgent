@@ -47,6 +47,7 @@ from theygent_ir import (
     McpToolConfig,
     Node,
     QuotaConfig,
+    RagConfig,
     RateLimitConfig,
     RouterConfig,
     SpeakConfig,
@@ -100,6 +101,7 @@ from theygent_control_plane.walker import (
     execute_mcp_connection_tool,
     execute_mcp_tool,
     execute_quota,
+    execute_rag,
     execute_ratelimit,
     execute_speak,
     execute_tool,
@@ -114,6 +116,7 @@ from theygent_control_plane.walker import (
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
+    resolve_rag_query,
     tool_result_message,
     usage_attributes,
 )
@@ -204,6 +207,9 @@ class DurableResources:
     gates: Any = None  # gates.GateBackend
     # The artifact store transcribe/speak resolve audio references through. May be None.
     artifacts: Any = None  # artifacts.LocalArtifactStore
+    # The retrieval backend rag nodes/capabilities query — the SAME one the interactive
+    # walker uses, so retrieval behaves identically on both runtimes. May be None.
+    rag: Any = None  # rag.RagRetriever
 
 
 _RES: DurableResources | None = None
@@ -349,6 +355,24 @@ async def _mcp_conn_step(
 
 
 @DBOS.step(**_RETRY)
+async def _rag_step(
+    run_id: str,
+    node_id: str,
+    source: str,
+    query: str,
+    top_k: int,
+    min_similarity: float | None,
+) -> dict[str, Any]:
+    """Retrieval as a durable step — the query is resolved deterministically in the workflow
+    body; the embedding + search (real I/O) happen HERE and journal their serializable result,
+    so a completed retrieval replays instead of re-embedding."""
+    out = await execute_rag(
+        _res().rag, source=source, query=query, top_k=top_k, min_similarity=min_similarity
+    )
+    return {"ok": out.ok, "value": out.value}
+
+
+@DBOS.step(**_RETRY)
 async def _http_step(
     run_id: str,
     node_id: str,
@@ -391,6 +415,21 @@ async def _durable_tool_call(
     independently journaled — a crash mid-loop resumes at the first incomplete step, completed
     calls replay from the journal. Mirrors the interactive ``execute_tool_call`` but via @DBOS.step
     bodies. Plain helper (not itself a step): it composes steps inside the workflow body."""
+    # A rag capability dispatches by NODE (no ir.tools binding shape) — mirror of the
+    # interactive execute_tool_call's rag branch, via the journaled step.
+    rag_node = next((n for n in ir.nodes if n.id == call.name and n.type == "rag"), None)
+    if rag_node is not None:
+        rcfg = RagConfig.model_validate(rag_node.config)
+        o = await _rag_step(
+            run_id,
+            node_id,
+            rcfg.source,
+            str(call.arguments.get("query") or ""),
+            rcfg.top_k,
+            rcfg.min_similarity,
+        )
+        return ActivityOutcome(ok=o["ok"], value=o["value"])
+
     # Dispatch: an ir.tools key OR a tool/mcp_tool NODE id wired as a capability (binding from the
     # node's inline config). Same dispatch below either way; legacy keys tried first.
     binding = ir.tools.get(call.name) or _capability_binding(ir, call.name)
@@ -1191,7 +1230,27 @@ async def _durable_walk(
                         values,
                         live_handles,
                     )
-                else:  # agent / rag / retriever / memory / code — deferred
+                elif node.type == "rag":  # retrieval over a saved source
+                    rcfg = RagConfig.model_validate(node.config)
+                    # The query resolves deterministically in the workflow body (replay-stable
+                    # step args); the embedding + search journal inside the step. An unresolvable
+                    # $in ref is a structured err — the tool contract, mirroring _walk_rag.
+                    try:
+                        rag_query = resolve_rag_query(rcfg, ports, node.id)
+                    except Exception as exc:
+                        rag_outcome = ActivityOutcome(ok=False, value=str(exc))
+                    else:
+                        step_out = await _rag_step(
+                            run_id,
+                            node.id,
+                            rcfg.source,
+                            rag_query,
+                            rcfg.top_k,
+                            rcfg.min_similarity,
+                        )
+                        rag_outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
+                    _bind_outcome(node, rag_outcome, values, live_handles)
+                else:  # agent / retriever / memory / code — deferred
                     raise NotImplementedError(
                         f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
                     )

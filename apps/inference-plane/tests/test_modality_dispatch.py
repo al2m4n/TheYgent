@@ -287,6 +287,16 @@ def test_llamacpp_embeddings_adds_flags() -> None:
     assert cmd[cmd.index("--pooling") + 1] == "mean"
 
 
+def test_llamacpp_embeddings_pooling_overrides_per_binding() -> None:
+    # Some embedders pool differently (e.g. last-token models) — the binding's params carry
+    # the override; the default stays mean.
+    launcher = LlamaCppLauncher(binary_path=sys.executable)
+    binding = _binding("llamacpp", "embeddings")
+    binding.params["pooling"] = "last"
+    cmd = launcher._build_command(binding, 9004)
+    assert cmd[cmd.index("--pooling") + 1] == "last"
+
+
 def test_llamacpp_chat_omits_embedding_flags() -> None:
     launcher = LlamaCppLauncher(binary_path=sys.executable)
     cmd = launcher._build_command(_binding("llamacpp", "chat"), 9002)

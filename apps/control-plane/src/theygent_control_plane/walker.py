@@ -59,6 +59,7 @@ from theygent_ir import (
     McpTool,
     McpToolConfig,
     Node,
+    RagConfig,
     RouterConfig,
     SpeakConfig,
     ToolConfig,
@@ -182,6 +183,10 @@ class WalkContext:
     # The artifact store ``transcribe``/``speak`` resolve audio references through (fetch the input
     # audio bytes / store the produced audio). Injected; ``None`` when no audio node runs.
     artifacts: Any = None  # artifacts.LocalArtifactStore
+    # The retrieval backend a ``rag`` node queries (embeds over the gateway, hybrid-searches the
+    # control-plane store). Injected; ``None`` when no graph retrieves — same discipline as
+    # ``tool_auth``/``gates``: the walker calls it, the backend owns its sessions.
+    rag: Any = None  # rag.RagRetriever
     # The observability handle for this run (the control-plane opens it before walking). When set,
     # the walker wraps each node in a span and captures per-node I/O through it (the one-wrapper
     # seam); when ``None`` (telemetry not wired) the walk is purely additive — the walker still does
@@ -794,6 +799,34 @@ async def execute_tool(
     return ActivityOutcome(ok=True, value=value)
 
 
+async def execute_rag(
+    retriever: Any,
+    *,
+    source: str,
+    query: str,
+    top_k: int,
+    min_similarity: float | None,
+) -> ActivityOutcome:
+    """Run one retrieval against the injected backend (``WalkContext.rag`` /
+    ``DurableResources.rag``). Same ok/err contract as ``execute_tool``: every failure shape —
+    no backend wired, unknown source, nothing ingested, an embedding failure — is a *structured
+    error* with an actionable message, never a run failure. The success value is the serializable
+    ``{source_id, source_name, query, matches: […]}`` retrieval result (matches carry text,
+    heading path, source uri/title, and scores — enough for the model to cite)."""
+
+    if retriever is None:
+        return ActivityOutcome(
+            ok=False, value="rag: no retrieval backend is configured on this runtime"
+        )
+    try:
+        value = await retriever.retrieve(
+            source_id=source, query=query, top_k=top_k, min_similarity=min_similarity
+        )
+    except Exception as exc:  # retrieval failed: structured err, run continues.
+        return ActivityOutcome(ok=False, value=str(exc))
+    return ActivityOutcome(ok=True, value=value)
+
+
 async def execute_mcp_tool(
     mcp: McpManager, server: str, tool: str, args: dict[str, Any]
 ) -> ActivityOutcome:
@@ -1364,7 +1397,7 @@ async def build_tool_schemas(
 
 
 def _capability_tool_nodes(ir: IRDocument, llm_node_id: str) -> list[Node]:
-    """The tool/mcp_tool nodes wired to this llm's ``tool``-role port (capability edges) — the
+    """The tool/mcp_tool/rag nodes wired to this llm's ``tool``-role port (capability edges) — the
     source of every inbound ``channel:"tool"`` edge. These are the tools the model may CALL; they
     are NOT run in topological order (a capability executes lazily inside the llm loop, args from
     the model). Deduped, source order preserved."""
@@ -1375,7 +1408,7 @@ def _capability_tool_nodes(ir: IRDocument, llm_node_id: str) -> list[Node]:
         if edge.channel != "tool" or edge.target != llm_node_id or edge.source in seen:
             continue
         src = by_id.get(edge.source)
-        if src is not None and src.type in ("tool", "mcp_tool"):
+        if src is not None and src.type in ("tool", "mcp_tool", "rag"):
             nodes.append(src)
             seen.add(edge.source)
     return nodes
@@ -1447,6 +1480,28 @@ async def build_capability_schemas(
                                 )
                                 break
             schemas.append(schema or _fn_schema(node.id, cfg.description, None))
+        elif node.type == "rag":
+            # A retrieval capability self-describes statically: one required ``query`` string.
+            # topK/minSimilarity are authored knobs on the node, deliberately NOT model-settable.
+            rcfg = RagConfig.model_validate(node.config)
+            schemas.append(
+                _fn_schema(
+                    node.id,
+                    rcfg.description
+                    or "Search the connected knowledge base for passages relevant to a query. "
+                    "Returns the best-matching excerpts with their source documents.",
+                    {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "What to search for (natural language).",
+                            }
+                        },
+                        "required": ["query"],
+                    },
+                )
+            )
         else:  # a tool node — builtin or http
             tcfg = ToolConfig.model_validate(node.config)
             if tcfg.connection or tcfg.url_template:
@@ -1492,6 +1547,7 @@ async def execute_tool_call(
     run_id: str,
     node_id: str,
     idempotency_suffix: str = "",
+    rag: Any = None,
 ) -> ActivityOutcome:
     """Execute ONE model-emitted tool call by dispatching to the EXISTING executor for its binding —
     no new tool machinery. ``call.name`` is an ir.tools key (or a directly-registered builtin);
@@ -1500,6 +1556,20 @@ async def execute_tool_call(
     error is RETURNED, not raised, so the loop feeds it back to the model. The
     ``idempotency_suffix`` (the call id / iteration) is appended to the http idempotency key so a
     write tool called twice in one loop under at-least-once doesn't collide."""
+
+    # A rag capability dispatches by NODE, not by an ir.tools binding — retrieval has no
+    # tools-block shape (the source id + knobs live in the node's own config; the model
+    # supplies only the query).
+    rag_node = next((n for n in ir.nodes if n.id == call.name and n.type == "rag"), None)
+    if rag_node is not None:
+        rcfg = RagConfig.model_validate(rag_node.config)
+        return await execute_rag(
+            rag,
+            source=rcfg.source,
+            query=str(call.arguments.get("query") or ""),
+            top_k=rcfg.top_k,
+            min_similarity=rcfg.min_similarity,
+        )
 
     # ``call.name`` is an ir.tools key. If it isn't, it may be a tool/mcp_tool NODE id wired as a
     # capability — resolve the binding from that node's inline config. Either way the same dispatch
@@ -1908,8 +1978,10 @@ async def walk(
                     await _walk_speak(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "imagine":
                     await _walk_imagine(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "rag":
+                    await _walk_rag(node, ir, ctx, values, skipped, live_handles)
                 else:
-                    # agent / rag / retriever / memory / code — deferred.
+                    # agent / retriever / memory / code — deferred.
                     raise NotImplementedError(
                         f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"
                     )
@@ -2284,6 +2356,7 @@ async def _walk_llm(
                         run_id=ctx.run_id,
                         node_id=node.id,
                         idempotency_suffix=f"{node.id}-{iteration}-{call.id}",
+                        rag=ctx.rag,
                     )
                     if tool_scope is not None:
                         tool_scope.set_attributes({"tool.name": call.name, "tool.ok": outcome.ok})
@@ -2375,6 +2448,59 @@ async def _walk_tool(
                 "run_id": ctx.run_id,
                 "node_id": node.id,
                 "tool": config.tool,
+                "error": outcome.value,
+            },
+        )
+
+
+def resolve_rag_query(config: RagConfig, ports: _PortInputs, node_id: str) -> str:
+    """The step-mode query: ``config.query`` rendered through the shared ``$in`` grammar when
+    authored; otherwise the default in-port's whole value. A non-string upstream value is
+    JSON-serialized (retrieval wants text). Shared by both runtimes so the durable lowering
+    resolves queries identically."""
+    if config.query is not None:
+        return _render_template(config.query, ports, node_id)
+    value = _resolve_ref("$in", ports, node_id)
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+
+async def _walk_rag(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+) -> None:
+    """Step-mode ``rag`` node: resolve the query (config template or the default in-port), run
+    the retrieval through the injected backend, and bind matches to the ok handle(s). Every
+    failure — unresolvable query ref, unknown source, nothing ingested yet — is a *structured
+    error* bound to ``err``; the run continues (the tool ok/err contract)."""
+
+    config = RagConfig.model_validate(node.config)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    try:
+        query = resolve_rag_query(config, ports, node.id)
+    except Exception as exc:  # an unresolvable $in ref is a structured err, like a tool arg
+        outcome = ActivityOutcome(ok=False, value=str(exc))
+    else:
+        outcome = await execute_rag(
+            ctx.rag,
+            source=config.source,
+            query=query,
+            top_k=config.top_k,
+            min_similarity=config.min_similarity,
+        )
+    _bind_outcome(node, outcome, values, live_handles)
+    if not outcome.ok:
+        logger.info(
+            "graph.rag_error",
+            extra={
+                "run_id": ctx.run_id,
+                "node_id": node.id,
+                "source": config.source,
                 "error": outcome.value,
             },
         )

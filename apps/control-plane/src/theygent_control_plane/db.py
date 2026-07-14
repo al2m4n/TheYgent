@@ -28,6 +28,13 @@ def create_engine(database_url: str) -> AsyncEngine:
     """A pooled async engine for ``postgresql+asyncpg://…``. Created once (lifespan)."""
     # pool_pre_ping: a recycled/dead pooled connection surfaces as a clean reconnect
     # rather than a first-query error — matters when instances outlive PG failovers.
+    #
+    # pgvector rides on TEXT, deliberately: the asyncpg *binary* codec
+    # (pgvector.asyncpg.register_vector) and the SQLAlchemy ``Vector`` column type are mutually
+    # exclusive — the type stringifies on bind, and a registered binary codec would then be handed
+    # that string and fail. Unregistered, asyncpg sends the string as text and Postgres' vector
+    # input function parses it; reads come back as text the type parses to floats. Retrieval
+    # queries bind their query vector the same way (a ``[…]`` string + an explicit cast).
     return create_async_engine(database_url, pool_pre_ping=True)
 
 

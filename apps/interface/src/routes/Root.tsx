@@ -22,7 +22,6 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../components/ui";
 import { Avatar, AvatarFallback } from "../components/ui/avatar";
-import { Badge } from "../components/ui/badge";
 import {
   Sidebar,
   SidebarContent,
@@ -64,7 +63,7 @@ interface NavEntry {
 
 // Three groups, separated in the rail: the build/observe surfaces (Agents/Runs), the
 // conversational surfaces (New Chat / Chats, with the recent sessions right below), and a
-// collapsible Configuration group (Registries, MCP, the reserved RAG slot, app Settings).
+// collapsible Configuration group (Registries, MCP, RAG, app Settings).
 const NAV_MAIN: NavEntry[] = [
   { to: "/", label: "Agents", icon: Bot, exact: true },
   { to: "/runs", label: "Runs", icon: Activity },
@@ -75,10 +74,10 @@ const NAV_CHAT: NavEntry[] = [
   { to: "/sessions", label: "Chats", icon: MessagesSquare },
 ];
 
-// Configuration entries around the RAG placeholder (which is reserved, not routed).
 const NAV_CONFIG_HEAD: NavEntry[] = [
   { to: "/registries", label: "Registries", icon: Boxes },
   { to: "/mcp", label: "MCP", icon: Plug },
+  { to: "/rag", label: "RAG", icon: Database },
 ];
 // App-level settings (endpoints, credentials) — distinct from the profile's USER settings
 // (identity, theme) at the bottom of the rail.
@@ -372,19 +371,6 @@ function RecentItem({ session }: { session: SessionSummary }) {
   );
 }
 
-// The reserved retrieval slot: visible so the IA already has its place, inert until it ships.
-function RagPlaceholder() {
-  return (
-    <SidebarMenuItem>
-      <SidebarMenuButton disabled title="Coming soon" tooltip="RAG — soon">
-        <Database />
-        <span>RAG</span>
-        <Badge variant="secondary">soon</Badge>
-      </SidebarMenuButton>
-    </SidebarMenuItem>
-  );
-}
-
 // The collapsible Configuration group. Expanded rail: a disclosure header over the entries;
 // icon rail: the entries render as plain icons regardless of the disclosure (a hidden group
 // would strand them — the header itself hides via the group-label icon-mode rule).
@@ -433,7 +419,6 @@ function ConfigGroup() {
             {NAV_CONFIG_HEAD.map((item) => (
               <NavItem key={item.to} item={item} />
             ))}
-            <RagPlaceholder />
             <NavItem item={NAV_SETTINGS} />
           </SidebarMenu>
         </SidebarGroupContent>

@@ -4,6 +4,7 @@ import { Chat } from "./routes/Chat";
 import { Editor } from "./routes/Editor";
 import { Home } from "./routes/Home";
 import { Mcp } from "./routes/Mcp";
+import { Rag } from "./routes/Rag";
 import { Registries } from "./routes/Registries";
 import { Root } from "./routes/Root";
 import { RunDetail } from "./routes/RunDetail";
@@ -85,6 +86,12 @@ const mcpRoute = createRoute({
   component: Mcp,
 });
 
+const ragRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/rag",
+  component: Rag,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -101,6 +108,7 @@ const routeTree = rootRoute.addChildren([
   editorRoute,
   registriesRoute,
   mcpRoute,
+  ragRoute,
   settingsRoute,
 ]);
 

@@ -737,7 +737,8 @@ def test_alembic_and_dbos_schemas_coexist_and_roundtrip(_: int) -> None:
     from theygent_control_plane.durable.config import to_dbos_url
 
     try:
-        container = PostgresContainer("postgres:16", driver="asyncpg")
+        # pgvector image: the migration chain includes CREATE EXTENSION vector (retrieval).
+        container = PostgresContainer("pgvector/pgvector:pg16", driver="asyncpg")
         container.start()
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"Docker/Postgres unavailable: {exc}")
