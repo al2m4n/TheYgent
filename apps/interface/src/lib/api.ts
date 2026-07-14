@@ -140,22 +140,117 @@ export interface McpServerSummary {
   name: string;
   transport: string;
   connected: boolean;
+  /** A remote (http/sse) registration's endpoint; null for stdio. */
+  url?: string | null;
+  /** Header KEYS only — values never round-trip the wire (the sovereignty rule). */
+  headerKeys?: string[];
 }
 
-// The PUT /admin/mcp/servers/{name} body — a stdio server definition. `env` carries the user's
-// secrets/paths into the spawned subprocess; it stays in the user's trust domain.
+// The PUT /admin/mcp/servers/{name} body — a name-keyed server registration. Stdio uses
+// command/args/env/cwd (`env` carries the user's secrets/paths into the spawned subprocess; it
+// stays in the user's trust domain); http/sse use url/headers. Generated (openapi/graphql)
+// servers are NOT registered here — they are mcp_server connections (POST /connections).
 export interface McpServerConfig {
-  transport: "stdio";
-  command: string;
-  args: string[];
+  transport: "stdio" | "http" | "sse";
+  command?: string | null;
+  args?: string[];
   env?: Record<string, string> | null;
   cwd?: string | null;
+  url?: string | null;
+  headers?: Record<string, string> | null;
 }
 
 export interface McpToolDescriptor {
   name: string;
   description?: string | null;
   inputSchema?: Record<string, unknown> | null;
+}
+
+// ── MCP hub catalog (browse/install servers from a registry) — camelCase /admin/* wire ───────────
+// Hand-mirrored catalog metadata (like CatalogEntry for models) — never the IR. Browse is
+// metadata-only; install lands as an `mcp_server` connection with `config.origin` stamped.
+
+export interface McpRegistryInfo {
+  id: string;
+  label: string;
+  url: string;
+}
+
+export interface McpCatalogEntry {
+  registry: string;
+  name: string;
+  title: string | null;
+  description: string;
+  version: string;
+  status: string;
+  isLatest: boolean;
+  updatedAt: string | null;
+  repositoryUrl: string | null;
+  websiteUrl: string | null;
+  stars: number | null;
+  transports: string[];
+  packageTypes: string[];
+  deprecationMessage: string | null;
+  installed: boolean;
+  installedAs: string | null;
+  installedConnection: string | null;
+}
+
+export interface McpCatalogPage {
+  entries: McpCatalogEntry[];
+  nextCursor: string | null;
+}
+
+// One value the user must (or may) supply before a candidate installs. `target` says where it
+// lands: an env var, a launch arg, a request header, or the url. `secret` values are routed to
+// the encrypted store server-side — the install form only ever sends them once.
+export interface McpInstallInput {
+  name: string;
+  description: string | null;
+  required: boolean;
+  secret: boolean;
+  default: string | null;
+  choices: string[] | null;
+  placeholder: string | null;
+  target: "env" | "arg" | "header" | "url";
+}
+
+export interface McpInstallCandidate {
+  id: string;
+  kind: "stdio" | "http" | "sse";
+  label: string;
+  inputs: McpInstallInput[];
+  supportsOauth: boolean;
+  warnings: string[];
+  command: string | null;
+  args: string[];
+  url: string | null;
+  [k: string]: unknown;
+}
+
+export interface McpCatalogDetail {
+  entry: McpCatalogEntry;
+  candidates: McpInstallCandidate[];
+}
+
+// The tools a generated (openapi/graphql) server WOULD expose — nothing is created by a preview.
+// `url` is the upstream base the server derived (e.g. from the spec's servers list).
+export interface GeneratedPreview {
+  tools: McpToolDescriptor[];
+  url: string | null;
+}
+
+export interface McpOauthStart {
+  status: "authorized" | "pending" | "error";
+  authorizationUrl?: string;
+  error?: string;
+}
+
+export interface McpOauthStatus {
+  authorized: boolean;
+  pending: boolean;
+  lastError: string | null;
+  connected: boolean;
 }
 
 // ── connection resource (the tool/MCP auth seam) ─────────────────────────────
@@ -768,6 +863,107 @@ export const api = {
       `/admin/mcp/servers/${encodeURIComponent(name)}:close`,
       { method: "POST" },
     ),
+
+  // ── control plane: connection-backed MCP servers (the converged registration shape) ─
+  // An `mcp_server` connection gets the same operational surface a name-keyed registration has:
+  // capability probe, warm, close — plus the interactive authorization flow for remote servers.
+  getConnectionMcpTools: (id: string) =>
+    request<{ tools: McpToolDescriptor[] }>(
+      CONTROL_PLANE_URL,
+      `/connections/${encodeURIComponent(id)}/mcp/tools`,
+    ).then((r) => r.tools),
+
+  warmConnectionMcp: (id: string) =>
+    request<{ id: string; connected: boolean }>(
+      CONTROL_PLANE_URL,
+      `/connections/${encodeURIComponent(id)}/mcp:warm`,
+      { method: "POST" },
+    ),
+
+  closeConnectionMcp: (id: string) =>
+    request<{ id: string; connected: boolean }>(
+      CONTROL_PLANE_URL,
+      `/connections/${encodeURIComponent(id)}/mcp:close`,
+      { method: "POST" },
+    ),
+
+  // Kick off (or re-check) the user-authorized token flow for an `auth.type === "oauth"`
+  // connection. `pending` means "open authorizationUrl in the browser and poll the status".
+  startConnectionMcpOauth: (id: string) =>
+    request<McpOauthStart>(
+      CONTROL_PLANE_URL,
+      `/connections/${encodeURIComponent(id)}/mcp-oauth:start`,
+      { method: "POST" },
+    ),
+
+  getConnectionMcpOauth: (id: string) =>
+    request<McpOauthStatus>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}/mcp-oauth`),
+
+  // ── control plane: MCP hub catalog (browse registries, install as connections) ─
+  listMcpRegistries: () =>
+    request<{ registries: McpRegistryInfo[] }>(CONTROL_PLANE_URL, "/admin/mcp/registries").then(
+      (r) => r.registries,
+    ),
+
+  searchMcpCatalog: (
+    params: { registry?: string; search?: string; limit?: number; cursor?: string } = {},
+  ) => {
+    const q = new URLSearchParams();
+    if (params.registry) q.set("registry", params.registry);
+    if (params.search) q.set("search", params.search);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.cursor) q.set("cursor", params.cursor);
+    const qs = q.toString();
+    return request<McpCatalogPage>(CONTROL_PLANE_URL, `/admin/mcp/catalog${qs ? `?${qs}` : ""}`);
+  },
+
+  getMcpCatalogEntry: (registry: string, name: string, version = "latest") => {
+    const q = new URLSearchParams({ registry, name, version });
+    return request<McpCatalogDetail>(CONTROL_PLANE_URL, `/admin/mcp/catalog/entry?${q}`);
+  },
+
+  // Install one hub entry as an `mcp_server` connection. Secret-flagged values are routed to the
+  // encrypted store SERVER-SIDE — the UI just sends the filled form, once.
+  installMcpCatalogEntry: (body: {
+    registry: string;
+    name: string;
+    version: string;
+    candidateId: string;
+    connectionName: string;
+    values: Record<string, string>;
+    useOauth?: boolean;
+  }) =>
+    request<ConnectionRecord>(CONTROL_PLANE_URL, "/admin/mcp/catalog/install", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Preview the tools a generated (openapi/graphql) server would expose — nothing is created.
+  previewGenerated: (body: {
+    kind: "openapi" | "graphql";
+    spec?: Record<string, unknown>;
+    specUrl?: string;
+    url?: string;
+    allowMutations?: boolean;
+    connection?: string;
+  }) =>
+    request<GeneratedPreview>(CONTROL_PLANE_URL, "/admin/mcp/generated:preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Fetch an arbitrary, user-supplied JSON document from the BROWSER (no auth headers — this is
+  // not a plane call). Used to inline an OpenAPI spec into a connection config when the user gave
+  // only its URL; a CORS-blocked or non-JSON document throws so the caller can ask for a paste.
+  fetchJsonDocument: async (url: string): Promise<Record<string, unknown>> => {
+    const res = await fetch(url);
+    if (!res.ok) throw new ApiError(`${res.status} ${res.statusText}`, res.status, "http_error");
+    const doc = (await res.json()) as unknown;
+    if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
+      throw new ApiError("document did not parse to a JSON object", 422, "invalid_spec");
+    }
+    return doc as Record<string, unknown>;
+  },
 
   // ── inference plane: model + engine registry (the "Installed" tab) ─────────
   // Register / lifecycle / capabilities all on the user-controlled inference plane, called

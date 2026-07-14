@@ -32,6 +32,7 @@ from theygent_control_plane.mcp.client import (
     McpServerConfig,
     McpToolDescriptor,
     McpToolNotFound,
+    SseMcpClient,
     StdioMcpClient,
 )
 
@@ -44,13 +45,29 @@ ClientFactory = Callable[[McpServerConfig], McpClient]
 
 
 def _default_factory(config: McpServerConfig) -> McpClient:
-    """Build the transport-appropriate client: ``http`` → ``HttpMcpClient`` (url + the
-    server-side-built auth headers), else ``StdioMcpClient`` (the local subprocess)."""
+    """Build the transport-appropriate client: ``http``/``sse`` → the remote clients (url + the
+    server-side-built auth headers), ``stdio`` → the local subprocess. Generated transports
+    (``openapi``/``graphql``) and user-authorized token auth need collaborators (spec builders,
+    token storage) this bare factory doesn't have — the app wires those via
+    ``build_client_factory``; reaching one here is a configuration error surfaced as a
+    connection failure, not a crash."""
+    if config.transport in ("openapi", "graphql") or config.oauth_connection:
+        raise McpConnectionError(
+            f"MCP server config (transport {config.transport!r}) requires the app-configured "
+            "client factory; this process was started without one"
+        )
     if config.transport == "http":
         return HttpMcpClient(url=config.url or "", headers=config.headers)
+    if config.transport == "sse":
+        return SseMcpClient(url=config.url or "", headers=config.headers)
     return StdioMcpClient(
         command=config.command or "", args=config.args, env=config.env, cwd=config.cwd
     )
+
+
+#: The public name for the bare factory — what late-binding callers fall back to before the
+#: app's full factory (generated servers, token auth) is constructed.
+default_client_factory = _default_factory
 
 
 class McpServerNotFound(KeyError):

@@ -32,7 +32,7 @@ What an [edge](#edge) carries between [ports](#port). `data` passes a value; `co
 
 ### Connection
 
-A named, reusable credential for a tool or MCP server — kind `http_auth` or `mcp_server`. The non-secret config is stored plainly; the secret is encrypted, write-only, and never appears in the graph. See [Tools](../building/nodes/tools.md).
+A named, reusable credential for a tool or MCP server — kind `http_auth` or `mcp_server`. The non-secret config is stored plainly; the secret is encrypted, write-only, and never appears in the graph. Remote-server auth types: `bearer`, `api_key`, `basic`, `headers` (a whole header map), `oauth2_client_credentials`, or `oauth` (interactive sign-in, tokens stored encrypted behind the same secret reference). Everything the MCP page creates — hub installs, remote, OpenAPI/GraphQL, stdio-with-secrets — is a connection. See [Tools](../building/nodes/tools.md) and [MCP servers](../mcp/index.md).
 
 ### Content hash
 
@@ -58,6 +58,10 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
+### Generated server
+
+An MCP server TheYgent mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
+
 ### Graph
 
 The document that defines an [agent](#agent): a `camelCase` JSON envelope holding the model and tool [bindings](#binding), a list of typed [nodes](#node), and the [edges](#edge) wiring them, plus a never-hashed `view` block for canvas layout. Also called the IR (intermediate representation). See [Agents & graphs](../concepts/agents-and-graphs.md).
@@ -65,6 +69,10 @@ The document that defines an [agent](#agent): a `camelCase` JSON envelope holdin
 ### Guardrail
 
 A node that checks its input against a rule (regex, length, allow/deny list, JSON-shape, PII) or an LLM judge, then routes to a `pass` or `block` port. Wire `block` to an output to refuse a request before doing expensive work. See [Guardrail](../building/nodes/guardrail.md).
+
+### Hub (MCP registry)
+
+A catalog of published MCP servers you can browse and install from: the Official MCP Registry, the GitHub MCP Registry, or a self-hosted registry added via `THEYGENT_MCP_REGISTRIES` (which doubles as an allowlist for air-gapped setups). Installing an entry creates an `mcp_server` [connection](#connection) stamped with its origin (registry + version). See [MCP servers](../mcp/index.md).
 
 ### Hybrid search
 
@@ -88,7 +96,7 @@ The name you give a model when you register it (for example `triage-fast`) and t
 
 ### MCP (Model Context Protocol)
 
-An open protocol for exposing external tools to models. TheYgent connects to MCP servers — over `stdio` (a local process) or HTTP — and lets your agents call the tools they expose through the `mcp_tool` node. See [MCP tools](../building/nodes/mcp.md).
+An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
 
 ### Modality
 

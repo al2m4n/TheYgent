@@ -14,6 +14,7 @@ from theygent_control_plane.mcp.client import (
     McpServerConfig,
     McpToolDescriptor,
     McpToolNotFound,
+    SseMcpClient,
     StdioMcpClient,
 )
 from theygent_control_plane.mcp.manager import McpManager, McpServerNotFound
@@ -28,5 +29,6 @@ __all__ = [
     "McpServerNotFound",
     "McpToolDescriptor",
     "McpToolNotFound",
+    "SseMcpClient",
     "StdioMcpClient",
 ]

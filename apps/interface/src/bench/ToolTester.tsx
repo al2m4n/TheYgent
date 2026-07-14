@@ -28,7 +28,10 @@ type InputMode = "image" | "json";
 
 export function ToolTester() {
   const servers = useQuery({ queryKey: ["mcpServers"], queryFn: () => api.listMcpServers() });
-  const [server, setServer] = useState("");
+  const connections = useQuery({ queryKey: ["connections"], queryFn: () => api.listConnections() });
+  // The target is a registered server OR an mcp_server connection — the value carries which
+  // ("srv:<name>" / "con:<id>") so the throwaway graph binds the right config field.
+  const [target, setTarget] = useState("");
   const [tool, setTool] = useState("");
   const [mode, setMode] = useState<InputMode>("image");
   const [imageArg, setImageArg] = useState("image");
@@ -76,7 +79,13 @@ export function ToolTester() {
       }
     }
 
-    const ir = buildToolGraph({ server, tool: tool.trim(), argNames: Object.keys(input) });
+    const ir = buildToolGraph({
+      ...(target.startsWith("con:")
+        ? { connection: target.slice(4) }
+        : { server: target.slice(4) }),
+      tool: tool.trim(),
+      argNames: Object.keys(input),
+    });
     setRunning(true);
     try {
       const r = await api.runGraph({ ir, input });
@@ -96,25 +105,34 @@ export function ToolTester() {
   }
 
   const canRun =
-    Boolean(server && tool.trim()) && (mode === "image" ? Boolean(imageSrc) : Boolean(json.trim()));
+    Boolean(target && tool.trim()) && (mode === "image" ? Boolean(imageSrc) : Boolean(json.trim()));
+
+  const mcpConnections = (connections.data ?? []).filter((c) => c.kind === "mcp_server");
+  const loaded = servers.data !== undefined && connections.data !== undefined;
+  const hasTargets = (servers.data?.length ?? 0) > 0 || mcpConnections.length > 0;
 
   return (
     <section className="space-y-3">
       <SectionHeading>Tool tester</SectionHeading>
-      {servers.isLoading && <Spinner label="Loading MCP servers…" />}
+      {(servers.isLoading || connections.isLoading) && <Spinner label="Loading MCP servers…" />}
       {servers.error && <ErrorBanner error={servers.error} />}
-      {servers.data && servers.data.length === 0 && (
-        <Empty>No registered MCP servers. Register one (e.g. a YOLO/SAM CV server) first.</Empty>
+      {loaded && !hasTargets && (
+        <Empty>No MCP servers. Add one (e.g. a YOLO/SAM CV server) first.</Empty>
       )}
-      {servers.data && servers.data.length > 0 && (
+      {hasTargets && (
         <Card className="space-y-3 p-4">
           <div className="grid grid-cols-2 gap-3">
             <Field label="MCP server">
-              <Select value={server} onChange={(e) => setServer(e.target.value)}>
+              <Select value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="">Pick a server…</option>
-                {servers.data.map((s) => (
-                  <option key={s.name} value={s.name} disabled={!s.connected}>
-                    {s.name} {s.connected ? "" : "(disconnected)"}
+                {(servers.data ?? []).map((s) => (
+                  <option key={`srv:${s.name}`} value={`srv:${s.name}`} disabled={!s.connected}>
+                    server · {s.name} {s.connected ? "" : "(disconnected)"}
+                  </option>
+                ))}
+                {mcpConnections.map((c) => (
+                  <option key={`con:${c.id}`} value={`con:${c.id}`}>
+                    connection · {c.name}
                   </option>
                 ))}
               </Select>

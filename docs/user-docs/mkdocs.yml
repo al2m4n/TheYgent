@@ -117,6 +117,9 @@ nav:
       - Engines: models/engines.md
   - RAG:
       - rag/index.md
+  - MCP:
+      - mcp/index.md
+      - Example agents: mcp/examples.md
   - Running Agents:
       - running/index.md
       - Durable Runs: running/durable.md

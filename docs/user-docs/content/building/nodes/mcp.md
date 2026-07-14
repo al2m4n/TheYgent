@@ -21,53 +21,21 @@ Same shape as the other tool nodes.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `tool` | string | *(required)* | The tool name the server exposes. |
-| `server` | string | `null` | The registered MCP server's name (from the MCP page). Set **this or** `connection`, never both. |
-| `connection` | string | `null` | The id of an `mcp_server` connection. Set **this or** `server`, never both. |
+| `tool` | string | *(required)* | The tool name the server exposes. In the inspector this is a **searchable picker** over the tools the chosen server actually reports; it degrades to a free-text field when the server can't be reached, so authoring is never blocked. |
+| `server` | string | `null` | A name-keyed MCP server's name (registered through the admin API). Set **this or** `connection`, never both. |
+| `connection` | string | `null` | The id of an `mcp_server` connection — anything created on the [MCP page](../../mcp/index.md): hub installs, remote servers with auth, OpenAPI/GraphQL servers, stdio servers with secret env. Set **this or** `server`, never both. |
 | `args` | object | `{}` | Arguments for the tool in step mode. `$in` references are allowed. In capability mode the model supplies them. |
 | `description` | string | `null` | An optional "use this when…" hint for the model in capability mode. MCP tools already describe themselves through the server, so this is a nudge, not a requirement. |
 
-You must set **exactly one** of `server` or `connection`. In the inspector, picking one clears the other automatically. Use `server` for a plainly-registered server; use `connection` when the server needs authentication supplied from an encrypted secret (see [Secrets in server config](#secrets-in-server-config)).
+You must set **exactly one** of `server` or `connection`. The inspector shows both pickers and picking one clears the other automatically; the tool picker works the same against either target.
 
 ## The MCP page
 
-Register and manage servers from the **MCP** page in the sidebar. It has two parts: the server registry at the top and a tool tester below it.
+Servers are set up and managed on the **MCP** page in the sidebar, which has [its own section in these docs](../../mcp/index.md). The short version: **Browse hubs** installs a published server from an MCP registry, and **Add server** defines one by hand — a local **stdio** subprocess, a **remote** HTTP/SSE endpoint, or a generated server derived from an **OpenAPI** spec or a **GraphQL** endpoint. Everything lands in one list with transport and connected badges and per-row **Tools** / **Warm** / **Close** / **Delete** actions (plus **Connect** for OAuth sign-in).
 
-### Define a server
+Below the list, the **tool tester** runs a single tool through a throwaway one-node graph so you can check it works before wiring it into an agent. When a tool returns image detections (bounding boxes with labels and scores), they are drawn over the image — handy for computer-vision servers.
 
-Click **Define server**. The form registers a **stdio** server — one that runs as a local subprocess:
-
-| Field | Placeholder | Notes |
-|---|---|---|
-| **Name** | `filesystem` | The logical name you reference from `mcp_tool` nodes. |
-| **Command** | `npx` | The executable to launch. Required. |
-| **Args** | `-y @modelcontextprotocol/server-filesystem /tmp` | Whitespace-separated arguments. |
-| **Env** | `API_KEY=…` | One `KEY=value` per line, passed into the spawned process. Values are never logged. |
-| **Working dir (optional)** | `/path/to/cwd` | The directory the process starts in. |
-
-**Save server** is enabled once Name and Command are filled in. Registrations persist across restarts (the connection itself stays lazy — the process is not spawned until the server is first used).
-
-### Manage a registered server
-
-Each row shows the server's name, a transport badge (`stdio` or `http`), and a connected/idle badge. The actions are:
-
-- **Tools** — connect if needed and list the tools the server reports, each with its name and description.
-- **Warm** — start the server process and connect now, instead of on first use.
-- **Close** — stop the server process. The registration is kept, and the server reconnects lazily on the next call.
-- **Delete** — remove the registration. This is irreversible: the command, args, and env cannot be recovered, so it goes through a confirmation dialog.
-
-A search box and transport/status filters help when you have many servers.
-
-### The tool tester
-
-Below the registry, the tool tester runs a single tool through a throwaway one-node graph so you can check it works before wiring it into an agent. When a tool returns image detections (bounding boxes with labels and scores), they are drawn over the image — handy for computer-vision servers.
-
-### HTTP (remote) servers
-
-The **Define server** form registers stdio servers only. To reach a remote server over streamable-HTTP/SSE, you have two options:
-
-- Register it through the admin API with `transport: http` and a `url` (see the [API reference](../../reference/api.md)).
-- Reference it through an `mcp_server` **connection** whose config sets `transport: http` and `url`. This is the right choice when the server needs an auth header built from a secret.
+Everything the MCP page creates is an `mcp_server` **connection**, referenced from an `mcp_tool` node via `connection`. The `server` field remains for name-keyed registrations made through the [admin API](../../reference/api.md) — plain stdio or remote servers that carry no secret.
 
 ## How tools are discovered
 
@@ -82,12 +50,12 @@ An unregistered server name is always rejected up front (`mcp_server_not_found`)
 
 ## Secrets in server config
 
-MCP servers run locally, in your trust domain — the same posture as your inference engines. How a credential reaches the server depends on the transport:
+MCP servers run in your trust domain — the same posture as your inference engines. How a credential reaches the server depends on the transport:
 
-- **stdio servers** receive secrets and paths through their **Env** — each `KEY=value` line is set in the subprocess's environment. This is where an API key or a data path goes. Env values are stored so the registration survives a restart, but are never echoed back or logged with their values.
-- **HTTP servers** get their authentication header built server-side from an `mcp_server` **connection**'s secret. The secret never appears in the agent document.
+- **stdio servers** receive secrets through their environment: the Add server form's **Secret env** lines are stored encrypted and injected into the subprocess at launch (non-secret **Env** lines are stored plainly). Neither is ever echoed back or logged with its values.
+- **Remote and generated servers** get their authentication built server-side from the connection's encrypted secret — a bearer token, an API-key header, basic credentials, a whole header map, OAuth2 client credentials, or interactively-minted OAuth tokens. The secret never appears in the agent document.
 
-To create an `mcp_server` connection, open the [editor](../editor.md), click empty canvas so nothing is selected, and use the **Connections (tool / MCP auth)** panel: choose **New connection**, set **Kind** to `mcp_server`, put `transport`/`url`/`headers` in **Config**, and the credential in the write-only **Secret** field.
+The [MCP page](../../mcp/index.md) is the normal place to set all of this up. A connection can also be created from the [editor](../editor.md): click empty canvas so nothing is selected and use the **Connections (tool / MCP auth)** panel, with the credential in the write-only **Secret** field.
 
 ## Calling MCP tools from an llm
 
@@ -117,21 +85,24 @@ graph LR
   fs["mcp_tool · read_file"] -. tool .-> llm
 ```
 
-Register a `filesystem` server on the MCP page (command `npx`, args `-y @modelcontextprotocol/server-filesystem /tmp`), then add a Tool node, choose **MCP**, pick the `filesystem` server, and set the tool to `read_file`:
+Add a `filesystem` server on the MCP page (**Add server → Stdio**: command `npx`, args `-y @modelcontextprotocol/server-filesystem /tmp`), then add a Tool node, choose **MCP**, pick the server, and pick `read_file` from the tool list:
 
 ```json
 {
   "id": "read_file",
   "type": "mcp_tool",
   "kind": "activity",
-  "config": { "tool": "read_file", "server": "filesystem" }
+  "config": { "tool": "read_file", "connection": "con_01hzy…" }
 }
 ```
+
+(A name-keyed server registered through the admin API is referenced with `"server": "filesystem"` instead.)
 
 Wiring its `use` handle into the llm's `tools` port exposes it as a `read_file` function the model can call. To use the same node as a **step** instead — reading one fixed file each run — feed its `in` port and template the path, for example `"args": { "path": "$in.in.path" }` when the run input is an object like `{"path": …, "question": …}`. See [Input references](../input-references.md) for the `$in` grammar.
 
 ## Works well with
 
+- [MCP servers](../../mcp/index.md) — the MCP page: browse hubs, the four ways to add a server, OAuth sign-in.
 - [The llm node](llm.md) — the `tools` port that turns an MCP tool into a model capability.
 - [Tool nodes](tools.md) — built-in and REST tools, wired the same two ways.
 - [Input references](../input-references.md) — the `$in` grammar for templating arguments in step mode.

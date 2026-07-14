@@ -25,7 +25,9 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+import httpx
 from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel, Field
@@ -62,20 +64,32 @@ class McpToolNotFound(KeyError):
 
 
 class McpServerConfig(BaseModel):
-    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload).
-    ``transport`` is ``stdio`` (a local subprocess — ``command``/``args``/``env``/``cwd``) or
-    ``http`` (a remote streamable-HTTP/SSE server — ``url``/``headers``). For stdio, ``env`` carries
-    the user's secrets/paths INTO the subprocess; for http, an auth header is built SERVER-SIDE from
-    a connection secret and lands in ``headers`` — never in the IR, never logged with values,
-    never resolved in theygent cloud (the sovereignty invariant)."""
+    """A registered MCP server (the ``/admin/mcp/servers/{name}`` payload) or a resolved
+    connection config. ``transport`` picks the client:
 
-    transport: Literal["stdio", "http"] = "stdio"
+    - ``stdio`` — a local subprocess (``command``/``args``/``env``/``cwd``). ``env`` carries the
+      user's secrets/paths INTO the subprocess.
+    - ``http`` / ``sse`` — a remote server (``url``/``headers``; streamable-HTTP vs. legacy SSE).
+      An auth header is built SERVER-SIDE from a connection secret and lands in ``headers``.
+    - ``openapi`` / ``graphql`` — a GENERATED in-process server: tools derived from ``spec``
+      (a parsed OpenAPI document) or from introspecting the GraphQL endpoint at ``url``;
+      upstream calls reuse ``url`` (base URL) + ``headers`` (upstream auth), knobs in ``options``.
+
+    Secrets never appear in the IR, are never logged with values, and are never resolved in
+    theygent cloud (the sovereignty invariant). ``oauth_connection`` marks a config whose auth is
+    a user-authorized token flow: the app-built client factory attaches the token machinery for
+    that connection id — the token itself never rides this model."""
+
+    transport: Literal["stdio", "http", "sse", "openapi", "graphql"] = "stdio"
     command: str | None = None  # stdio
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] | None = None
     cwd: str | None = None
-    url: str | None = None  # http (streamable-HTTP / SSE)
-    headers: dict[str, str] | None = None  # http — incl auth, built server-side from a connection
+    url: str | None = None  # http/sse endpoint · openapi upstream base URL · graphql endpoint
+    headers: dict[str, str] | None = None  # http/sse — incl auth, built server-side
+    spec: dict[str, Any] | None = None  # openapi — the parsed spec document
+    options: dict[str, Any] = Field(default_factory=dict)  # generated-server knobs
+    oauth_connection: str | None = None  # connection id whose stored tokens authenticate ``url``
 
 
 class McpClient(Protocol):
@@ -265,19 +279,50 @@ class StdioMcpClient(_ActorMcpClient):
 
 
 class HttpMcpClient(_ActorMcpClient):
-    """A persistent streamable-HTTP / SSE MCP connection — a remote server by url.
+    """A persistent streamable-HTTP MCP connection — a remote server by url.
     ``headers`` carries the auth built SERVER-SIDE from a connection secret; the secret never
-    appears in the IR. Same actor machinery as stdio — only the transport differs."""
+    appears in the IR. ``auth`` is an optional httpx auth hook (a token-flow provider for
+    user-authorized servers). Same actor machinery as stdio — only the transport differs."""
 
-    def __init__(self, *, url: str, headers: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> None:
         super().__init__()
         self._url = url
         self._headers = dict(headers) if headers else None
+        self._auth = auth
 
     async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
         # streamablehttp_client yields (read, write, get_session_id); we don't need the session-id
         # callback (the actor owns one persistent session for the connection lifetime).
         read, write, _get_session_id = await stack.enter_async_context(
-            streamablehttp_client(self._url, headers=self._headers)
+            streamablehttp_client(self._url, headers=self._headers, auth=self._auth)
+        )
+        return read, write
+
+
+class SseMcpClient(_ActorMcpClient):
+    """A persistent SSE MCP connection — the legacy remote transport many hosted servers still
+    speak. Identical contract to :class:`HttpMcpClient`; only the wire protocol differs."""
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: Mapping[str, str] | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> None:
+        super().__init__()
+        self._url = url
+        self._headers = dict(headers) if headers else None
+        self._auth = auth
+
+    async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        read, write = await stack.enter_async_context(
+            sse_client(self._url, headers=self._headers, auth=self._auth)
         )
         return read, write

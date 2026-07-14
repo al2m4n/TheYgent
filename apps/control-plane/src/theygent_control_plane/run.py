@@ -253,7 +253,11 @@ class Connection(BaseModel):
         itself is never stored here, so the wire exposes only whether a secret is SET
         (``hasSecret``), never the ref or value — mirroring how ``Trigger.public_dump`` redacts to
         ``***`` and ``_mcp_view`` lists env keys without values. Any secret-ish key wrongly nested
-        in ``config`` is also redacted defensively (secrets belong behind ``secret_ref``)."""
+        in ``config`` is also redacted defensively (secrets belong behind ``secret_ref``).
+
+        A generated MCP server's ``config.spec`` (a whole parsed OpenAPI document, possibly
+        megabytes) is elided to a small summary — list responses must stay light, and the wire
+        never needs the document back (changing the spec is a re-upload, not an edit)."""
         data = self.model_dump(mode="json")
         data["hasSecret"] = self.secret_ref is not None
         data.pop("secret_ref", None)
@@ -261,6 +265,15 @@ class Connection(BaseModel):
         for key in list(config):
             if key in _SECRETISH_CONFIG_KEYS:
                 config[key] = "***"
+        spec = config.get("spec")
+        if isinstance(spec, dict):
+            info = spec.get("info") if isinstance(spec.get("info"), dict) else {}
+            paths = spec.get("paths") if isinstance(spec.get("paths"), dict) else {}
+            config["spec"] = {
+                "title": info.get("title"),
+                "version": info.get("version"),
+                "pathCount": len(paths),
+            }
         data["config"] = config
         return data
 

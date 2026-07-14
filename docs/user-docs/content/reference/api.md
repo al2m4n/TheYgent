@@ -139,7 +139,7 @@ Opt-in conversational memory. See [Runs & sessions](../concepts/runs-and-session
 
 ### Connections
 
-Named tool/MCP credentials. The `secret` is write-only and never returned. See [Tools](../building/nodes/tools.md).
+Named tool/MCP credentials. The `secret` is write-only and never returned. See [Tools](../building/nodes/tools.md) and [MCP servers](../mcp/index.md).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -185,7 +185,9 @@ curl -X POST http://localhost:8080/artifacts \
 
 ### MCP servers
 
-Register external tool servers. See [MCP tools](../building/nodes/mcp.md).
+Register external tool servers. See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+
+Name-keyed registrations (plain stdio/remote servers, no secrets — openapi/graphql must be created as connections instead):
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -193,6 +195,27 @@ Register external tool servers. See [MCP tools](../building/nodes/mcp.md).
 | GET | `/admin/mcp/servers` | List registered servers (env **values** are never echoed). |
 | GET | `/admin/mcp/servers/{name}/tools` | List the server's tools (lazy-connects; unreachable → `503 mcp_unavailable`). |
 | POST | `/admin/mcp/servers/{name}:warm` / `:close` | Start / stop the server process. |
+
+Connection-backed servers (everything the MCP page creates — hub installs, remote servers with auth, OpenAPI/GraphQL servers) get the same operational surface through their connection id:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/connections/{id}/mcp/tools` | List the server's tools through the connection (lazy-connects; unreachable → `503 mcp_unavailable`). |
+| POST | `/connections/{id}/mcp:warm` / `:close` | Connect the server now / tear down the live connection (the connection row is kept). |
+| POST | `/connections/{id}/mcp-oauth:start` | Begin interactive authorization for an `auth.type: oauth` connection. Returns `{status, authorizationUrl?}` — open the URL in a browser; the provider redirects back to `/mcp/oauth/callback`. |
+| GET | `/connections/{id}/mcp-oauth` | Authorization status: `{authorized, pending, lastError, connected}`. Tokens are never returned. |
+
+### MCP hubs (catalog)
+
+Browse MCP registries and install published servers. Bodies and responses on this surface are `camelCase`. See [MCP servers](../mcp/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/admin/mcp/registries` | The browsable registries: the two built-ins plus any from [`THEYGENT_MCP_REGISTRIES`](environment.md). |
+| GET | `/admin/mcp/catalog` | One page of a registry's servers (`registry`, `search`, `limit` 1–100, `cursor`); entries carry installed-state stamps. A registry that can't be reached → `502 mcp_registry_error`. |
+| GET | `/admin/mcp/catalog/entry` | One server (`registry`, `name`, `version` default `latest`) with its install candidates and their declared inputs. |
+| POST | `/admin/mcp/catalog/install` | Install a candidate as an `mcp_server` connection. Body `{registry, name, version?, candidateId, connectionName, values, useOauth?}`. Secret-flagged values go to the encrypted store server-side. Returns `201` with the connection. |
+| POST | `/admin/mcp/generated:preview` | The tools an OpenAPI/GraphQL server *would* derive — nothing is created. Body `{kind, spec?|specUrl?, url?, allowMutations?}`. |
 
 ### Bench store
 

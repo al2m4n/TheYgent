@@ -89,6 +89,8 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 | Variable | Default | Effect |
 |---|---|---|
 | `THEYGENT_MCP_CALL_TIMEOUT_S` | `120` | Timeout, in seconds, for a single MCP tool call before it errors. Raise it for slow tools. |
+| `THEYGENT_MCP_REGISTRIES` | *(unset)* | Extra MCP hubs for the catalog browser: a JSON array of `{"id", "label", "url"}` objects. Any registry speaking the standard subregistry API works; a self-hosted one doubles as an allowlist for air-gapped setups. A malformed value is a loud error, never a silently dropped registry. See [MCP servers](../mcp/index.md). |
+| `THEYGENT_OAUTH_REDIRECT_URL` | `http://localhost:8080/mcp/oauth/callback` | Where an MCP OAuth sign-in redirects the browser back to. Change it only if the control plane is reached at a different address than the default. |
 
 !!! note
     A number of other `THEYGENT_*` names exist only to drive tests and integration harnesses — they are not end-user configuration and are omitted here. If a name is not on this page, treat it as internal.

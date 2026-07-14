@@ -24,6 +24,7 @@ cockpit's create-a-connection flow, so this degrades loudly rather than refusing
 from __future__ import annotations
 
 import logging
+import os
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +44,17 @@ def new_secret_ref() -> str:
     """A fresh ``secret_ref`` (``sec_<ulid>``) — the id of a ``secret`` row, what a connection
     points at. The ``sec_`` prefix makes the ref recognizable in logs/config (never the secret)."""
     return f"sec_{ULID()}"
+
+
+def secret_keys_from_env() -> list[str] | None:
+    """Resolve the Fernet key(s) from ``THEYGENT_SECRET_KEY`` (comma-separated for rotation —
+    first encrypts, all decrypt). ``None`` when unset (:meth:`SecretStore.from_keys` then warns
+    and uses an ephemeral key — dev-only). Shared by every process that opens the secret store
+    (API and worker), so the two can never disagree about how keys are read."""
+    raw = os.environ.get(SECRET_KEY_ENV)
+    if not raw:
+        return None
+    return [k.strip() for k in raw.split(",") if k.strip()]
 
 
 class SecretDecryptError(RuntimeError):

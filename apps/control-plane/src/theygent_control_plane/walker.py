@@ -855,26 +855,54 @@ async def execute_mcp_tool(
         return ActivityOutcome(ok=False, value=f"mcp server {server!r} tool {tool!r} failed: {exc}")
 
 
-def mcp_config_from_connection(conn: ResolvedConnection) -> McpServerConfig:
-    """Build the MCP server config from an ``mcp_server`` connection, server-side. For ``http`` the
-    secret becomes an auth header (bearer / api-key); for ``stdio`` it can be injected into the
-    subprocess env under a connection-named key (``secretEnv``). The secret exists only here, never
-    in the IR."""
+async def mcp_config_from_connection(
+    conn: ResolvedConnection, *, connection_id: str | None = None
+) -> McpServerConfig:
+    """Build the MCP server config from an ``mcp_server`` connection, server-side. Auth is
+    resolved here — the secret exists only for this call, never in the IR:
+
+    - ``http``/``sse``: the connection's auth scheme becomes request headers via the same
+      ``_auth_headers`` the http tool uses (bearer / api-key / basic / header-map / oauth2
+      client-credentials — ONE auth implementation, not a second MCP-flavoured one). A legacy
+      connection with a secret but no ``auth`` block keeps the original default: bearer.
+      The interactive ``oauth`` scheme instead stamps ``oauth_connection`` so the app-built
+      client factory attaches the token flow — the token never rides this config.
+    - ``stdio``: the secret enters the subprocess env — one var (``secretEnv``) or a whole
+      JSON map (``auth.type == "env"``, several secrets under one rotatable ref).
+    - ``openapi``/``graphql``: the spec/endpoint pass through and the SAME auth schemes apply
+      to the generated server's *upstream* calls.
+    """
     cfg = conn.config or {}
     transport = cfg.get("transport", "stdio")
-    if transport == "http":
+    if transport in ("http", "sse", "openapi", "graphql"):
         headers: dict[str, str] = dict(cfg.get("headers") or {})
-        if conn.secret:
-            auth = cfg.get("auth") or {}
-            if auth.get("type") == "api_key":
-                headers[str(auth.get("header", "X-API-Key"))] = conn.secret
-            else:  # default: bearer
-                headers["Authorization"] = f"Bearer {conn.secret}"
-        return McpServerConfig(transport="http", url=cfg.get("url"), headers=headers or None)
+        auth = cfg.get("auth") or {}
+        if conn.secret and not auth.get("type"):
+            headers["Authorization"] = f"Bearer {conn.secret}"  # pre-auth-block default
+        else:
+            headers.update(await _auth_headers(conn))
+        oauth_ref = connection_id if auth.get("type") == "oauth" else None
+        # Generated-server knobs may sit flat on the connection config (the form writes them
+        # that way) or pre-nested under ``options`` — normalize to one place.
+        options = dict(cfg.get("options") or {})
+        for knob in ("allowMutations", "include", "exclude", "timeoutSeconds"):
+            if knob in cfg:
+                options.setdefault(knob, cfg[knob])
+        return McpServerConfig(
+            transport=transport,
+            url=cfg.get("url") or cfg.get("baseUrl"),
+            headers=headers or None,
+            spec=cfg.get("spec"),
+            options=options,
+            oauth_connection=oauth_ref,
+        )
     env: dict[str, str] = dict(cfg.get("env") or {})
-    secret_env = cfg.get("secretEnv")
-    if conn.secret and isinstance(secret_env, str):
-        env[secret_env] = conn.secret
+    if conn.secret:
+        secret_env = cfg.get("secretEnv")
+        if isinstance(secret_env, str) and secret_env:
+            env[secret_env] = conn.secret
+        elif (cfg.get("auth") or {}).get("type") == "env":
+            env.update(_secret_map(conn.secret, what="env"))
     return McpServerConfig(
         transport="stdio",
         command=cfg.get("command"),
@@ -1085,13 +1113,29 @@ async def _resolve_oauth2_token(auth: Mapping[str, Any], secret: str) -> str:
     return str(token)
 
 
+def _secret_map(secret: str | None, *, what: str) -> dict[str, str]:
+    """Parse a JSON-object secret (a map of names → values under ONE secret ref, so rotation
+    stays hash-stable) into a plain string dict. A malformed blob is a loud error naming the
+    scheme — silently sending no auth would produce baffling 401s downstream."""
+    try:
+        parsed = json.loads(secret or "")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{what} auth requires the secret to be a JSON object map") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{what} auth requires the secret to be a JSON object map")
+    return {str(k): str(v) for k, v in parsed.items()}
+
+
 async def _auth_headers(conn: ResolvedConnection) -> dict[str, str]:
     """Build the auth header(s) for a resolved connection, server-side. Supports bearer, api-key
-    header, basic, and oauth2 client-credentials. An auth-less connection (no scheme) or a missing
-    secret adds nothing. Raw secret values never leave this function."""
+    header, basic, a whole header map (``headers`` — the secret is a JSON object, for servers
+    that want several/custom auth headers), and oauth2 client-credentials. An auth-less
+    connection (no scheme) or a missing secret adds nothing. The interactive ``oauth`` scheme
+    adds nothing HERE — its token rides an httpx auth hook attached by the client factory, not a
+    static header. Raw secret values never leave this function."""
     auth = (conn.config or {}).get("auth") or {}
     atype = auth.get("type")
-    if not atype:
+    if not atype or atype == "oauth":
         return {}
     if conn.secret is None and atype != "oauth2_client_credentials":
         return {}  # the scheme needs a secret that isn't set — caller's call proceeds auth-less
@@ -1103,10 +1147,18 @@ async def _auth_headers(conn: ResolvedConnection) -> dict[str, str]:
         user = str(auth.get("username", ""))
         token = base64.b64encode(f"{user}:{conn.secret}".encode()).decode("ascii")
         return {"Authorization": f"Basic {token}"}
+    if atype == "headers":
+        return _secret_map(conn.secret, what="headers")
     if atype == "oauth2_client_credentials":
         token = await _resolve_oauth2_token(auth, conn.secret or "")
         return {"Authorization": f"Bearer {token}"}
     raise ValueError(f"unsupported connection auth type {atype!r}")
+
+
+#: Public name for building a connection's auth headers outside a step (e.g. previewing a
+#: generated server against its upstream) — the SAME implementation the step-time paths use,
+#: so preview and execution can never disagree about what auth is sent.
+connection_auth_headers = _auth_headers
 
 
 def _apply_response_map(value: Any, path: str) -> Any:
@@ -1361,7 +1413,7 @@ async def _schema_for_binding(
         with contextlib.suppress(Exception):  # unresolvable/unreachable → no schema (best-effort)
             conn = await tool_auth(binding.connection)
             if conn is not None:
-                cfg = mcp_config_from_connection(conn)
+                cfg = await mcp_config_from_connection(conn, connection_id=binding.connection)
                 for d in await mcp.list_connection_tools(binding.connection, cfg):
                     if d.name == binding.tool:
                         return _fn_schema(name, d.description, d.input_schema)
@@ -1472,7 +1524,7 @@ async def build_capability_schemas(
                 with contextlib.suppress(Exception):  # unreachable → the authored fallback below
                     conn = await tool_auth(cfg.connection)
                     if conn is not None:
-                        mcfg = mcp_config_from_connection(conn)
+                        mcfg = await mcp_config_from_connection(conn, connection_id=cfg.connection)
                         for d in await mcp.list_connection_tools(cfg.connection, mcfg):
                             if d.name == cfg.tool:
                                 schema = _fn_schema(
@@ -1592,7 +1644,7 @@ async def execute_tool_call(
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {binding.connection!r} not found or disabled"
             )
-        cfg = mcp_config_from_connection(conn)
+        cfg = await mcp_config_from_connection(conn, connection_id=binding.connection)
         return await execute_mcp_connection_tool(
             mcp, binding.connection or "", cfg, binding.tool, call.arguments
         )
@@ -2591,7 +2643,10 @@ async def _mcp_tool_outcome(
             return ActivityOutcome(
                 ok=False, value=f"mcp connection {config.connection!r} not found or disabled"
             )
-        mcp_config = mcp_config_from_connection(conn)
+        try:
+            mcp_config = await mcp_config_from_connection(conn, connection_id=config.connection)
+        except Exception as exc:  # e.g. a malformed secret map / token fetch failure
+            return ActivityOutcome(ok=False, value=f"mcp connection {config.connection!r}: {exc}")
         return await execute_mcp_connection_tool(ctx.mcp, config.connection, mcp_config, tool, args)
     return await execute_mcp_tool(ctx.mcp, config.server or "", tool, args)
 

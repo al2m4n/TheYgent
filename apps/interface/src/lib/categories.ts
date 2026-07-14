@@ -102,11 +102,15 @@ export const STATUS_TONE: Record<string, Tone> = {
 };
 export const statusTone = (status: string): Tone => STATUS_TONE[status] ?? "slate";
 
-// MCP transport (stdio today; http/sse reserved for the tool-plane seam).
+// MCP transport — stdio/http/sse are real client transports; openapi/graphql are generated
+// in-process servers (tools derived from a spec or introspection), coloured apart so a
+// generated server never reads as a plain remote.
 export const TRANSPORT_TONE: Record<string, Tone> = {
   stdio: "blue",
   http: "teal",
   sse: "violet",
+  openapi: "amber",
+  graphql: "pink",
 };
 export const transportTone = (transport: string): Tone => TRANSPORT_TONE[transport] ?? "slate";
 
