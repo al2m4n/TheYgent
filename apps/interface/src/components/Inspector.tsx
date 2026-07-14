@@ -28,6 +28,7 @@ import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { ModelParamsSection } from "./ModelParamsPanel";
 import { NodeCodeEditor } from "./NodeCodeEditor";
+import { SearchableSelect } from "./SearchableSelect";
 import { Badge, Button, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 import { Checkbox } from "./ui/checkbox";
 
@@ -1351,6 +1352,70 @@ function McpServerPicker({
   );
 }
 
+/** The mcp_tool `tool` picker: a searchable combobox over the tools the selected server (or
+ * mcp_server connection) actually exposes, fetched live. On any failure — nothing selected yet,
+ * server unreachable, empty tool list — it degrades to the free-text input so authoring is
+ * never blocked by a server that won't spawn. */
+function McpToolPicker({
+  server,
+  connection,
+  value,
+  onChange,
+}: {
+  server: string | undefined;
+  connection: string | undefined;
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
+  const source = connection || server;
+  const tools = useQuery({
+    queryKey: connection ? ["mcpToolsConn", connection] : ["mcpTools", server],
+    queryFn: () =>
+      connection ? api.getConnectionMcpTools(connection) : api.getMcpTools(server as string),
+    enabled: Boolean(source),
+    retry: false,
+    staleTime: 30_000,
+  });
+  if (!source || tools.isError || (tools.data && tools.data.length === 0)) {
+    return (
+      <Field label="tool *">
+        <Input
+          value={value ?? ""}
+          placeholder="the tool name exposed by that server"
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </Field>
+    );
+  }
+  const options = (tools.data ?? []).map((t) => ({
+    value: t.name,
+    label: t.description ? `${t.name} — ${t.description}` : t.name,
+  }));
+  // A saved tool the server no longer reports (offline authoring, renamed tool) stays selectable.
+  if (value && !options.some((o) => o.value === value)) {
+    options.unshift({ value, label: value });
+  }
+  return (
+    // A plain label element (not <Field>'s <label>) — a <label> must not wrap the trigger
+    // button + popover, or every inner control inherits the label text as its accessible name.
+    <div className="space-y-1">
+      <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+        tool *
+      </span>
+      <SearchableSelect
+        options={options}
+        value={value ?? ""}
+        onChange={onChange}
+        placeholder={tools.isLoading ? "loading tools…" : "pick a tool…"}
+        searchPlaceholder="Search tools…"
+        disabled={tools.isLoading}
+        ariaLabel="tool"
+        className="w-full"
+      />
+    </div>
+  );
+}
+
 function AgentPicker({
   value,
   onChange,
@@ -1538,13 +1603,12 @@ function ToolNodePanel({
               onChange(updateNodeConfig(ir, node.id, { ...config, connection: v, server: null }))
             }
           />
-          <Field label="tool *">
-            <Input
-              value={(config.tool as string) ?? ""}
-              placeholder="the tool name exposed by that server"
-              onChange={(e) => setKey("tool", e.target.value)}
-            />
-          </Field>
+          <McpToolPicker
+            server={(config.server as string | null | undefined) ?? undefined}
+            connection={(config.connection as string | null | undefined) ?? undefined}
+            value={(config.tool as string | null | undefined) ?? undefined}
+            onChange={(v) => setKey("tool", v)}
+          />
         </>
       )}
 

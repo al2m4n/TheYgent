@@ -136,9 +136,9 @@ Only the model's `content` accumulates into the run's output, and that answer is
 
 Wiring a tool node into the `tools` port turns it into a **capability**: the model may call it on its own, decide the arguments, read the result, and continue. This is autonomous tool-calling, and it is entirely visual.
 
-1. Drop a [tool](tools.md) or [MCP tool](mcp.md) node onto the canvas and configure it.
+1. Drop a [tool](tools.md), [MCP tool](mcp.md), or [rag](rag.md) node onto the canvas and configure it.
 2. Drag its violet **`use`** handle (on top of the tool node) into this llm node's violet **`tools`** port (on the bottom).
-3. The **Tools the model can call** panel now lists that tool, with a kind badge (builtin / http / mcp).
+3. The **Tools the model can call** panel now lists that tool, with a kind badge (builtin / http / mcp / rag).
 
 A few things follow from wiring a capability:
 

@@ -32,6 +32,7 @@ The palette derives its list directly from the set of runnable node types, so th
 | `llm` | Calls a language model with templated messages; optional tool-calling and streaming. | [LLM](llm.md) |
 | `tool` | Runs a built-in tool or an HTTP API — as a pipeline step or a model capability. | [Tools](tools.md) |
 | `mcp_tool` | Calls a tool exposed by a connected MCP server. | [MCP tools](mcp.md) |
+| `rag` | Retrieves the most relevant passages from a RAG source — as a step or a model capability. | [RAG](rag.md) |
 | `transcribe` | Speech-to-text: turns audio into text. | [Audio & images](media.md) |
 | `speak` | Text-to-speech: turns text into audio. | [Audio & images](media.md) |
 | `imagine` | Generates an image from a text prompt. | [Audio & images](media.md) |
@@ -72,7 +73,7 @@ You can only connect like to like (data to data, control to control, tool to too
 
 ## What isn't here
 
-A handful of type ids exist in the underlying schema but do not run yet and never appear in the palette: `agent`, `rag`, `retriever`, `memory`, `code`, `condition`, and `iterator`. If you hand-write raw IR that uses one, the control plane refuses to run it. Build with the runnable types above.
+A handful of type ids exist in the underlying schema but do not run yet and never appear in the palette: `agent`, `retriever`, `memory`, `code`, `condition`, and `iterator`. If you hand-write raw IR that uses one, the control plane refuses to run it. Build with the runnable types above.
 
 ## Related pages
 

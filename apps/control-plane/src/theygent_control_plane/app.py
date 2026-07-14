@@ -24,18 +24,22 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
+from urllib.parse import urljoin
 
+import httpx
+import yaml
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from openai import APIConnectionError, APIStatusError
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
@@ -54,7 +58,21 @@ from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
 from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.governance import LOCAL_PRINCIPAL, authorize
-from theygent_control_plane.mcp import McpConnectionError, McpManager, McpServerConfig
+from theygent_control_plane.mcp import (
+    McpClient,
+    McpConnectionError,
+    McpManager,
+    McpServerConfig,
+)
+from theygent_control_plane.mcp.factory import build_client_factory
+from theygent_control_plane.mcp.generated import GeneratedServerError, preview_tools
+from theygent_control_plane.mcp.manager import ClientFactory, default_client_factory
+from theygent_control_plane.mcp.oauth import DbTokenStorage, OAuthBroker, broker_oauth_builder
+from theygent_control_plane.mcp.registry import (
+    McpRegistryClient,
+    McpRegistryError,
+    build_install,
+)
 from theygent_control_plane.observability import (
     INPROC_EXECUTOR,
     CaptureLevel,
@@ -82,7 +100,7 @@ from theygent_control_plane.run import (
     TriggerKind,
     new_ulid,
 )
-from theygent_control_plane.secrets import SECRET_KEY_ENV, SecretStore
+from theygent_control_plane.secrets import SecretStore, secret_keys_from_env
 from theygent_control_plane.store import (
     AgentStore,
     BenchStore,
@@ -104,7 +122,9 @@ from theygent_control_plane.walker import (
     WalkContext,
     WalkResult,
     audio_model_nodes,
+    connection_auth_headers,
     llm_models,
+    mcp_config_from_connection,
     mcp_tool_nodes,
     read_usage,
     resolve_model_key,
@@ -362,6 +382,41 @@ class UpdateConnectionRequest(BaseModel):
     enabled: bool | None = None
 
 
+# ── MCP hub request models (camelCase aliases — these ride the /admin/mcp surface) ───────────────
+
+
+class McpCatalogInstallRequest(BaseModel):
+    # Install one hub entry as an ``mcp_server`` connection. ``values`` feeds the chosen
+    # candidate's declared inputs; secret-flagged values are routed to the encrypted secret
+    # store SERVER-SIDE (they arrive once here and never round-trip back to the browser).
+    model_config = ConfigDict(populate_by_name=True)
+
+    registry: str
+    name: str
+    version: str = "latest"
+    candidate_id: str = Field(alias="candidateId")
+    connection_name: str = Field(alias="connectionName")
+    values: dict[str, str] = Field(default_factory=dict)
+    # A remote candidate may be authorized interactively instead of pasting a token: the
+    # connection is created with the user-authorized auth scheme and connected via the
+    # authorize flow afterwards.
+    use_oauth: bool = Field(default=False, alias="useOauth")
+
+
+class GeneratedPreviewRequest(BaseModel):
+    # Preview the tools a generated (openapi/graphql) server WOULD expose, before anything is
+    # created. ``spec`` inline or ``specUrl`` fetched server-side; graphql introspects ``url``
+    # (optionally authed via an existing connection's scheme).
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: Literal["openapi", "graphql"]
+    spec: dict[str, Any] | None = None
+    spec_url: str | None = Field(default=None, alias="specUrl")
+    url: str | None = None  # openapi upstream base URL · graphql endpoint
+    allow_mutations: bool = Field(default=False, alias="allowMutations")
+    connection: str | None = None  # auth source for the preview's upstream calls
+
+
 class CreateRagSourceRequest(BaseModel):
     # Create a retrieval source. ``embedding_model`` is a LOGICAL inference-plane id, pinned at
     # creation (vectors from different models share no similarity space — switching models is an
@@ -387,14 +442,8 @@ class RagQueryRequest(BaseModel):
     min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
 
 
-def _secret_keys_from_env() -> list[str] | None:
-    """Resolve the Fernet key(s) for the secret store from ``THEYGENT_SECRET_KEY`` (comma-separated
-    for rotation — first encrypts, all decrypt). ``None`` when unset (SecretStore then warns + uses
-    an ephemeral key — dev-only, see secrets.py)."""
-    raw = os.environ.get(SECRET_KEY_ENV)
-    if not raw:
-        return None
-    return [k.strip() for k in raw.split(",") if k.strip()]
+# The Fernet-key resolution lives in secrets.py (`secret_keys_from_env`) — the worker reads the
+# same keys, and two copies of "how keys are read" would eventually disagree.
 
 
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
@@ -503,6 +552,7 @@ def create_app(
     gateway: GatewayClient | None = None,
     database_url: str | None = None,
     mcp_manager: McpManager | None = None,
+    mcp_registry_client: McpRegistryClient | None = None,
     cors_origins: list[str] | None = None,
     invoke_token: str | None = None,
     secret_key: list[str] | None = None,
@@ -533,7 +583,7 @@ def create_app(
     # secrets.py).
     connections = ConnectionStore()
     secrets = SecretStore.from_keys(
-        secret_key if secret_key is not None else _secret_keys_from_env()
+        secret_key if secret_key is not None else secret_keys_from_env()
     )
     # The observability seam. One live SpanBus for the /trace/stream side-channel (shared with
     # the in-process durable runtime so its spans stream too), and the opt-in OTLP sink —
@@ -549,8 +599,27 @@ def create_app(
     token = invoke_token if invoke_token is not None else os.environ.get("THEYGENT_INVOKE_TOKEN")
     # The MCP server registry/connections. App-scoped: created once, connections are lazy
     # (no I/O at construction), torn down at shutdown. `mcp_manager` lets tests inject a
-    # manager with a fake client factory.
-    mcp = mcp_manager or McpManager()
+    # manager with a fake client factory. The real client factory needs lifespan-built
+    # collaborators (sessionmaker-backed token storage, the oauth broker, generated-server
+    # builders), so the manager gets a LATE-BINDING factory: the lifespan drops the full
+    # implementation into the holder; until then the bare default covers stdio/http/sse.
+    _factory_holder: dict[str, ClientFactory | None] = {"impl": None}
+
+    def _late_factory(config: McpServerConfig) -> McpClient:
+        impl = _factory_holder["impl"]
+        return impl(config) if impl is not None else default_client_factory(config)
+
+    mcp = mcp_manager or McpManager(client_factory=_late_factory)
+    # Where the authorization server sends the user's browser back after consent. Default
+    # matches the local API port; a non-default bind or reverse proxy overrides via env.
+    oauth_redirect_url = os.environ.get(
+        "THEYGENT_OAUTH_REDIRECT_URL", "http://localhost:8080/mcp/oauth/callback"
+    )
+    oauth_broker = OAuthBroker(oauth_redirect_url)
+    # Registry browsing (the MCP hub catalog): one client speaking the shared subregistry API
+    # shape against every configured registry; per-request TTL caching lives inside it.
+    # Injectable so the fast suite can serve fixture registries without network.
+    mcp_registry = mcp_registry_client or McpRegistryClient()
     # Resolved at startup, not import, so importing the factory has no side effects and a
     # missing DATABASE_URL fails loudly in the lifespan rather than silently.
     db_url = database_url or os.environ.get("DATABASE_URL")
@@ -576,6 +645,13 @@ def create_app(
         # secret resolution is identical on both runtimes (never in the IR/span/journal).
         tool_resolver = DbConnectionResolver(app.state.sessionmaker, connections, secrets)
         app.state.tool_resolver = tool_resolver
+        # The full MCP client factory (generated openapi/graphql servers + user-authorized
+        # token auth via the broker) needs the sessionmaker, so it lands in the late-binding
+        # holder here. Test-injected managers keep their fake factory untouched.
+        _factory_holder["impl"] = build_client_factory(
+            oauth=broker_oauth_builder(oauth_broker, app.state.sessionmaker, connections, secrets)
+        )
+        app.state.oauth_broker = oauth_broker
         # The gate backend (ratelimit counter + quota usage-read). Built once; injected
         # into the interactive WalkContext + durable resources so gates behave identically on both.
         gate_backend = GateBackend(app.state.sessionmaker)
@@ -2349,6 +2425,21 @@ def create_app(
     # (public_dump redacts to hasSecret). Auth resolution is server-side at step time
     # (no per-node apply endpoint).
 
+    # The auth vocabulary an mcp_server connection may declare. `env`/`headers` carry a JSON
+    # object map as the ONE secret (several values, one rotatable ref); `oauth` is the
+    # interactive user-authorized flow (tokens broker-managed behind the same secret_ref).
+    _MCP_AUTH_TYPES = frozenset(
+        {
+            "env",
+            "headers",
+            "bearer",
+            "api_key",
+            "basic",
+            "oauth2_client_credentials",
+            "oauth",
+        }
+    )
+
     def _validate_connection(kind: ConnectionKind, config: dict[str, Any]) -> JSONResponse | None:
         """Reject a connection whose config is malformed or smuggles a secret (secrets go in
         the write-only ``secret`` field, never ``config``). Returns an error response or None."""
@@ -2363,9 +2454,10 @@ def create_app(
                 )
         if kind == "mcp_server":
             transport = config.get("transport", "stdio")
-            if transport not in ("stdio", "http"):
+            if transport not in ("stdio", "http", "sse", "openapi", "graphql"):
                 return _error(
-                    f"mcp_server connection transport must be 'stdio' or 'http', got {transport!r}",
+                    "mcp_server connection transport must be one of "
+                    f"stdio | http | sse | openapi | graphql, got {transport!r}",
                     status=400,
                     code="invalid_connection",
                 )
@@ -2375,9 +2467,42 @@ def create_app(
                     status=400,
                     code="invalid_connection",
                 )
-            if transport == "http" and not config.get("url"):
+            if transport in ("http", "sse", "graphql") and not config.get("url"):
                 return _error(
-                    "mcp_server http connection requires a 'url' in config",
+                    f"mcp_server {transport} connection requires a 'url' in config",
+                    status=400,
+                    code="invalid_connection",
+                )
+            if transport == "openapi":
+                if not isinstance(config.get("spec"), dict):
+                    return _error(
+                        "mcp_server openapi connection requires 'spec' (the parsed OpenAPI "
+                        "document) in config",
+                        status=400,
+                        code="invalid_connection",
+                    )
+                base = str(config.get("url") or config.get("baseUrl") or "")
+                if not base.startswith(("http://", "https://")):
+                    # A relative base (a spec's own "servers" entry is often "/api/v3")
+                    # would produce a server whose every call fails with a protocol error —
+                    # reject it while the user is still in the form.
+                    return _error(
+                        "mcp_server openapi connection requires an absolute upstream base "
+                        f"URL ('url' starting with http:// or https://), got {base!r}",
+                        status=400,
+                        code="invalid_connection",
+                    )
+            auth_type = (config.get("auth") or {}).get("type")
+            if auth_type is not None and auth_type not in _MCP_AUTH_TYPES:
+                return _error(
+                    f"unknown mcp_server auth type {auth_type!r}; supported: "
+                    + " | ".join(sorted(_MCP_AUTH_TYPES)),
+                    status=400,
+                    code="invalid_connection",
+                )
+            if auth_type == "oauth" and transport not in ("http", "sse"):
+                return _error(
+                    "interactive 'oauth' auth applies to remote (http/sse) MCP servers only",
                     status=400,
                     code="invalid_connection",
                 )
@@ -2782,13 +2907,16 @@ def create_app(
     def _mcp_view(name: str) -> dict[str, Any]:
         cfg = mcp.config(name)
         assert cfg is not None
-        # `env` keys are listed but VALUES are never echoed back (sovereignty: user's trust domain).
+        # `env`/`headers` KEYS are listed but VALUES are never echoed back (sovereignty:
+        # the user's trust domain; an Authorization value must not round-trip the wire).
         return {
             "name": name,
             "transport": cfg.transport,
             "command": cfg.command,
             "args": cfg.args,
             "envKeys": sorted(cfg.env or {}),
+            "url": cfg.url,
+            "headerKeys": sorted(cfg.headers or {}),
             "connected": mcp.is_connected(name),
         }
 
@@ -2803,6 +2931,15 @@ def create_app(
         except ValidationError as exc:
             return _error(
                 f"invalid MCP server config: {exc}", status=422, code="invalid_mcp_config"
+            )
+        if cfg.transport in ("openapi", "graphql"):
+            # Generated servers carry a spec/options payload the name-keyed registry row has no
+            # columns for — they live as mcp_server CONNECTIONS (which also give them auth).
+            return _error(
+                f"a {cfg.transport} server is created as an mcp_server connection "
+                "(POST /connections), not a named registration",
+                status=400,
+                code="invalid_mcp_config",
             )
         await mcp.register(name, cfg)
         # Persist the registration so it survives a restart (the manager is in-memory).
@@ -2983,7 +3120,10 @@ def create_app(
 
     @app.get("/admin/mcp/servers", dependencies=[Depends(require_auth)])
     async def list_mcp_servers() -> Any:
-        return {"servers": mcp.states()}
+        # Only NAME-registered servers list here. Connection-backed servers register in the
+        # manager under their connection id (`con_…`) on first use — surfacing those rows here
+        # would hand the editor's `server` picker an id that belongs in the `connection` field.
+        return {"servers": [s for s in mcp.states() if not str(s["name"]).startswith("con_")]}
 
     @app.get("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
     async def get_mcp_server(name: str) -> Any:
@@ -3034,6 +3174,343 @@ def create_app(
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
         await mcp.close(name)
         return JSONResponse(_mcp_view(name))
+
+    # ── connection-backed MCP servers: /connections/{id}/mcp* ────────────
+    # An mcp_server CONNECTION is the converged registration shape (encrypted auth, hub
+    # installs, generated servers). These routes give it the same operational surface a
+    # name-keyed registration has — capability probe, warm, close. The manager keys the live
+    # connection by the connection id, so these ops and step-time calls share one connection
+    # and one tool cache.
+
+    async def _mcp_connection_config(connection_id: str) -> McpServerConfig | JSONResponse:
+        async with app.state.sessionmaker() as session:
+            conn = await connections.get(session, connection_id)
+        if conn is None or conn.kind != "mcp_server":
+            return _error(
+                f"unknown mcp_server connection {connection_id!r}",
+                status=404,
+                code="connection_not_found",
+            )
+        if not conn.enabled:
+            return _error(
+                f"connection {connection_id!r} is disabled",
+                status=409,
+                code="connection_disabled",
+            )
+        resolved = await app.state.tool_resolver(connection_id)
+        if resolved is None:
+            return _error(
+                f"unknown mcp_server connection {connection_id!r}",
+                status=404,
+                code="connection_not_found",
+            )
+        try:
+            return await mcp_config_from_connection(resolved, connection_id=connection_id)
+        except Exception as exc:  # malformed secret map / token-fetch failure — caller's config
+            return _error(
+                f"connection auth could not be built: {exc}",
+                status=422,
+                code="invalid_connection",
+            )
+
+    @app.get("/connections/{connection_id}/mcp/tools", dependencies=[Depends(require_auth)])
+    async def get_connection_mcp_tools(connection_id: str) -> Any:
+        cfg = await _mcp_connection_config(connection_id)
+        if isinstance(cfg, JSONResponse):
+            return cfg
+        try:
+            tools = await mcp.list_connection_tools(connection_id, cfg)
+        except McpConnectionError as exc:
+            return _error(str(exc), status=503, code="mcp_unavailable")
+        return {
+            "tools": [
+                {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                for t in tools
+            ]
+        }
+
+    @app.post("/connections/{connection_id}/mcp:warm", dependencies=[Depends(require_auth)])
+    async def warm_connection_mcp(connection_id: str) -> Any:
+        cfg = await _mcp_connection_config(connection_id)
+        if isinstance(cfg, JSONResponse):
+            return cfg
+        try:
+            await mcp.list_connection_tools(connection_id, cfg)  # registers + lazy-connects
+        except McpConnectionError as exc:
+            return _error(str(exc), status=503, code="mcp_unavailable")
+        return {"id": connection_id, "connected": mcp.is_connected(connection_id)}
+
+    @app.post("/connections/{connection_id}/mcp:close", dependencies=[Depends(require_auth)])
+    async def close_connection_mcp(connection_id: str) -> Any:
+        # Close is best-effort teardown of the live connection; the connection row is untouched.
+        await mcp.close(connection_id)
+        return {"id": connection_id, "connected": mcp.is_connected(connection_id)}
+
+    # ── interactive authorization for remote MCP servers ─────────────────
+    # The authorize flow may only run from here (a user clicked Connect); anywhere else the
+    # broker fails fast so an unattended run binds `err` instead of waiting on a browser.
+
+    @app.post("/connections/{connection_id}/mcp-oauth:start", dependencies=[Depends(require_auth)])
+    async def start_mcp_oauth(connection_id: str) -> Any:
+        cfg = await _mcp_connection_config(connection_id)
+        if isinstance(cfg, JSONResponse):
+            return cfg
+        if not cfg.oauth_connection:
+            return _error(
+                "this connection's auth type is not 'oauth' — nothing to authorize",
+                status=400,
+                code="invalid_connection",
+            )
+
+        async def connect() -> None:
+            # A fresh connect drives the SDK's flow (401 → discovery → registration → browser).
+            # Drop any live connection first so stored-token validity is actually revalidated.
+            await mcp.close(connection_id)
+            await mcp.list_connection_tools(connection_id, cfg)
+
+        result = await app.state.oauth_broker.start(connection_id, connect)
+        return JSONResponse(result)
+
+    @app.get("/connections/{connection_id}/mcp-oauth", dependencies=[Depends(require_auth)])
+    async def mcp_oauth_status(connection_id: str) -> Any:
+        storage = DbTokenStorage(app.state.sessionmaker, connections, secrets, connection_id)
+        tokens = await storage.get_tokens()
+        broker = app.state.oauth_broker
+        return {
+            "authorized": tokens is not None,
+            "pending": broker.pending(connection_id),
+            "lastError": broker.last_error(connection_id),
+            "connected": mcp.is_connected(connection_id),
+        }
+
+    # Deliberately un-gated: the authorization server redirects the USER'S BROWSER here — it
+    # carries no bearer header. The only thing this route does is resolve a pending flow by
+    # its single-use `state` and render a close-this-tab page; an unknown state is a 400 page.
+    @app.get("/mcp/oauth/callback")
+    async def mcp_oauth_callback(
+        state: str = "", code: str | None = None, error: str | None = None
+    ) -> HTMLResponse:
+        ok = app.state.oauth_broker.callback(state, code, error)
+        if ok and not error:
+            body = "<h3>Authorized.</h3><p>You can close this tab and return to TheYgent.</p>"
+            status = 200
+        elif ok:
+            # `error` arrives on the query string — escape it, this page renders as HTML.
+            body = f"<h3>Authorization refused.</h3><p>{html.escape(error or '')}</p>"
+            status = 200
+        else:
+            body = (
+                "<h3>Unknown or expired authorization request.</h3>"
+                "<p>Start again from the MCP page.</p>"
+            )
+            status = 400
+        return HTMLResponse(
+            f"<html><body style='font-family:sans-serif'>{body}</body></html>", status_code=status
+        )
+
+    # ── the MCP hub catalog: /admin/mcp/registries + /admin/mcp/catalog* ──
+    # Browse is metadata-only against the configured registries (official / GitHub /
+    # self-hosted); install lands as an mcp_server connection with `config.origin` stamped so
+    # the catalog can mark what is already installed (and later check for updates).
+
+    async def _mcp_installed_index() -> dict[tuple[str, str], Any]:
+        async with app.state.sessionmaker() as session:
+            rows = await connections.list_connections(session, limit=200)
+        index: dict[tuple[str, str], Any] = {}
+        for conn in rows:
+            origin = (conn.config or {}).get("origin")
+            if conn.kind == "mcp_server" and isinstance(origin, dict) and origin.get("name"):
+                index[(str(origin.get("registry", "")), str(origin["name"]))] = conn
+        return index
+
+    def _stamp_installed(entry: dict[str, Any], index: dict[tuple[str, str], Any]) -> None:
+        conn = index.get((entry.get("registry", ""), entry.get("name", "")))
+        entry["installed"] = conn is not None
+        entry["installedAs"] = conn.name if conn is not None else None
+        entry["installedConnection"] = conn.id if conn is not None else None
+
+    @app.get("/admin/mcp/registries", dependencies=[Depends(require_auth)])
+    async def list_mcp_registries() -> Any:
+        return {"registries": [r.model_dump(by_alias=True) for r in mcp_registry.registries()]}
+
+    @app.get("/admin/mcp/catalog", dependencies=[Depends(require_auth)])
+    async def browse_mcp_catalog(
+        registry: str = Query(default="official"),
+        search: str = Query(default=""),
+        limit: int = Query(default=30, ge=1, le=100),
+        cursor: str | None = Query(default=None),
+    ) -> Any:
+        try:
+            page = await mcp_registry.list_servers(
+                registry, search=search, limit=limit, cursor=cursor
+            )
+        except McpRegistryError as exc:
+            return _error(str(exc), status=502, code="mcp_registry_error")
+        index = await _mcp_installed_index()
+        entries = [e.model_dump(by_alias=True) for e in page.entries]
+        for entry in entries:
+            _stamp_installed(entry, index)
+        return {"entries": entries, "nextCursor": page.next_cursor}
+
+    @app.get("/admin/mcp/catalog/entry", dependencies=[Depends(require_auth)])
+    async def get_mcp_catalog_entry(
+        registry: str = Query(),
+        name: str = Query(),
+        version: str = Query(default="latest"),
+    ) -> Any:
+        try:
+            detail = await mcp_registry.get_server(registry, name, version=version)
+        except McpRegistryError as exc:
+            return _error(str(exc), status=502, code="mcp_registry_error")
+        payload = detail.model_dump(by_alias=True)
+        index = await _mcp_installed_index()
+        _stamp_installed(payload["entry"], index)
+        return payload
+
+    @app.post("/admin/mcp/catalog/install", dependencies=[Depends(require_auth)])
+    async def install_mcp_catalog_entry(req: McpCatalogInstallRequest) -> Any:
+        try:
+            detail = await mcp_registry.get_server(req.registry, req.name, version=req.version)
+        except McpRegistryError as exc:
+            return _error(str(exc), status=502, code="mcp_registry_error")
+        candidate = next((c for c in detail.candidates if c.id == req.candidate_id), None)
+        if candidate is None:
+            return _error(
+                f"unknown install candidate {req.candidate_id!r} for {req.name!r}",
+                status=404,
+                code="candidate_not_found",
+            )
+        try:
+            plan = build_install(candidate, req.values)
+        except McpRegistryError as exc:
+            return _error(str(exc), status=400, code="invalid_install")
+        config = dict(plan.config)
+        if req.use_oauth:
+            if config.get("transport") not in ("http", "sse"):
+                return _error(
+                    "interactive authorization applies to remote (http/sse) candidates only",
+                    status=400,
+                    code="invalid_install",
+                )
+            # The user authorizes in the browser instead of pasting a token: drop any
+            # secret-header plan in favor of the token flow.
+            config["auth"] = {"type": "oauth"}
+            secret_value: str | None = None
+        else:
+            secret_value = json.dumps(plan.secret_map) if plan.secret_map else None
+        config["origin"] = {
+            "registry": req.registry,
+            "name": detail.entry.name,
+            "version": detail.entry.version,
+        }
+        invalid = _validate_connection("mcp_server", config)
+        if invalid is not None:
+            return invalid
+        async with tx() as session:
+            secret_ref = await secrets.create(session, secret_value) if secret_value else None
+            conn = await connections.create(
+                session,
+                name=req.connection_name,
+                kind="mcp_server",
+                config=config,
+                secret_ref=secret_ref,
+                enabled=True,
+            )
+        logger.info(
+            "mcp.hub_installed",
+            extra={"connection_id": conn.id, "registry": req.registry, "server": req.name},
+        )
+        return JSONResponse(conn.public_dump(), status_code=201)
+
+    # ── generated-server preview: tools from a spec/endpoint, nothing created ──
+
+    @app.post("/admin/mcp/generated:preview", dependencies=[Depends(require_auth)])
+    async def preview_generated_mcp(req: GeneratedPreviewRequest) -> Any:
+        spec = req.spec
+        if req.kind == "openapi" and spec is None:
+            if not req.spec_url:
+                return _error(
+                    "openapi preview needs 'spec' (parsed document) or 'specUrl'",
+                    status=400,
+                    code="invalid_spec",
+                )
+            try:
+                async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+                    resp = await client.get(req.spec_url)
+                    resp.raise_for_status()
+                    raw = resp.text
+            except Exception as exc:
+                return _error(
+                    f"could not fetch spec from {req.spec_url!r}: {exc}",
+                    status=400,
+                    code="spec_fetch_failed",
+                )
+            try:
+                spec = json.loads(raw)
+            except ValueError:
+                try:
+                    spec = yaml.safe_load(raw)  # OpenAPI documents are commonly YAML
+                except yaml.YAMLError as exc:
+                    return _error(
+                        f"spec is neither valid JSON nor YAML: {exc}",
+                        status=400,
+                        code="invalid_spec",
+                    )
+            if not isinstance(spec, dict):
+                return _error(
+                    "fetched spec did not parse to an object", status=400, code="invalid_spec"
+                )
+        url = req.url
+        if req.kind == "openapi" and not url:
+            servers = spec.get("servers") if isinstance(spec, dict) else None
+            if isinstance(servers, list) and servers and isinstance(servers[0], dict):
+                url = servers[0].get("url")
+            # Specs routinely declare a RELATIVE server URL ("/api/v3") — meaningful only
+            # against the origin the spec was fetched from. Resolve it there; a pasted spec
+            # with a relative server keeps needing an explicit base URL (validated on create).
+            if url and req.spec_url and not str(url).startswith(("http://", "https://")):
+                url = urljoin(req.spec_url, str(url))
+        if req.kind == "graphql" and not url:
+            return _error(
+                "graphql preview needs 'url' (the endpoint)", status=400, code="invalid_spec"
+            )
+        headers: dict[str, str] = {}
+        if req.connection:
+            resolved = await app.state.tool_resolver(req.connection)
+            if resolved is None:
+                return _error(
+                    f"unknown connection {req.connection!r}",
+                    status=404,
+                    code="connection_not_found",
+                )
+            try:
+                headers = await connection_auth_headers(resolved)
+            except Exception as exc:
+                return _error(
+                    f"connection auth could not be built: {exc}",
+                    status=422,
+                    code="invalid_connection",
+                )
+        config = McpServerConfig(
+            transport=req.kind,
+            spec=spec,
+            url=url,
+            headers=headers or None,
+            options={"allowMutations": req.allow_mutations},
+        )
+        try:
+            tools = await preview_tools(config)
+        except GeneratedServerError as exc:
+            return _error(str(exc), status=422, code="invalid_spec")
+        except McpConnectionError as exc:
+            return _error(str(exc), status=502, code="mcp_unavailable")
+        return {
+            "tools": [
+                {"name": t.name, "description": t.description, "inputSchema": t.input_schema}
+                for t in tools
+            ],
+            "url": url,
+        }
 
     # ── liveness / readiness ─────────────────────────────────────────────
 

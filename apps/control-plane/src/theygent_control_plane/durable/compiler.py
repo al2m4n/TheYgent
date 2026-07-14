@@ -349,7 +349,10 @@ async def _mcp_conn_step(
         return {"ok": False, "value": f"mcp connection {connection_id!r}: {exc}"}
     if conn is None:
         return {"ok": False, "value": f"mcp connection {connection_id!r} not found or disabled"}
-    cfg = mcp_config_from_connection(conn)
+    try:
+        cfg = await mcp_config_from_connection(conn, connection_id=connection_id)
+    except Exception as exc:  # e.g. a malformed secret map / token fetch failure
+        return {"ok": False, "value": f"mcp connection {connection_id!r}: {exc}"}
     out = await execute_mcp_connection_tool(res.mcp, connection_id, cfg, tool, args)
     return {"ok": out.ok, "value": out.value}
 

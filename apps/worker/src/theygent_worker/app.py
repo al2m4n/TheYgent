@@ -19,10 +19,22 @@ import os
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 from theygent_control_plane import db
+from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.durable import DurableRuntime
+from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.mcp import McpManager
+from theygent_control_plane.mcp.factory import build_client_factory
+from theygent_control_plane.mcp.oauth import worker_oauth_builder
 from theygent_control_plane.rag import RagRetriever
-from theygent_control_plane.store import AgentStore, McpStore, RunStore, TriggerStore
+from theygent_control_plane.secrets import SecretStore, secret_keys_from_env
+from theygent_control_plane.store import (
+    AgentStore,
+    ConnectionStore,
+    McpStore,
+    RunStore,
+    TriggerStore,
+)
+from theygent_control_plane.tool_resolve import DbConnectionResolver
 from theygent_gateway_client import GatewayClient
 
 logger = logging.getLogger("theygent.worker")
@@ -48,7 +60,22 @@ async def build_runtime(
     drive the worker's exact wiring without the blocking loop."""
     engine = db.create_engine(database_url)
     sessionmaker = db.create_sessionmaker(engine)
-    mcp = mcp or McpManager()
+    # The connection/secret seam — the worker resolves tool + MCP auth exactly like the API
+    # process (server-side, inside the step, same env-provided keys); without it every
+    # connection-backed http/mcp step on this topology bound `err`.
+    connections = ConnectionStore()
+    secrets = SecretStore.from_keys(secret_keys_from_env())
+    tool_resolver = DbConnectionResolver(sessionmaker, connections, secrets)
+    if mcp is None:
+        # No user sits at the worker, so interactive authorization can't happen here — the
+        # factory's token flows refresh silently and fail fast with an actionable message when
+        # a browser round-trip would be needed. Generated (openapi/graphql) servers build the
+        # same way as in the API process.
+        mcp = McpManager(
+            client_factory=build_client_factory(
+                oauth=worker_oauth_builder(sessionmaker, connections, secrets)
+            )
+        )
     # Rehydrate the MCP registry so mcp_tool activities can connect (connections stay
     # lazy; only the registration is restored). Same posture as the control-plane lifespan.
     mcp_store = McpStore()
@@ -64,6 +91,11 @@ async def build_runtime(
         agents=AgentStore(),
         triggers=TriggerStore(),
         sessionmaker=sessionmaker,
+        # The same step-time seams the control-plane's in-process runtime gets: auth
+        # resolution, gate counters, and artifact storage — one behavior, two deployables.
+        tool_auth=tool_resolver,
+        gates=GateBackend(sessionmaker),
+        artifacts=LocalArtifactStore(),
         # Retrieval backend for rag activities — embeds over the same gateway (logical ids),
         # searches the shared Postgres. Same behavior as the control-plane's runtime.
         rag=RagRetriever(sessionmaker, gateway),

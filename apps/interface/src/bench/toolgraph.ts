@@ -14,8 +14,11 @@
 import type { IRDocument } from "@theygent/ir-types";
 
 export interface ToolGraphSpec {
-  /** the logical name of a registered MCP server (resolved by the control-plane MCP manager). */
-  server: string;
+  /** the logical name of a registered MCP server (resolved by the control-plane MCP manager).
+   * Exactly one of `server` / `connection` is set — the same rule the mcp_tool config has. */
+  server?: string;
+  /** the id of an `mcp_server` connection (transport + server-side auth resolved from it). */
+  connection?: string;
   /** a tool that server exposes. */
   tool: string;
   /** the input field names forwarded as the tool's args, each templated as `$in.in.<name>`. */
@@ -28,7 +31,7 @@ export interface ToolGraphSpec {
  * edge so the graph passes `validate_graph`; the `mcp_tool`'s success value binds its non-error `out`
  * handle (walker `_success_handles`), which the `output` boundary consumes as the run output.
  */
-export function buildToolGraph({ server, tool, argNames }: ToolGraphSpec): IRDocument {
+export function buildToolGraph({ server, connection, tool, argNames }: ToolGraphSpec): IRDocument {
   // Each declared arg pulls one field off the input object via the port-addressed token.
   const args: Record<string, string> = {};
   for (const name of argNames) args[name] = `$in.in.${name}`;
@@ -50,7 +53,12 @@ export function buildToolGraph({ server, tool, argNames }: ToolGraphSpec): IRDoc
         id: "n_tool",
         type: "mcp_tool",
         kind: "activity",
-        config: { server, tool, args },
+        config: {
+          ...(server ? { server } : {}),
+          ...(connection ? { connection } : {}),
+          tool,
+          args,
+        },
         ports: {
           in: [{ id: "in", type: "any", required: true }],
           out: [{ id: "out", type: "any", required: true }],

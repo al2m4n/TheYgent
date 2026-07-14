@@ -139,13 +139,34 @@ Opt-in conversational memory. See [Runs & sessions](../concepts/runs-and-session
 
 ### Connections
 
-Named tool/MCP credentials. The `secret` is write-only and never returned. See [Tools](../building/nodes/tools.md).
+Named tool/MCP credentials. The `secret` is write-only and never returned. See [Tools](../building/nodes/tools.md) and [MCP servers](../mcp/index.md).
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/connections` | Create. Body `{name, kind, config, secret?, enabled?}`. `kind` is `http_auth` or `mcp_server`. |
 | GET | `/connections` | List (responses expose `hasSecret` only; secret-ish config keys redacted). |
 | GET / PATCH / DELETE | `/connections/{id}` | Read / update (a non-empty `secret` rotates in place without changing any content hash) / delete. |
+
+### RAG sources
+
+Retrieval collections agents search through the rag node. See [RAG sources](../rag/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. |
+| GET | `/rag/sources` | List (keyset pagination via `limit` + `before`). |
+| GET / PATCH / DELETE | `/rag/sources/{id}` | Read (status + live ingest `progress`) / rename or edit crawl config / delete with all documents and vectors. |
+| GET | `/rag/sources/{id}/documents` | The source's documents with per-document status, chunk counts, and errors. |
+| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime; 50 MiB cap). Returns `202`; poll the source for progress. |
+| POST | `/rag/sources/{id}:ingest` | Start (or re-run) the crawl. `202`; unchanged pages are hash-skipped. `409` while an ingest is already running. |
+| POST | `/rag/sources/{id}:cancel` | Cancel the in-flight ingest (a no-op on a settled source). |
+| POST | `/rag/sources/{id}/query` | Run the same hybrid retrieval a rag node runs. Body `{query, top_k?, min_similarity?}`; returns the match list. |
+
+```bash
+curl -X POST "http://localhost:8080/rag/sources/rag_01ABC/documents?filename=handbook.pdf" \
+  -H 'Content-Type: application/pdf' \
+  --data-binary @handbook.pdf
+```
 
 ### Artifacts
 
@@ -164,7 +185,9 @@ curl -X POST http://localhost:8080/artifacts \
 
 ### MCP servers
 
-Register external tool servers. See [MCP tools](../building/nodes/mcp.md).
+Register external tool servers. See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+
+Name-keyed registrations (plain stdio/remote servers, no secrets — openapi/graphql must be created as connections instead):
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -172,6 +195,27 @@ Register external tool servers. See [MCP tools](../building/nodes/mcp.md).
 | GET | `/admin/mcp/servers` | List registered servers (env **values** are never echoed). |
 | GET | `/admin/mcp/servers/{name}/tools` | List the server's tools (lazy-connects; unreachable → `503 mcp_unavailable`). |
 | POST | `/admin/mcp/servers/{name}:warm` / `:close` | Start / stop the server process. |
+
+Connection-backed servers (everything the MCP page creates — hub installs, remote servers with auth, OpenAPI/GraphQL servers) get the same operational surface through their connection id:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/connections/{id}/mcp/tools` | List the server's tools through the connection (lazy-connects; unreachable → `503 mcp_unavailable`). |
+| POST | `/connections/{id}/mcp:warm` / `:close` | Connect the server now / tear down the live connection (the connection row is kept). |
+| POST | `/connections/{id}/mcp-oauth:start` | Begin interactive authorization for an `auth.type: oauth` connection. Returns `{status, authorizationUrl?}` — open the URL in a browser; the provider redirects back to `/mcp/oauth/callback`. |
+| GET | `/connections/{id}/mcp-oauth` | Authorization status: `{authorized, pending, lastError, connected}`. Tokens are never returned. |
+
+### MCP hubs (catalog)
+
+Browse MCP registries and install published servers. Bodies and responses on this surface are `camelCase`. See [MCP servers](../mcp/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/admin/mcp/registries` | The browsable registries: the two built-ins plus any from [`THEYGENT_MCP_REGISTRIES`](environment.md). |
+| GET | `/admin/mcp/catalog` | One page of a registry's servers (`registry`, `search`, `limit` 1–100, `cursor`); entries carry installed-state stamps. A registry that can't be reached → `502 mcp_registry_error`. |
+| GET | `/admin/mcp/catalog/entry` | One server (`registry`, `name`, `version` default `latest`) with its install candidates and their declared inputs. |
+| POST | `/admin/mcp/catalog/install` | Install a candidate as an `mcp_server` connection. Body `{registry, name, version?, candidateId, connectionName, values, useOauth?}`. Secret-flagged values go to the encrypted store server-side. Returns `201` with the connection. |
+| POST | `/admin/mcp/generated:preview` | The tools an OpenAPI/GraphQL server *would* derive — nothing is created. Body `{kind, spec?|specUrl?, url?, allowMutations?}`. |
 
 ### Bench store
 
