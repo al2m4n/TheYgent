@@ -147,6 +147,27 @@ Named tool/MCP credentials. The `secret` is write-only and never returned. See [
 | GET | `/connections` | List (responses expose `hasSecret` only; secret-ish config keys redacted). |
 | GET / PATCH / DELETE | `/connections/{id}` | Read / update (a non-empty `secret` rotates in place without changing any content hash) / delete. |
 
+### RAG sources
+
+Retrieval collections agents search through the rag node. See [RAG sources](../rag/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. |
+| GET | `/rag/sources` | List (keyset pagination via `limit` + `before`). |
+| GET / PATCH / DELETE | `/rag/sources/{id}` | Read (status + live ingest `progress`) / rename or edit crawl config / delete with all documents and vectors. |
+| GET | `/rag/sources/{id}/documents` | The source's documents with per-document status, chunk counts, and errors. |
+| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime; 50 MiB cap). Returns `202`; poll the source for progress. |
+| POST | `/rag/sources/{id}:ingest` | Start (or re-run) the crawl. `202`; unchanged pages are hash-skipped. `409` while an ingest is already running. |
+| POST | `/rag/sources/{id}:cancel` | Cancel the in-flight ingest (a no-op on a settled source). |
+| POST | `/rag/sources/{id}/query` | Run the same hybrid retrieval a rag node runs. Body `{query, top_k?, min_similarity?}`; returns the match list. |
+
+```bash
+curl -X POST "http://localhost:8080/rag/sources/rag_01ABC/documents?filename=handbook.pdf" \
+  -H 'Content-Type: application/pdf' \
+  --data-binary @handbook.pdf
+```
+
 ### Artifacts
 
 Audio/image blobs by reference. See [Voice](../chat/voice.md).

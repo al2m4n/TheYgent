@@ -97,6 +97,7 @@ nav:
           - LLM: building/nodes/llm.md
           - Tools: building/nodes/tools.md
           - MCP Tools: building/nodes/mcp.md
+          - RAG: building/nodes/rag.md
           - Router: building/nodes/router.md
           - Transform: building/nodes/transform.md
           - Guardrail: building/nodes/guardrail.md
@@ -114,6 +115,8 @@ nav:
       - Installing Local Models: models/installing.md
       - Remote Models: models/remote.md
       - Engines: models/engines.md
+  - RAG:
+      - rag/index.md
   - Running Agents:
       - running/index.md
       - Durable Runs: running/durable.md

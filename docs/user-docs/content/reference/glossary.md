@@ -50,6 +50,10 @@ A run executed on the durable runtime, which checkpoints each completed step so 
 
 A wire connecting one node's out-[port](#port) to another's in-port, carrying a [channel](#channel). At most one `data` edge may feed a given in-port. See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
 
+### Embedding model
+
+A model that turns text into a vector so that similar meanings land near each other — the model behind retrieval. Each [RAG source](#rag-source) pins one embedding model (a [logical id](#logical-model-id)) at creation, because vectors from different models are not comparable. See [RAG sources](../rag/index.md).
+
 ### Engine
 
 The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
@@ -61,6 +65,10 @@ The document that defines an [agent](#agent): a `camelCase` JSON envelope holdin
 ### Guardrail
 
 A node that checks its input against a rule (regex, length, allow/deny list, JSON-shape, PII) or an LLM judge, then routes to a `pass` or `block` port. Wire `block` to an output to refuse a request before doing expensive work. See [Guardrail](../building/nodes/guardrail.md).
+
+### Hybrid search
+
+How a [RAG source](#rag-source) is searched: semantic (vector) similarity fused with keyword full-text ranking, so paraphrases and exact identifiers both surface. Runs entirely inside your Postgres. See [RAG sources](../rag/index.md).
 
 ### Inference plane
 
@@ -97,6 +105,10 @@ One of the three node [kinds](#kind): deterministic control flow — `router`, `
 ### Port
 
 A named connection point on a [node](#node), on the in or out side, carrying a [channel](#channel) (`data`, `control`, or `tool`). A required in-port must be fed by exactly one data edge for the graph to validate. See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
+
+### RAG source
+
+A named document collection agents retrieve from — filled by uploading files or crawling a site, chunked and embedded against its pinned [embedding model](#embedding-model), stored in your Postgres, and searched by the [rag node](../building/nodes/rag.md). Referenced by a stable id, so re-ingesting never changes an agent's version. See [RAG sources](../rag/index.md).
 
 ### Run
 
