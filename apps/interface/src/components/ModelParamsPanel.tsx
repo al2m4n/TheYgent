@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ParamForm } from "../bench/ParamForm";
 import {
-  type PanelModality,
+  type NodeParamModality,
   type ParamSpec,
   coerceParam,
   narrowSpecs,
@@ -47,7 +47,7 @@ export function ModelParamsSection({
   onChange,
   note,
 }: {
-  modality: PanelModality;
+  modality: NodeParamModality;
   logicalId?: string;
   params: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
@@ -124,7 +124,7 @@ function PresetLoader({
   modality,
   onLoad,
 }: {
-  modality: PanelModality;
+  modality: NodeParamModality;
   onLoad: (params: Record<string, unknown>) => void;
 }) {
   const [presetId, setPresetId] = useState("");
