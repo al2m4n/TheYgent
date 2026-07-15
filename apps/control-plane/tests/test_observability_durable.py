@@ -14,7 +14,7 @@ from collections.abc import Iterator
 import pytest
 from _durable import BlockingInference, reset_dbos_schema, save_agent
 from _fake_inference import FakeInference
-from _ir import _doc, _edge, _node, trivial_ir
+from _ir import _doc, _edge, _node, llm_ir, trivial_ir
 from theygent_control_plane import db
 from theygent_control_plane.durable.runtime import DurableRuntime
 from theygent_control_plane.mcp import McpManager
@@ -179,6 +179,92 @@ async def test_durable_llm_node_io_captures_reasoning(pg_url: str) -> None:
     assert io is not None and io.outputs is not None
     assert io.outputs["reasoning"] == "thinking step..."
     assert "reasoning" not in (io.inputs or {})  # capture-only output, never an in-port
+
+
+async def test_durable_llm_node_io_captures_tool_calls(pg_url: str) -> None:
+    # The durable tool loop records each call + its RESULT under the reserved `tool_calls` entry —
+    # the same node_io shape the interactive walker writes (one wrapper, both runtimes), so the run
+    # inspector shows tool results regardless of which runtime ran the agent.
+    await reset_dbos_schema(pg_url)
+    ir = llm_ir("$in")
+    ir["id"] = "agt_obs_tool_calls"
+    ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+    ir["nodes"][1]["config"]["tools"] = ["echo"]
+    with FakeInference(
+        mode="tool_call", tool_name="echo", tool_args={"value": "hi"}, response="answer after tool"
+    ) as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, sm)
+        rt.launch()
+        try:
+            ref = {"agent_id": aid, "version": ver, "content_hash": None}
+            handle = await rt.enqueue_run(ref, "go")
+            result = await handle.get_result()
+            assert result["status"] == "completed"
+            async with sm() as s:
+                io = await NodeIoStore().get_io(s, result["runId"], "n_llm")
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+    assert io is not None and io.outputs is not None
+    assert io.outputs["tool_calls"] == [
+        {
+            "name": "echo",
+            "arguments": {"value": "hi"},
+            "ok": True,
+            "result": "hi",
+            "iteration": 0,
+            "index": 0,
+        }
+    ]
+    assert io.outputs["ok"] == "answer after tool"
+
+
+async def test_durable_llm_node_io_captures_failed_tool_call(pg_url: str) -> None:
+    # Parity for the err path: a failed (unknown) tool call records ok=False + the error result on
+    # the durable runtime too — the same record shape the interactive walker writes.
+    await reset_dbos_schema(pg_url)
+    ir = llm_ir("$in")
+    ir["id"] = "agt_obs_tool_err"
+    ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+    ir["nodes"][1]["config"]["tools"] = ["echo"]
+    with FakeInference(
+        mode="tool_call", tool_name="ghost", tool_args={}, response="recovered answer"
+    ) as fake:
+        engine = db.create_engine(pg_url)
+        sm = db.create_sessionmaker(engine)
+        agents = AgentStore()
+        aid, ver = await save_agent(sm, agents, ir)
+        rt, gw = _build_runtime(pg_url, fake.v1_url, agents, sm)
+        rt.launch()
+        try:
+            ref = {"agent_id": aid, "version": ver, "content_hash": None}
+            handle = await rt.enqueue_run(ref, "go")
+            result = await handle.get_result()
+            assert result["status"] == "completed"
+            async with sm() as s:
+                io = await NodeIoStore().get_io(s, result["runId"], "n_llm")
+        finally:
+            rt.shutdown()
+            await gw.aclose()
+            await engine.dispose()
+
+    assert io is not None and io.outputs is not None
+    assert io.outputs["tool_calls"] == [
+        {
+            "name": "ghost",
+            "arguments": {},
+            "ok": False,
+            "result": "unknown tool 'ghost'",
+            "iteration": 0,
+            "index": 0,
+        }
+    ]
 
 
 def _model_guardrail_ir(agent_id: str) -> dict:

@@ -13,12 +13,10 @@ import {
   Brain,
   ChevronDown,
   ChevronUp,
+  Cpu,
   Download,
   Eye,
-  Flame,
-  FlaskConical,
   ImagePlus,
-  Loader2,
   Lock,
   MessageSquare,
   Mic,
@@ -27,9 +25,7 @@ import {
   Search,
   SearchX,
   ServerOff,
-  Snowflake,
   Star,
-  Trash2,
   Volume2,
   Waypoints,
   Wrench,
@@ -60,18 +56,17 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
-import { Item, ItemActions, ItemContent } from "../components/ui/item";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "../components/ui/item";
 import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
 import { Skeleton } from "../components/ui/skeleton";
 import { Spinner } from "../components/ui/spinner";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../components/ui/table";
 import { type CatalogEntry, type CatalogVariant, type Fit, type ModelView, api } from "../lib/api";
 import { countBy, engineTone, toggle, toneOf } from "../lib/categories";
 import { formatBytes, relativeTime } from "../lib/format";
@@ -313,7 +308,9 @@ function AddModelPanel({
           {resolved && (
             <Card className="gap-0 py-0">
               <CardHeader className="px-4 py-2">
-                <CardDescription className="mono truncate text-[11px]">{resolved}</CardDescription>
+                <CardDescription className="mono truncate text-[11px]" title={resolved}>
+                  {resolved}
+                </CardDescription>
               </CardHeader>
               <ModelDetail entry={minimalEntry(resolved)} onStarted={onClose} />
             </Card>
@@ -470,126 +467,101 @@ function InstalledPanel() {
               <EmptyDescription>No models match the current filters.</EmptyDescription>
             </Empty>
           ) : (
-            <div className="overflow-hidden rounded-lg border">
-              <Table>
-                <TableHeader className="bg-muted/50">
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead>Logical id</TableHead>
-                    <TableHead>Engine</TableHead>
-                    <TableHead>Model</TableHead>
-                    <TableHead>State</TableHead>
-                    <TableHead>Capabilities</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map((m: ModelView) => {
-                    const st = isResident(m) ? "resident" : "cold";
-                    return (
-                      <TableRow
-                        key={m.logicalId}
-                        className="cursor-pointer"
-                        onClick={(e) => {
-                          // Badges, the probe, and the action buttons are all <button>s — let them
-                          // keep their own click; anything else on the row opens the registration.
-                          if ((e.target as HTMLElement).closest("button")) return;
-                          setInspectModel(m);
-                        }}
+            <ItemGroup className="gap-2">
+              {filtered.map((m: ModelView) => {
+                const st = isResident(m) ? "resident" : "cold";
+                const { text, full } = modelDisplay(m.binding);
+                const warming = warm.isPending && warm.variables === m.logicalId;
+                const evicting = evict.isPending && evict.variables === m.logicalId;
+                const removing = remove.isPending && remove.variables === m.logicalId;
+                // Per-row busy (like the MCP/RAG rows) — an action in flight on one model disables
+                // only that model's actions, not the same action on every other row.
+                const busy = warming || evicting || removing;
+                return (
+                  <Item key={m.logicalId} variant="outline" className="bg-card">
+                    <ItemMedia variant="icon">
+                      <Cpu />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>
+                        {/* The logical id opens the registration (settings / hub detail) — the same
+                            thing the whole row used to do, now an explicit target. */}
+                        <button
+                          type="button"
+                          onClick={() => setInspectModel(m)}
+                          title="Open the registration"
+                          className="mono hover:underline"
+                        >
+                          {m.logicalId}
+                        </button>
+                      </ItemTitle>
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        <CategoryBadge
+                          tone={engineTone(m.binding.binding)}
+                          active={engineSel.includes(m.binding.binding)}
+                          onClick={() => setEngineSel((s) => toggle(s, m.binding.binding))}
+                          title={`Filter by ${engineLabel(m.binding.binding)}`}
+                        >
+                          {engineLabel(m.binding.binding)}
+                        </CategoryBadge>
+                        <CategoryBadge
+                          tone={st === "resident" ? "green" : "slate"}
+                          active={stateSel.includes(st)}
+                          onClick={() => setStateSel((s) => toggle(s, st))}
+                          title={`Filter by ${st}`}
+                        >
+                          {st}
+                        </CategoryBadge>
+                        <span
+                          className="mono max-w-[16rem] truncate text-muted-foreground"
+                          title={full}
+                        >
+                          {text}
+                        </span>
+                        <CapabilitiesCell logicalId={m.logicalId} />
+                      </div>
+                    </ItemContent>
+                    <ItemActions>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setBenchModel(m)}
+                        title="Test & benchmark this model"
                       >
-                        <TableCell className="mono text-foreground">{m.logicalId}</TableCell>
-                        <TableCell>
-                          <CategoryBadge
-                            tone={engineTone(m.binding.binding)}
-                            active={engineSel.includes(m.binding.binding)}
-                            onClick={() => setEngineSel((s) => toggle(s, m.binding.binding))}
-                            title={`Filter by ${engineLabel(m.binding.binding)}`}
-                          >
-                            {engineLabel(m.binding.binding)}
-                          </CategoryBadge>
-                        </TableCell>
-                        <TableCell className="mono text-muted-foreground">
-                          {(() => {
-                            const { text, full } = modelDisplay(m.binding);
-                            return (
-                              <span className="block max-w-[220px] truncate" title={full}>
-                                {text}
-                              </span>
-                            );
-                          })()}
-                        </TableCell>
-                        <TableCell>
-                          <CategoryBadge
-                            tone={st === "resident" ? "green" : "slate"}
-                            active={stateSel.includes(st)}
-                            onClick={() => setStateSel((s) => toggle(s, st))}
-                            title={`Filter by ${st}`}
-                          >
-                            {st}
-                          </CategoryBadge>
-                        </TableCell>
-                        <TableCell className="whitespace-normal">
-                          <CapabilitiesCell logicalId={m.logicalId} />
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button
-                              size="icon-sm"
-                              aria-label="Bench"
-                              title="Test & benchmark this model"
-                              onClick={() => setBenchModel(m)}
-                            >
-                              <FlaskConical size={14} />
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="icon-sm"
-                              aria-label="Warm"
-                              title="Warm — load the model into the engine"
-                              disabled={warm.isPending}
-                              onClick={() => warm.mutate(m.logicalId)}
-                            >
-                              {warm.isPending && warm.variables === m.logicalId ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <Flame size={14} />
-                              )}
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="icon-sm"
-                              aria-label="Evict"
-                              title="Evict — unload the model from memory"
-                              disabled={evict.isPending}
-                              onClick={() => evict.mutate(m.logicalId)}
-                            >
-                              {evict.isPending && evict.variables === m.logicalId ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <Snowflake size={14} />
-                              )}
-                            </Button>
-                            <Button
-                              variant="destructive"
-                              size="icon-sm"
-                              aria-label="Delete"
-                              title="Delete — unregister this model"
-                              disabled={remove.isPending}
-                              onClick={() => setConfirmDelete(m.logicalId)}
-                            >
-                              {remove.isPending && remove.variables === m.logicalId ? (
-                                <Loader2 size={14} className="animate-spin" />
-                              ) : (
-                                <Trash2 size={14} />
-                              )}
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                        Bench
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => warm.mutate(m.logicalId)}
+                        title="Warm — load the model into the engine"
+                      >
+                        {warming ? "Warming…" : "Warm"}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => evict.mutate(m.logicalId)}
+                        title="Evict — unload the model from memory"
+                      >
+                        {evicting ? "Evicting…" : "Evict"}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => setConfirmDelete(m.logicalId)}
+                        title="Delete — unregister this model"
+                      >
+                        {removing ? "Deleting…" : "Delete"}
+                      </Button>
+                    </ItemActions>
+                  </Item>
+                );
+              })}
+            </ItemGroup>
           )}
         </>
       )}
@@ -613,7 +585,10 @@ function InstalledPanel() {
           >
             <Card className="gap-0 py-0">
               <CardHeader className="px-4 py-2">
-                <CardDescription className="mono truncate text-[11px]">
+                <CardDescription
+                  className="mono truncate text-[11px]"
+                  title={inspectModel.binding.model}
+                >
                   {inspectModel.binding.model}
                 </CardDescription>
               </CardHeader>
@@ -1438,10 +1413,14 @@ function ModelCard({
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="truncate text-sm">{entry.title}</CardTitle>
+              <CardTitle className="truncate text-sm" title={entry.title}>
+                {entry.title}
+              </CardTitle>
               {entry.installed && <ToneBadge tone="green">✓ installed</ToneBadge>}
             </div>
-            <CardDescription className="mono truncate text-[11px]">{entry.ref}</CardDescription>
+            <CardDescription className="mono truncate text-[11px]" title={entry.ref}>
+              {entry.ref}
+            </CardDescription>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
               {entry.params && <span className="text-foreground">{entry.params}</span>}
               {entry.gated && (

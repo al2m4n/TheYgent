@@ -81,6 +81,7 @@ export function FilterBar({
   searchPlaceholder = "Search…",
   facets = [],
   trailing,
+  extraActive = false,
   total,
   shown,
   onClear,
@@ -89,13 +90,17 @@ export function FilterBar({
   onSearch?: (value: string) => void;
   searchPlaceholder?: string;
   facets?: Facet[];
-  /** Extra controls for the right cluster (e.g. a sort select). */
+  /** Extra controls for the right cluster (e.g. a sort select or time picker). */
   trailing?: ReactNode;
+  /** Whether a control the FilterBar doesn't own (e.g. a time window) is currently narrowing the
+   *  list — folds into the "Clear filters" affordance so it appears/resets consistently. */
+  extraActive?: boolean;
   total?: number;
   shown?: number;
   onClear?: () => void;
 }) {
-  const hasActive = (search ?? "").trim() !== "" || facets.some((f) => f.selected.length > 0);
+  const hasActive =
+    (search ?? "").trim() !== "" || facets.some((f) => f.selected.length > 0) || extraActive;
 
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-slate-800 bg-[var(--c-surface-2)] px-3 py-2">
@@ -127,6 +132,7 @@ export function FilterBar({
                 count={o.count}
                 active={f.selected.includes(o.value)}
                 onClick={() => f.onToggle(o.value)}
+                title={o.label}
               >
                 {o.label}
               </CategoryBadge>

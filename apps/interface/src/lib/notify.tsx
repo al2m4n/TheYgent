@@ -110,7 +110,9 @@ function DownloadToast({
       <div className="flex items-center justify-between gap-2 text-xs">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-slate-500">⬇</span>
-          <span className="mono truncate text-slate-200">{data.logicalId}</span>
+          <span className="mono truncate text-slate-200" title={data.logicalId}>
+            {data.logicalId}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* Cancelled is user-initiated, not a failure — it gets the neutral slate, not alarm red. */}
@@ -219,7 +221,9 @@ function IngestToast({
         <div className="flex items-center justify-between gap-2 text-xs">
           <div className="flex min-w-0 items-center gap-2">
             <Database size={13} className="shrink-0 text-muted-foreground" aria-hidden />
-            <span className="mono truncate text-foreground">{data?.name ?? sourceId}</span>
+            <span className="mono truncate text-foreground" title={data?.name ?? sourceId}>
+              {data?.name ?? sourceId}
+            </span>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Badge tone="slate">gone</Badge>
@@ -260,7 +264,9 @@ function IngestToast({
       <div className="flex items-center justify-between gap-2 text-xs">
         <div className="flex min-w-0 items-center gap-2">
           <Database size={13} className="shrink-0 text-muted-foreground" aria-hidden />
-          <span className="mono truncate text-foreground">{data.name ?? sourceId}</span>
+          <span className="mono truncate text-foreground" title={data.name ?? sourceId}>
+            {data.name ?? sourceId}
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {/* Cancelled is user-initiated, not a failure — neutral slate, not alarm red. */}

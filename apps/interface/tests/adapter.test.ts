@@ -1,5 +1,7 @@
 import {
+  addMcpToolNodes,
   addNode,
+  addPort,
   connect,
   defaultAddPosition,
   deleteEdges,
@@ -8,12 +10,15 @@ import {
   irToReactFlow,
   reactFlowToIr,
   relayout,
+  removePort,
+  renamePort,
   setNodeIcon,
   setNodePositions,
   setToolKind,
   toolKindOf,
   updateEdge,
   updateNodeConfig,
+  updatePort,
   withDerivedTools,
 } from "../src/adapter";
 import type { ViewBlock } from "../src/adapter/types";
@@ -477,5 +482,236 @@ describe("canvas edits produce valid IR", () => {
     const x = (id: string) => view.nodes?.[id]?.position.x ?? 0;
     expect(x("n_in")).toBeLessThan(x("n_llm"));
     expect(x("n_llm")).toBeLessThan(x("n_out"));
+  });
+});
+
+// ── port (handle) editing: add/rename/remove/configure a node's named handles ─────────────────────
+
+describe("port editing", () => {
+  const portsOf = (ir: ReturnType<typeof sampleGraph>, id: string) =>
+    ir.nodes?.find((n) => n.id === id)?.ports;
+
+  it("addPort appends a data out-port with the round-trip shape", () => {
+    const ir = addPort(sampleGraph(), "n_llm", "out");
+    const outs = portsOf(ir, "n_llm")?.out ?? [];
+    // The default llm out is `out`; the new one is a unique id in the emitted `{id,type,required}`
+    // shape (no `role` key for a data port), so it round-trips byte-for-byte.
+    expect(outs.map((p) => p.id)).toEqual(["out", "out2"]);
+    expect(outs[1]).toEqual({ id: "out2", type: "any", required: true });
+    const back = reactFlowToIr(irToReactFlow(ir), ir);
+    expect(sameHashedContent(back, ir)).toBe(true);
+  });
+
+  it("addPort with a control role emits the role and lands on the control channel", () => {
+    const ir = addPort(sampleGraph(), "n_llm", "in", { role: "control" });
+    const ins = portsOf(ir, "n_llm")?.in ?? [];
+    expect(ins.find((p) => p.role === "control")).toMatchObject({ role: "control" });
+    // A control in-port renders on the top/bottom control handle — the round-trip keeps the role.
+    const back = reactFlowToIr(irToReactFlow(ir), ir);
+    expect(sameHashedContent(back, ir)).toBe(true);
+  });
+
+  it("renamePort on a router out-port rewires the edge sourced from it (the router branch)", () => {
+    // Build the two-branch router shape (local/remote) from a fresh router — the exact thing the
+    // Wizard couldn't do before: a router's branches ARE its out-ports.
+    let ir = addNode(sampleGraph(), "router", { x: 0, y: 0 });
+    const routerId = ir.nodes?.at(-1)?.id as string;
+    ir = addPort(ir, routerId, "out"); // now out: [out, out2]
+    // free n_out's in-port (it's fed by e2) so the router can drive it — one data edge per in-port.
+    ir = deleteEdges(ir, ["e2"]);
+    const conn = connect(ir, {
+      source: routerId,
+      sourceHandle: "out",
+      target: "n_out",
+      targetHandle: "in",
+    });
+    ir = conn.ir as typeof ir;
+    ir = renamePort(ir, routerId, "out", "out", "local");
+    expect(portsOf(ir, routerId)?.out?.map((p) => p.id)).toEqual(["local", "out2"]);
+    // the edge from the renamed handle followed the rename (wiring survives)
+    const wired = ir.edges?.find((e) => e.source === routerId);
+    expect(wired?.sourceHandle).toBe("local");
+  });
+
+  it("renamePort on an in-port rewires the edge that targets it (multi-input)", () => {
+    let ir = renamePort(sampleGraph(), "n_llm", "in", "in", "question");
+    expect(portsOf(ir, "n_llm")?.in?.map((p) => p.id)).toEqual(["question"]);
+    // e1 (n_in.out → n_llm.in) now targets the renamed port
+    expect(ir.edges?.find((e) => e.id === "e1")?.targetHandle).toBe("question");
+    // adding a second named in-port gives the $in.<port> compose shape
+    ir = addPort(ir, "n_llm", "in", { id: "file" });
+    expect(portsOf(ir, "n_llm")?.in?.map((p) => p.id)).toEqual(["question", "file"]);
+  });
+
+  it("renamePort is a no-op on a duplicate or empty target id (ids stay unique per side)", () => {
+    const ir = addPort(sampleGraph(), "n_llm", "out"); // out: [out, out2]
+    expect(renamePort(ir, "n_llm", "out", "out2", "out")).toBe(ir); // collision → unchanged ref
+    expect(renamePort(ir, "n_llm", "out", "out2", "")).toBe(ir); // empty → unchanged ref
+  });
+
+  it("removePort drops the port and prunes its incident edges", () => {
+    // e2 is n_llm.out → n_out.in; removing n_llm's `out` must delete e2.
+    const ir = removePort(sampleGraph(), "n_llm", "out", "out");
+    expect(portsOf(ir, "n_llm")?.out).toEqual([]);
+    expect(ir.edges?.some((e) => e.id === "e2")).toBe(false);
+    expect(ir.edges?.some((e) => e.id === "e1")).toBe(true); // the untouched edge remains
+  });
+
+  it("updatePort toggles required on an in-port and stamps the error type on an out-port", () => {
+    let ir = updatePort(sampleGraph(), "n_llm", "in", "in", { required: false });
+    expect(portsOf(ir, "n_llm")?.in?.[0]?.required).toBe(false);
+    ir = updatePort(ir, "n_llm", "out", "out", { type: "error" });
+    expect(portsOf(ir, "n_llm")?.out?.[0]?.type).toBe("error");
+    const back = reactFlowToIr(irToReactFlow(ir), ir);
+    expect(sameHashedContent(back, ir)).toBe(true);
+  });
+
+  it("builds a working two-branch router (local/remote) that survives a save round-trip", () => {
+    let ir = addNode(sampleGraph(), "router", { x: 0, y: 0 });
+    const routerId = ir.nodes?.at(-1)?.id as string;
+    // one extra out-port, then name the two branches — the router shape hybrid_route.json uses.
+    ir = addPort(ir, routerId, "out");
+    ir = renamePort(ir, routerId, "out", "out", "local");
+    ir = renamePort(ir, routerId, "out", "out2", "remote");
+    ir = updateNodeConfig(ir, routerId, { select: "$in.in.route" });
+    expect(portsOf(ir, routerId)?.out?.map((p) => p.id)).toEqual(["local", "remote"]);
+
+    // The router built in the editor survives a save (load→save): the branch names, the select, and
+    // the node stay intact. (A freshly-ADDED node's ports omit the type/required defaults the server
+    // fills, so the FIRST save fills them — thereafter the shape is stable, asserted by the idempotent
+    // second round-trip.)
+    const saved = reactFlowToIr(irToReactFlow(ir), ir);
+    const savedRouter = saved.nodes?.find((n) => n.id === routerId);
+    expect(savedRouter?.ports?.out?.map((p) => p.id)).toEqual(["local", "remote"]);
+    expect(savedRouter?.config).toEqual({ select: "$in.in.route" });
+    const resaved = reactFlowToIr(irToReactFlow(saved), saved);
+    expect(sameHashedContent(resaved, saved)).toBe(true);
+  });
+});
+
+// ── bulk-add MCP tools: one gesture spawns configured, wired, positioned nodes ────────────────────
+
+describe("addMcpToolNodes", () => {
+  it("spawns one configured node per tool, wired into the llm's tool-role port", () => {
+    const ir = capabilityBase();
+    const { ir: next, newIds } = addMcpToolNodes(ir, {
+      server: "files",
+      tools: ["read_file", "write_file"],
+      attachTo: "n_llm",
+    });
+    expect(newIds).toEqual(["read_file", "write_file"]);
+    const read = next.nodes?.find((n) => n.id === "read_file");
+    expect(read?.type).toBe("mcp_tool");
+    expect(read?.kind).toBe("activity");
+    expect(read?.label).toBe("read_file");
+    expect(read?.config).toMatchObject({ tool: "read_file", server: "files", connection: null });
+    // ports come from the registry spec, incl. the tool-role capability handle.
+    expect(read?.ports?.out?.some((p) => p.role === "tool")).toBe(true);
+    // every spawned node is wired: its capability handle → the llm's tools port, channel "tool".
+    const toolEdges = (next.edges ?? []).filter(
+      (e) => e.channel === "tool" && e.target === "n_llm",
+    );
+    expect(toolEdges.map((e) => e.source).sort()).toEqual(["read_file", "write_file"]);
+    for (const e of toolEdges) {
+      expect(e.sourceHandle).toBe("use");
+      expect(e.targetHandle).toBe("tools");
+    }
+    // the derived ir.tools registry indexes the batch, tagged mcp (keyed by node id).
+    const tools = next.tools as Record<string, { kind?: string }>;
+    expect(tools.read_file?.kind).toBe("mcp");
+    expect(tools.write_file?.kind).toBe("mcp");
+  });
+
+  it("node id IS the function name: sanitized from the tool, numeric suffix on collision", () => {
+    const ir = capabilityBase();
+    const first = addMcpToolNodes(ir, { server: "a", tools: ["repo.read file!"] }).ir;
+    expect(first.nodes?.some((n) => n.id === "repo_read_file")).toBe(true);
+    // the same tool name from a DIFFERENT server is a new node — same id base, suffixed.
+    const { ir: second, newIds } = addMcpToolNodes(first, {
+      server: "b",
+      tools: ["repo.read file!"],
+    });
+    expect(newIds).toEqual(["repo_read_file_2"]);
+    expect(second.nodes?.find((n) => n.id === "repo_read_file_2")?.config).toMatchObject({
+      server: "b",
+    });
+  });
+
+  it("reuses an existing node for the same server+tool — wires it instead of duplicating", () => {
+    const ir = capabilityBase();
+    const once = addMcpToolNodes(ir, { server: "files", tools: ["read_file"] }).ir; // unwired spawn
+    const { ir: twice, newIds } = addMcpToolNodes(once, {
+      server: "files",
+      tools: ["read_file"],
+      attachTo: "n_llm",
+    });
+    expect(newIds).toEqual([]); // no duplicate node
+    expect(twice.nodes?.filter((n) => n.type === "mcp_tool")).toHaveLength(1);
+    expect(
+      twice.edges?.some(
+        (e) => e.channel === "tool" && e.source === "read_file" && e.target === "n_llm",
+      ),
+    ).toBe(true);
+  });
+
+  it("re-adding an already-wired batch is a no-op on hashed content", () => {
+    const ir = capabilityBase();
+    const once = addMcpToolNodes(ir, {
+      server: "files",
+      tools: ["read_file"],
+      attachTo: "n_llm",
+    }).ir;
+    const twice = addMcpToolNodes(once, {
+      server: "files",
+      tools: ["read_file"],
+      attachTo: "n_llm",
+    }).ir;
+    expect(sameHashedContent(twice, once)).toBe(true);
+    expect(twice.edges).toHaveLength(once.edges?.length ?? 0);
+  });
+
+  it("an attachTo without a tool-role in-port spawns the batch but wires nothing", () => {
+    const ir = sampleGraph(); // this llm declares no tools port
+    const { ir: next, newIds } = addMcpToolNodes(ir, {
+      server: "files",
+      tools: ["read_file"],
+      attachTo: "n_llm",
+    });
+    expect(newIds).toEqual(["read_file"]);
+    expect(next.edges?.some((e) => (e.channel ?? "data") === "tool")).toBe(false);
+  });
+
+  it("positions land in the view only, and the spawned graph round-trips the canvas", () => {
+    const ir = capabilityBase();
+    const { ir: next, newIds } = addMcpToolNodes(ir, {
+      server: "files",
+      tools: ["a", "b", "c", "d"],
+      attachTo: "n_llm",
+    });
+    const view = next.view as ViewBlock;
+    for (const id of newIds) {
+      const p = view.nodes?.[id]?.position;
+      expect(Number.isFinite(p?.x)).toBe(true);
+      expect(Number.isFinite(p?.y)).toBe(true);
+    }
+    // layout stays out of hashed content, and the batch is canvas-legal: load→save is identity.
+    expect(JSON.stringify(viewStrippedContent(next))).not.toContain("position");
+    const back = reactFlowToIr(irToReactFlow(next), next);
+    expect(sameHashedContent(back, next)).toBe(true);
+  });
+
+  it("a connection-backed batch carries the connection id, never a server name", () => {
+    const ir = capabilityBase();
+    const { ir: next } = addMcpToolNodes(ir, {
+      connection: "con_1",
+      tools: ["search"],
+      attachTo: "n_llm",
+    });
+    expect(next.nodes?.find((n) => n.id === "search")?.config).toMatchObject({
+      connection: "con_1",
+      server: null,
+    });
+    const tools = next.tools as Record<string, { kind?: string; connection?: string }>;
+    expect(tools.search).toMatchObject({ kind: "mcp", connection: "con_1" });
   });
 });

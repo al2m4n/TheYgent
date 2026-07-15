@@ -241,6 +241,9 @@ export function RunWaterfall({
                       )}
                     </span>
                     <span
+                      // Show the human label (`name`) — a tool phase's `phase` carries a
+                      // `#<iter>.<idx>` identity discriminator that reads as noise in the row.
+                      title={s.name ?? s.phase}
                       className={`mono truncate text-left text-xs ${
                         s.phase
                           ? "text-violet-700 dark:text-violet-300"
@@ -249,7 +252,7 @@ export function RunWaterfall({
                             : "text-muted-foreground"
                       }`}
                     >
-                      {s.phase ?? s.name}
+                      {s.name ?? s.phase}
                     </span>
                   </div>
                   <div data-wf-track className="relative h-7 flex-1">

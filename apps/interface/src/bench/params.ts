@@ -207,12 +207,49 @@ const TTS_PARAMS: ParamSpec[] = [
   },
 ];
 
+// text → image generation params. There is no bench tester panel for image generation, so this is
+// NOT a PanelModality (no PANEL_REGISTRY entry); it exists only for the graph `imagine` node's
+// `params`, forwarded to `/v1/images/generations`. Only knobs the image server actually reads are
+// offered (a param it ignores would be a misleading control).
+const IMAGE_PARAMS: ParamSpec[] = [
+  {
+    key: "size",
+    label: "Size",
+    type: "text",
+    placeholder: "512x512",
+    help: "Output dimensions as WxH (e.g. 512x512). Diffusion models round each side to a multiple of 64; larger sizes cost more memory and time.",
+  },
+  {
+    key: "steps",
+    label: "Steps",
+    type: "number",
+    min: 1,
+    step: 1,
+    help: "Denoising iterations. More steps can sharpen detail at the cost of speed; distilled few-step models need only a handful. Empty uses the engine's default.",
+  },
+  {
+    key: "n",
+    label: "Images",
+    type: "number",
+    min: 1,
+    max: 4,
+    step: 1,
+    help: "How many images to generate from the prompt (1–4).",
+  },
+];
+
 export const PARAM_SPECS: Record<PanelModality, ParamSpec[]> = {
   chat: CHAT_PARAMS,
   embeddings: EMBEDDINGS_PARAMS,
   "audio.transcription": STT_PARAMS,
   "audio.speech": TTS_PARAMS,
 };
+
+// The modalities a graph model-call NODE can carry `params` for: the bench panel modalities PLUS
+// `images.generation` (the `imagine` node), which has no tester panel of its own but does carry
+// generation params. Kept separate from `PanelModality` so the bench panel registry stays exhaustive
+// without inventing an image tester panel.
+export type NodeParamModality = PanelModality | "images.generation";
 
 /** Narrow a spec list by a model's advertised capabilities (a gated param is hidden, not greyed). */
 export function narrowSpecs(specs: ParamSpec[], caps: Capabilities | undefined): ParamSpec[] {
@@ -232,7 +269,8 @@ export function paramsForModality(
  * node, whose config vocabulary names the audio container `format` (the runtime maps it onto the
  * wire's `response_format`) — so the editor writes the key the walker actually reads.
  */
-export function specsForNodeParams(modality: PanelModality): ParamSpec[] {
+export function specsForNodeParams(modality: NodeParamModality): ParamSpec[] {
+  if (modality === "images.generation") return IMAGE_PARAMS;
   const specs = PARAM_SPECS[modality] ?? [];
   if (modality !== "audio.speech") return specs;
   return specs.map((s) => (s.key === "response_format" ? { ...s, key: "format" } : s));
@@ -243,7 +281,7 @@ export function specsForNodeParams(modality: PanelModality): ParamSpec[] {
  * `response_format` → `format` rename); every other modality copies through unchanged.
  */
 export function presetParamsForNode(
-  modality: PanelModality,
+  modality: NodeParamModality,
   params: Record<string, unknown>,
 ): Record<string, unknown> {
   if (modality !== "audio.speech" || !("response_format" in params)) return { ...params };

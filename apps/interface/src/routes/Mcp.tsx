@@ -11,7 +11,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Globe, Lock, Plus, Server, Star } from "lucide-react";
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import { ToolTester } from "../bench/ToolTester";
+import { buildToolGraph } from "../bench/toolgraph";
 import { CategoryBadge, FilterBar } from "../components/Filters";
 import { TimeAgo } from "../components/TimeAgo";
 import {
@@ -56,6 +56,7 @@ import {
   type McpCatalogEntry,
   type McpInstallCandidate,
   type McpInstallInput,
+  type McpToolDescriptor,
   api,
 } from "../lib/api";
 import { countBy, toggle, transportTone } from "../lib/categories";
@@ -85,7 +86,6 @@ export function Mcp() {
         </div>
       </div>
       <ServerList />
-      <ToolTester />
       {browsing && <BrowseHubsModal onClose={() => setBrowsing(false)} />}
       {adding && <AddServerModal onClose={() => setAdding(false)} />}
     </Page>
@@ -106,6 +106,11 @@ interface UnifiedServer {
   authType: string | null;
   origin: { registry?: string; name?: string; version?: string } | null;
   connectionId: string | null;
+  // The connection's stored config (transport + command/args/env or url/headers + auth), so the
+  // settings modal can pre-fill without a second fetch. Null for name-defined servers — the control
+  // plane exposes only their summary, not their full config.
+  config: Record<string, unknown> | null;
+  enabled: boolean;
 }
 
 function ServerList() {
@@ -132,6 +137,8 @@ function ServerList() {
       authType: null,
       origin: null,
       connectionId: null,
+      config: null,
+      enabled: true,
     }));
     const conns = (connections.data ?? [])
       .filter((c) => c.kind === "mcp_server")
@@ -149,6 +156,8 @@ function ServerList() {
           authType: auth?.type ?? null,
           origin,
           connectionId: c.id,
+          config: c.config,
+          enabled: c.enabled,
         };
       });
     return [...defined, ...conns];
@@ -184,6 +193,9 @@ function ServerList() {
   // Deleting is irreversible (a definition's config / a connection's secret is never
   // redisplayed), so it goes through the shared confirmation dialog.
   const [confirmRemove, setConfirmRemove] = useState<UnifiedServer | null>(null);
+  // Clicking a server's name opens its settings (rename, config, secret, enable) — the same
+  // "click the row to edit its registration" the models registry has.
+  const [settingsFor, setSettingsFor] = useState<UnifiedServer | null>(null);
 
   // Filters: transport (the category) and connected/idle state over the MERGED list, plus a
   // name search. New transports (openapi/graphql/…) appear as facet values automatically.
@@ -283,6 +295,7 @@ function ServerList() {
                   statusSel={statusSel}
                   onToggleTransport={toggleTransport}
                   onToggleStatus={toggleStatus}
+                  onSettings={() => setSettingsFor(s)}
                   onWarm={() => warm.mutate(s)}
                   onClose={() => close.mutate(s)}
                   onRemove={() => setConfirmRemove(s)}
@@ -313,6 +326,9 @@ function ServerList() {
           onCancel={() => setConfirmRemove(null)}
         />
       )}
+      {settingsFor !== null && (
+        <EditServerModal server={settingsFor} onClose={() => setSettingsFor(null)} />
+      )}
     </section>
   );
 }
@@ -323,6 +339,7 @@ function ServerRow({
   statusSel,
   onToggleTransport,
   onToggleStatus,
+  onSettings,
   onWarm,
   onClose,
   onRemove,
@@ -335,6 +352,7 @@ function ServerRow({
   statusSel: string[];
   onToggleTransport: (value: string) => void;
   onToggleStatus: (value: string) => void;
+  onSettings: () => void;
   onWarm: () => void;
   onClose: () => void;
   onRemove: () => void;
@@ -404,26 +422,6 @@ function ServerRow({
     onError: (e) => setOauthError(e instanceof Error ? e.message : String(e)),
   });
 
-  // Secret rotation, for connection-backed rows whose auth carries a pasted credential.
-  // Rotation writes through the connection PATCH (same secret ref server-side), so no agent
-  // version moves. OAuth rows are excluded: their tokens are minted by the sign-in flow and a
-  // hand-written value would corrupt the stored grant — re-authorize with Connect instead.
-  const canRotate = Boolean(
-    server.connectionId && server.authType !== "oauth" && (server.hasSecret || server.authType),
-  );
-  const [rotating, setRotating] = useState(false);
-  const [newSecret, setNewSecret] = useState("");
-  const rotate = useMutation({
-    mutationFn: () => api.patchConnection(server.connectionId as string, { secret: newSecret }),
-    onSuccess: () => {
-      setRotating(false);
-      setNewSecret("");
-      notify.success(`${server.name} secret updated`);
-      qc.invalidateQueries({ queryKey: ["connections"] });
-    },
-  });
-  const mapSecret = server.authType === "env" || server.authType === "headers";
-
   const st = server.connected ? "connected" : "idle";
   // While any action on this row is in flight, disable the others so they can't race.
   const busy = warming || closing || removing;
@@ -434,7 +432,14 @@ function ServerRow({
       </ItemMedia>
       <ItemContent>
         <ItemTitle className="flex items-center gap-1.5">
-          {server.name}
+          <button
+            type="button"
+            onClick={onSettings}
+            title="Open settings"
+            className="hover:underline"
+          >
+            {server.name}
+          </button>
           {server.hasSecret && (
             <span title="has an encrypted secret (write-only — never shown again)">
               <Lock size={12} className="text-muted-foreground" aria-label="has secret" />
@@ -513,65 +518,18 @@ function ServerRow({
         >
           {closing ? "Closing…" : "Close"}
         </Button>
-        {canRotate && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setRotating(true)}
-            disabled={busy}
-            title="Write a new secret (the old value is never shown)"
-          >
-            Rotate secret
-          </Button>
-        )}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onSettings}
+          title="Rename, reconfigure, rotate the secret, enable/disable"
+        >
+          Settings
+        </Button>
         <Button variant="destructive" size="sm" onClick={onRemove} disabled={busy}>
           {removing ? "Deleting…" : "Delete"}
         </Button>
       </ItemActions>
-      {rotating && (
-        <Modal
-          title={`Rotate secret — ${server.name}`}
-          onClose={() => setRotating(false)}
-          width="max-w-md"
-        >
-          <div className="space-y-3">
-            <Field label={mapSecret ? "New secret (JSON object)" : "New secret"}>
-              {mapSecret ? (
-                <Textarea
-                  value={newSecret}
-                  onChange={(e) => setNewSecret(e.target.value)}
-                  placeholder={'{ "NAME": "value" }'}
-                  className="mono"
-                />
-              ) : (
-                <Input
-                  type="password"
-                  value={newSecret}
-                  onChange={(e) => setNewSecret(e.target.value)}
-                  placeholder="write-only — never shown again"
-                />
-              )}
-            </Field>
-            <p className="text-xs text-muted-foreground">
-              {mapSecret
-                ? "This auth type stores a map — paste the complete JSON object of names to values."
-                : "Replaces the stored credential in place. No agent changes; the next call uses the new value."}
-            </p>
-            <ErrorBanner error={rotate.error} />
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setRotating(false)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={!newSecret.trim() || rotate.isPending}
-                onClick={() => rotate.mutate()}
-              >
-                {rotate.isPending ? "Saving…" : "Save secret"}
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
       {(showTools || oauthError) && (
         <ItemFooter className="flex-col items-stretch justify-start gap-1 border-t pt-2">
           {oauthError && <ErrorBanner error={oauthError} />}
@@ -582,16 +540,21 @@ function ServerRow({
               {tools.data && tools.data.length === 0 && (
                 <p className="text-xs text-muted-foreground">No tools reported.</p>
               )}
-              <ul className="space-y-1">
-                {tools.data?.map((t) => (
-                  <li key={t.name} className="text-xs">
-                    <span className="mono text-foreground">{t.name}</span>
-                    {t.description && (
-                      <span className="text-muted-foreground"> — {t.description}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              {tools.data && tools.data.length > 0 && (
+                <ul className="space-y-1.5">
+                  {tools.data.map((t) => (
+                    <ToolRunner
+                      key={t.name}
+                      tool={t}
+                      target={
+                        server.connectionId
+                          ? { connection: server.connectionId }
+                          : { server: server.name }
+                      }
+                    />
+                  ))}
+                </ul>
+              )}
             </>
           )}
         </ItemFooter>
@@ -600,7 +563,364 @@ function ServerRow({
   );
 }
 
+// ── per-tool runner (folded into a server's Tools panel) ─────────────────────────────────────────
+// Run ONE of a server's tools right where it's listed. The args editor is pre-seeded from the tool's
+// own inputSchema, so you don't have to know the arg names. It runs through the same throwaway
+// `input → mcp_tool → output` graph the agent path uses (`buildToolGraph` + `runGraph`) — no new
+// backend, no new execution path — and shows the tool's raw output.
+function ToolRunner({
+  tool,
+  target,
+}: {
+  tool: McpToolDescriptor;
+  target: { server?: string; connection?: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const [argsText, setArgsText] = useState(() => skeletonFromSchema(tool.inputSchema));
+  const [output, setOutput] = useState<string | null>(null);
+
+  const run = useMutation({
+    mutationFn: async () => {
+      let input: Record<string, unknown> = {};
+      const trimmed = argsText.trim();
+      if (trimmed) {
+        const parsed = JSON.parse(trimmed);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error("Arguments must be a JSON object of named tool args.");
+        }
+        input = parsed as Record<string, unknown>;
+      }
+      const ir = buildToolGraph({ ...target, tool: tool.name, argNames: Object.keys(input) });
+      const r = await api.runGraph({ ir, input });
+      if (r.error) throw new Error(r.error);
+      return r.output ?? "";
+    },
+    onSuccess: (out) => setOutput(out),
+  });
+
+  return (
+    <li className="rounded-md border border-border/60 bg-muted/30 p-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <span className="mono text-xs text-foreground">{tool.name}</span>
+          {tool.description && (
+            <p className="text-[11px] leading-snug text-muted-foreground">{tool.description}</p>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={() => setOpen((v) => !v)}
+          aria-pressed={open}
+        >
+          {open ? "Hide" : "Run"}
+        </Button>
+      </div>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <Field label="Arguments (JSON)">
+            <Textarea
+              rows={4}
+              className="mono text-xs"
+              spellCheck={false}
+              value={argsText}
+              onChange={(e) => setArgsText(e.target.value)}
+            />
+          </Field>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => run.mutate()} disabled={run.isPending}>
+              {run.isPending ? "Running…" : "Run tool"}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              Runs once through a throwaway one-node agent.
+            </span>
+          </div>
+          <ErrorBanner error={run.error} />
+          {/* Only the LATEST run's output — isSuccess resets to false the moment the next run
+              starts, so a prior success never lingers beside a fresh error. */}
+          {run.isSuccess && output !== null && (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-2 text-xs text-foreground">
+              {formatToolOutput(output)}
+            </pre>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// ── server settings (opened by clicking a server's name) ─────────────────────────────────────────
+// Connection-backed servers carry their full config, so they get a real edit form; name-defined
+// servers expose only a summary, so they get a read-only detail view.
+function EditServerModal({ server, onClose }: { server: UnifiedServer; onClose: () => void }) {
+  if (server.connectionId && server.config) {
+    return <ConnectionSettingsModal server={server} onClose={onClose} />;
+  }
+  return <DefinedServerModal server={server} onClose={onClose} />;
+}
+
+function ConnectionSettingsModal({
+  server,
+  onClose,
+}: {
+  server: UnifiedServer;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const cfg = (server.config ?? {}) as Record<string, unknown>;
+  const transport = typeof cfg.transport === "string" ? cfg.transport : "stdio";
+  const isStdio = transport === "stdio";
+  const isRemote = transport === "http" || transport === "sse";
+  const isGenerated = transport === "openapi" || transport === "graphql";
+  // A pasted credential can be replaced; an OAuth grant is minted by the sign-in flow, so a
+  // hand-written value would corrupt it — re-authorize with Connect instead.
+  const canRotate = Boolean(server.authType && server.authType !== "oauth");
+  const mapSecret = server.authType === "env" || server.authType === "headers";
+
+  const [name, setName] = useState(server.name);
+  const [enabled, setEnabled] = useState(server.enabled);
+  const [command, setCommand] = useState(typeof cfg.command === "string" ? cfg.command : "");
+  const [args, setArgs] = useState(Array.isArray(cfg.args) ? (cfg.args as string[]).join(" ") : "");
+  const [env, setEnv] = useState(() => envToLines(cfg.env));
+  const [cwd, setCwd] = useState(typeof cfg.cwd === "string" ? cfg.cwd : "");
+  const [url, setUrl] = useState(typeof cfg.url === "string" ? cfg.url : "");
+  const [headers, setHeaders] = useState(() => envToLines(cfg.headers));
+  const [newSecret, setNewSecret] = useState("");
+
+  const save = useMutation({
+    mutationFn: () => {
+      // Start from the stored config so keys we don't edit (auth, origin, a generated server's
+      // derived tools) survive the write untouched.
+      const nextConfig: Record<string, unknown> = { ...cfg };
+      if (isStdio) {
+        nextConfig.command = command.trim();
+        nextConfig.args = parseArgs(args);
+        nextConfig.env = parseEnv(env) ?? {};
+        // undefined is dropped by JSON.stringify — clears cwd on the wire when left blank.
+        nextConfig.cwd = cwd.trim() || undefined;
+      } else if (isRemote) {
+        nextConfig.url = url.trim();
+        nextConfig.headers = parseEnv(headers) ?? {};
+      }
+      const body: {
+        name?: string;
+        config?: Record<string, unknown>;
+        enabled?: boolean;
+        secret?: string;
+      } = { name: name.trim(), enabled };
+      // Only editable transports write config back. A generated server's stored config carries the
+      // full parsed spec, which the connection dump elides to a summary — sending it back would
+      // overwrite the real spec and wipe the derived tools. Omitting config leaves it untouched.
+      if (isStdio || isRemote) body.config = nextConfig;
+      // The secret is write-only — only send it when the user actually types a replacement.
+      if (newSecret.trim()) body.secret = newSecret.trim();
+      return api.patchConnection(server.connectionId as string, body);
+    },
+    onSuccess: () => {
+      notify.success(`${name.trim()} updated`);
+      qc.invalidateQueries({ queryKey: ["connections"] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal title={`${server.name} — settings`} width="max-w-2xl" onClose={onClose}>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name">
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Transport">
+            <Input value={transport} disabled className="mono" />
+          </Field>
+        </div>
+
+        {isStdio && (
+          <>
+            <Field label="Command">
+              <Input
+                value={command}
+                onChange={(e) => setCommand(e.target.value)}
+                placeholder="npx"
+              />
+            </Field>
+            <Field label="Args (whitespace-separated)">
+              <Input value={args} onChange={(e) => setArgs(e.target.value)} />
+            </Field>
+            <Field label="Env (NAME=value, one per line — non-secret)">
+              <Textarea
+                rows={3}
+                className="mono"
+                value={env}
+                onChange={(e) => setEnv(e.target.value)}
+              />
+            </Field>
+            <Field label="Working dir (optional)">
+              <Input value={cwd} onChange={(e) => setCwd(e.target.value)} />
+            </Field>
+          </>
+        )}
+
+        {isRemote && (
+          <>
+            <Field label="URL">
+              <Input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://host/mcp"
+              />
+            </Field>
+            <Field label="Headers (NAME=value, one per line — non-secret)">
+              <Textarea
+                rows={2}
+                className="mono"
+                value={headers}
+                onChange={(e) => setHeaders(e.target.value)}
+              />
+            </Field>
+          </>
+        )}
+
+        {isGenerated && (
+          <NoteBanner>
+            Generated {transport} server — its derived tools and upstream spec aren't hand-edited
+            here. You can rename it, toggle it, or rotate its credential; re-create it to change the
+            spec.
+          </NoteBanner>
+        )}
+
+        {canRotate && (
+          <Field
+            label={
+              mapSecret
+                ? "Rotate secret (JSON object — leave blank to keep the current one)"
+                : "Rotate secret (leave blank to keep the current one)"
+            }
+          >
+            {mapSecret ? (
+              <Textarea
+                value={newSecret}
+                onChange={(e) => setNewSecret(e.target.value)}
+                placeholder={'{ "NAME": "value" }'}
+                className="mono"
+                style={SECRET_TEXTAREA_STYLE}
+                rows={2}
+              />
+            ) : (
+              <Input
+                type="password"
+                value={newSecret}
+                onChange={(e) => setNewSecret(e.target.value)}
+                placeholder="write-only — never shown again"
+              />
+            )}
+          </Field>
+        )}
+
+        <label className="flex w-fit items-center gap-2 text-sm text-foreground">
+          <Switch checked={enabled} onCheckedChange={setEnabled} />
+          Enabled
+        </label>
+
+        <ErrorBanner error={save.error} />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={!name.trim() || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function DefinedServerModal({ server, onClose }: { server: UnifiedServer; onClose: () => void }) {
+  return (
+    <Modal title={`${server.name} — settings`} width="max-w-md" onClose={onClose}>
+      <div className="space-y-3">
+        <NoteBanner>
+          This is a name-defined server. Its command, args, and env live in the control-plane config
+          and aren't editable from the browser — re-add it to change them, or delete it from its
+          row.
+        </NoteBanner>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+          <dt className="text-muted-foreground">Name</dt>
+          <dd className="mono text-foreground">{server.name}</dd>
+          <dt className="text-muted-foreground">Transport</dt>
+          <dd className="text-foreground">{server.transport}</dd>
+          <dt className="text-muted-foreground">State</dt>
+          <dd className="text-foreground">{server.connected ? "connected" : "idle"}</dd>
+        </dl>
+        <div className="flex justify-end">
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── small shared helpers ──────────────────────────────────────────────────────────────────────────
+
+// Turn a JSON-Schema property into a placeholder default so the args editor seeds with the right
+// shape. A `type` may be a string or an array of strings — take the first concrete one.
+function schemaDefault(prop: unknown): unknown {
+  if (!prop || typeof prop !== "object") return null;
+  const p = prop as Record<string, unknown>;
+  // A nullable schema types as e.g. ["null", "string"]; seed from the first NON-null type.
+  const types = Array.isArray(p.type) ? p.type : [p.type];
+  const t = types.find((x) => x !== "null") ?? types[0];
+  switch (t) {
+    case "string":
+      return "";
+    case "number":
+    case "integer":
+      return 0;
+    case "boolean":
+      return false;
+    case "array":
+      return [];
+    case "object":
+      return {};
+    default:
+      return null;
+  }
+}
+
+// Seed the tool's args editor from its declared inputSchema (an empty object when it has none).
+function skeletonFromSchema(schema: Record<string, unknown> | null | undefined): string {
+  const props =
+    schema && typeof schema === "object"
+      ? (schema.properties as Record<string, unknown> | undefined)
+      : undefined;
+  if (!props || typeof props !== "object") return "{}";
+  const out: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(props)) out[name] = schemaDefault(def);
+  return JSON.stringify(out, null, 2);
+}
+
+// Pretty-print a tool's output as JSON when it parses, else show it raw.
+function formatToolOutput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "(empty output)";
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return raw;
+  }
+}
+
+// Render a config map ({ NAME: value }) back into the NAME=value lines the forms edit.
+function envToLines(v: unknown): string {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+  return Object.entries(v as Record<string, unknown>)
+    .map(([k, val]) => `${k}=${String(val)}`)
+    .join("\n");
+}
 
 // Parse newline/space-separated args, and KEY=value env/header lines, into the wire shape.
 function parseArgs(raw: string): string[] {
@@ -827,15 +1147,24 @@ function HubEntryCard({
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="truncate text-sm">{entry.title || entry.name}</CardTitle>
+              <CardTitle className="truncate text-sm" title={entry.title || entry.name}>
+                {entry.title || entry.name}
+              </CardTitle>
               {entry.installed && <Badge tone="green">✓ installed</Badge>}
               {entry.status && entry.status !== "active" && (
                 <Badge tone="amber">{entry.status}</Badge>
               )}
             </div>
-            <CardDescription className="mono truncate text-[11px]">{entry.name}</CardDescription>
+            <CardDescription className="mono truncate text-[11px]" title={entry.name}>
+              {entry.name}
+            </CardDescription>
             {entry.description && (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
+              <p
+                className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                title={entry.description}
+              >
+                {entry.description}
+              </p>
             )}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className="mono">v{entry.version}</span>
@@ -933,7 +1262,9 @@ function HubEntryDetail({ entry }: { entry: McpCatalogEntry }) {
           {data.candidates.map((c) => (
             <Item key={c.id} variant="outline" className="flex-nowrap gap-3 px-3 py-2">
               <ItemContent className="min-w-0 flex-row flex-wrap items-center gap-2">
-                <span className="mono truncate text-sm text-foreground">{c.label}</span>
+                <span className="mono truncate text-sm text-foreground" title={c.label}>
+                  {c.label}
+                </span>
                 <CategoryBadge tone={transportTone(c.kind)}>{c.kind}</CategoryBadge>
                 {c.supportsOauth && <Badge tone="cyan">sign-in</Badge>}
                 {c.inputs.length > 0 && (
@@ -1029,12 +1360,17 @@ function HubInstallDialog({
           <NoteBanner key={w}>{w}</NoteBanner>
         ))}
         {candidate.command && (
-          <p className="mono truncate text-[11px] text-muted-foreground">
+          <p
+            className="mono truncate text-[11px] text-muted-foreground"
+            title={`${candidate.command} ${candidate.args.join(" ")}`}
+          >
             {candidate.command} {candidate.args.join(" ")}
           </p>
         )}
         {candidate.url && (
-          <p className="mono truncate text-[11px] text-muted-foreground">{candidate.url}</p>
+          <p className="mono truncate text-[11px] text-muted-foreground" title={candidate.url}>
+            {candidate.url}
+          </p>
         )}
         <Field label="Connection name (how agents reference it)">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={suggested} />

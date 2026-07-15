@@ -7,6 +7,7 @@
 // unknown (recorded before targets were stored) stays readable, just not continuable.
 
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
 import { ChatView } from "../chat/ChatView";
 import type { SessionKind } from "../chat/session";
@@ -16,14 +17,6 @@ import { type RunChatTarget, useRunChat } from "../chat/useRunChat";
 import { TimeAgo } from "../components/TimeAgo";
 import { ConfirmDialog, ErrorBanner, Page, Spinner } from "../components/ui";
 import { Badge } from "../components/ui/badge";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "../components/ui/breadcrumb";
 import { Button } from "../components/ui/button";
 import { api } from "../lib/api";
 import { toneOf } from "../lib/categories";
@@ -128,19 +121,13 @@ export function SessionDetail() {
     // composer stays pinned at the bottom — the page itself never scrolls behind it.
     <Page className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/sessions">Chats</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage className="mono break-all font-semibold">{session.id}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        <Link
+          to="/sessions"
+          className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft size={16} /> Chats
+        </Link>
+        <span className="mono break-all text-sm font-semibold text-foreground">{session.id}</span>
         {label && (
           <Badge variant="secondary" className={toneOf("blue").badge}>
             {label}

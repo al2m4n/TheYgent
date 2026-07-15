@@ -9,6 +9,7 @@ Proven against the same real Postgres + real Alembic schema as the rest of the f
 from __future__ import annotations
 
 from _fake_inference import FULL_MESSAGE
+from _ir import trivial_ir
 from fastapi.testclient import TestClient
 from ulid import ULID
 
@@ -101,6 +102,23 @@ def test_session_detail_unknown_404(client: TestClient) -> None:
     resp = client.get("/sessions/nope")
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "session_not_found"
+
+
+def test_stats_exact_totals(client: TestClient) -> None:
+    # The dashboard overview needs exact totals, not the paginated list window.
+    assert client.get("/stats").json() == {"runs": 0, "sessions": 0, "agents": 0}
+
+    # Two one-shot runs (no session) + two runs sharing one session → 4 runs, 1 session row.
+    _run(client)
+    _run(client)
+    sid = str(ULID())
+    _run(client, session_id=sid, text="first")
+    _run(client, session_id=sid, text="second")
+
+    # One saved agent.
+    assert client.post("/agents", json={"ir": trivial_ir()}).status_code == 201
+
+    assert client.get("/stats").json() == {"runs": 4, "sessions": 1, "agents": 1}
 
 
 def test_cors_dev_origin_allowed(client: TestClient) -> None:

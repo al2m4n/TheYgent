@@ -7,7 +7,9 @@
 // selected — and is pulled OUT of the Output ports, (5) hover → onHoverNode fires the canvas-flash
 // join for NODE rows only, (6) zoom is the mouse wheel over the timeline (clamped at 1×; "Fit"
 // resets), (7) an in-flight span renders a bounded pulsing bar, (8) no trace degrades to a note,
-// (9) the chat fold mounts the waterfall lazily — an unopened turn fetches nothing.
+// (9) the chat fold mounts the waterfall lazily — an unopened turn fetches nothing, (10) an llm
+// node's autonomous tool calls surface each call's args + RESULT (ok/err), scoped to one call when
+// a `tool.<name>` phase row is selected (by iteration+index, not index alone).
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -72,8 +74,10 @@ const SPANS = [
     span_id: "tool",
     parent_span_id: "llm",
     node_id: "n_llm",
+    // `name` is the clean display label; `phase` carries the `#<iter>.<idx>` identity discriminator
+    // (what real data records) so the inspector can scope to this exact call.
     name: "tool.http_fetch",
-    phase: "tool.http_fetch",
+    phase: "tool.http_fetch#0.0",
     status: "ok",
     start_ns: 270,
     end_ns: 314,
@@ -92,13 +96,27 @@ const SPANS = [
   },
 ];
 
-// The llm node's captured I/O, including the reserved `reasoning` output entry.
+// The llm node's captured I/O, including the reserved `reasoning` and `tool_calls` output entries.
+// `tool_calls` records each autonomous call's args + RESULT (what the tool returned).
 const FULL_IO = {
   run_id: "r",
   node_id: "n_llm",
   capture_level: "full",
   inputs: { in: "fetch example.com" },
-  outputs: { ok: "the example domain answer", reasoning: "let me think about that fetch" },
+  outputs: {
+    ok: "the example domain answer",
+    reasoning: "let me think about that fetch",
+    tool_calls: [
+      {
+        name: "http_fetch",
+        arguments: { url: "https://example.com" },
+        ok: true,
+        result: { status: 200, body: "Example Domain" },
+        iteration: 0,
+        index: 0,
+      },
+    ],
+  },
   bytes_in: 16,
   bytes_out: 25,
   truncated: false,
@@ -177,6 +195,164 @@ describe("RunWaterfall", () => {
     // The Output ports show only real ports — the reserved `reasoning` entry is pulled out
     // into the section (the lowercase port label must not appear).
     expect(within(detail).queryByText("reasoning")).not.toBeInTheDocument();
+  });
+
+  it("shows each tool call's args AND result on the llm node row", async () => {
+    withQuery(<RunWaterfall runId="r" />);
+    await waitFor(() => expect(screen.getByText("n_llm")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("n_llm"));
+    const detail = await screen.findByTestId("span-detail");
+    // The whole loop is shown on the node row (not scoped to one call). findBy waits for the io.
+    expect(await within(detail).findByText("Tool calls")).toBeInTheDocument();
+    expect(within(detail).getByText("http_fetch")).toBeInTheDocument();
+    // The args AND — the point of the change — the RESULT the tool returned both render.
+    expect(within(detail).getByText(/https:\/\/example\.com/)).toBeInTheDocument();
+    expect(within(detail).getByText(/Example Domain/)).toBeInTheDocument();
+    // The reserved `tool_calls` entry is pulled out of the Output ports (no raw lowercase label).
+    expect(within(detail).queryByText("tool_calls")).not.toBeInTheDocument();
+  });
+
+  it("scopes to the single call when a tool phase row is selected", async () => {
+    getNodeIo.mockResolvedValue({
+      ...FULL_IO,
+      outputs: {
+        ok: "answer",
+        tool_calls: [
+          {
+            name: "http_fetch",
+            arguments: {},
+            ok: true,
+            result: "RESULT_ZERO",
+            iteration: 0,
+            index: 0,
+          },
+          {
+            name: "http_fetch",
+            arguments: {},
+            ok: false,
+            result: "RESULT_ONE",
+            iteration: 0,
+            index: 1,
+          },
+        ],
+      },
+    });
+    withQuery(<RunWaterfall runId="r" />);
+    await waitFor(() => expect(screen.getByText("tool.http_fetch")).toBeInTheDocument());
+    // Selecting the `tool.http_fetch#0.0` row scopes to its own record (index 0) — not the loop.
+    fireEvent.click(screen.getByText("tool.http_fetch"));
+    const detail = await screen.findByTestId("span-detail");
+    // findBy waits for the io; scoped to index 0's record only.
+    expect(await within(detail).findByText("Tool result")).toBeInTheDocument();
+    expect(within(detail).getByText("RESULT_ZERO")).toBeInTheDocument();
+    expect(within(detail).queryByText("RESULT_ONE")).not.toBeInTheDocument();
+  });
+
+  it("renders the err badge and the error result for a failed tool call", async () => {
+    getNodeIo.mockResolvedValue({
+      ...FULL_IO,
+      outputs: {
+        ok: "recovered answer",
+        tool_calls: [
+          {
+            name: "http_fetch",
+            arguments: { url: "https://down.example" },
+            ok: false,
+            result: "HTTP timeout",
+            iteration: 0,
+            index: 0,
+          },
+        ],
+      },
+    });
+    withQuery(<RunWaterfall runId="r" />);
+    await waitFor(() => expect(screen.getByText("tool.http_fetch")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("tool.http_fetch"));
+    const detail = await screen.findByTestId("span-detail");
+    // A failed call shows an `err` badge AND the error the tool returned (why it failed, not just
+    // that the model recovered) — the core motivation for showing tool results.
+    expect(await within(detail).findByText("err")).toBeInTheDocument();
+    expect(within(detail).getByText("HTTP timeout")).toBeInTheDocument();
+  });
+
+  it("scopes by iteration, not index alone, across tool-loop turns", async () => {
+    // Two turns call the SAME tool: records differ only by `iteration`. Selecting the turn-1 row
+    // (`tool.http_fetch#1.0`) must resolve to the turn-1 record, not the turn-0 one at index 0.
+    getTrace.mockResolvedValue([
+      {
+        id: "r:_root",
+        span_id: "root",
+        parent_span_id: null,
+        name: "run-1",
+        status: "ok",
+        start_ns: 0,
+        end_ns: 600,
+      },
+      {
+        id: "r:n_llm",
+        span_id: "llm",
+        parent_span_id: "root",
+        node_id: "n_llm",
+        node_type: "llm",
+        name: "n_llm",
+        status: "ok",
+        start_ns: 10,
+        end_ns: 540,
+      },
+      {
+        id: "r:t0",
+        span_id: "t0",
+        parent_span_id: "llm",
+        node_id: "n_llm",
+        name: "tool.http_fetch",
+        phase: "tool.http_fetch#0.0",
+        status: "ok",
+        start_ns: 100,
+        end_ns: 140,
+      },
+      {
+        id: "r:t1",
+        span_id: "t1",
+        parent_span_id: "llm",
+        node_id: "n_llm",
+        name: "tool.http_fetch",
+        phase: "tool.http_fetch#1.0",
+        status: "ok",
+        start_ns: 200,
+        end_ns: 240,
+      },
+    ]);
+    getNodeIo.mockResolvedValue({
+      ...FULL_IO,
+      outputs: {
+        ok: "answer",
+        tool_calls: [
+          {
+            name: "http_fetch",
+            arguments: {},
+            ok: true,
+            result: "TURN_ZERO",
+            iteration: 0,
+            index: 0,
+          },
+          {
+            name: "http_fetch",
+            arguments: {},
+            ok: true,
+            result: "TURN_ONE",
+            iteration: 1,
+            index: 0,
+          },
+        ],
+      },
+    });
+    const { container } = withQuery(<RunWaterfall runId="r" />);
+    await waitFor(() => expect(screen.getAllByText("tool.http_fetch")).toHaveLength(2));
+    // DFS rows: [0]=ruler, [1]=root, [2]=n_llm, [3]=#0.0, [4]=#1.0 → select the turn-1 row.
+    fireEvent.click(tracks(container)[4]);
+    const detail = await screen.findByTestId("span-detail");
+    expect(await within(detail).findByText("TURN_ONE")).toBeInTheDocument();
+    expect(within(detail).queryByText("TURN_ZERO")).not.toBeInTheDocument();
   });
 
   it("shows the gated capture note when payloads are withheld (metadata)", async () => {

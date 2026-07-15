@@ -5,16 +5,25 @@
 // llm node.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type IRDocument, type Node as IRNode, NODE_TYPES } from "@theygent/ir-types";
+import {
+  type IRDocument,
+  type Node as IRNode,
+  type Port as IRPort,
+  NODE_TYPES,
+} from "@theygent/ir-types";
 import { Check, ChevronDown, ChevronUp, Diamond, Lock, Plus, Search, X } from "lucide-react";
 import { Suspense, lazy, useEffect, useId, useRef, useState } from "react";
 import {
   type GuardrailCheck,
+  type PortSide,
   type Selection,
   type ToolBinding,
   type ToolKind,
   type ViewBlock,
+  addPort,
   deleteEdges,
+  removePort,
+  renamePort,
   setGuardrailCheck,
   setNodeIcon,
   setToolKind,
@@ -22,10 +31,12 @@ import {
   updateEdge,
   updateNodeConfig,
   updateNodeLabel,
+  updatePort,
 } from "../adapter";
 import { api } from "../lib/api";
 import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
+import { AddMcpToolsDialog } from "./AddMcpToolsDialog";
 import { ModelParamsSection } from "./ModelParamsPanel";
 import { NodeCodeEditor } from "./NodeCodeEditor";
 import { SearchableSelect } from "./SearchableSelect";
@@ -39,11 +50,16 @@ const IconPickerGrid = lazy(() => import("./IconPickerGrid"));
 // node types whose config composes a saved, pinned agent (the `agent` field is an agent-id picker).
 const PINNED_BODY_TYPES = new Set(["subgraph", "loop", "map"]);
 
-// The model-calling audio nodes: their `model` gets the binding picker (options narrowed to the
-// matching modality) and their `params` gets the schema-driven form instead of a raw JSON box.
-const AUDIO_MODEL_TYPES: Record<string, "audio.transcription" | "audio.speech"> = {
+// The model-calling media nodes: their `model` gets the binding picker (options narrowed to the
+// matching modality) and their `params` gets the schema-driven form instead of a raw JSON box. Each
+// maps 1:1 to a data-plane endpoint — transcribe→transcriptions, speak→speech, imagine→images.
+const MEDIA_MODEL_TYPES: Record<
+  string,
+  "audio.transcription" | "audio.speech" | "images.generation"
+> = {
   transcribe: "audio.transcription",
   speak: "audio.speech",
+  imagine: "images.generation",
 };
 
 interface Props {
@@ -114,7 +130,9 @@ function NodePanel({
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <Badge tone={KIND_TONE[node.kind] ?? "slate"}>{node.kind}</Badge>
-            <span className="mono truncate text-xs text-slate-400">{node.type}</span>
+            <span className="mono truncate text-xs text-slate-400" title={node.type}>
+              {node.type}
+            </span>
           </div>
           {/* Wizard ⇄ Code, per node — the form, or this exact node's JSON. */}
           <div className="flex shrink-0 items-center rounded-md border border-slate-700 p-0.5">
@@ -212,20 +230,20 @@ function NodePanel({
                   </div>
                 );
               }
-              // The audio model nodes get the same picker (narrowed to their modality) and a real
-              // params form in place of the raw JSON box.
-              if (AUDIO_MODEL_TYPES[node.type] && key === "model") {
+              // The media model nodes (transcribe/speak/imagine) get the same picker (narrowed to
+              // their modality) and a real params form in place of the raw JSON box.
+              if (MEDIA_MODEL_TYPES[node.type] && key === "model") {
                 return (
                   <ModelPicker
                     key={`${node.id}:${key}`}
                     ir={ir}
                     nodeId={node.id}
-                    modality={AUDIO_MODEL_TYPES[node.type]}
+                    modality={MEDIA_MODEL_TYPES[node.type]}
                     onChange={onChange}
                   />
                 );
               }
-              if (AUDIO_MODEL_TYPES[node.type] && key === "params") {
+              if (MEDIA_MODEL_TYPES[node.type] && key === "params") {
                 const bindingKey = config.model as string | undefined;
                 const binding = bindingKey
                   ? ir.models?.[bindingKey as keyof typeof ir.models]
@@ -233,7 +251,7 @@ function NodePanel({
                 return (
                   <ModelParamsSection
                     key={`${node.id}:${key}`}
-                    modality={AUDIO_MODEL_TYPES[node.type]}
+                    modality={MEDIA_MODEL_TYPES[node.type]}
                     logicalId={(binding as { model?: string } | undefined)?.model}
                     params={(config.params as Record<string, unknown>) ?? {}}
                     onChange={(p) => setConfigKey("params", p)}
@@ -290,6 +308,70 @@ function NodePanel({
               if (PINNED_BODY_TYPES.has(node.type) && key === "contentHash") {
                 return null;
               }
+              // The router's `select` is a $in-reference that must resolve to one of its output
+              // handle names — give it an insert-$in helper and a hint listing the live branches,
+              // instead of a bare text box that assumes you know the token grammar.
+              if (node.type === "router" && key === "select") {
+                return (
+                  <RouterSelectField
+                    key={`${node.id}:${key}`}
+                    node={node}
+                    value={config.select as string | undefined}
+                    onChange={(v) => setConfigKey("select", v)}
+                  />
+                );
+              }
+              // The loop's early-stop `condition` is a $in-reference over each iteration's output.
+              if (node.type === "loop" && key === "condition") {
+                return (
+                  <TokenInput
+                    key={`${node.id}:${key}`}
+                    label="stop condition (optional)"
+                    value={config.condition as string | undefined}
+                    placeholder="$in.in.done"
+                    onChange={(v) => setConfigKey("condition", v || null)}
+                    hint={
+                      <>
+                        The loop stops early once this resolves truthy — a{" "}
+                        <span className="mono">$in</span> reference over each iteration's output
+                        (e.g. <span className="mono">$in.in.done</span>). Leave empty to always run
+                        all <span className="mono">max iterations</span>.
+                      </>
+                    }
+                  />
+                );
+              }
+              // A gate's `keyExpr` is the per-caller bucket key: a $in-ref meters each caller, any
+              // other value is one fixed bucket shared by everyone.
+              if ((node.type === "ratelimit" || node.type === "quota") && key === "keyExpr") {
+                return (
+                  <TokenInput
+                    key={`${node.id}:${key}`}
+                    label="key expr *"
+                    value={config.keyExpr as string | undefined}
+                    placeholder="$in.in.user_id"
+                    onChange={(v) => setConfigKey("keyExpr", v)}
+                    hint={
+                      <>
+                        The bucket this gate counts against. A <span className="mono">$in</span>{" "}
+                        reference (e.g. <span className="mono">$in.in.user_id</span>, or a trigger
+                        token) meters each caller separately; any other value is a single fixed
+                        bucket shared by everyone.
+                      </>
+                    }
+                  />
+                );
+              }
+              // `transform.expr` is a JSON template (not a DSL) — a dedicated validated editor.
+              if (node.type === "transform" && key === "expr") {
+                return (
+                  <TransformExprField
+                    key={`${node.id}:${key}`}
+                    value={config.expr as string | undefined}
+                    onChange={(v) => setConfigKey("expr", v)}
+                  />
+                );
+              }
               return (
                 <ConfigField
                   key={`${node.id}:${key}`}
@@ -302,6 +384,8 @@ function NodePanel({
               );
             })
           )}
+
+          <PortsSection ir={ir} node={node} onChange={onChange} />
 
           {node.type === "input" && <TriggerPanel agentId={ir.id} />}
         </div>
@@ -473,6 +557,403 @@ function LabelIconField({
   );
 }
 
+// ── $in-token fields (a text/expression field over the port-addressed substitution grammar) ─────────
+
+/** A field whose value uses the `$in` substitution grammar (`$in` = the default in-port, `$in.<port>`
+ * a named in-port, `$in.<port>.<field>` drills in). Adds an "Insert input ($in)" helper (insert at
+ * the caret) and an optional hint, so a token-language field is guided instead of a bare box that
+ * assumes the author already knows the grammar. Used by every reference/expression field (router
+ * select, loop condition, gate key, rag query, edge condition, …). */
+function TokenInput({
+  label,
+  value,
+  placeholder,
+  hint,
+  multiline,
+  onChange,
+}: {
+  label: string;
+  value: string | undefined;
+  placeholder?: string;
+  hint?: React.ReactNode;
+  multiline?: boolean;
+  onChange: (v: string) => void;
+}) {
+  const ref = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const insertIn = () => {
+    const el = ref.current;
+    const text = value ?? "";
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    onChange(`${text.slice(0, start)}$in${text.slice(end)}`);
+    // Restore the caret just after the inserted token once the controlled value updates.
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + 3;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  };
+  const cls =
+    "mono w-full rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-sm text-slate-100 outline-none focus:border-blue-500";
+  return (
+    <Field label={label}>
+      {multiline ? (
+        <textarea
+          ref={ref as React.RefObject<HTMLTextAreaElement>}
+          value={value ?? ""}
+          placeholder={placeholder}
+          spellCheck={false}
+          aria-label={label}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${cls} h-20 text-xs`}
+        />
+      ) : (
+        <input
+          ref={ref as React.RefObject<HTMLInputElement>}
+          value={value ?? ""}
+          placeholder={placeholder}
+          spellCheck={false}
+          aria-label={label}
+          onChange={(e) => onChange(e.target.value)}
+          className={cls}
+        />
+      )}
+      <button
+        type="button"
+        onClick={insertIn}
+        className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+      >
+        <Plus size={12} aria-hidden /> Insert input ($in)
+      </button>
+      {hint && (
+        <span className="mt-0.5 block text-[10px] leading-relaxed text-slate-600">{hint}</span>
+      )}
+    </Field>
+  );
+}
+
+/** The router's `select`: a `$in`-reference whose RESOLVED value must equal one of this router's
+ * output handle names — the walker then follows only that branch. Free text (it can drill into any
+ * field the upstream produced), but the hint lists the live branch names so the author knows both the
+ * grammar AND the target values. */
+function RouterSelectField({
+  node,
+  value,
+  onChange,
+}: {
+  node: IRNode;
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
+  // The branches a select value can land on: the data out-ports (an error port isn't a route target).
+  const branches = ((node.ports?.out ?? []) as IRPort[])
+    .filter((p) => (p.role ?? "data") === "data" && p.type !== "error")
+    .map((p) => p.id);
+  return (
+    <TokenInput
+      label="select *"
+      value={value}
+      placeholder="$in.in.route"
+      onChange={onChange}
+      hint={
+        <>
+          Reads a value from the input; the router follows the branch whose name matches it. Must
+          resolve to one of{" "}
+          {branches.length > 0 ? (
+            branches.map((b, i) => (
+              <span key={b}>
+                <span className="mono text-slate-400">{b}</span>
+                {i < branches.length - 1 ? ", " : ""}
+              </span>
+            ))
+          ) : (
+            <span>this router's output handles (add them under Ports)</span>
+          )}
+          . Use <span className="mono">$in</span> for the whole input,{" "}
+          <span className="mono">$in.in.route</span> to read the <span className="mono">route</span>{" "}
+          field of the input.
+        </>
+      }
+    />
+  );
+}
+
+/** The `transform` node's `expr`: a JSON TEMPLATE (not a jq/JSONata DSL) whose string leaves may be
+ * `$in` references — the runtime parses it and resolves each ref over the input. It must be valid
+ * JSON (a non-JSON expr fails the run loudly), so this shows live JSON validity alongside the token
+ * helper. */
+function TransformExprField({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (v: string) => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  const text = value ?? "";
+  const trimmed = text.trim();
+  let jsonError: string | null = null;
+  if (trimmed !== "") {
+    try {
+      JSON.parse(trimmed);
+    } catch (e) {
+      jsonError = (e as Error).message;
+    }
+  }
+  const insertIn = () => {
+    const el = ref.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    onChange(`${text.slice(0, start)}$in${text.slice(end)}`);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const pos = start + 3;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
+  };
+  return (
+    <Field label="expr *">
+      <textarea
+        ref={ref}
+        value={text}
+        spellCheck={false}
+        aria-label="expr"
+        placeholder={'{ "city": "$in.in.location.city", "temp": "$in.in.temp" }'}
+        onChange={(e) => onChange(e.target.value)}
+        className={`mono h-24 w-full rounded-md border bg-[var(--c-surface)] px-2.5 py-1.5 text-xs text-slate-100 outline-none ${
+          jsonError
+            ? "border-red-700 focus:border-red-500"
+            : "border-slate-700 focus:border-blue-500"
+        }`}
+      />
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={insertIn}
+          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+        >
+          <Plus size={12} aria-hidden /> Insert input ($in)
+        </button>
+        {trimmed !== "" &&
+          (jsonError ? (
+            <span className="text-[11px] text-red-600 dark:text-red-400">✗ not valid JSON</span>
+          ) : (
+            <span className="text-[11px] text-emerald-700 dark:text-emerald-500">✓ valid JSON</span>
+          ))}
+      </div>
+      <span className="block text-[10px] leading-relaxed text-slate-600">
+        A JSON template describing the output shape. String leaves that are{" "}
+        <span className="mono">$in</span> references (e.g.{" "}
+        <span className="mono">$in.in.field</span>) pull from the input; everything else is a
+        literal. Not a code/expression language.
+      </span>
+    </Field>
+  );
+}
+
+// ── ports section (add/rename/remove/configure a node's named handles) ─────────────────────────────
+
+/** One editable port row: the handle NAME (renaming rewires its edges), a required toggle (inputs)
+ * or an error toggle (data outputs), and a remove. A control/tool port shows a read-only role badge —
+ * those carry edge-channel semantics (sequencing / capability wiring) and are created by wiring or
+ * the Code view, not renamed to a different role here. */
+function PortRow({
+  side,
+  port,
+  siblingIds,
+  onRename,
+  onRemove,
+  onToggleRequired,
+  onToggleError,
+}: {
+  side: PortSide;
+  port: IRPort;
+  siblingIds: string[];
+  onRename: (newId: string) => void;
+  onRemove: () => void;
+  onToggleRequired: (required: boolean) => void;
+  onToggleError: (isError: boolean) => void;
+}) {
+  const [name, setName] = useState(port.id);
+  // Re-seed if the id changes from elsewhere (a Code edit, an undo) — but a self-commit leaves the
+  // buffer already equal to port.id, so this never clobbers typing.
+  useEffect(() => setName(port.id), [port.id]);
+
+  const role = port.role ?? "data";
+  const isError = port.type === "error";
+  const trimmed = name.trim();
+  const dup = trimmed !== port.id && siblingIds.includes(trimmed);
+  const invalid = trimmed === "" || dup;
+  const commit = () => {
+    if (invalid) {
+      setName(port.id); // revert an empty/duplicate name — handle ids must be unique per side
+      return;
+    }
+    if (trimmed !== port.id) onRename(trimmed);
+  };
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5">
+        <input
+          value={name}
+          aria-label={`${side}-port name`}
+          spellCheck={false}
+          onChange={(e) => setName(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") setName(port.id);
+          }}
+          className={`mono min-w-0 flex-1 rounded border bg-[var(--c-surface)] px-1.5 py-1 text-xs text-slate-100 outline-none ${
+            invalid
+              ? "border-red-600 focus:border-red-500"
+              : "border-slate-700 focus:border-blue-500"
+          }`}
+        />
+        {role !== "data" && <Badge tone={role === "tool" ? "blue" : "amber"}>{role}</Badge>}
+        {isError && <Badge tone="red">error</Badge>}
+        <button
+          type="button"
+          onClick={onRemove}
+          title={`Remove ${side}-port (and its wired edges)`}
+          aria-label={`Remove ${side}-port ${port.id}`}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-red-400"
+        >
+          <X size={13} aria-hidden />
+        </button>
+      </div>
+      {/* Per-side flag: inputs toggle `required` (an unfed required input fails validation); data
+          outputs toggle the error branch (a red handle the runtime routes failures to). */}
+      {role === "data" && (
+        <label className="flex items-center gap-1.5 pl-0.5 text-[11px] text-slate-500">
+          {side === "in" ? (
+            <>
+              <Checkbox
+                checked={port.required ?? true}
+                onCheckedChange={(v) => onToggleRequired(v === true)}
+              />
+              required (must be fed by an edge)
+            </>
+          ) : (
+            <>
+              <Checkbox checked={isError} onCheckedChange={(v) => onToggleError(v === true)} />
+              error branch (routes failures here)
+            </>
+          )}
+        </label>
+      )}
+    </div>
+  );
+}
+
+/** A node's named handles, edited in place. Handle names are hashed IR content the runtime addresses:
+ * an out-port name is a router branch (`select` resolves to one) and each named handle is an edge
+ * endpoint; an in-port name is a `$in.<port>` key (multi-input, so one node composes several
+ * upstreams). This is what makes a router or a multi-input node buildable without the Code view. */
+function PortsSection({
+  ir,
+  node,
+  onChange,
+}: {
+  ir: IRDocument;
+  node: IRNode;
+  onChange: (ir: IRDocument) => void;
+}) {
+  // Expanded by default for a router (its branches ARE its out-ports — the reason to open this), else
+  // collapsed to stay out of the way on nodes whose ports rarely change.
+  const [open, setOpen] = useState(node.type === "router");
+  const ins = (node.ports?.in ?? []) as IRPort[];
+  const outs = (node.ports?.out ?? []) as IRPort[];
+
+  const renderList = (side: PortSide, ports: IRPort[]) => {
+    const ids = ports.map((p) => p.id);
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+            {side === "in" ? "Inputs" : "Outputs"}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onChange(addPort(ir, node.id, side))}
+              className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-blue-600 hover:bg-[var(--c-hover)] dark:text-blue-400"
+            >
+              <Plus size={11} aria-hidden /> data
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange(addPort(ir, node.id, side, { role: "control" }))}
+              title="A control handle — pure sequencing (run-after), no value passed"
+              className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-amber-600 hover:bg-[var(--c-hover)] dark:text-amber-400"
+            >
+              <Plus size={11} aria-hidden /> control
+            </button>
+          </div>
+        </div>
+        {ports.length === 0 ? (
+          <p className="text-[11px] text-slate-600">No {side === "in" ? "inputs" : "outputs"}.</p>
+        ) : (
+          ports.map((p) => (
+            <PortRow
+              key={p.id}
+              side={side}
+              port={p}
+              siblingIds={ids.filter((id) => id !== p.id)}
+              onRename={(newId) => onChange(renamePort(ir, node.id, side, p.id, newId))}
+              onRemove={() => onChange(removePort(ir, node.id, side, p.id))}
+              onToggleRequired={(required) =>
+                onChange(updatePort(ir, node.id, side, p.id, { required }))
+              }
+              onToggleError={(isError) =>
+                onChange(updatePort(ir, node.id, side, p.id, { type: isError ? "error" : "any" }))
+              }
+            />
+          ))
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="rounded-md border border-slate-800">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between px-2 py-1.5 text-left"
+      >
+        <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500">
+          <ChevronDown
+            size={13}
+            aria-hidden
+            className={`shrink-0 text-slate-600 transition-transform ${open ? "" : "-rotate-90"}`}
+          />
+          Ports (handles)
+        </span>
+        <span className="mono text-[10px] text-slate-600">
+          {ins.length} in · {outs.length} out
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-slate-800 p-2">
+          {renderList("in", ins)}
+          {renderList("out", outs)}
+          <p className="text-[10px] leading-relaxed text-slate-600">
+            A handle's name is what edges connect to and what{" "}
+            <span className="mono">$in.&lt;name&gt;</span> reads; a router's{" "}
+            <span className="mono">select</span> resolves to one output name. Renaming re-wires its
+            edges; removing deletes them.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── edge panel ────────────────────────────────────────────────────────────────
 
 function EdgePanel({
@@ -550,15 +1031,19 @@ function EdgePanel({
           )}
         </FieldGroup>
 
-        <Field label="Condition (router-driven, optional)">
-          <Input
-            value={edge.condition ?? ""}
-            placeholder="e.g. $in.in.handle"
-            onChange={(e) =>
-              onChange(updateEdge(ir, edge.id, { condition: e.target.value || null }))
-            }
-          />
-        </Field>
+        <TokenInput
+          label="condition (router-driven, optional)"
+          value={edge.condition ?? ""}
+          placeholder="$in.in.handle"
+          onChange={(v) => onChange(updateEdge(ir, edge.id, { condition: v || null }))}
+          hint={
+            <>
+              A <span className="mono">$in</span> reference; the edge is taken only when it resolves
+              truthy. Usually left empty — routing is normally driven by a router node's{" "}
+              <span className="mono">select</span> and named handles instead.
+            </>
+          }
+        />
       </div>
     </div>
   );
@@ -732,7 +1217,8 @@ function llmCapabilityTools(
 /** Show the tools this llm may autonomously call: the tool/mcp_tool nodes wired into its
  * `tools` port (read-only — wire/unwire on the canvas), plus the tool_choice + iteration cap. Any
  * legacy `config.tools` keys (ir.tools refs predating capability wiring) are listed too. The loop
- * runs whenever the llm has ANY tool (wired or legacy). */
+ * runs whenever the llm has ANY tool (wired or legacy). "Add MCP tools" is the bulk path: pick a
+ * server, tick tools, and the batch lands as configured nodes already wired into this port. */
 function LlmToolsPanel({
   ir,
   nodeId,
@@ -742,24 +1228,42 @@ function LlmToolsPanel({
   nodeId: string;
   onChange: (ir: IRDocument) => void;
 }) {
+  const [bulkAdd, setBulkAdd] = useState(false);
   const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
   const config = (node?.config ?? {}) as Record<string, unknown>;
-  const choice = typeof config.toolChoice === "string" ? (config.toolChoice as string) : "auto";
+  // tool_choice is EITHER an OpenAI string (auto/required/none) OR a named-function object
+  // ({type:"function",function:{name}}) that forces one tool. Read both so a Code-authored forced
+  // choice survives editing here (an earlier version collapsed the object to "auto" and rewrote it
+  // on every edit — a silent data loss).
+  const rawChoice = config.toolChoice;
+  const namedChoice =
+    rawChoice &&
+    typeof rawChoice === "object" &&
+    (rawChoice as { type?: string }).type === "function"
+      ? ((rawChoice as { function?: { name?: string } }).function?.name ?? "")
+      : undefined;
+  const choiceMode =
+    namedChoice !== undefined ? "function" : typeof rawChoice === "string" ? rawChoice : "auto";
   const maxIter =
     typeof config.maxToolIterations === "number" ? (config.maxToolIterations as number) : 8;
   const wired = llmCapabilityTools(ir, nodeId);
   const legacy = Array.isArray(config.tools) ? (config.tools as string[]) : [];
   const hasTools = wired.length > 0 || legacy.length > 0;
+  // The function names the model sees (a wired tool node's id IS its function name) — the candidates
+  // for a forced tool_choice.
+  const toolNames = [...wired.map((t) => t.id), ...legacy];
 
+  // Only write the keys the caller explicitly changes — never force toolChoice/maxToolIterations, so
+  // an unrelated edit can't clobber a forced tool_choice or an absent-means-default field.
   const set = (extra: Record<string, unknown>) =>
-    onChange(
-      updateNodeConfig(ir, nodeId, {
-        ...config,
-        toolChoice: choice,
-        maxToolIterations: maxIter,
-        ...extra,
-      }),
-    );
+    onChange(updateNodeConfig(ir, nodeId, { ...config, ...extra }));
+  const setChoice = (mode: string) =>
+    set({
+      toolChoice:
+        mode === "function"
+          ? { type: "function", function: { name: namedChoice || toolNames[0] || "" } }
+          : mode,
+    });
 
   return (
     <div className="space-y-1.5">
@@ -768,9 +1272,10 @@ function LlmToolsPanel({
       </span>
       {!hasTools ? (
         <p className="text-[11px] leading-relaxed text-slate-600">
-          None yet — drop a <span className="mono">tool</span> node, then drag its violet capability
-          handle into this node's <span className="mono">tools</span> port (the violet handle on the
-          bottom). The model decides when to call it.
+          None yet — add a batch from an MCP server below, or drop a{" "}
+          <span className="mono">tool</span> node and drag its violet capability handle into this
+          node's <span className="mono">tools</span> port (the violet handle on the bottom). The
+          model decides when to call it.
         </p>
       ) : (
         <div className="space-y-1">
@@ -793,18 +1298,54 @@ function LlmToolsPanel({
           ))}
         </div>
       )}
+      <Button className="h-7 text-xs" onClick={() => setBulkAdd(true)}>
+        <Plus size={12} aria-hidden /> Add MCP tools
+      </Button>
+      {bulkAdd && (
+        <AddMcpToolsDialog
+          ir={ir}
+          attachTo={nodeId}
+          onChange={onChange}
+          onClose={() => setBulkAdd(false)}
+        />
+      )}
       {hasTools && (
         <div className="mt-1 space-y-2 rounded-md border border-slate-800 p-2">
           <label className="block space-y-1">
             <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               tool choice
             </span>
-            <Select value={choice} onChange={(e) => set({ toolChoice: e.target.value })}>
+            <Select value={choiceMode} onChange={(e) => setChoice(e.target.value)}>
               <option value="auto">auto — model decides</option>
               <option value="required">required — must call a tool</option>
               <option value="none">none — never call</option>
+              <option value="function">force a specific tool</option>
             </Select>
           </label>
+          {choiceMode === "function" && (
+            <label className="block space-y-1">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                forced tool
+              </span>
+              <Select
+                value={namedChoice ?? ""}
+                onChange={(e) =>
+                  set({ toolChoice: { type: "function", function: { name: e.target.value } } })
+                }
+              >
+                {toolNames.length === 0 && <option value="">— wire a tool first —</option>}
+                {/* Keep a forced tool the graph no longer wires selectable (offline / renamed). */}
+                {namedChoice && !toolNames.includes(namedChoice) && (
+                  <option value={namedChoice}>{namedChoice}</option>
+                )}
+                {toolNames.map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
           <label className="block space-y-1">
             <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
               max tool iterations
@@ -1024,18 +1565,161 @@ function MessageRow({
             placeholder="Message text… use $in for the input"
             className="mono h-20 w-full rounded border border-slate-700 bg-[var(--c-surface-2)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
           />
-          <button
-            type="button"
-            onClick={insertIn}
-            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
-          >
-            <Plus size={12} aria-hidden /> Insert input ($in)
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={insertIn}
+              className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+            >
+              <Plus size={12} aria-hidden /> Insert input ($in)
+            </button>
+            {/* Turn this into a multimodal message: keep the text, add an image part (a graph can
+                drive a vision model this way). The image url is $in-templatable so it enters from an
+                in-port. */}
+            <button
+              type="button"
+              onClick={() =>
+                onContent([
+                  { type: "text", text: (content as string) || "$in" },
+                  { type: "image_url", image_url: { url: "$in" } },
+                ])
+              }
+              className="inline-flex items-center gap-1 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
+            >
+              <Plus size={12} aria-hidden /> Add image
+            </button>
+          </div>
         </>
       ) : (
-        // Rich (vision) content: text+image_url parts — keep it editable as JSON so it isn't lost.
-        <JsonField label="content (text + image parts)" value={content} onChange={onContent} />
+        // Rich (vision) content: an editable list of text + image_url parts (the multimodal shape a
+        // graph uses to drive a vision model).
+        <RichContentEditor
+          parts={Array.isArray(content) ? content : []}
+          onChange={onContent}
+          onCollapse={(text) => onContent(text)}
+        />
       )}
+    </div>
+  );
+}
+
+/** A multimodal message's `content`: an ordered list of `text` and `image_url` parts. Text parts get
+ * a textarea (with the same `$in` grammar as a plain-string content); image parts get a url input
+ * ($in-templatable, an http/data url, or `$in.image` from an in-port). Collapse back to a plain
+ * string once only text remains. Emits exactly the OpenAI content-part shape (extra keys are
+ * rejected by the IR), preserving an image part's optional `detail`. */
+function RichContentEditor({
+  parts,
+  onChange,
+  onCollapse,
+}: {
+  parts: unknown[];
+  onChange: (parts: unknown[]) => void;
+  onCollapse: (text: string) => void;
+}) {
+  // Stable per-part keys (a growing counter), so editing/removing a part never remounts the wrong
+  // row — the same buffer discipline the message + string-list editors use. Re-seed only when parts
+  // change from OUTSIDE (a node switch, the Code view), never on our own emit.
+  const idRef = useRef(0);
+  const [rows, setRows] = useState<Array<{ key: string; part: Record<string, any> }>>(() =>
+    (parts as Array<Record<string, any>>).map((part) => ({ key: `p${idRef.current++}`, part })),
+  );
+  const lastEmitted = useRef(JSON.stringify(parts ?? []));
+  useEffect(() => {
+    const incoming = JSON.stringify(parts ?? []);
+    if (incoming !== lastEmitted.current) {
+      lastEmitted.current = incoming;
+      setRows(
+        (parts as Array<Record<string, any>>).map((part) => ({ key: `p${idRef.current++}`, part })),
+      );
+    }
+  }, [parts]);
+
+  const commit = (next: Array<{ key: string; part: Record<string, any> }>) => {
+    setRows(next);
+    const emitted = next.map((r) => r.part);
+    lastEmitted.current = JSON.stringify(emitted);
+    onChange(emitted);
+  };
+  const setPart = (i: number, part: Record<string, unknown>) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, part } : r)));
+  const removePart = (i: number) => commit(rows.filter((_, j) => j !== i));
+  const addPart = (part: Record<string, unknown>) =>
+    commit([...rows, { key: `p${idRef.current++}`, part }]);
+  const onlyText = rows.length > 0 && rows.every((r) => r.part?.type === "text");
+  const partClass = "space-y-1 rounded border border-slate-700 bg-[var(--c-surface-2)] p-1.5";
+
+  return (
+    <div className="space-y-1.5">
+      <span className="block text-[10px] font-medium uppercase tracking-wide text-slate-500">
+        content parts (text + image)
+      </span>
+      {rows.map((r, i) => {
+        const p = r.part;
+        return (
+          <div key={r.key} className={partClass}>
+            <div className="flex items-center justify-between">
+              <Badge tone={p?.type === "image_url" ? "violet" : "slate"}>
+                {p?.type === "image_url" ? "image" : "text"}
+              </Badge>
+              <button
+                type="button"
+                onClick={() => removePart(i)}
+                aria-label="Remove content part"
+                className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-red-400"
+              >
+                <X size={12} aria-hidden />
+              </button>
+            </div>
+            {p?.type === "image_url" ? (
+              <Input
+                value={(p.image_url?.url as string) ?? ""}
+                placeholder="https://… · data:… · $in.image"
+                onChange={(e) =>
+                  setPart(i, {
+                    type: "image_url",
+                    image_url: { ...p.image_url, url: e.target.value },
+                  })
+                }
+              />
+            ) : (
+              <textarea
+                spellCheck={false}
+                value={(p?.text as string) ?? ""}
+                placeholder="Text… use $in for the input"
+                onChange={(e) => setPart(i, { type: "text", text: e.target.value })}
+                className="mono h-16 w-full rounded border border-slate-700 bg-[var(--c-surface)] px-2 py-1 text-xs text-slate-100 outline-none focus:border-blue-500"
+              />
+            )}
+          </div>
+        );
+      })}
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => addPart({ type: "text", text: "" })}
+          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+        >
+          <Plus size={12} aria-hidden /> text
+        </button>
+        <button
+          type="button"
+          onClick={() => addPart({ type: "image_url", image_url: { url: "$in" } })}
+          className="inline-flex items-center gap-1 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
+        >
+          <Plus size={12} aria-hidden /> image
+        </button>
+        {onlyText && (
+          <button
+            type="button"
+            onClick={() => onCollapse(rows.map((r) => (r.part?.text as string) ?? "").join("\n"))}
+            title="Collapse back to a plain-text message"
+            className="ml-auto text-[11px] text-slate-500 hover:text-slate-300"
+          >
+            plain text
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -1117,7 +1801,10 @@ function ListPicker({
           }}
           className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
         >
-          <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
+          <span
+            className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}
+            title={value || placeholder || (loading ? "Loading…" : "Select…")}
+          >
             {value || placeholder || (loading ? "Loading…" : "Select…")}
           </span>
           <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
@@ -1179,7 +1866,9 @@ function ListPicker({
                         i === active ? "bg-[var(--c-hover)]" : ""
                       } ${o === value ? "text-blue-700 dark:text-blue-300" : "text-slate-200"}`}
                     >
-                      <span className="mono truncate">{o}</span>
+                      <span className="mono truncate" title={o}>
+                        {o}
+                      </span>
                       {o === value && (
                         <Check
                           size={14}
@@ -1199,7 +1888,11 @@ function ListPicker({
                     onClick={() => select(query.trim())}
                     className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-[var(--c-hover)]"
                   >
-                    Use “<span className="mono truncate">{query.trim()}</span>”
+                    Use “
+                    <span className="mono truncate" title={query.trim()}>
+                      {query.trim()}
+                    </span>
+                    ”
                   </button>
                 </li>
               )}
@@ -1506,6 +2199,12 @@ function ToolNodePanel({
   const kind = toolKindOf(node);
   const config = (node.config ?? {}) as Record<string, unknown>;
   const builtinListId = useId();
+  const [bulkAdd, setBulkAdd] = useState(false);
+  // Siblings spawned by the bulk dialog wire wherever THIS node's capability edge points (if it
+  // feeds an llm), so "add more from this server" extends the same model's toolset in one step.
+  const feedsLlm = (ir.edges ?? []).find(
+    (e) => (e.channel ?? "data") === "tool" && e.source === node.id,
+  )?.target;
   const setKey = (key: string, value: unknown) =>
     onChange(updateNodeConfig(ir, node.id, { ...config, [key]: value }));
 
@@ -1535,19 +2234,22 @@ function ToolNodePanel({
       </FieldGroup>
 
       {kind === "builtin" && (
-        <Field label="builtin *">
-          <Input
-            list={builtinListId}
-            value={(config.tool as string) ?? ""}
-            placeholder="echo / http_fetch / a registered tool"
-            onChange={(e) => setKey("tool", e.target.value)}
-          />
-          <datalist id={builtinListId}>
-            {["echo", "http_fetch"].map((o) => (
-              <option key={o} value={o} />
-            ))}
-          </datalist>
-        </Field>
+        <>
+          <Field label="builtin *">
+            <Input
+              list={builtinListId}
+              value={(config.tool as string) ?? ""}
+              placeholder="echo / http_fetch / a registered tool"
+              onChange={(e) => setKey("tool", e.target.value)}
+            />
+            <datalist id={builtinListId}>
+              {["echo", "http_fetch"].map((o) => (
+                <option key={o} value={o} />
+              ))}
+            </datalist>
+          </Field>
+          <ArgsField value={config.args} onChange={(v) => setKey("args", v)} />
+        </>
       )}
 
       {kind === "rest" && (
@@ -1555,9 +2257,13 @@ function ToolNodePanel({
           <Field label="URL template *">
             <Input
               value={(config.urlTemplate as string) ?? ""}
-              placeholder="https://api.example.com/{path}"
+              placeholder="https://api.example.com/items/$in.in.id"
               onChange={(e) => setKey("urlTemplate", e.target.value)}
             />
+            <span className="text-[10px] text-slate-600">
+              Supports <span className="mono">$in</span> substitution (
+              <span className="mono">$in.in.id</span>) anywhere in the path or query string.
+            </span>
           </Field>
           <Field label="method">
             <Select
@@ -1580,6 +2286,7 @@ function ToolNodePanel({
             value={config.parameterSchema}
             onChange={(v) => setKey("parameterSchema", v)}
           />
+          <RestAdvanced config={config} setKey={setKey} />
         </>
       )}
 
@@ -1609,6 +2316,24 @@ function ToolNodePanel({
             value={(config.tool as string | null | undefined) ?? undefined}
             onChange={(v) => setKey("tool", v)}
           />
+          <ArgsField value={config.args} onChange={(v) => setKey("args", v)} />
+          {Boolean(config.server || config.connection) && (
+            <Button className="h-7 text-xs" onClick={() => setBulkAdd(true)}>
+              <Plus size={12} aria-hidden /> Add more tools from this server
+            </Button>
+          )}
+          {bulkAdd && (
+            <AddMcpToolsDialog
+              ir={ir}
+              attachTo={feedsLlm}
+              near={node.id}
+              initialServer={(config.server as string | null | undefined) ?? undefined}
+              initialConnection={(config.connection as string | null | undefined) ?? undefined}
+              lockSource
+              onChange={onChange}
+              onClose={() => setBulkAdd(false)}
+            />
+          )}
         </>
       )}
 
@@ -1624,9 +2349,110 @@ function ToolNodePanel({
         Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
         handle (top) into an llm's{" "}
         <span className="text-violet-600 dark:text-violet-300">tools</span> port to let the model
-        call it. Advanced REST fields (headers, body, response map…) are in the Code view.
+        call it (the model fills in the args). Wired as a plain data step instead, the node takes
+        its args from the template above.
       </p>
     </>
+  );
+}
+
+/** The step-mode arg template for a builtin / mcp tool node: a JSON object whose values are literals
+ * or `$in` references (`$in`, `$in.<port>`, `$in.a.b`) resolved before the call — e.g.
+ * `{"path": "$in.in.path"}`. Ignored when the node is wired as an llm capability (the model supplies
+ * the args then), so it is optional. */
+function ArgsField({
+  value,
+  onChange,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <JsonField
+        label="args (step mode — the $in template)"
+        value={value ?? {}}
+        onChange={(v) => onChange(v && typeof v === "object" && !Array.isArray(v) ? v : {})}
+      />
+      <span className="text-[10px] text-slate-600">
+        e.g. <span className="mono">{'{ "path": "$in.in.path" }'}</span> — literals or{" "}
+        <span className="mono">$in</span> references. Leave <span className="mono">{"{}"}</span>{" "}
+        when wired as a model capability.
+      </span>
+    </div>
+  );
+}
+
+/** The advanced REST request fields — collapsed by default so the common case (URL + method +
+ * connection + parameterSchema) stays uncluttered. The connection injects auth headers server-side,
+ * so these headers are for NON-secret request shaping only. `bodyTemplate`/`headers` use the same
+ * `$in` substitution as the URL; `responseMap` is a JSONPath that shapes the step output. */
+function RestAdvanced({
+  config,
+  setKey,
+}: {
+  config: Record<string, unknown>;
+  setKey: (key: string, value: unknown) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-md border border-slate-800">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[11px] font-medium uppercase tracking-wide text-slate-500"
+      >
+        <ChevronDown
+          size={13}
+          aria-hidden
+          className={`shrink-0 text-slate-600 transition-transform ${open ? "" : "-rotate-90"}`}
+        />
+        Advanced request
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-slate-800 p-2">
+          <JsonField
+            label="headers (non-secret; auth is added by the connection)"
+            value={config.headers ?? {}}
+            onChange={(v) =>
+              setKey("headers", v && typeof v === "object" && !Array.isArray(v) ? v : {})
+            }
+          />
+          <JsonField
+            label="bodyTemplate ($in-substituted; GraphQL: { query, variables })"
+            value={config.bodyTemplate ?? null}
+            onChange={(v) => setKey("bodyTemplate", v)}
+          />
+          <Field label="responseMap (JSONPath to shape the output, e.g. $.data)">
+            <Input
+              value={(config.responseMap as string) ?? ""}
+              placeholder="$.data"
+              onChange={(e) => setKey("responseMap", e.target.value || null)}
+            />
+          </Field>
+          <Field label="timeout (seconds)">
+            <Input
+              type="number"
+              min={0}
+              step={0.5}
+              value={typeof config.timeoutSeconds === "number" ? String(config.timeoutSeconds) : ""}
+              placeholder="engine default"
+              onChange={(e) =>
+                setKey("timeoutSeconds", e.target.value === "" ? null : Number(e.target.value))
+              }
+            />
+          </Field>
+          <Field label="idempotency key (replay-safe re-run of unsafe methods)">
+            <Input
+              value={(config.idempotencyKey as string) ?? ""}
+              placeholder="e.g. $in.in.request_id"
+              onChange={(e) => setKey("idempotencyKey", e.target.value || null)}
+            />
+          </Field>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1758,16 +2584,19 @@ function RagNodePanel({
         />
       </Field>
 
-      <Field label="query (optional)">
-        <Input
-          value={(config.query as string) ?? ""}
-          placeholder="e.g. context for: $in"
-          onChange={(e) => setKey("query", e.target.value || null)}
-        />
-        <span className="text-[10px] text-slate-600">
-          step-mode only: $in template; leave empty to use the in-port value
-        </span>
-      </Field>
+      <TokenInput
+        label="query (optional)"
+        value={(config.query as string) ?? ""}
+        placeholder="context for: $in"
+        onChange={(v) => setKey("query", v || null)}
+        hint={
+          <>
+            Step-mode only: a <span className="mono">$in</span> template for the retrieval query.
+            Leave empty to use the in-port value verbatim. (Wired as a capability, the model
+            supplies the query and this is ignored.)
+          </>
+        }
+      />
 
       <p className="text-[10px] text-slate-600">
         Wire this node's violet <span className="text-violet-600 dark:text-violet-300">use</span>{" "}
@@ -2184,14 +3013,20 @@ function GuardrailModelField({
           : "not a declared binding (declare it or pick another)";
 
   return (
-    <ListPicker
-      label="judge model *"
-      value={value}
-      options={options}
-      hint={hint}
-      placeholder="pick a binding or inference model…"
-      onChange={pick}
-    />
+    <div className="space-y-3">
+      <ListPicker
+        label="judge model *"
+        value={value}
+        options={options}
+        hint={hint}
+        placeholder="pick a binding or inference model…"
+        onChange={pick}
+      />
+      {/* The judge is a real inference call, so its binding carries generation params like any llm's
+          (a temperature: 0 + a small maxTokens keep a yes/no verdict crisp and cheap). Same editor
+          the llm model field uses. */}
+      <BindingParams ir={ir} bindingKey={value} onChange={onChange} />
+    </div>
   );
 }
 
@@ -2252,7 +3087,10 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
           >
             <span className="mono text-xs text-slate-200">{key}</span>
             <Badge>{t.kind}</Badge>
-            <span className="mono ml-auto truncate text-[10px] text-slate-600">
+            <span
+              className="mono ml-auto truncate text-[10px] text-slate-600"
+              title={summarizeTool(t)}
+            >
               {summarizeTool(t)}
             </span>
           </div>

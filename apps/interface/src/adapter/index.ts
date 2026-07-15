@@ -392,6 +392,132 @@ export function updateNodeLabel(ir: IRDocument, id: string, label: string): IRDo
   };
 }
 
+// ── port (handle) editing — the named in/out ports a node declares ─────────────────────────────────
+//
+// Ports are hashed IR content (unlike positions/icons), so these are authoring mutations like
+// `updateNodeConfig`, not `view` edits. A node's ports are what the runtime addresses: an out-port
+// name is a router branch (`select` resolves to one) and each named handle is an edge target; an
+// in-port name is a `$in.<port>` key (multi-input). The Wizard exposes these so a router's branches
+// and a node's multiple inputs can be built without dropping to the node's Code view. Renaming
+// REWIRES the edges on that handle (wiring survives); removing PRUNES the incident edges (no dangling
+// reference). New ports are emitted in the exact shape `reactFlowToIr` re-emits (`{id,type,required}`,
+// role only when non-`data`) so a port added here round-trips byte-for-byte.
+
+export type PortSide = "in" | "out";
+
+/** A unique port id on `side`, from a base (e.g. "out" → "out2" if taken). Handle names must be
+ * unique within a node's side — they're what an edge's source/target handle references. */
+function freshPortId(existing: Port[], base: string): string {
+  const taken = new Set(existing.map((p) => p.id));
+  if (base && !taken.has(base)) return base;
+  const root = base || "port";
+  let i = 2;
+  while (taken.has(`${root}${i}`)) i += 1;
+  return `${root}${i}`;
+}
+
+function mapPorts(n: IRNode, side: PortSide, f: (list: Port[]) => Port[]): IRNode {
+  const inPorts = n.ports?.in ?? [];
+  const outPorts = n.ports?.out ?? [];
+  return {
+    ...n,
+    ports: side === "in" ? { in: f(inPorts), out: outPorts } : { in: inPorts, out: f(outPorts) },
+  };
+}
+
+/** Add a named port to a node's `in`/`out` side. `role` defaults to `data`; `type: "error"` marks an
+ * error out-port (the runtime's error semantics key on the port type, not the name). The id defaults
+ * to a unique "in"/"out"-derived name the author then renames. */
+export function addPort(
+  ir: IRDocument,
+  nodeId: string,
+  side: PortSide,
+  opts: { id?: string; type?: string; required?: boolean; role?: "data" | "control" | "tool" } = {},
+): IRDocument {
+  return {
+    ...ir,
+    nodes: (ir.nodes ?? []).map((n) => {
+      if (n.id !== nodeId) return n;
+      const list = (side === "in" ? n.ports?.in : n.ports?.out) ?? [];
+      const role = opts.role ?? "data";
+      const id = freshPortId(list, opts.id ?? (side === "in" ? "in" : "out"));
+      const port: Port = { id, type: opts.type ?? "any", required: opts.required ?? true };
+      if (role !== "data") port.role = role;
+      return mapPorts(n, side, (l) => [...l, port]);
+    }),
+  };
+}
+
+/** Rename a port and REWIRE every edge on that handle so wiring survives the rename. A no-op if the
+ * new id is empty, unchanged, or already used on that side (the caller keeps ids unique). */
+export function renamePort(
+  ir: IRDocument,
+  nodeId: string,
+  side: PortSide,
+  oldId: string,
+  newId: string,
+): IRDocument {
+  if (!newId || newId === oldId) return ir;
+  const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
+  const list = (side === "in" ? node?.ports?.in : node?.ports?.out) ?? [];
+  if (list.some((p) => p.id === newId)) return ir; // collision — keep ids unique
+  const nodes = (ir.nodes ?? []).map((n) =>
+    n.id === nodeId
+      ? mapPorts(n, side, (l) => l.map((p) => (p.id === oldId ? { ...p, id: newId } : p)))
+      : n,
+  );
+  const edges = (ir.edges ?? []).map((e) => {
+    if (side === "out" && e.source === nodeId && e.sourceHandle === oldId) {
+      return { ...e, sourceHandle: newId };
+    }
+    if (side === "in" && e.target === nodeId && e.targetHandle === oldId) {
+      return { ...e, targetHandle: newId };
+    }
+    return e;
+  });
+  return { ...ir, nodes, edges };
+}
+
+/** Remove a port and PRUNE its incident edges (no dangling handle reference). `ir.tools` is
+ * re-derived: dropping a tool node's `use` port removes its capability edge and its registry entry. */
+export function removePort(
+  ir: IRDocument,
+  nodeId: string,
+  side: PortSide,
+  portId: string,
+): IRDocument {
+  const nodes = (ir.nodes ?? []).map((n) =>
+    n.id === nodeId ? mapPorts(n, side, (l) => l.filter((p) => p.id !== portId)) : n,
+  );
+  const edges = (ir.edges ?? []).filter(
+    (e) =>
+      !(
+        (side === "out" && e.source === nodeId && e.sourceHandle === portId) ||
+        (side === "in" && e.target === nodeId && e.targetHandle === portId)
+      ),
+  );
+  return withDerivedTools({ ...ir, nodes, edges });
+}
+
+/** Patch a port's flags: `required` (in-ports — an unfed required in-port is a loud validation
+ * error) and `type` ("error" marks an error out-port). */
+export function updatePort(
+  ir: IRDocument,
+  nodeId: string,
+  side: PortSide,
+  portId: string,
+  patch: { required?: boolean; type?: string },
+): IRDocument {
+  return {
+    ...ir,
+    nodes: (ir.nodes ?? []).map((n) =>
+      n.id === nodeId
+        ? mapPorts(n, side, (l) => l.map((p) => (p.id === portId ? { ...p, ...patch } : p)))
+        : n,
+    ),
+  };
+}
+
 /** Patch an edge's `channel` (data ↔ control) and/or `condition` (router-driven edges). */
 export function updateEdge(
   ir: IRDocument,
@@ -586,4 +712,146 @@ export function duplicateNode(ir: IRDocument, id: string): { ir: IRDocument; new
     ir: setNodePositions(withNode, { [newId]: { x: srcPos.x + 40, y: srcPos.y + 40 } }),
     newId,
   };
+}
+
+// ── bulk-add MCP tools (one gesture: spawn configured nodes, wired to an llm) ─────────────────────
+
+// The spawned batch stacks in a small grid below its anchor so it reads as one gesture; the
+// author drags or Tidies from there.
+const BULK_GRID_COLS = 3;
+const BULK_GRID_X = 240;
+const BULK_GRID_Y = 100;
+
+/** A function-name-safe node id from an MCP tool name. The node id IS the function name the model
+ * calls, so `read_file` beats a generated `n_mcp_tool_3` — the model sees a meaningful name. A
+ * collision (the same tool name from another server) gets a numeric suffix. */
+function toolNodeId(name: string, taken: Set<string>): string {
+  const base = name.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/^_+|_+$/g, "") || "mcp_tool";
+  let id = base;
+  let i = 1;
+  while (taken.has(id)) {
+    i += 1;
+    id = `${base}_${i}`;
+  }
+  return id;
+}
+
+/** Bulk-add MCP tools: one configured `mcp_tool` node per tool name, all reaching ONE server
+ * (`server` a registered name XOR `connection` an mcp_server connection id — the same exactly-one
+ * rule the node config enforces). With `attachTo` (an llm node id), each node's capability handle
+ * is wired into that llm's tool-role in-port, so a batch is pick-and-done: no per-node config, no
+ * per-node drag. A tool that already has a node for the same server is REUSED (wired if needed),
+ * never duplicated — re-adding is idempotent. New nodes stack in a grid below the anchor
+ * (`near` ?? `attachTo`); positions are `view`-only, never hashed content. `config.description`
+ * stays null: an mcp tool self-describes at runtime via the server's tool list, so freezing the
+ * browse-time description into hashed content would only let it drift. */
+export function addMcpToolNodes(
+  ir: IRDocument,
+  opts: {
+    server?: string;
+    connection?: string;
+    tools: string[];
+    attachTo?: string;
+    near?: string;
+  },
+): { ir: IRDocument; newIds: string[] } {
+  const spec = NODE_TYPES.mcp_tool;
+  if (!spec || opts.tools.length === 0) return { ir, newIds: [] };
+  const nodes = ir.nodes ?? [];
+  const target = opts.attachTo ? nodes.find((n) => n.id === opts.attachTo) : undefined;
+  const toolsPort = (target?.ports?.in ?? []).find((p) => p.role === "tool");
+  const useHandle = (spec.ports.out ?? []).find((p) => p.role === "tool")?.id ?? "use";
+
+  const sameSource = (cfg: Record<string, unknown>) =>
+    opts.server ? cfg.server === opts.server : cfg.connection === opts.connection;
+
+  const takenNodeIds = new Set(nodes.map((n) => n.id));
+  const takenEdgeIds = new Set((ir.edges ?? []).map((e) => e.id));
+  const newNodes: IRNode[] = [];
+  const newEdges: IREdge[] = [];
+  const newIds: string[] = [];
+  const wireIds: string[] = [];
+
+  for (const name of opts.tools) {
+    const existing = nodes.find(
+      (n) =>
+        n.type === "mcp_tool" &&
+        ((n.config ?? {}) as Record<string, unknown>).tool === name &&
+        sameSource((n.config ?? {}) as Record<string, unknown>),
+    );
+    if (existing) {
+      wireIds.push(existing.id);
+      continue;
+    }
+    const id = toolNodeId(name, takenNodeIds);
+    takenNodeIds.add(id);
+    newIds.push(id);
+    wireIds.push(id);
+    newNodes.push({
+      id,
+      type: "mcp_tool",
+      kind: spec.kind,
+      label: name,
+      config: {
+        ...structuredClone(spec.defaultConfig),
+        tool: name,
+        server: opts.server ?? null,
+        connection: opts.connection ?? null,
+      },
+      // Fill the `required` default the registry spec omits, so the spawned node is byte-identical
+      // to what a canvas load→save re-emits (the batch round-trips as-is).
+      ports: {
+        in: (spec.ports.in ?? []).map((p) => ({ ...p, required: p.required ?? true })),
+        out: (spec.ports.out ?? []).map((p) => ({ ...p, required: p.required ?? true })),
+      },
+    });
+  }
+
+  if (target && toolsPort) {
+    const wired = new Set(
+      (ir.edges ?? [])
+        .filter((e) => (e.channel ?? "data") === "tool" && e.target === target.id)
+        .map((e) => e.source),
+    );
+    for (const id of wireIds) {
+      if (wired.has(id)) continue;
+      wired.add(id);
+      newEdges.push({
+        id: freshId("e", takenEdgeIds),
+        source: id,
+        sourceHandle: useHandle,
+        target: target.id,
+        targetHandle: toolsPort.id,
+        channel: "tool",
+        condition: null,
+      });
+    }
+  }
+
+  let next: IRDocument = {
+    ...ir,
+    nodes: [...nodes, ...newNodes],
+    edges: [...(ir.edges ?? []), ...newEdges],
+  };
+
+  if (newIds.length > 0) {
+    const positions = resolvePositions(
+      next.nodes ?? [],
+      next.edges ?? [],
+      (next.view ?? {}) as ViewBlock,
+    );
+    const anchorId = opts.near ?? opts.attachTo;
+    const anchor = (anchorId ? positions[anchorId] : undefined) ?? defaultAddPosition(ir);
+    const place: Record<string, XYPosition> = {};
+    newIds.forEach((id, i) => {
+      place[id] = {
+        x: anchor.x + (i % BULK_GRID_COLS) * BULK_GRID_X,
+        y: anchor.y + BULK_GRID_Y + Math.floor(i / BULK_GRID_COLS) * BULK_GRID_Y,
+      };
+    });
+    next = setNodePositions(next, place);
+  }
+
+  // Keep the derived ir.tools registry in step (idempotent — save re-derives the same).
+  return { ir: withDerivedTools(next), newIds };
 }

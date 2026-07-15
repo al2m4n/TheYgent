@@ -65,6 +65,7 @@ from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     _NODE_REASONING_KEY,
+    _NODE_TOOL_CALLS_KEY,
     ActivityOutcome,
     EngineNameNotAllowed,
     RouterError,
@@ -89,6 +90,7 @@ from theygent_control_plane.walker import (
     _single_in_value,
     _success_handles,
     _to_openai_tool_choice,
+    _tool_call_record,
     assistant_tool_calls_message,
     build_capability_schemas,
     build_http_call,
@@ -973,6 +975,8 @@ async def _durable_walk(
                     usage_acc: dict[str, int] | None = None
                     # Per-turn thinking → the node's captured `reasoning` entry.
                     reasoning_parts: list[str] = []
+                    # Calls + their results → the node's captured `tool_calls` entry.
+                    tool_call_records: list[dict[str, Any]] = []
                     truncated = False
                     capped = False
                     async with gen_cm as gen_scope:
@@ -1028,6 +1032,9 @@ async def _durable_walk(
                                         tool_scope.set_attributes(
                                             {"tool.name": call.name, "tool.ok": outcome.ok}
                                         )
+                                tool_call_records.append(
+                                    _tool_call_record(call, outcome, iteration, ci)
+                                )
                                 messages.append(tool_result_message(call, outcome))
                             # A FORCED tool_choice ("required" / a named function) applies to the
                             # FIRST turn only — re-sending it would force a tool call on every
@@ -1054,6 +1061,10 @@ async def _durable_walk(
                     # never a dataflow handle.
                     if reasoning_parts:
                         values[(node.id, _NODE_REASONING_KEY)] = "\n\n".join(reasoning_parts)
+                    # Tool calls + results → the reserved capture entry (the run inspector's tool
+                    # RESULT view). Same reserved-key channel as reasoning; never a dataflow handle.
+                    if tool_call_records:
+                        values[(node.id, _NODE_TOOL_CALLS_KEY)] = tool_call_records
                     live_handles[node.id] = _success_handles(node)
                     for handle in live_handles[node.id]:
                         values[(node.id, handle)] = final_output

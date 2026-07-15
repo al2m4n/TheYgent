@@ -3,6 +3,7 @@ import { MessagesSquare } from "lucide-react";
 import { useMemo, useState } from "react";
 import { FilterBar } from "../components/Filters";
 import { TimeAgo } from "../components/TimeAgo";
+import { TimeRangeFilter } from "../components/TimeRangeFilter";
 import { Badge, ErrorBanner, Page, Spinner, buttonClass, linkClass } from "../components/ui";
 import {
   Empty,
@@ -21,7 +22,9 @@ import {
   TableRow,
 } from "../components/ui/table";
 import type { SessionSummary } from "../lib/runtypes";
+import { ALL_TIME, type TimeRange, inRange, isActive } from "../lib/timeRange";
 import { useInView } from "../lib/useInView";
+import { useNow } from "../lib/useNow";
 import { flattenPages, useSessionsInfinite } from "../queries";
 
 // What the session was talking to, from its stored metadata (absent on sessions recorded before
@@ -89,14 +92,18 @@ export function SessionsList() {
   const sessions = useMemo(() => flattenPages(data), [data]);
   const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [q, setQ] = useState("");
+  const [range, setRange] = useState<TimeRange>(ALL_TIME);
+  // Keep a relative window ("last 5 minutes") rolling as time passes, not frozen at load.
+  const now = useNow(range.type === "relative");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    if (!needle) return sessions ?? [];
-    return (sessions ?? []).filter((t) =>
-      `${t.id} ${t.preview ?? ""} ${targetOf(t) ?? ""}`.toLowerCase().includes(needle),
-    );
-  }, [sessions, q]);
+    return (sessions ?? []).filter((t) => {
+      if (!inRange(t.last_activity, range, now)) return false;
+      if (!needle) return true;
+      return `${t.id} ${t.preview ?? ""} ${targetOf(t) ?? ""}`.toLowerCase().includes(needle);
+    });
+  }, [sessions, q, range, now]);
 
   return (
     <Page className="space-y-4">
@@ -132,9 +139,14 @@ export function SessionsList() {
             search={q}
             onSearch={setQ}
             searchPlaceholder="Search id, preview, target…"
+            trailing={<TimeRangeFilter value={range} onChange={setRange} />}
+            extraActive={isActive(range)}
             total={sessions.length}
             shown={filtered.length}
-            onClear={() => setQ("")}
+            onClear={() => {
+              setQ("");
+              setRange(ALL_TIME);
+            }}
           />
           {filtered.length === 0 ? (
             <Empty className="border py-10">
@@ -163,7 +175,10 @@ export function SessionsList() {
                         </TableCell>
                         <TableCell>{target ? <Badge tone="blue">{target}</Badge> : "—"}</TableCell>
                         <TableCell>{t.message_count}</TableCell>
-                        <TableCell className="max-w-md truncate text-muted-foreground">
+                        <TableCell
+                          className="max-w-md truncate text-muted-foreground"
+                          title={t.preview ?? "—"}
+                        >
                           {t.preview ?? "—"}
                         </TableCell>
                         <TableCell className="text-muted-foreground">

@@ -2025,6 +2025,17 @@ def create_app(
         rows = await agents.list_agents(session, limit=limit, before=before)
         return {"agents": [a.model_dump(mode="json") for a in rows]}
 
+    @app.get("/stats", dependencies=[Depends(require_auth)])
+    async def stats(session: AsyncSession = Depends(get_session)) -> Any:
+        # Exact totals for the dashboard overview tiles — one cheap COUNT(*) per table. Distinct
+        # from the paginated /runs, /sessions, /agents lists (which return only a page window, so a
+        # client can't derive a true total). Read-only and additive; changes no existing endpoint.
+        return {
+            "runs": await store.count_runs(session),
+            "sessions": await store.count_chat_sessions(session),
+            "agents": await agents.count_agents(session),
+        }
+
     @app.get("/agents/{agent_id}", dependencies=[Depends(require_auth)])
     async def get_agent(agent_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         detail = await agents.get_agent_detail(session, agent_id)

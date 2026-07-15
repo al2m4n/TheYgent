@@ -54,6 +54,36 @@ const CONN_OAUTH = {
   updated_at: "2026-01-01T00:00:00+00:00",
 };
 
+// A generated (OpenAPI) connection. The connection dump ELIDES the full parsed spec to a summary,
+// so the settings modal must never send config back (that would overwrite the real spec server-side
+// and wipe the derived tools).
+const CONN_OPENAPI = {
+  id: "con_3",
+  name: "petstore",
+  kind: "mcp_server",
+  config: {
+    transport: "openapi",
+    url: "https://petstore.example/openapi.json",
+    spec: { title: "Petstore", version: "1.0.0", pathCount: 12 },
+    auth: { type: "bearer" },
+  },
+  hasSecret: true,
+  enabled: true,
+  created_at: "2026-01-01T00:00:00+00:00",
+  updated_at: "2026-01-01T00:00:00+00:00",
+};
+
+const CONN_STDIO = {
+  id: "con_4",
+  name: "fs-conn",
+  kind: "mcp_server",
+  config: { transport: "stdio", command: "npx", args: ["-y", "@mcp/fs", "/tmp"], env: {} },
+  hasSecret: false,
+  enabled: true,
+  created_at: "2026-01-01T00:00:00+00:00",
+  updated_at: "2026-01-01T00:00:00+00:00",
+};
+
 const ENTRY_A = {
   registry: "official",
   name: "io.github.acme/alpha",
@@ -475,7 +505,7 @@ describe("MCP page — oauth connect", () => {
 // ── secret rotation ───────────────────────────────────────────────────────────────────────────────
 
 describe("MCP page — secret rotation", () => {
-  it("rotates a connection secret through the write-only PATCH; oauth rows are excluded", async () => {
+  it("rotates a connection secret from the settings modal; oauth rows offer no rotate field", async () => {
     const calls = mockRoutes(
       (path, method) => {
         if (method === "PATCH" && path === "/connections/con_1") {
@@ -489,22 +519,99 @@ describe("MCP page — secret rotation", () => {
 
     await screen.findByText("github");
     await screen.findByText("linear");
-    // Exactly one row offers rotation: the bearer connection. OAuth tokens are broker-managed
-    // (re-authorize with Connect), so that row must not invite a hand-written value.
-    const rotateButtons = screen.getAllByRole("button", { name: "Rotate secret" });
-    expect(rotateButtons).toHaveLength(1);
 
-    fireEvent.click(rotateButtons[0]);
+    // Open the OAuth row's settings: its grant is broker-managed (re-authorize with Connect), so the
+    // settings modal must NOT invite a hand-written secret.
+    fireEvent.click(screen.getByText("linear"));
+    await screen.findByText("linear — settings");
+    expect(screen.queryByPlaceholderText("write-only — never shown again")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // The bearer connection can rotate its secret from its settings modal; the write rides the
+    // connection PATCH alongside the (unchanged) config.
+    fireEvent.click(screen.getByText("github"));
+    await screen.findByText("github — settings");
     const input = await screen.findByPlaceholderText("write-only — never shown again");
     expect(input).toHaveAttribute("type", "password");
     fireEvent.change(input, { target: { value: "new-token" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save secret" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => {
       const patch = calls.find(
         (c) => c.method === "PATCH" && pathOf(c.url) === "/connections/con_1",
       );
-      expect(patch?.body).toEqual({ secret: "new-token" });
+      expect(patch?.body).toMatchObject({ name: "github", enabled: true, secret: "new-token" });
+      // The stored config round-trips untouched (we start from it and only overwrite edited keys).
+      expect((patch?.body as { config: { url: string } }).config.url).toBe(
+        "https://gh.example/mcp",
+      );
+    });
+  });
+});
+
+// ── the settings modal ──────────────────────────────────────────────────────────────────────────
+
+describe("MCP page — settings modal", () => {
+  it("a generated server's save omits config, so its elided spec is never written back", async () => {
+    const calls = mockRoutes(
+      (path, method) => {
+        if (method === "PATCH" && path === "/connections/con_3") {
+          return jsonResponse({ ...CONN_OPENAPI });
+        }
+        return undefined;
+      },
+      { servers: [], connections: [CONN_OPENAPI] },
+    );
+    renderMcp();
+
+    await screen.findByText("petstore");
+    fireEvent.click(screen.getByText("petstore"));
+    await screen.findByText("petstore — settings");
+    // A generated server exposes only rename/toggle/rotate — no config fields, and a clear note.
+    expect(screen.getByText(/Generated openapi server/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const patch = calls.find(
+        (c) => c.method === "PATCH" && pathOf(c.url) === "/connections/con_3",
+      );
+      expect(patch).toBeDefined();
+      // config MUST be absent — sending the summarized spec back would wipe the derived tools.
+      expect(patch?.body).not.toHaveProperty("config");
+      expect(patch?.body).toMatchObject({ name: "petstore", enabled: true });
+    });
+  });
+
+  it("a stdio connection's save writes the reconfigured command/args back through config", async () => {
+    const calls = mockRoutes(
+      (path, method) => {
+        if (method === "PATCH" && path === "/connections/con_4") {
+          return jsonResponse({ ...CONN_STDIO });
+        }
+        return undefined;
+      },
+      { servers: [], connections: [CONN_STDIO] },
+    );
+    renderMcp();
+
+    await screen.findByText("fs-conn");
+    fireEvent.click(screen.getByText("fs-conn"));
+    await screen.findByText("fs-conn — settings");
+    // The command field is seeded from config; change it and save.
+    const command = screen.getByPlaceholderText("npx");
+    expect(command).toHaveValue("npx");
+    fireEvent.change(command, { target: { value: "uvx" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => {
+      const patch = calls.find(
+        (c) => c.method === "PATCH" && pathOf(c.url) === "/connections/con_4",
+      );
+      expect(patch?.body).toMatchObject({
+        name: "fs-conn",
+        enabled: true,
+        config: { transport: "stdio", command: "uvx", args: ["-y", "@mcp/fs", "/tmp"], env: {} },
+      });
     });
   });
 });

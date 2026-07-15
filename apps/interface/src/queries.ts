@@ -149,6 +149,53 @@ export function useModels() {
   return useQuery({ queryKey: keys.models(), queryFn: () => api.listModels() });
 }
 
+// ── dashboard: plane liveness + resident engines ────────────────────────────
+// The two plane-status widgets poll on a relaxed cadence (the tab pauses polling when hidden by
+// default). retry is off — an unreachable plane is a first-class state to render, not an error to
+// hammer. The probe never throws for a not-ready plane (it returns `reachable`), so a failed fetch
+// here means the network itself failed and we still render "offline".
+export function useControlHealth() {
+  return useQuery({
+    queryKey: ["health", "control"],
+    queryFn: () => api.controlHealth(),
+    refetchInterval: 15000,
+    retry: false,
+  });
+}
+
+export function useInferenceHealth() {
+  return useQuery({
+    queryKey: ["health", "inference"],
+    queryFn: () => api.inferenceHealth(),
+    refetchInterval: 15000,
+    retry: false,
+  });
+}
+
+// Exact control-plane totals (runs/sessions/agents) for the dashboard KPI tiles — one COUNT(*) per
+// table, so the tiles show a true total instead of the loaded page window. Polled on a relaxed
+// cadence; tolerated to fail (the tiles fall back to the loaded-window count).
+export function useStats() {
+  return useQuery({
+    queryKey: ["stats"],
+    queryFn: () => api.getStats(),
+    refetchInterval: 15000,
+    retry: false,
+  });
+}
+
+// The inference plane's resident (warm) engines + the residency ceiling. Polled ~10s so the
+// dashboard reflects a model warming/evicting without a reload; tolerated to fail (the plane may be
+// down — the widget degrades to offline).
+export function useEngines() {
+  return useQuery({
+    queryKey: ["engines"],
+    queryFn: () => api.getEngines(),
+    refetchInterval: 10000,
+    retry: false,
+  });
+}
+
 // "Save as agent": a new agent id → create; an existing id → add a version. Each invalidates
 // the agent list + that agent's detail so the canvas Home/Editor pick up the new version.
 export function useAgentMutations() {

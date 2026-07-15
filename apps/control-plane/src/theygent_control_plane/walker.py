@@ -1870,6 +1870,31 @@ _DROPPED_ERROR_KEY = "__dropped_error__"
 # other port), never graph-visible dataflow.
 _NODE_REASONING_KEY = "__reasoning__"
 
+# The reserved key an llm node's autonomous tool-calling loop records its calls under, surfaced in
+# the node's captured outputs as the ``tool_calls`` entry: one record per call {name, arguments, ok,
+# result, iteration, index}. Like ``reasoning`` it is observability payload only (same node_io
+# gating/caps), never a dataflow handle — it lets the run inspector show WHAT each tool returned,
+# which otherwise lives only in the transient conversation the model never surfaces. ``iteration``
+# + ``index`` mirror the ``tool.<name>#<iter>.<idx>`` phase-span id so the inspector can scope a
+# single tool row to its own record.
+_NODE_TOOL_CALLS_KEY = "__tool_calls__"
+
+
+def _tool_call_record(
+    call: ToolCall, outcome: ActivityOutcome, iteration: int, index: int
+) -> dict[str, Any]:
+    """One captured record of an autonomous tool call + its result, for the node's ``tool_calls``
+    observability entry. ``result`` is the raw ok/err value the tool returned (the same value fed
+    back to the model), rendered by the inspector; capping/truncation rides the node_io cap."""
+    return {
+        "name": call.name,
+        "arguments": call.arguments,
+        "ok": outcome.ok,
+        "result": outcome.value,
+        "iteration": iteration,
+        "index": index,
+    }
+
 
 def _bind_outcome(
     node: Node,
@@ -2206,6 +2231,11 @@ def _io_output_snapshot(
     reasoning = values.get((node.id, _NODE_REASONING_KEY))
     if reasoning is not None:
         out["reasoning"] = reasoning
+    # An llm node's autonomous tool calls + their results ride the same reserved-entry channel as
+    # reasoning — capture-only, so the inspector can show what each tool returned (never a handle).
+    tool_calls = values.get((node.id, _NODE_TOOL_CALLS_KEY))
+    if tool_calls:
+        out["tool_calls"] = tool_calls
     return out
 
 
@@ -2310,6 +2340,7 @@ async def _walk_llm(
     final_finish: str | None = None
     usage_acc: dict[str, int] | None = None
     reasoning_parts: list[str] = []  # per-turn thinking → the node's captured `reasoning` entry
+    tool_call_records: list[dict[str, Any]] = []  # calls + results → the `tool_calls` entry
     truncated = False
     capped = False
     async with gen_cm as gen_scope:
@@ -2412,6 +2443,7 @@ async def _walk_llm(
                     )
                     if tool_scope is not None:
                         tool_scope.set_attributes({"tool.name": call.name, "tool.ok": outcome.ok})
+                tool_call_records.append(_tool_call_record(call, outcome, iteration, ci))
                 messages.append(tool_result_message(call, outcome))
             # A FORCED tool_choice ("required" / a named function) applies to the FIRST turn
             # only — re-sending it would force a tool call on every turn, so the model could
@@ -2446,6 +2478,11 @@ async def _walk_llm(
     # node_io capture persists it alongside the answer — never a dataflow handle.
     if reasoning_parts:
         values[(node.id, _NODE_REASONING_KEY)] = "\n\n".join(reasoning_parts)
+
+    # The tool calls this node made + what each returned, recorded under the reserved key so the run
+    # inspector can show the tool RESULTS (they otherwise vanish into the transient conversation).
+    if tool_call_records:
+        values[(node.id, _NODE_TOOL_CALLS_KEY)] = tool_call_records
 
     # Activate the success handles and bind the final text, so downstream data edges pick it by
     # ``sourceHandle`` (e.g. "ok"). An llm error raises mid-stream (failed run) — it never binds.
