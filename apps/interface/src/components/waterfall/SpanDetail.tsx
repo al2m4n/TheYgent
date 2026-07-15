@@ -2,10 +2,12 @@
 // pane on wide containers, stacked below on narrow ones), never a separate modal. Header = the
 // span's identity + a compact stat strip (status, timing, model, tokens, sizes); body = the gated
 // per-node I/O as stacked, all-visible sections in the order the step actually happened:
-// Input → Reasoning → Output. Reasoning is the reserved `reasoning` entry the server records in
-// an llm node's captured outputs — it shows on the llm node and its model.generate row alike.
+// Input → Reasoning → Tool calls → Output. Reasoning and Tool calls are reserved entries the
+// server records in an llm node's captured outputs — they show on the llm node and its phase rows
+// alike. Tool calls carry each autonomous call's args + RESULT (what the tool returned, otherwise
+// buried in the transient conversation); a `tool.<name>` phase row scopes down to its one call.
 
-import { Brain, X } from "lucide-react";
+import { Brain, Wrench, X } from "lucide-react";
 import { useMemo } from "react";
 import { NodeIcon, defaultIconFor } from "../../lib/icons";
 import { useNodeIo } from "../../queries";
@@ -21,12 +23,36 @@ import {
   tokensPerSec,
 } from "./spans";
 
+// One captured autonomous tool call + its result — the reserved `tool_calls` output entry the
+// server records on an llm node. `iteration`/`index` mirror the `tool.<name>#<iter>.<idx>` phase id
+// so the inspector can scope a single tool row to its own record.
+interface ToolCallRecord {
+  name?: string;
+  arguments?: unknown;
+  ok?: boolean;
+  result?: unknown;
+  iteration?: number;
+  index?: number;
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
       <span className="text-[9px] uppercase tracking-wide opacity-60">{label}</span>
       <span className="mono text-foreground">{value}</span>
     </span>
+  );
+}
+
+// One payload block — a string renders verbatim, anything else pretty-prints as JSON. Scrolls
+// internally past `maxH` so stacked sections all stay on screen.
+function Payload({ value, maxH }: { value: unknown; maxH: string }) {
+  return (
+    <pre
+      className={`mono ${maxH} overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background px-2 py-1 text-xs text-foreground`}
+    >
+      {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
+    </pre>
   );
 }
 
@@ -51,16 +77,60 @@ function IoSection({
         Object.entries(data).map(([port, value]) => (
           <div key={port} className="space-y-0.5">
             <div className="mono text-[10px] text-blue-700 dark:text-blue-400">{port}</div>
-            <pre
-              className={`mono ${maxH} overflow-auto whitespace-pre-wrap break-words rounded-md border bg-background px-2 py-1 text-xs text-foreground`}
-            >
-              {typeof value === "string" ? value : JSON.stringify(value, null, 2)}
-            </pre>
+            <Payload value={value} maxH={maxH} />
           </div>
         ))
       ) : (
         <p className="text-xs text-muted-foreground">—</p>
       )}
+    </div>
+  );
+}
+
+// The autonomous tool calls an llm node made, each with its args and — the point of this section —
+// the RESULT the tool returned. `scoped` is true when a single `tool.<name>` phase row is selected
+// (one call), false on the node / model.generate rows (the whole loop).
+function ToolCalls({
+  calls,
+  scoped,
+  maxH,
+}: {
+  calls: ToolCallRecord[];
+  scoped: boolean;
+  maxH: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+        <Wrench size={11} />
+        <span>{scoped ? "Tool result" : "Tool calls"}</span>
+      </div>
+      {calls.map((call, i) => (
+        <div
+          // The loop position (iteration/index) is the stable identity; fall back to the array slot.
+          key={`${call.iteration ?? "i"}.${call.index ?? i}`}
+          className="space-y-1 rounded-md border bg-muted/30 px-2 py-1.5"
+        >
+          <div className="flex items-center gap-1.5">
+            <span className="mono truncate text-[11px] font-medium text-foreground">
+              {call.name ?? "tool"}
+            </span>
+            <Badge tone={call.ok === false ? "red" : "green"}>
+              {call.ok === false ? "err" : "ok"}
+            </Badge>
+          </div>
+          {call.arguments !== undefined && call.arguments !== null && (
+            <div className="space-y-0.5">
+              <div className="mono text-[10px] text-blue-700 dark:text-blue-400">args</div>
+              <Payload value={call.arguments} maxH={maxH} />
+            </div>
+          )}
+          <div className="space-y-0.5">
+            <div className="mono text-[10px] text-blue-700 dark:text-blue-400">result</div>
+            <Payload value={call.result} maxH={maxH} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -106,13 +176,33 @@ export function SpanDetail({
 
   const data = io.data;
   // The reserved reasoning entry is presentation, not a dataflow port — pull it out of the
-  // captured outputs so the Output tab shows only real ports.
+  // captured outputs so the Output section shows only real ports.
   const reasoning =
     data?.outputs && typeof data.outputs.reasoning === "string" ? data.outputs.reasoning : null;
+  // The reserved tool_calls entry (autonomous calls + results). On a `tool.<name>#<iter>.<idx>`
+  // phase row, scope down to that one call; on the node / model.generate rows, show the whole loop.
+  const toolCalls = useMemo<{ calls: ToolCallRecord[]; scoped: boolean } | null>(() => {
+    const raw = data?.outputs?.tool_calls;
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    const all = raw as ToolCallRecord[];
+    const m = span.phase?.match(/#(\d+)\.(\d+)$/);
+    if (m) {
+      const one = all.find((c) => c.iteration === Number(m[1]) && c.index === Number(m[2]));
+      if (one) return { calls: [one], scoped: true };
+    }
+    return { calls: all, scoped: false };
+  }, [data, span.phase]);
+  // Both reserved entries are presentation, not dataflow ports — strip them from the Output section
+  // (only when they carry the reserved SHAPE; an unexpectedly-typed value stays a real port).
   const outputs = useMemo(() => {
-    if (!data?.outputs) return data?.outputs ?? null;
-    if (typeof data.outputs.reasoning !== "string") return data.outputs;
-    const { reasoning: _omitted, ...rest } = data.outputs;
+    const o = data?.outputs;
+    if (!o) return o ?? null;
+    const rest: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(o)) {
+      if (k === "reasoning" && typeof v === "string") continue;
+      if (k === "tool_calls" && Array.isArray(v)) continue;
+      rest[k] = v;
+    }
     return rest;
   }, [data]);
 
@@ -134,9 +224,9 @@ export function SpanDetail({
           )}
           <h3
             className="mono truncate text-sm font-semibold text-foreground"
-            title={span.phase ?? span.name}
+            title={span.name ?? span.phase}
           >
-            {span.phase ?? span.name}
+            {span.name ?? span.phase}
           </h3>
         </div>
         <button
@@ -171,7 +261,8 @@ export function SpanDetail({
 
       {nodeId == null ? (
         <p className="text-muted-foreground">
-          Whole-run totals. Select a node or phase row for its input, output and reasoning.
+          Whole-run totals. Select a node or phase row for its input, output, reasoning and tool
+          results.
         </p>
       ) : (
         <>
@@ -206,6 +297,9 @@ export function SpanDetail({
                     {reasoning}
                   </pre>
                 </div>
+              )}
+              {toolCalls && (
+                <ToolCalls calls={toolCalls.calls} scoped={toolCalls.scoped} maxH={maxH} />
               )}
               <IoSection
                 label="Output"

@@ -191,6 +191,74 @@ def test_llm_tool_loop_reasoning_joins_turns(pg_url: str) -> None:
     assert io["outputs"]["ok"] == "answer after tool"
 
 
+# ── tool-call capture (the reserved `tool_calls` outputs entry — args + RESULT) ──
+
+
+def test_llm_node_io_captures_tool_calls_with_results(pg_url: str) -> None:
+    # The autonomous tool loop records each call + its RESULT under the reserved `tool_calls`
+    # outputs entry, so the run inspector can show what a tool returned — it otherwise lives only in
+    # the transient conversation the model never surfaces. One `echo` call (returns `value` as-is).
+    with FakeInference(
+        mode="tool_call",
+        tool_name="echo",
+        tool_args={"value": "hi"},
+        response="answer after tool",
+    ) as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            ir = llm_ir("$in")
+            ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+            ir["nodes"][1]["config"]["tools"] = ["echo"]
+            run_id = _graph_run(client, ir)
+            io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert io["outputs"]["tool_calls"] == [
+        {
+            "name": "echo",
+            "arguments": {"value": "hi"},
+            "ok": True,
+            "result": "hi",
+            "iteration": 0,
+            "index": 0,
+        }
+    ]
+    # Capture-only: the reserved entry rides alongside the real success output, never replaces it.
+    assert io["outputs"]["ok"] == "answer after tool"
+
+
+def test_llm_node_io_captures_failed_tool_call_result(pg_url: str) -> None:
+    # A FAILED tool call (the model hallucinated a tool not in the graph) records ok=False and the
+    # error the tool "returned" — the strongest reason to surface tool results: seeing WHY a tool
+    # call failed, not just that the model recovered. The loop feeds the error back (never fatal).
+    with FakeInference(
+        mode="tool_call", tool_name="ghost", tool_args={}, response="recovered answer"
+    ) as server:
+        app = create_app(inference_base_url=server.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            ir = llm_ir("$in")
+            ir["tools"] = {"echo": {"kind": "builtin", "ref": "echo"}}
+            ir["nodes"][1]["config"]["tools"] = ["echo"]
+            run_id = _graph_run(client, ir)
+            io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert io["outputs"]["tool_calls"] == [
+        {
+            "name": "ghost",
+            "arguments": {},
+            "ok": False,
+            "result": "unknown tool 'ghost'",
+            "iteration": 0,
+            "index": 0,
+        }
+    ]
+    assert io["outputs"]["ok"] == "recovered answer"
+
+
+def test_llm_node_io_no_tool_calls_entry_when_no_tools_used(client: TestClient) -> None:
+    # A plain llm run (no tool loop) has no `tool_calls` entry — never an empty-list placeholder.
+    run_id = _graph_run(client, trivial_ir())
+    io = client.get(f"/runs/{run_id}/nodes/n_llm/io").json()
+    assert "tool_calls" not in io["outputs"]
+
+
 def test_prompt_run_stream_captures_reasoning(pg_url: str) -> None:
     # The /runs streaming path relays the thinking live (event: reasoning) AND captures it into
     # the synthetic llm node's outputs, so it survives the stream.

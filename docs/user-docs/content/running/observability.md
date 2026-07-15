@@ -60,9 +60,11 @@ Rows carry inline annotations where they help: the duration, a check or cross fo
 
 Click any bar to open its inspector — a side pane when the window is wide, stacked below when it is narrow. It shows a compact stat line for that span: status, how long it `took`, the `model`, `ttft` (time to the first answer token), tokens in and out, the generation `rate`, the `finish` reason, the I/O byte sizes, and — when the work ran off the main process — which `worker` handled it.
 
-Below the stats are up to three payload sections for the node: **Input**, **Reasoning**, and **Output**. These are fetched lazily when you open the row, and whether they show anything depends on the capture policy (below). Selecting the run-root row instead shows the whole-run token totals.
+Below the stats are up to four payload sections for the node: **Input**, **Reasoning**, **Tool calls**, and **Output**. These are fetched lazily when you open the row, and whether they show anything depends on the capture policy (below). Selecting the run-root row instead shows the whole-run token totals.
 
 The **Reasoning** section (rendered in violet, between Input and Output) holds a reasoning model's thinking for that node. Thinking is kept out of the run's output and out of session memory — it is recorded here for inspection only, never folded into the answer.
+
+The **Tool calls** section (rendered in amber) appears on a model node that called tools on its own. It lists each call the model made with its arguments and — the useful part — the **result** the tool returned, which otherwise lives only in the model's private conversation. Selecting a single `tool.…` phase row narrows the section to just that one call's result. Like reasoning, this is recorded for inspection only; it never becomes a wire between nodes.
 
 ## Node input and output capture
 
