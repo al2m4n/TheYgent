@@ -1,17 +1,10 @@
 import { Link, useParams } from "@tanstack/react-router";
+import { ChevronLeft } from "lucide-react";
 import { type ReactNode, useEffect } from "react";
 import { ThinkingBlock } from "../chat/ThinkingBlock";
 import { ResumePanel } from "../components/ResumePanel";
 import { TimeAgo } from "../components/TimeAgo";
 import { ErrorBanner, NoteBanner, Page, Spinner, StatusBadge, linkClass } from "../components/ui";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "../components/ui/breadcrumb";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { RunWaterfall } from "../components/waterfall";
 import { useLiveRun } from "../lib/live";
@@ -96,19 +89,13 @@ export function RunDetail() {
   return (
     <Page className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/runs">Runs</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage className="mono break-all font-semibold">{run.id}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+        <Link
+          to="/runs"
+          className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ChevronLeft size={16} /> Runs
+        </Link>
+        <span className="mono break-all text-sm font-semibold text-foreground">{run.id}</span>
         <StatusBadge status={status} />
       </div>
 

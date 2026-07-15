@@ -20,7 +20,7 @@ import { ErrorBanner, Page, linkClass } from "../components/ui";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
-import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
+import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
 import { api } from "../lib/api";
 import { toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
@@ -154,33 +154,19 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-foreground">New Chat</h1>
-        {/* What to talk to. Both pins freeze once the conversation starts (the session's target
-            is fixed); "New chat" starts over. */}
-        <ToggleGroup
-          type="single"
-          size="sm"
-          variant="outline"
+        {/* What to talk to — a model or a saved agent. This and the target below both freeze once
+            the conversation starts (the session's target is fixed); "New chat" starts over. */}
+        <NativeSelect
+          className="w-32"
           value={kind}
-          onValueChange={(next) => {
-            // Re-clicking the active item reports "" — the chat always has a target kind.
-            if (next) setKind(next as TargetKind);
-          }}
+          onChange={(e) => setKind(e.target.value as TargetKind)}
           disabled={started}
           aria-label="Target kind"
+          title={started ? "The target is pinned once the conversation starts" : undefined}
         >
-          <ToggleGroupItem
-            value="model"
-            className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-          >
-            Model
-          </ToggleGroupItem>
-          <ToggleGroupItem
-            value="agent"
-            className="data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
-          >
-            Agent
-          </ToggleGroupItem>
-        </ToggleGroup>
+          <NativeSelectOption value="model">Model</NativeSelectOption>
+          <NativeSelectOption value="agent">Agent</NativeSelectOption>
+        </NativeSelect>
         {kind === "model" ? (
           <>
             <SearchableSelect

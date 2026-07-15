@@ -3,6 +3,7 @@ import { Activity } from "lucide-react";
 import { useMemo, useState } from "react";
 import { CategoryBadge, FilterBar } from "../components/Filters";
 import { TimeAgo } from "../components/TimeAgo";
+import { TimeRangeFilter } from "../components/TimeRangeFilter";
 import { ErrorBanner, Page, Spinner, buttonClass, linkClass } from "../components/ui";
 import {
   Empty,
@@ -22,7 +23,9 @@ import {
 } from "../components/ui/table";
 import { countBy, statusTone, toggle } from "../lib/categories";
 import { shortId } from "../lib/format";
+import { ALL_TIME, type TimeRange, inRange, isActive } from "../lib/timeRange";
 import { useInView } from "../lib/useInView";
+import { useNow } from "../lib/useNow";
 import { flattenPages, useRunsInfinite } from "../queries";
 
 // The natural status reading order (lifecycle), so the chips don't reorder as counts change.
@@ -88,6 +91,9 @@ export function RunsList() {
   const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [statusSel, setStatusSel] = useState<string[]>([]);
   const [q, setQ] = useState("");
+  const [range, setRange] = useState<TimeRange>(ALL_TIME);
+  // Keep a relative window ("last 5 minutes") rolling as time passes, not frozen at load.
+  const now = useNow(range.type === "relative");
 
   const statusCounts = useMemo(() => countBy(runs ?? [], (r) => r.status), [runs]);
 
@@ -95,6 +101,7 @@ export function RunsList() {
     const needle = q.trim().toLowerCase();
     return (runs ?? []).filter((r) => {
       if (statusSel.length && !statusSel.includes(r.status)) return false;
+      if (!inRange(r.created_at, range, now)) return false;
       if (needle) {
         const hay =
           `${r.id} ${r.model ?? ""} ${r.graph_id ?? ""} ${r.session_id ?? ""}`.toLowerCase();
@@ -102,7 +109,7 @@ export function RunsList() {
       }
       return true;
     });
-  }, [runs, statusSel, q]);
+  }, [runs, statusSel, q, range, now]);
 
   const statusFacet = {
     label: "Status",
@@ -154,11 +161,14 @@ export function RunsList() {
             onSearch={setQ}
             searchPlaceholder="Search id, model…"
             facets={[statusFacet]}
+            trailing={<TimeRangeFilter value={range} onChange={setRange} />}
+            extraActive={isActive(range)}
             total={runs.length}
             shown={filtered.length}
             onClear={() => {
               setStatusSel([]);
               setQ("");
+              setRange(ALL_TIME);
             }}
           />
 

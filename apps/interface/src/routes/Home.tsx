@@ -13,7 +13,8 @@ import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
 import { FilterBar } from "../components/Filters";
 import { GraphPreview } from "../components/GraphPreview";
 import { TimeAgo } from "../components/TimeAgo";
-import { ErrorBanner, Modal, Page, Spinner, buttonClass } from "../components/ui";
+import { ViewToggle } from "../components/ViewToggle";
+import { ErrorBanner, Modal, Page, Spinner, buttonClass, linkClass } from "../components/ui";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardFooter } from "../components/ui/card";
@@ -27,9 +28,18 @@ import {
 } from "../components/ui/empty";
 import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
 import { Skeleton } from "../components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import { fromStoredVersion } from "../lib/agent";
 import { type AgentDetail, type AgentSummary, api } from "../lib/api";
 import { useInView } from "../lib/useInView";
+import { useViewMode } from "../lib/viewMode";
 import { flattenPages, useAgentsInfinite } from "../queries";
 
 type Sort = "modified" | "created" | "name" | "versions";
@@ -49,6 +59,7 @@ export function Home() {
   const [benchAgentId, setBenchAgentId] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("modified");
+  const [view, setView] = useViewMode("agents", "grid");
 
   const shown = useMemo(() => {
     const arr = [...(agents ?? [])];
@@ -124,20 +135,23 @@ export function Home() {
             shown={shown.length}
             onClear={q ? () => setQ("") : undefined}
             trailing={
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                Sort
-                <NativeSelect
-                  size="sm"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value as Sort)}
-                >
-                  {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
-                    <NativeSelectOption key={s} value={s}>
-                      {SORT_LABEL[s]}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              </label>
+              <>
+                <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  Sort
+                  <NativeSelect
+                    size="sm"
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as Sort)}
+                  >
+                    {(Object.keys(SORT_LABEL) as Sort[]).map((s) => (
+                      <NativeSelectOption key={s} value={s}>
+                        {SORT_LABEL[s]}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </label>
+                <ViewToggle value={view} onChange={setView} />
+              </>
             }
           />
 
@@ -145,12 +159,14 @@ export function Home() {
             <Empty className="border py-10">
               <EmptyDescription>No agents match the current filters.</EmptyDescription>
             </Empty>
-          ) : (
+          ) : view === "grid" ? (
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
               {shown.map((a) => (
                 <AgentCard key={a.id} agent={a} onBench={() => setBenchAgentId(a.id)} />
               ))}
             </div>
+          ) : (
+            <AgentTable agents={shown} onBench={setBenchAgentId} />
           )}
 
           {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
@@ -165,6 +181,73 @@ export function Home() {
 
       {benchAgentId && <BenchModal agentId={benchAgentId} onClose={() => setBenchAgentId(null)} />}
     </Page>
+  );
+}
+
+// The list rendering: the same agents as a compact table. No per-row graph fetch (that's the grid's
+// job) — just the registry summary each row already carries, so it stays light at any length.
+function AgentTable({
+  agents,
+  onBench,
+}: {
+  agents: AgentSummary[];
+  onBench: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border bg-card">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Agent</TableHead>
+            <TableHead>Version</TableHead>
+            <TableHead>Versions</TableHead>
+            <TableHead>Updated</TableHead>
+            <TableHead className="text-right">Run</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {agents.map((a) => (
+            <TableRow key={a.id}>
+              <TableCell>
+                <Link
+                  to="/editor"
+                  search={{ agent: a.id, version: a.latest_version ?? undefined }}
+                  className="flex flex-col"
+                >
+                  <span className={`truncate font-medium ${linkClass}`} title={a.name}>
+                    {a.name}
+                  </span>
+                  <span className="mono truncate text-[11px] text-muted-foreground/70" title={a.id}>
+                    {a.id}
+                  </span>
+                </Link>
+              </TableCell>
+              <TableCell>
+                {a.latest_version ? (
+                  <Badge
+                    variant="secondary"
+                    className="mono bg-primary/10 text-[11px] text-primary"
+                  >
+                    v{a.latest_version}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground/60">—</span>
+                )}
+              </TableCell>
+              <TableCell className="text-muted-foreground">{a.version_count}</TableCell>
+              <TableCell className="text-muted-foreground">
+                <TimeAgo iso={a.updated_at} />
+              </TableCell>
+              <TableCell className="text-right">
+                <Button size="sm" disabled={!a.latest_version} onClick={() => onBench(a.id)}>
+                  Run
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
   );
 }
 
