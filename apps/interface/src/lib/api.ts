@@ -597,6 +597,11 @@ export const api = {
 
   getRun: (id: string) => request<Run>(CONTROL_PLANE_URL, `/runs/${encodeURIComponent(id)}`),
 
+  // Exact overview totals for the dashboard tiles — one COUNT(*) per table, distinct from the
+  // paginated lists (which only expose a page window, so a client can't derive a true total).
+  getStats: () =>
+    request<{ runs: number; sessions: number; agents: number }>(CONTROL_PLANE_URL, "/stats"),
+
   // ── artifacts (audio in/out for an agent run) ────────────────────────────────
   // An audio agent is orchestrated by the control-plane walker, so its input/output audio crosses
   // the control plane as an artifact REFERENCE. These move the bytes: upload a recorded clip to get

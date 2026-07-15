@@ -450,7 +450,11 @@ function DocumentList({ sourceId }: { sourceId: string }) {
           <span className="mono truncate text-foreground" title={d.uri}>
             {d.uri}
           </span>
-          {d.title && <span className="truncate text-muted-foreground">{d.title}</span>}
+          {d.title && (
+            <span className="truncate text-muted-foreground" title={d.title}>
+              {d.title}
+            </span>
+          )}
           <span className="ml-auto shrink-0 text-muted-foreground">{d.chunks} chunks</span>
           {d.status === "failed" && d.error && (
             <span className="w-full text-[11px] text-red-600 dark:text-red-400">{d.error}</span>
@@ -513,7 +517,11 @@ function MatchCard({ match }: { match: RagQueryMatch }) {
         {match.similarity != null && (
           <span className="text-muted-foreground">sim {match.similarity.toFixed(2)}</span>
         )}
-        {match.heading && <span className="truncate text-foreground">{match.heading}</span>}
+        {match.heading && (
+          <span className="truncate text-foreground" title={match.heading}>
+            {match.heading}
+          </span>
+        )}
         <span className="mono ml-auto max-w-[50%] truncate text-muted-foreground" title={match.uri}>
           {match.title || match.uri}
         </span>

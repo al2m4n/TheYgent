@@ -127,6 +127,7 @@ export function FilterBar({
                 count={o.count}
                 active={f.selected.includes(o.value)}
                 onClick={() => f.onToggle(o.value)}
+                title={o.label}
               >
                 {o.label}
               </CategoryBadge>

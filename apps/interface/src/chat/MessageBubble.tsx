@@ -50,6 +50,7 @@ export function MessageBubble({ message, extras }: { message: ChatMessage; extra
               to="/runs/$runId"
               params={{ runId: message.runId }}
               className="font-normal text-blue-600 hover:text-blue-500 dark:text-blue-400"
+              title={message.runId}
             >
               run {shortId(message.runId)}
             </Link>

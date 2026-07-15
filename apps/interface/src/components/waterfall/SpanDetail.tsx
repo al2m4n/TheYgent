@@ -132,7 +132,10 @@ export function SpanDetail({
               className="shrink-0 text-muted-foreground"
             />
           )}
-          <h3 className="mono truncate text-sm font-semibold text-foreground">
+          <h3
+            className="mono truncate text-sm font-semibold text-foreground"
+            title={span.phase ?? span.name}
+          >
             {span.phase ?? span.name}
           </h3>
         </div>

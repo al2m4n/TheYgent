@@ -83,7 +83,9 @@ export function SearchableSelect({
                   }}
                 >
                   <Check className={cn(o.value === value ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate">{o.label}</span>
+                  <span className="truncate" title={o.label}>
+                    {o.label}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

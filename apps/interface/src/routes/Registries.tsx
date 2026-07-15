@@ -313,7 +313,9 @@ function AddModelPanel({
           {resolved && (
             <Card className="gap-0 py-0">
               <CardHeader className="px-4 py-2">
-                <CardDescription className="mono truncate text-[11px]">{resolved}</CardDescription>
+                <CardDescription className="mono truncate text-[11px]" title={resolved}>
+                  {resolved}
+                </CardDescription>
               </CardHeader>
               <ModelDetail entry={minimalEntry(resolved)} onStarted={onClose} />
             </Card>
@@ -613,7 +615,10 @@ function InstalledPanel() {
           >
             <Card className="gap-0 py-0">
               <CardHeader className="px-4 py-2">
-                <CardDescription className="mono truncate text-[11px]">
+                <CardDescription
+                  className="mono truncate text-[11px]"
+                  title={inspectModel.binding.model}
+                >
                   {inspectModel.binding.model}
                 </CardDescription>
               </CardHeader>
@@ -1438,10 +1443,14 @@ function ModelCard({
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="truncate text-sm">{entry.title}</CardTitle>
+              <CardTitle className="truncate text-sm" title={entry.title}>
+                {entry.title}
+              </CardTitle>
               {entry.installed && <ToneBadge tone="green">✓ installed</ToneBadge>}
             </div>
-            <CardDescription className="mono truncate text-[11px]">{entry.ref}</CardDescription>
+            <CardDescription className="mono truncate text-[11px]" title={entry.ref}>
+              {entry.ref}
+            </CardDescription>
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
               {entry.params && <span className="text-foreground">{entry.params}</span>}
               {entry.gated && (

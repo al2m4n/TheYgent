@@ -217,6 +217,15 @@ class RunStore:
         rows = (await session.execute(stmt)).scalars().all()
         return [_to_run(row) for row in rows]
 
+    async def count_runs(self, session: AsyncSession) -> int:
+        """Total run count — the exact figure the dashboard overview shows (the list endpoint only
+        returns a page window). A single ``COUNT(*)``; read-only."""
+        return int((await session.scalar(select(func.count()).select_from(RunRow))) or 0)
+
+    async def count_chat_sessions(self, session: AsyncSession) -> int:
+        """Total chat-session count, for the dashboard overview (see :meth:`count_runs`)."""
+        return int((await session.scalar(select(func.count()).select_from(ChatSessionRow))) or 0)
+
     @staticmethod
     def _session_summary_stmt() -> Any:
         """The base summary select (aggregates joined onto the session row) shared by the
@@ -821,6 +830,11 @@ class AgentStore:
             )
             for row in rows
         ]
+
+    async def count_agents(self, session: AsyncSession) -> int:
+        """Total saved-agent count, for the dashboard overview (the list endpoint only returns a
+        page window). A single ``COUNT(*)``; read-only."""
+        return int((await session.scalar(select(func.count()).select_from(AgentRow))) or 0)
 
     async def get_agent_detail(self, session: AsyncSession, agent_id: str) -> AgentDetail | None:
         """An agent and its versions, newest first by ``seq`` (GET /agents/{id})."""

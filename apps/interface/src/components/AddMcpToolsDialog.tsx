@@ -234,9 +234,14 @@ export function AddMcpToolsDialog({
                       onCheckedChange={(v) => toggle(r.name, v === true)}
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="mono block truncate text-xs">{r.name}</span>
+                      <span className="mono block truncate text-xs" title={r.name}>
+                        {r.name}
+                      </span>
                       {r.description && (
-                        <span className="block truncate text-[11px] text-muted-foreground">
+                        <span
+                          className="block truncate text-[11px] text-muted-foreground"
+                          title={r.description}
+                        >
                           {r.description}
                         </span>
                       )}

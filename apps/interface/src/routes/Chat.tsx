@@ -255,6 +255,7 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
             to="/sessions/$sessionId"
             params={{ sessionId: chat.sessionId }}
             className={`ml-auto text-xs ${linkClass}`}
+            title={chat.sessionId}
           >
             session {shortId(chat.sessionId)}
           </Link>

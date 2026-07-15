@@ -130,7 +130,9 @@ function NodePanel({
         <div className="flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2">
             <Badge tone={KIND_TONE[node.kind] ?? "slate"}>{node.kind}</Badge>
-            <span className="mono truncate text-xs text-slate-400">{node.type}</span>
+            <span className="mono truncate text-xs text-slate-400" title={node.type}>
+              {node.type}
+            </span>
           </div>
           {/* Wizard ⇄ Code, per node — the form, or this exact node's JSON. */}
           <div className="flex shrink-0 items-center rounded-md border border-slate-700 p-0.5">
@@ -1799,7 +1801,10 @@ function ListPicker({
           }}
           className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-700 bg-[var(--c-surface)] px-2.5 py-1.5 text-left text-sm outline-none hover:border-slate-500 focus:border-blue-500"
         >
-          <span className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}>
+          <span
+            className={value ? "mono truncate text-slate-100" : "truncate text-slate-500"}
+            title={value || placeholder || (loading ? "Loading…" : "Select…")}
+          >
             {value || placeholder || (loading ? "Loading…" : "Select…")}
           </span>
           <ChevronDown size={14} className="shrink-0 text-slate-500" aria-hidden />
@@ -1861,7 +1866,9 @@ function ListPicker({
                         i === active ? "bg-[var(--c-hover)]" : ""
                       } ${o === value ? "text-blue-700 dark:text-blue-300" : "text-slate-200"}`}
                     >
-                      <span className="mono truncate">{o}</span>
+                      <span className="mono truncate" title={o}>
+                        {o}
+                      </span>
                       {o === value && (
                         <Check
                           size={14}
@@ -1881,7 +1888,11 @@ function ListPicker({
                     onClick={() => select(query.trim())}
                     className="flex w-full items-center gap-1 px-2.5 py-1.5 text-left text-sm text-slate-300 hover:bg-[var(--c-hover)]"
                   >
-                    Use “<span className="mono truncate">{query.trim()}</span>”
+                    Use “
+                    <span className="mono truncate" title={query.trim()}>
+                      {query.trim()}
+                    </span>
+                    ”
                   </button>
                 </li>
               )}
@@ -3076,7 +3087,10 @@ function ToolsRegistry({ ir }: { ir: IRDocument }) {
           >
             <span className="mono text-xs text-slate-200">{key}</span>
             <Badge>{t.kind}</Badge>
-            <span className="mono ml-auto truncate text-[10px] text-slate-600">
+            <span
+              className="mono ml-auto truncate text-[10px] text-slate-600"
+              title={summarizeTool(t)}
+            >
               {summarizeTool(t)}
             </span>
           </div>

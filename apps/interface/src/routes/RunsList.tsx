@@ -198,9 +198,18 @@ export function RunsList() {
                           {run.status}
                         </CategoryBadge>
                       </TableCell>
-                      <TableCell className="mono">{run.model || "—"}</TableCell>
+                      <TableCell className="mono" title={run.model || undefined}>
+                        {run.model || "—"}
+                      </TableCell>
                       <TableCell className="mono text-muted-foreground">
-                        {run.graph_id ? `${shortId(run.graph_id, 10)}@${run.graph_version}` : "—"}
+                        {run.graph_id ? (
+                          // shortId keeps the cell to one line; the full id@version is on hover.
+                          <span title={`${run.graph_id}@${run.graph_version}`}>
+                            {shortId(run.graph_id, 10)}@{run.graph_version}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
                       </TableCell>
                       <TableCell>
                         {run.session_id ? (
@@ -208,6 +217,7 @@ export function RunsList() {
                             to="/sessions/$sessionId"
                             params={{ sessionId: run.session_id }}
                             className="mono text-muted-foreground hover:text-foreground"
+                            title={run.session_id}
                           >
                             {shortId(run.session_id, 10)}
                           </Link>

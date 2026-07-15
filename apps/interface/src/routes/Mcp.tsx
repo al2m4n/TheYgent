@@ -827,15 +827,24 @@ function HubEntryCard({
         <CardHeader className="flex flex-row items-center justify-between gap-3 px-4 py-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <CardTitle className="truncate text-sm">{entry.title || entry.name}</CardTitle>
+              <CardTitle className="truncate text-sm" title={entry.title || entry.name}>
+                {entry.title || entry.name}
+              </CardTitle>
               {entry.installed && <Badge tone="green">✓ installed</Badge>}
               {entry.status && entry.status !== "active" && (
                 <Badge tone="amber">{entry.status}</Badge>
               )}
             </div>
-            <CardDescription className="mono truncate text-[11px]">{entry.name}</CardDescription>
+            <CardDescription className="mono truncate text-[11px]" title={entry.name}>
+              {entry.name}
+            </CardDescription>
             {entry.description && (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
+              <p
+                className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                title={entry.description}
+              >
+                {entry.description}
+              </p>
             )}
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
               <span className="mono">v{entry.version}</span>
@@ -933,7 +942,9 @@ function HubEntryDetail({ entry }: { entry: McpCatalogEntry }) {
           {data.candidates.map((c) => (
             <Item key={c.id} variant="outline" className="flex-nowrap gap-3 px-3 py-2">
               <ItemContent className="min-w-0 flex-row flex-wrap items-center gap-2">
-                <span className="mono truncate text-sm text-foreground">{c.label}</span>
+                <span className="mono truncate text-sm text-foreground" title={c.label}>
+                  {c.label}
+                </span>
                 <CategoryBadge tone={transportTone(c.kind)}>{c.kind}</CategoryBadge>
                 {c.supportsOauth && <Badge tone="cyan">sign-in</Badge>}
                 {c.inputs.length > 0 && (
@@ -1029,12 +1040,17 @@ function HubInstallDialog({
           <NoteBanner key={w}>{w}</NoteBanner>
         ))}
         {candidate.command && (
-          <p className="mono truncate text-[11px] text-muted-foreground">
+          <p
+            className="mono truncate text-[11px] text-muted-foreground"
+            title={`${candidate.command} ${candidate.args.join(" ")}`}
+          >
             {candidate.command} {candidate.args.join(" ")}
           </p>
         )}
         {candidate.url && (
-          <p className="mono truncate text-[11px] text-muted-foreground">{candidate.url}</p>
+          <p className="mono truncate text-[11px] text-muted-foreground" title={candidate.url}>
+            {candidate.url}
+          </p>
         )}
         <Field label="Connection name (how agents reference it)">
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={suggested} />

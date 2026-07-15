@@ -163,7 +163,10 @@ export function SessionsList() {
                         </TableCell>
                         <TableCell>{target ? <Badge tone="blue">{target}</Badge> : "—"}</TableCell>
                         <TableCell>{t.message_count}</TableCell>
-                        <TableCell className="max-w-md truncate text-muted-foreground">
+                        <TableCell
+                          className="max-w-md truncate text-muted-foreground"
+                          title={t.preview ?? "—"}
+                        >
                           {t.preview ?? "—"}
                         </TableCell>
                         <TableCell className="text-muted-foreground">

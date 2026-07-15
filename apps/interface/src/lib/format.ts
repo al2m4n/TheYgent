@@ -47,6 +47,26 @@ export function formatBytes(n: number | null | undefined): string {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
 }
 
+// Compact a count for a tight tile: exact below 1,000, then K/M with one trimmed decimal
+// (1234 → "1.2K", 12345 → "12K", 1_500_000 → "1.5M"). The full value is shown on hover via
+// `exactCount` — so the abbreviation never hides the real number.
+export function formatCount(n: number): string {
+  if (!Number.isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs < 1000) return String(n);
+  const [value, suffix] = abs < 1_000_000 ? [n / 1000, "K"] : [n / 1_000_000, "M"];
+  // One decimal below 10 (1.2K), whole numbers above (12K) — and drop a trailing ".0".
+  const shown =
+    Math.abs(value) < 10 ? value.toFixed(1).replace(/\.0$/, "") : String(Math.round(value));
+  return `${shown}${suffix}`;
+}
+
+// The full value with locale thousands separators (1234 → "1,234"), for the hover title next to a
+// `formatCount` abbreviation.
+export function exactCount(n: number): string {
+  return Number.isFinite(n) ? n.toLocaleString() : "—";
+}
+
 export function formatDuration(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}s`;
   const m = Math.floor(sec / 60);

@@ -67,7 +67,9 @@ export function LocalCredentials() {
               key={c.name}
               className="flex items-center justify-between rounded border border-slate-800 bg-[var(--c-surface)] px-2.5 py-1.5"
             >
-              <span className="mono truncate text-xs text-slate-200">{c.name}</span>
+              <span className="mono truncate text-xs text-slate-200" title={c.name}>
+                {c.name}
+              </span>
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-slate-500">•••••• set</span>
                 <button

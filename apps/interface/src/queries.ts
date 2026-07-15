@@ -172,6 +172,18 @@ export function useInferenceHealth() {
   });
 }
 
+// Exact control-plane totals (runs/sessions/agents) for the dashboard KPI tiles — one COUNT(*) per
+// table, so the tiles show a true total instead of the loaded page window. Polled on a relaxed
+// cadence; tolerated to fail (the tiles fall back to the loaded-window count).
+export function useStats() {
+  return useQuery({
+    queryKey: ["stats"],
+    queryFn: () => api.getStats(),
+    refetchInterval: 15000,
+    retry: false,
+  });
+}
+
 // The inference plane's resident (warm) engines + the residency ceiling. Polled ~10s so the
 // dashboard reflects a model warming/evicting without a reload; tolerated to fail (the plane may be
 // down — the widget degrades to offline).

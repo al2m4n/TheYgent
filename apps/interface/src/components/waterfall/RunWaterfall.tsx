@@ -241,6 +241,7 @@ export function RunWaterfall({
                       )}
                     </span>
                     <span
+                      title={s.phase ?? s.name}
                       className={`mono truncate text-left text-xs ${
                         s.phase
                           ? "text-violet-700 dark:text-violet-300"

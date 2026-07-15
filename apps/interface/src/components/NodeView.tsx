@@ -67,7 +67,9 @@ export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
       <div className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
           <NodeIcon name={iconName} className="shrink-0 text-slate-300" size={16} />
-          <span className="truncate text-sm font-medium text-slate-100">{data.label}</span>
+          <span className="truncate text-sm font-medium text-slate-100" title={data.label}>
+            {data.label}
+          </span>
         </span>
         <span className={`h-2 w-2 shrink-0 rounded-full ${style.dot}`} />
       </div>
