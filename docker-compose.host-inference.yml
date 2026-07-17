@@ -1,0 +1,29 @@
+# Hybrid topology: the inference plane runs BARE-METAL on the host (the only way to use
+# MLX on Apple Silicon — Metal is not reachable from a Linux container), everything else
+# stays containerized. The containerized services reach it through the host gateway.
+#
+#   1. Start the host inference plane (it must listen beyond loopback for containers to
+#      reach it):
+#        THEYGENT_INFERENCE_PLANE_HOST=0.0.0.0 uv run --package theygent-inference-plane theygent-inference-plane
+#   2. Bring up the rest:
+#        docker compose -f docker-compose.yml -f docker-compose.host-inference.yml up -d
+#
+# The published :8081 disappears with the container; the SPA's baked-in
+# http://localhost:8081 then reaches the host process directly — same port, same URL.
+
+services:
+  inference-plane:
+    # Parking the service under an unused profile removes it from the default bring-up.
+    profiles: ["disabled"]
+
+  control-plane:
+    environment:
+      THEYGENT_INFERENCE_PLANE_URL: http://host.docker.internal:8081/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  worker:
+    environment:
+      THEYGENT_INFERENCE_PLANE_URL: http://host.docker.internal:8081/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,26 @@
+# kubectl apply -k deploy/k8s
+#
+# Expects the images to be present on the cluster nodes (imagePullPolicy: IfNotPresent):
+#   docker compose --profile worker build
+#   minikube image load theygent/control-plane:dev theygent/inference-plane:dev \
+#     theygent/worker:dev theygent/interface:dev
+# (or use `make k8s-load` / `make k8s-apply`).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: theygent
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: theygent
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - config.yaml
+  - storage.yaml
+  - postgres.yaml
+  - inference-plane.yaml
+  - control-plane.yaml
+  - worker.yaml
+  - interface.yaml

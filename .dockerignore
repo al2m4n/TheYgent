@@ -1,0 +1,50 @@
+# Build context hygiene — every image builds from the REPO ROOT context
+# (docker build -f apps/<app>/Dockerfile .), so keep the context lean.
+#
+# NOTE: unlike .gitignore, a bare pattern here matches ONLY at the context root — nested
+# exclusions need the **/ prefix, hence the doubled entries.
+
+# VCS / editor / agent state
+.git
+.idea
+.claude
+**/.DS_Store
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+
+# Node
+**/node_modules
+**/dist
+**/.vite
+**/*.tsbuildinfo
+
+# Local dev processes and logs (make up / make down)
+.run
+logs
+**/*.log
+
+# Env files never bake into an image — configuration is injected at run time. (The nested
+# variant matters: a stray apps/interface/.env would be auto-loaded by vite build and bake
+# local VITE_* overrides into the published bundle.)
+**/.env
+**/.env.*
+
+# Model weights live in caches outside the repo, never in an image.
+**/*.gguf
+**/*.safetensors
+**/*.bin
+**/*.mlx
+
+# Internal docs, fixtures, and scratch notes — not needed by any image.
+docs
+session-fixtures
+detail-test-fixtures
+*.md
+!README.md

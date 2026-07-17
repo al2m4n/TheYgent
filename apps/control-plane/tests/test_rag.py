@@ -672,3 +672,20 @@ async def test_durable_rag_step_matches_the_walker(pg_url: str) -> None:
                 DBOS.destroy(destroy_registry=False)
             await gw.aclose()
             await engine.dispose()
+
+
+def test_browser_install_hint_is_deployment_aware(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fix for a missing JS-rendering browser differs by deployment: a container needs
+    a different IMAGE (a runtime install cannot work there), bare-metal needs one command.
+    The hint must say the right thing in each."""
+    from pathlib import Path
+
+    from theygent_control_plane.rag.crawl import _browser_install_hint
+
+    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+    hint = _browser_install_hint()
+    assert "WITH_JS_RENDER=1" in hint and "render_js off" in hint
+
+    monkeypatch.delenv("KUBERNETES_SERVICE_HOST")
+    if not Path("/.dockerenv").exists():  # bare-metal branch (dev machines, CI VMs)
+        assert "playwright install chromium" in _browser_install_hint()

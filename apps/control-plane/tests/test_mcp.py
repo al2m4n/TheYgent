@@ -248,3 +248,17 @@ def test_mcp_deletion_persists_across_restart(fake_inference, pg_url: str) -> No
     with TestClient(app2) as c2:
         servers = c2.get("/admin/mcp/servers").json()["servers"]
         assert not any(s["name"] == "gone" for s in servers)  # the delete survived too
+
+
+async def test_stdio_connect_names_the_missing_launcher() -> None:
+    """A stdio server whose launch command is absent from this host must fail with an error
+    that NAMES the command and the alternatives — the raw spawn failure is a bare
+    FileNotFoundError that names nothing."""
+    from theygent_control_plane.mcp import McpConnectionError, StdioMcpClient
+
+    client_ = StdioMcpClient(command="definitely-not-a-real-launcher", args=["serve"])
+    with pytest.raises(McpConnectionError) as exc_info:
+        await client_.connect()
+    message = str(exc_info.value)
+    assert "definitely-not-a-real-launcher" in message
+    assert "http/sse" in message and "openapi/graphql" in message

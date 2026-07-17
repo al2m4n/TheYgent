@@ -1,0 +1,168 @@
+# theygent — the containerized bring-up. The SECOND way of running the stack; `make up`
+# (bare-metal processes) remains the first, and both stay supported.
+#
+#   docker compose up -d --build          postgres + migrations + all three planes
+#   docker compose --profile worker up -d …the same plus the standalone durable worker
+#   docker compose down                   stop (add -v to also drop the data volumes)
+#
+# Apple-Silicon note (MLX): MLX only runs bare-metal on macOS. To keep local MLX inference
+# while everything else is containerized, run the inference plane on the host and layer the
+# override on top:
+#   docker compose -f docker-compose.yml -f docker-compose.host-inference.yml up -d
+#
+# Ports mirror the Makefile stack (control-plane :8080, inference :8081, interface :5174) so
+# the interface's baked-in localhost URLs and the CORS defaults hold in both ways of running.
+# Postgres publishes on :5433, clear of a local Postgres already holding :5432. To let this
+# compose Postgres back the bare-metal stack too (one database for both ways of running),
+# remap it to "127.0.0.1:5432:5432" after stopping whatever holds :5432.
+
+name: theygent
+
+services:
+  postgres:
+    # pgvector ships in the image — migration 0015 does CREATE EXTENSION vector.
+    image: pgvector/pgvector:pg18-trixie
+    environment:
+      POSTGRES_USER: theygent
+      POSTGRES_PASSWORD: theygent
+      POSTGRES_DB: theygent
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    volumes:
+      # Postgres 18 images keep the data dir under /var/lib/postgresql (not …/data) —
+      # mounting the old path would leave the real data dir inside the container layer.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U theygent -d theygent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: apply Alembic migrations, then exit. The app services wait for it to finish,
+  # so a fresh `up` is ordered exactly like `make up` (install → migrate → start).
+  migrate:
+    image: theygent/control-plane:dev
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+    command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://theygent:theygent@postgres:5432/theygent
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  inference-plane:
+    image: theygent/inference-plane:dev
+    build:
+      context: .
+      dockerfile: apps/inference-plane/Dockerfile
+    restart: unless-stopped
+    environment:
+      THEYGENT_CORS_ORIGINS: http://localhost:5174
+      THEYGENT_MAX_RESIDENT: ${THEYGENT_MAX_RESIDENT:-2}
+    ports:
+      - "8081:8081"
+    volumes:
+      # Registry + downloaded weights (HF cache included) survive container replacement.
+      - inference-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+
+  control-plane:
+    image: theygent/control-plane:dev
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+      # Opt-in: bake the JS-rendering browser for retrieval sources with render_js
+      # (WITH_JS_RENDER=1 docker compose build control-plane). Default off (~500MB).
+      args:
+        WITH_JS_RENDER: ${WITH_JS_RENDER:-0}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://theygent:theygent@postgres:5432/theygent
+      THEYGENT_INFERENCE_PLANE_URL: http://inference-plane:8081/v1
+      THEYGENT_CORS_ORIGINS: http://localhost:5174
+      # The ${…} values interpolate from the shell AND the repo .env (compose auto-loads it)
+      # — deliberately the SAME knobs as the bare-metal stack, so a .env that opts into
+      # durable mode / sets a secret key configures both ways of running identically.
+      # Empty-string values behave exactly like unset (verified in-code). Pair durable mode
+      # with `--profile worker` for the standalone worker.
+      THEYGENT_DURABLE: ${THEYGENT_DURABLE:-0}
+      THEYGENT_SECRET_KEY: ${THEYGENT_SECRET_KEY:-}
+      THEYGENT_INVOKE_TOKEN: ${THEYGENT_INVOKE_TOKEN:-}
+    ports:
+      - "8080:8080"
+    volumes:
+      # Shared with the worker: artifacts written by durable runs are served by the API.
+      - theygent-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  # The standalone durable runtime (server topology). Off by default to mirror `make up`;
+  # enable with:  THEYGENT_DURABLE=1 docker compose --profile worker up -d
+  worker:
+    image: theygent/worker:dev
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    profiles: ["worker"]
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://theygent:theygent@postgres:5432/theygent
+      THEYGENT_INFERENCE_PLANE_URL: http://inference-plane:8081/v1
+      THEYGENT_SECRET_KEY: ${THEYGENT_SECRET_KEY:-}
+    volumes:
+      - theygent-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  interface:
+    image: theygent/interface:dev
+    build:
+      context: .
+      dockerfile: apps/interface/Dockerfile
+      # Baked at build time (Vite inlines them). Blank = the SPA's own localhost:8080/8081
+      # fallbacks, which match the published ports above.
+      args:
+        VITE_CONTROL_PLANE_URL: ${VITE_CONTROL_PLANE_URL:-}
+        VITE_INFERENCE_URL: ${VITE_INFERENCE_URL:-}
+    restart: unless-stopped
+    ports:
+      - "5174:80"
+    depends_on:
+      - control-plane
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  pgdata:
+  inference-data:
+  theygent-data:

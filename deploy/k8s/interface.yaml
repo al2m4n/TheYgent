@@ -1,0 +1,68 @@
+# The interface SPA — static files behind nginx; stateless, trivially scalable.
+#
+# Browser access in dev/minikube: port-forward so the SPA's baked-in localhost URLs line up
+# with the planes (same ports as the compose and make stacks):
+#   kubectl -n theygent port-forward svc/interface 5174:80 &
+#   kubectl -n theygent port-forward svc/control-plane 8080:8080 &
+#   kubectl -n theygent port-forward svc/inference-plane 8081:8081 &
+# A real deployment instead rebuilds the image with VITE_CONTROL_PLANE_URL /
+# VITE_INFERENCE_URL build args pointing at public URLs, and fronts these Services with an
+# Ingress.
+apiVersion: v1
+kind: Service
+metadata:
+  name: interface
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: interface
+spec:
+  selector:
+    app.kubernetes.io/name: interface
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: interface
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: interface
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: interface
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: interface
+    spec:
+      containers:
+        - name: interface
+          image: theygent/interface:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
