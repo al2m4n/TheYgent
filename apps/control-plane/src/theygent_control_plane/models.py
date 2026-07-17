@@ -177,6 +177,40 @@ class AgentVersionRow(Base):
     )
 
 
+class AgentDraftRow(Base):
+    """A mutable, autosaved, possibly-INVALID agent graph — the editor's work-in-progress,
+    the deliberate opposite of ``AgentVersionRow`` (immutable, content-addressed, validated).
+    Rows are updated in place on every autosave; the ``ir`` is NEVER validated or hashed (a
+    half-wired graph is the point of a draft), and ``view`` (layout) is split off exactly like
+    ``agent_version.ir``/``view``. Publishing a draft goes through the ``/agents`` registry —
+    this table never feeds a run.
+
+    ``agent_id`` is the registry agent this draft edits (NULL for a never-published graph) — a
+    plain breadcrumb, NOT an enforced FK, so deleting the agent never takes the draft with it
+    (the ``run.graph_id``/``run.trigger_id`` precedent: an origin pointer must not couple
+    lifecycles). ``owner_id`` is the deferred per-user scoping slot (NULL until identity lands
+    — the ``agent_io_policy.updated_by`` pattern). ``name``/``node_count`` are derived list-view
+    labels, re-derived from the ir on every write."""
+
+    __tablename__ = "agent_draft"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``drf_<ulid>``
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)  # breadcrumb, no FK
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)  # deferred principal slot
+    name: Mapped[str] = mapped_column(String)  # derived from the ir (name > id > "Untitled")
+    node_count: Mapped[int] = mapped_column(Integer)  # derived from the ir
+    ir: Mapped[dict] = mapped_column(JSONB)  # unvalidated, unhashed, view-stripped document
+    view: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # layout, never validated
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        # Non-unique on purpose: the client avoids duplicate per-agent drafts; the DB doesn't
+        # enforce it, so a multi-tab race tolerably yields two drafts instead of an error.
+        Index("ix_agent_draft_agent", "agent_id"),
+    )
+
+
 class McpServerRow(Base):
     """A persisted MCP server registration — the *registration*, never the live process handle.
     The domain shape is the manager's ``McpServerConfig`` (mcp/client.py); this row is the

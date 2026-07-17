@@ -1,13 +1,13 @@
 # The Bench
 
-The Bench is where you test and measure things before you wire them into an agent. Point it at a model to see how fast it answers, how it handles a prompt, and what it costs; point it at a saved agent to run it with a real input and watch every step. It is the same tooling for a quick "does this work" check and a careful side-by-side comparison.
+The Bench is where you test and measure things before you wire them into an agent. Point it at a model to see how fast it answers, how it handles a prompt, and what it costs; point it at a published agent to run it with a real input and watch every step. It is the same tooling for a quick "does this work" check and a careful side-by-side comparison. (For trying a graph *while you are still building it*, the editor has its own [Test panel](../building/editor.md#testing-on-the-canvas) — no publish needed.)
 
 There are two benches — one for models, one for agents — plus a small tester for MCP tools. All three share the same measurement and trace machinery.
 
 ## What you can bench
 
 - **Models** — any registered model, across its modalities: chat and vision, embeddings, speech-to-text, and text-to-speech. Model testing goes **straight to your inference plane's data endpoints** — the raw prompt, image, or audio never passes through the control plane. Only the measured metrics are recorded afterwards.
-- **Agents** — any [saved agent](../building/saving-agents.md), run through the normal run path so you exercise the whole graph exactly as production would.
+- **Agents** — any [published agent](../building/saving-agents.md), run through the normal run path so you exercise the whole graph exactly as production would.
 - **MCP tools** — a single registered tool, run standalone to check its shape and output.
 
 ## Benching a model
@@ -60,7 +60,7 @@ All of a model bench's raw traffic — `/v1/chat/completions`, `/v1/embeddings`,
 
 ## Benching an agent
 
-Open the Agents page (the home grid of your [saved agents](../building/saving-agents.md)) and press **Run** on an agent card — disabled until the agent has at least one saved version. The agent bench modal opens. (The **Bench** button appears on *model* rows in [Registries](../models/index.md); an agent card uses **Run**.)
+Open the Agents page (the grid of your [published agents](../building/saving-agents.md)) and press **Run** on an agent card — disabled until the agent has at least one published version. The agent bench modal opens. (The **Bench** button appears on *model* rows in [Registries](../models/index.md); an agent card uses **Run**.)
 
 Pick a **Version** (it defaults to and follows the latest until you pin one), then enter an **Input** in **Text** or **JSON** mode — JSON is parsed loudly, so a malformed object tells you rather than failing silently. A multi-input agent takes an object you address with `$in.in.<field>` (see [referencing inputs](../building/input-references.md)).
 
@@ -108,4 +108,4 @@ Saved results are readable through the API (`GET /bench/runs`, filterable by `lo
 - [Remote models](../models/remote.md) — register a hosted, OpenAI-compatible model to bench (and to see a cost figure).
 - [Observability](observability.md) — the run waterfall the agent bench embeds.
 - [Durable runs](durable.md) — what "Run durably" does and why some agents require it.
-- [Saving agents](../building/saving-agents.md) — creating the versions the agent bench runs and the presets it applies.
+- [Drafts & publishing](../building/saving-agents.md) — creating the versions the agent bench runs and the presets it applies.

@@ -7,7 +7,7 @@ graph LR
   IN[input] --> LLM[llm] --> OUT[output]
 ```
 
-In this walkthrough you'll build exactly that on the canvas, test-run it, and save it as a named, versioned agent.
+In this walkthrough you'll build exactly that on the canvas, test it right there, and publish it as a named, versioned agent. (Your work autosaves as a **draft** the whole time — closing the tab mid-build loses nothing.)
 
 **Before you start:** you need at least one registered model. If you don't have one yet, follow [Your first chat](first-chat.md) through step 2.
 
@@ -47,21 +47,31 @@ Click the llm node to select it; its settings appear in the inspector.
 
 The toolbar's validation indicator turns green (**valid**) when the graph is sound. If it shows red errors or amber warnings, click it to open the **Issues** panel — hovering an issue flashes the node or edge it points at. The usual first-agent fixes are: pick a model, and make sure every required input port is connected.
 
-## 6. Save it as a named agent
+## 6. Test it on the canvas
+
+No need to publish anything to try it:
+
+1. Click **Test** in the toolbar. A test console docks under the canvas.
+2. Type an input — say, *"What's the capital of France?"* — and press ++enter++.
+
+Watch the canvas: each node pulses as it executes, then keeps a green ring when it succeeds. The model's answer streams into the panel, and a **Trace** tab shows the per-node waterfall — hover a row and the matching node flashes. Not what you wanted? Tweak the prompt or model and run again; the loop never leaves the editor.
+
+## 7. Publish it as a named agent
 
 1. In the toolbar, set the **id** (for example `first-agent`), a **name**, and a **version** (it starts at `0.1.0`).
-2. Click **Save agent** (or press **⌘/Ctrl+S**).
+2. Click **Publish** and confirm.
 
-The server strips the visual layout, computes a **content hash**, and stores this as an **immutable version**. A few consequences worth knowing:
+The server strips the visual layout, computes a **content hash**, and stores this as an **immutable version** that anyone using this control plane can see and run. A few consequences worth knowing:
 
-- The **id becomes read-only** after the first save — to "rename", save under a new id.
-- To change the agent later, edit and **Save** again with a bumped **version**. Re-saving identical content under the same version does nothing; saving *different* content under the same version is rejected, so bump the version yourself.
+- The **id becomes read-only** after the first publish — to "rename", publish under a new id.
+- To change the agent later, edit and **Publish** again with a bumped **version**. Re-publishing identical content under the same version does nothing; publishing *different* content under the same version is rejected, so bump the version yourself.
+- Your working **draft is removed** on publish — the registry owns the content now. (Until then, drafts wait for you on the Agents page under **Drafts**.)
 
-See [Saving agents](../building/saving-agents.md) and [Agent versioning](../concepts/versioning.md) for more.
+See [Drafts & publishing](../building/saving-agents.md) and [Agent versioning](../concepts/versioning.md) for more.
 
-## 7. Run it
+## 8. Run it anywhere
 
-There is **no run button inside the editor** — you run saved agents from the Agents page.
+Once published, the agent runs from outside the editor too:
 
 1. Go to **Agents** in the sidebar.
 2. On your agent's card, click **Run**. A **Run · &lt;name&gt;** modal (the Agent Bench) opens.

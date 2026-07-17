@@ -71,7 +71,7 @@ It reads `DATABASE_URL` (required) and `THEYGENT_INFERENCE_PLANE_URL` (default `
 
 ### From the interface
 
-Open a saved agent's **Run** modal from the [Agents page](../building/saving-agents.md). The Run button is a split control:
+Open a published agent's **Run** modal from the [Agents page](../building/saving-agents.md). The Run button is a split control:
 
 - Its main segment runs the agent normally (streaming).
 - Its caret menu offers **Run durably** — *"checkpoints each step so it resumes after a crash (no token streaming)."*

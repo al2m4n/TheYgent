@@ -1,6 +1,6 @@
 # Triggers & webhooks
 
-A **trigger** gives a saved agent an **unattended entry point** — a way to run without you sitting at the interface. There are three:
+A **trigger** gives a published agent an **unattended entry point** — a way to run without you sitting at the interface. There are three:
 
 - **Token invoke** — a standing HTTP endpoint you call with a bearer token.
 - **Webhooks** — an inbound URL a third-party system POSTs to, authenticated by a signature.
@@ -10,7 +10,7 @@ All three run the **same** graph on the **same** run path as an interactive run;
 
 ## Prerequisites
 
-- **The agent must be saved.** A trigger always fires a saved, versioned agent — never a pasted graph. See [Saving agents](../building/saving-agents.md).
+- **The agent must be published.** A trigger always fires a published, versioned agent — never a pasted graph or a draft. See [Drafts & publishing](../building/saving-agents.md).
 - **It runs a pinned version.** A webhook or schedule pins **exactly one** of `version` or `content_hash`, so an unattended deploy always runs an *immutable* artifact and never silently drifts to "latest". Pinning zero or both is a `400 invalid_trigger`, and the pin must resolve when you create the trigger (a dangling pin 404s then, not at fire time). See [Agent versioning](../concepts/versioning.md).
 
 !!! note "Where triggers are managed"
@@ -176,7 +176,7 @@ curl -X PATCH http://localhost:8080/triggers/TRIGGER_ID \
 
 ## Related pages
 
-- [Saving agents](../building/saving-agents.md) — a trigger fires a saved, pinned agent.
+- [Drafts & publishing](../building/saving-agents.md) — a trigger fires a published, pinned agent.
 - [Durable runs](durable.md) — make unattended fires crash-resumable.
 - [Referencing inputs](../building/input-references.md) — how a webhook payload maps into the graph.
 - [Runs](index.md) — every fire produces a run you can inspect.

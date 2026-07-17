@@ -25,6 +25,7 @@ from sqlalchemy.orm import aliased
 
 from theygent_control_plane.mcp import McpServerConfig
 from theygent_control_plane.models import (
+    AgentDraftRow,
     AgentRow,
     AgentVersionRow,
     BenchCaseRow,
@@ -40,6 +41,7 @@ from theygent_control_plane.models import (
 )
 from theygent_control_plane.run import (
     AgentDetail,
+    AgentDraft,
     AgentSummary,
     AgentVersion,
     BenchCase,
@@ -914,6 +916,129 @@ class AgentStore:
             )
         ).scalar_one_or_none()
         return _stored_version(row) if row is not None else None
+
+
+def _to_draft(row: AgentDraftRow) -> AgentDraft:
+    return AgentDraft(
+        id=row.id,
+        agent_id=row.agent_id,
+        owner_id=row.owner_id,
+        name=row.name,
+        node_count=row.node_count,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        ir=dict(row.ir or {}),
+        view=row.view,
+    )
+
+
+def _derive_draft_meta(ir: dict[str, Any]) -> tuple[str, int]:
+    """Derive the list-view labels from a (view-stripped) draft ir: ``name`` falls back
+    ``name`` > ``id`` > ``"Untitled"``; ``node_count`` counts ``nodes`` when it is a list, else 0.
+    Best-effort labels over an UNVALIDATED document — never a validation of it. Re-derived on
+    every write so the row tracks the document."""
+    label = ir.get("name") or ir.get("id")
+    nodes = ir.get("nodes")
+    return (str(label) if label else "Untitled", len(nodes) if isinstance(nodes, list) else 0)
+
+
+class DraftStore:
+    """Postgres persistence for editor drafts — mutable, autosaved, possibly-invalid agent
+    graphs, deliberately OUTSIDE the registry's immutability invariants (contrast
+    ``AgentStore``: no hashing, no version rows, updates in place). Stateless ops over a
+    caller-provided session (the caller owns the transaction boundary), domain ``AgentDraft``
+    out, ``AgentDraftRow`` never leaks. The store takes the already view-stripped ``ir`` +
+    ``view`` (the route owns the wire-side split, like ``_canonical_ir_and_view`` for the
+    registry) and derives ``name``/``node_count`` itself so every write path re-derives them
+    identically. ``owner_id`` is always written NULL until identity lands."""
+
+    async def create_draft(
+        self,
+        session: AsyncSession,
+        *,
+        ir: dict[str, Any],
+        view: dict[str, Any] | None,
+        agent_id: str | None = None,
+    ) -> AgentDraft:
+        name, node_count = _derive_draft_meta(ir)
+        draft = AgentDraft(agent_id=agent_id, name=name, node_count=node_count, ir=ir, view=view)
+        session.add(
+            AgentDraftRow(
+                id=draft.id,
+                agent_id=agent_id,
+                owner_id=None,  # the deferred per-user scoping slot — NULL until identity lands
+                name=name,
+                node_count=node_count,
+                ir=ir,
+                view=view,
+                created_at=draft.created_at,
+                updated_at=draft.updated_at,
+            )
+        )
+        await session.flush()
+        return draft
+
+    async def get_draft(self, session: AsyncSession, draft_id: str) -> AgentDraft | None:
+        row = await session.get(AgentDraftRow, draft_id)
+        return _to_draft(row) if row is not None else None
+
+    async def update_draft(
+        self,
+        session: AsyncSession,
+        draft_id: str,
+        *,
+        ir: dict[str, Any],
+        view: dict[str, Any] | None,
+    ) -> AgentDraft | None:
+        """Replace the draft's document (autosave), re-deriving ``name``/``node_count`` and
+        bumping ``updated_at``. ``agent_id`` is immutable after create (the origin breadcrumb
+        never re-points). ``None`` on a miss."""
+        row = await session.get(AgentDraftRow, draft_id)
+        if row is None:
+            return None
+        row.ir = ir
+        row.view = view
+        row.name, row.node_count = _derive_draft_meta(ir)
+        row.updated_at = now()
+        await session.flush()
+        return _to_draft(row)
+
+    async def list_drafts(
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+        before: str | None = None,
+        agent_id: str | None = None,
+    ) -> list[AgentDraft]:
+        """Drafts, most recently EDITED first — a draft is mutated in place on every autosave,
+        so recency means ``updated_at``, not creation (ordering by ``created_at`` would freeze a
+        draft's position at birth and let a truncated page hide the row the user just touched).
+        Keyset pagination on ``(updated_at, id)`` DESC; the anchor comparison uses the same key
+        as the ORDER BY. The key is mutable, so a draft edited mid-pagination can be skipped or
+        repeated across pages — tolerable for this surface, which fetches one recent window. An
+        unknown ``before`` id is ignored. ``agent_id`` narrows to the drafts editing one
+        registry agent (exact match)."""
+        stmt = (
+            select(AgentDraftRow)
+            .order_by(AgentDraftRow.updated_at.desc(), AgentDraftRow.id.desc())
+            .limit(limit)
+        )
+        if agent_id is not None:
+            stmt = stmt.where(AgentDraftRow.agent_id == agent_id)
+        if before is not None:
+            anchor = await session.get(AgentDraftRow, before)
+            if anchor is not None:
+                stmt = stmt.where(
+                    tuple_(AgentDraftRow.updated_at, AgentDraftRow.id)
+                    < (anchor.updated_at, anchor.id)
+                )
+        rows = (await session.execute(stmt)).scalars().all()
+        return [_to_draft(row) for row in rows]
+
+    async def delete_draft(self, session: AsyncSession, draft_id: str) -> bool:
+        result = await session.execute(delete(AgentDraftRow).where(AgentDraftRow.id == draft_id))
+        return bool(cast("CursorResult[Any]", result).rowcount)
 
 
 def _to_trigger(row: TriggerRow) -> Trigger:

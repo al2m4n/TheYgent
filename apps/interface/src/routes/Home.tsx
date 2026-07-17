@@ -1,12 +1,13 @@
-// Home — the Agents page: saved agents from the registry as a compact card grid. Each card shows a
-// live preview of the agent's graph (rendered from its latest IR; falls back to a placeholder
-// identicon for an agent with no saved version), the name + key metadata (version, node count, last
+// Home — the Agents page: published agents from the registry as a compact card grid, with the
+// work-in-progress drafts (the editor's autosaves) in a strip above them. Each card shows a live
+// preview of the agent's graph (rendered from its latest IR; falls back to a placeholder identicon
+// for an agent with no published version), the name + key metadata (version, node count, last
 // modified), and a footer with the author + a Bench action. Click a card to open the agent on the
-// canvas. A search + sort bar sits on top. Read-only over the registry; no new endpoints.
+// canvas. A search + sort bar sits on top.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Bot, Plus } from "lucide-react";
+import { Bot, ChevronRight, NotebookPen, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentBench } from "../bench/AgentBench";
 import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
@@ -14,10 +15,19 @@ import { FilterBar } from "../components/Filters";
 import { GraphPreview } from "../components/GraphPreview";
 import { TimeAgo } from "../components/TimeAgo";
 import { ViewToggle } from "../components/ViewToggle";
-import { ErrorBanner, Modal, Page, Spinner, buttonClass, linkClass } from "../components/ui";
+import {
+  ConfirmDialog,
+  ErrorBanner,
+  Modal,
+  Page,
+  Spinner,
+  buttonClass,
+  linkClass,
+} from "../components/ui";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardFooter } from "../components/ui/card";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import {
   Empty,
   EmptyContent,
@@ -26,6 +36,16 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../components/ui/empty";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemGroup,
+  ItemMedia,
+  ItemSeparator,
+  ItemTitle,
+} from "../components/ui/item";
 import { NativeSelect, NativeSelectOption } from "../components/ui/native-select";
 import { Skeleton } from "../components/ui/skeleton";
 import {
@@ -37,10 +57,10 @@ import {
   TableRow,
 } from "../components/ui/table";
 import { fromStoredVersion } from "../lib/agent";
-import { type AgentDetail, type AgentSummary, api } from "../lib/api";
+import { type AgentDetail, type AgentSummary, type DraftSummary, api } from "../lib/api";
 import { useInView } from "../lib/useInView";
 import { useViewMode } from "../lib/viewMode";
-import { flattenPages, useAgentsInfinite } from "../queries";
+import { flattenPages, useAgentsInfinite, useDraftMutations, useDrafts } from "../queries";
 
 type Sort = "modified" | "created" | "name" | "versions";
 
@@ -60,6 +80,20 @@ export function Home() {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("modified");
   const [view, setView] = useViewMode("agents", "grid");
+
+  // Work-in-progress drafts (the editor's autosaves) — most recently edited first. A draft that
+  // edits a published agent also badges that agent's card/row below.
+  const draftsQuery = useDrafts();
+  const drafts = useMemo(
+    () => [...(draftsQuery.data ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [draftsQuery.data],
+  );
+  const draftByAgent = useMemo(() => {
+    const m = new Map<string, DraftSummary>();
+    // Iterated oldest-last so the NEWEST draft per agent wins the badge.
+    for (const d of [...drafts].reverse()) if (d.agent_id) m.set(d.agent_id, d);
+    return m;
+  }, [drafts]);
 
   const shown = useMemo(() => {
     const arr = [...(agents ?? [])];
@@ -85,7 +119,7 @@ export function Home() {
         <div>
           <h1 className="text-lg font-semibold text-foreground">Agents</h1>
           <p className="text-xs text-muted-foreground">
-            Your saved agents — open one on the canvas, bench it, or create a new one.
+            Your published agents — open one on the canvas, bench it, or create a new one.
           </p>
         </div>
         <Link
@@ -102,15 +136,17 @@ export function Home() {
         error={error && `Could not reach the control plane: ${(error as Error).message}`}
       />
 
+      {drafts.length > 0 && <DraftsStrip drafts={drafts} />}
+
       {!isLoading && !error && agents.length === 0 && (
         <Empty className="border py-10">
           <EmptyHeader>
             <EmptyMedia variant="icon">
               <Bot />
             </EmptyMedia>
-            <EmptyTitle>No saved agents yet</EmptyTitle>
+            <EmptyTitle>No published agents yet</EmptyTitle>
             <EmptyDescription>
-              Create one on the canvas and save it to see it here.
+              Build one on the canvas and publish it to see it here.
             </EmptyDescription>
           </EmptyHeader>
           <EmptyContent>
@@ -162,11 +198,16 @@ export function Home() {
           ) : view === "grid" ? (
             <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
               {shown.map((a) => (
-                <AgentCard key={a.id} agent={a} onBench={() => setBenchAgentId(a.id)} />
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  draft={draftByAgent.get(a.id)}
+                  onBench={() => setBenchAgentId(a.id)}
+                />
               ))}
             </div>
           ) : (
-            <AgentTable agents={shown} onBench={setBenchAgentId} />
+            <AgentTable agents={shown} draftByAgent={draftByAgent} onBench={setBenchAgentId} />
           )}
 
           {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
@@ -184,13 +225,128 @@ export function Home() {
   );
 }
 
+// The disclosure state of the drafts strip. Defaults OPEN (a draft is exactly the thing you were
+// working on); the toggle persists like the sidebar groups do. Guarded for non-DOM (test) envs.
+const DRAFTS_OPEN_KEY = "theygent.ui.draftsOpen";
+
+function readDraftsOpen(): boolean {
+  try {
+    return typeof localStorage === "undefined" || localStorage.getItem(DRAFTS_OPEN_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function writeDraftsOpen(open: boolean): void {
+  try {
+    localStorage.setItem(DRAFTS_OPEN_KEY, open ? "1" : "0");
+  } catch {
+    // no localStorage (tests) — the in-memory state still drives the UI this session.
+  }
+}
+
+// The work-in-progress strip: every autosaved draft, most recently edited first. A draft opens
+// straight into the editor session it bridges; discarding is the one destructive action, so it
+// confirms. Rendered above the published grid — a draft is exactly the thing you were working
+// on — but collapsible (persisted), with the count always visible so a folded strip still says
+// drafts exist.
+function DraftsStrip({ drafts }: { drafts: DraftSummary[] }) {
+  const { remove } = useDraftMutations();
+  const [confirming, setConfirming] = useState<DraftSummary | null>(null);
+  const [open, setOpen] = useState(readDraftsOpen);
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        writeDraftsOpen(next);
+      }}
+      className="space-y-2"
+    >
+      <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground">
+        <ChevronRight size={13} className={`transition-transform ${open ? "rotate-90" : ""}`} />
+        Drafts
+        <Badge variant="secondary" className="text-[11px]">
+          {drafts.length}
+        </Badge>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="rounded-xl border bg-card">
+        <ItemGroup>
+          {drafts.map((d, i) => (
+            <div key={d.id}>
+              {i > 0 && <ItemSeparator />}
+              <Item size="sm">
+                <ItemMedia variant="icon">
+                  <NotebookPen />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>
+                    <Link to="/editor" search={{ draft: d.id }} className={linkClass}>
+                      {d.name}
+                    </Link>
+                    <Badge
+                      variant="secondary"
+                      className="bg-amber-500/15 text-[11px] text-amber-700 dark:text-amber-300"
+                    >
+                      Draft
+                    </Badge>
+                  </ItemTitle>
+                  <ItemDescription>
+                    {d.agent_id ? (
+                      <>
+                        editing <span className="mono">{d.agent_id}</span> ·{" "}
+                      </>
+                    ) : (
+                      "not published yet · "
+                    )}
+                    {d.node_count} node{d.node_count === 1 ? "" : "s"} · saved{" "}
+                    <TimeAgo iso={d.updated_at} />
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Link to="/editor" search={{ draft: d.id }} className={buttonClass("default")}>
+                    Open
+                  </Link>
+                  <Button variant="ghost" size="sm" onClick={() => setConfirming(d)}>
+                    Discard
+                  </Button>
+                </ItemActions>
+              </Item>
+            </div>
+          ))}
+        </ItemGroup>
+      </CollapsibleContent>
+      {confirming && (
+        <ConfirmDialog
+          title="Discard this draft?"
+          message={
+            <>
+              The draft <span className="font-medium">{confirming.name}</span> and its unpublished
+              changes will be permanently removed.
+              {confirming.agent_id && " Published versions of the agent are not affected."}
+            </>
+          }
+          confirmLabel="Discard"
+          onConfirm={() => {
+            remove.mutate(confirming.id);
+            setConfirming(null);
+          }}
+          onCancel={() => setConfirming(null)}
+        />
+      )}
+    </Collapsible>
+  );
+}
+
 // The list rendering: the same agents as a compact table. No per-row graph fetch (that's the grid's
 // job) — just the registry summary each row already carries, so it stays light at any length.
 function AgentTable({
   agents,
+  draftByAgent,
   onBench,
 }: {
   agents: AgentSummary[];
+  draftByAgent: Map<string, DraftSummary>;
   onBench: (id: string) => void;
 }) {
   return (
@@ -223,16 +379,19 @@ function AgentTable({
                 </Link>
               </TableCell>
               <TableCell>
-                {a.latest_version ? (
-                  <Badge
-                    variant="secondary"
-                    className="mono bg-primary/10 text-[11px] text-primary"
-                  >
-                    v{a.latest_version}
-                  </Badge>
-                ) : (
-                  <span className="text-muted-foreground/60">—</span>
-                )}
+                <span className="inline-flex items-center gap-1.5">
+                  {a.latest_version ? (
+                    <Badge
+                      variant="secondary"
+                      className="mono bg-primary/10 text-[11px] text-primary"
+                    >
+                      v{a.latest_version}
+                    </Badge>
+                  ) : (
+                    <span className="text-muted-foreground/60">—</span>
+                  )}
+                  <DraftBadge draft={draftByAgent.get(a.id)} />
+                </span>
               </TableCell>
               <TableCell className="text-muted-foreground">{a.version_count}</TableCell>
               <TableCell className="text-muted-foreground">
@@ -251,7 +410,35 @@ function AgentTable({
   );
 }
 
-function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => void }) {
+// A published agent with unpublished draft edits wears a small amber badge that jumps straight
+// into that draft's editing session.
+function DraftBadge({ draft }: { draft: DraftSummary | undefined }) {
+  if (!draft) return null;
+  return (
+    <Link
+      to="/editor"
+      search={{ draft: draft.id }}
+      title={`Unpublished draft edits — saved ${new Date(draft.updated_at).toLocaleString()}`}
+    >
+      <Badge
+        variant="secondary"
+        className="bg-amber-500/15 text-[11px] text-amber-700 hover:bg-amber-500/25 dark:text-amber-300"
+      >
+        draft
+      </Badge>
+    </Link>
+  );
+}
+
+function AgentCard({
+  agent,
+  draft,
+  onBench,
+}: {
+  agent: AgentSummary;
+  draft: DraftSummary | undefined;
+  onBench: () => void;
+}) {
   const { seed, reroll } = useThumbVariant(agent.id);
   const hasVersion = !!agent.latest_version;
 
@@ -297,6 +484,17 @@ function AgentCard({ agent, onBench }: { agent: AgentSummary; onBench: () => voi
               </Badge>
             )}
           </div>
+          {draft && (
+            <div className="flex">
+              <Badge
+                variant="secondary"
+                className="bg-amber-500/15 text-[11px] text-amber-700 dark:text-amber-300"
+                title="This agent has unpublished draft edits — see the Drafts strip above"
+              >
+                draft
+              </Badge>
+            </div>
+          )}
           <div className="mono truncate text-[11px] text-muted-foreground/70" title={agent.id}>
             {agent.id}
           </div>

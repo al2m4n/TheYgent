@@ -130,12 +130,12 @@ Give this agent a list as input (a multi-input agent drills in with `$in.in.<fie
 
 Because all three are durable-only, run them the durable way:
 
-- **From the interface:** save the agent, then use **Run durably** on the Agents page (a single **Run durably** button appears for any agent containing a durable-only node). This needs the control plane started with `THEYGENT_DURABLE=1`.
+- **From the interface:** publish the agent, then use **Run durably** on the Agents page (a single **Run durably** button appears for any agent containing a durable-only node). This needs the control plane started with `THEYGENT_DURABLE=1`.
 - **Unattended:** deploy the agent behind a [schedule or webhook trigger](../../running/triggers.md) — in durable mode, triggered runs are durable automatically.
 
 ## Works well with
 
-- [Saving agents](../saving-agents.md) — the child agents these nodes compose must be saved and versioned first.
+- [Drafts & publishing](../saving-agents.md) — the child agents these nodes compose must be published and versioned first.
 - [Versioning](../../concepts/versioning.md) — why pinning a child by version or content hash keeps composition immutable.
 - [Durable runs](../../running/durable.md) — the runtime these nodes require, and how to enable it.
 - [Human node](human.md) — the fourth durable-only node, for pausing on human input.

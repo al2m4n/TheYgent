@@ -153,6 +153,34 @@ body {
   stroke-width: 3 !important;
 }
 
+/* Live test-run status: while a run streams, each node wears its execution state — pulsing while
+   its step is in flight, then its outcome ring. Applied via node `className` in GraphCanvas (from
+   the trace stream's per-node spans), never stored on the IR. */
+@keyframes theygent-run-running {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.9);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(96, 165, 250, 0.25);
+  }
+}
+.react-flow__node.theygent-run-running {
+  animation: theygent-run-running 1s ease-in-out infinite;
+  border-radius: 0.5rem;
+}
+.react-flow__node.theygent-run-ok {
+  box-shadow: 0 0 0 2px rgba(52, 211, 153, 0.8);
+  border-radius: 0.5rem;
+}
+.react-flow__node.theygent-run-err {
+  box-shadow: 0 0 0 2px rgba(251, 113, 133, 0.9);
+  border-radius: 0.5rem;
+}
+.react-flow__node.theygent-run-skipped {
+  opacity: 0.45;
+}
+
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;

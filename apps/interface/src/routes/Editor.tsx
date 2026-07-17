@@ -1,12 +1,18 @@
-// The editor: render a saved agent's IR on a React Flow canvas, edit basic structure + node
-// config, and save it back as an agent. Three columns — palette · canvas · inspector — over one
-// IR held as the single source of truth. Loading and saving go through the agent registry; the IR
-// (with its `view`) is what crosses the wire, and the server owns the contentHash.
+// The editor: render an agent's IR on a React Flow canvas, edit structure + node config, and take
+// it live. Three columns — palette · canvas · inspector — over one IR held as the single source of
+// truth, with a test console docked below. Two persistence tiers with distinct verbs:
+//   · SAVE  = the draft (automatic): edits debounce-save to the mutable /drafts resource, so a
+//     half-built — even structurally invalid — graph survives a reload or a week away. Cmd+S
+//     flushes it immediately.
+//   · PUBLISH = the registry (deliberate): an immutable, content-addressed version everyone can
+//     see and run. The server owns the contentHash; the draft is deleted on success.
+// Testing never leaves the canvas: the test panel runs the CURRENT document through the inline
+// graph-run path and the trace stream lights each node as it executes.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useBlocker, useNavigate } from "@tanstack/react-router";
 import type { IRDocument } from "@theygent/ir-types";
-import { Check, ChevronLeft, ChevronRight, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Play, TriangleAlert, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   type Selection,
@@ -20,14 +26,18 @@ import { IRCodeEditor } from "../components/IRCodeEditor";
 import { Inspector } from "../components/Inspector";
 import { Palette } from "../components/Palette";
 import { ResizeHandle } from "../components/ResizeHandle";
+import { type RunStateMap, TestPanel } from "../components/TestPanel";
+import { TimeAgo } from "../components/TimeAgo";
 import { Badge, Button, ErrorBanner, Input, Modal, Spinner } from "../components/ui";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
-import { blankGraph, fromStoredVersion } from "../lib/agent";
+import { type DraftAutosave, type DraftSeed, useDraftAutosave } from "../hooks/useDraftAutosave";
+import { blankGraph, fromDraft, fromStoredVersion } from "../lib/agent";
 import { ApiError, api } from "../lib/api";
 import { sameHashedContent } from "../lib/canonical";
 import { notify } from "../lib/notify";
 import { latestHash, saveAgent } from "../lib/save";
 import { type ValidationIssue, validateGraph } from "../lib/validate";
+import { keys } from "../queries";
 
 const routeApi = getRouteApi("/editor");
 
@@ -75,13 +85,15 @@ function irHistoryReducer(s: IrHistory, a: IrHistAction): IrHistory {
 }
 
 export function Editor() {
-  const { agent: agentId, version } = routeApi.useSearch();
+  const { agent: agentId, version, draft: draftParam } = routeApi.useSearch();
   const navigate = useNavigate();
-  const loadingExisting = Boolean(agentId && version);
+  // A ?draft=<id> wins over ?agent/?version — the draft record knows the agent it edits.
+  const loadingDraft = Boolean(draftParam);
+  const loadingExisting = Boolean(!draftParam && agentId && version);
   // A URL naming an agent but no version (shared / hand-edited) still means "open that agent" —
   // resolve its latest version from the registry and complete the URL rather than silently
   // discarding the agent param and opening a blank graph.
-  const resolvingLatest = Boolean(agentId && !version);
+  const resolvingLatest = Boolean(!draftParam && agentId && !version);
   const qc = useQueryClient();
 
   const { data: agentDetail, error: latestError } = useQuery({
@@ -112,6 +124,13 @@ export function Editor() {
     enabled: loadingExisting,
   });
 
+  // The loaded draft (when opening ?draft=<id> — a reload mid-edit, or "Open draft" anywhere).
+  const { data: draftRec, error: draftError } = useQuery({
+    queryKey: keys.draft(draftParam ?? ""),
+    queryFn: () => api.getDraft(draftParam as string),
+    enabled: loadingDraft,
+  });
+
   const [hist, dispatch] = useReducer(irHistoryReducer, {
     past: [],
     present: null,
@@ -132,35 +151,68 @@ export function Editor() {
     setResyncKey((k) => k + 1);
   }, []);
   const [selection, setSelection] = useState<Selection>(null);
+  // The last PUBLISHED content (when known) — drives Revert and the modified-since-publish badge.
+  // Null for a draft-only session (nothing published to revert to).
   const [savedSnapshot, setSavedSnapshot] = useState<IRDocument | null>(null);
   const [savedHash, setSavedHash] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
   // Bumped by "Tidy" to force the canvas to re-seed positions (a layout-only change is otherwise
   // invisible to the structural re-seed).
   const [reseedKey, setReseedKey] = useState(0);
   const [showIssues, setShowIssues] = useState(false);
   // Side-panel widths (px) — drag the splitters to resize, double-click to reset. Pure UI layout
-  // state (kept in memory, not the IR or localStorage — the registry is the only persistence).
+  // state (kept in memory, not the IR or localStorage — the drafts/registry APIs are the only
+  // persistence).
   const [paletteWidth, setPaletteWidth] = useState(280);
   const [inspectorWidth, setInspectorWidth] = useState(450);
   // Either side panel can be collapsed to a thin rail to give the canvas more room. UI-only state.
   const [paletteCollapsed, setPaletteCollapsed] = useState(false);
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
-  // Visual canvas vs. raw-IR JSON editor — two views over the one IRDocument. `codeValid` gates Save
-  // so a half-typed (unparseable) IR in the code view can't be saved.
+  // Visual canvas vs. raw-IR JSON editor — two views over the one IRDocument. `codeValid` gates
+  // Publish so a half-typed (unparseable) IR in the code view can't be published.
   const [mode, setMode] = useState<"visual" | "code">("visual");
   const [codeValid, setCodeValid] = useState(true);
   // The node/edge to flash on the canvas while hovering its issue (display only — not selection).
   const [highlight, setHighlight] = useState<Selection>(null);
+  // The docked test console + the live per-node execution state it feeds onto the canvas.
+  const [testOpen, setTestOpen] = useState(false);
+  const [runState, setRunState] = useState<RunStateMap>({});
   // Whether the open agent already exists in the registry (drives create vs add-version).
   const existsRef = useRef(false);
   // Which graph identity is currently seeded into `ir`, so we seed exactly ONCE per identity and
   // never re-create the IR on subsequent renders (re-seeding every render wipes the canvas — it
   // would render for a frame, then the next seed replaces it). A new blank graph keys as "new".
   const seededRef = useRef<string | null>(null);
+  // What the autosave loop measures against: the seeded identity + its baseline document. Set only
+  // when seeding, so the canvas key and the autosave state survive a URL param swap (adopting a
+  // freshly minted draft id into the URL must not remount or re-baseline anything).
+  const [seed, setSeed] = useState<DraftSeed | null>(null);
 
-  // Seed the IR: a loaded version, or a fresh blank graph for "new".
+  // Seed the IR: a loaded draft, a loaded registry version, or a fresh blank graph for "new".
   useEffect(() => {
+    if (loadingDraft) {
+      if (!draftRec) return; // query still loading — keep the spinner
+      const key = `draft:${draftRec.id}`;
+      if (seededRef.current === key) return;
+      seededRef.current = key;
+      const loaded = fromDraft(draftRec);
+      dispatch({ type: "reset", ir: loaded });
+      // The draft doesn't carry the published baseline — Revert/modified track the registry only
+      // when a published version was loaded directly.
+      setSavedSnapshot(null);
+      setSavedHash(null);
+      setSelection(null);
+      existsRef.current = Boolean(draftRec.agent_id);
+      setSeed({
+        key,
+        baseline: loaded,
+        draftId: draftRec.id,
+        agentId: draftRec.agent_id,
+        savedAt: draftRec.updated_at,
+      });
+      return;
+    }
     if (resolvingLatest) return; // the URL is still being completed with the latest version — don't seed a blank graph
     if (loadingExisting) {
       if (!stored) return; // query still loading — keep the spinner, don't seed yet
@@ -173,6 +225,13 @@ export function Editor() {
       setSavedHash(stored.content_hash);
       setSelection(null);
       existsRef.current = true;
+      setSeed({
+        key,
+        baseline: loaded,
+        draftId: null,
+        agentId: stored.agent_id,
+        savedAt: null,
+      });
     } else {
       if (seededRef.current === "new") return; // already seeded the blank graph
       seededRef.current = "new";
@@ -182,26 +241,62 @@ export function Editor() {
       setSavedHash(null);
       setSelection(null);
       existsRef.current = false;
+      setSeed({ key: "new", baseline: blank, draftId: null, agentId: null, savedAt: null });
     }
-  }, [stored, loadingExisting, resolvingLatest]);
+  }, [stored, loadingExisting, resolvingLatest, loadingDraft, draftRec]);
 
-  // "Modified" = the would-be-hashed content diverges from the last saved snapshot (a pure layout
-  // change is NOT dirty — layout lives in the unhashed `view` block). This drives the Revert
-  // button and the leave-guard.
+  // The draft autosave loop — every divergence from the seeded document debounce-saves.
+  const autosave = useDraftAutosave(seed, ir);
+
+  // Suppresses the leave-guard for our OWN programmatic navigations (post-publish, the draft-id
+  // URL adoption) — they fire before the guarded state recomputes.
+  const savingNavRef = useRef(false);
+
+  // The first autosave of a session MINTS a draft — adopt its id into the URL (replace, no history
+  // entry) so a reload reopens this exact session. Pre-mark the identity as seeded: the param swap
+  // must not re-seed the document or remount the canvas mid-edit.
+  useEffect(() => {
+    if (!autosave.draftId || draftParam === autosave.draftId) return;
+    seededRef.current = `draft:${autosave.draftId}`;
+    savingNavRef.current = true;
+    navigate({ to: "/editor", search: { draft: autosave.draftId }, replace: true });
+    window.setTimeout(() => {
+      savingNavRef.current = false;
+    }, 0);
+  }, [autosave.draftId, draftParam, navigate]);
+
+  // "Modified" = the would-be-hashed content diverges from the last PUBLISHED snapshot (a pure
+  // layout change is NOT modified — layout lives in the unhashed `view` block). Drives Revert.
   const dirty = useMemo(
     () => (ir && savedSnapshot ? !sameHashedContent(ir, savedSnapshot) : false),
     [ir, savedSnapshot],
   );
 
-  // Warn before losing unsaved work — both for in-app navigation (the resolver modal below) AND a
-  // browser tab close / reload (`enableBeforeUnload` → the native prompt). `savingNavRef` suppresses
-  // the guard for our OWN post-save navigation (which fires before `dirty` recomputes to false).
-  const savingNavRef = useRef(false);
+  // Unparseable JSON in the code view lives ONLY in that component's local buffer — the last
+  // valid parse is what `ir` (and thus the draft) holds. Leaving while diverged would silently
+  // discard the typed text, so it guards the exits alongside unsaved draft edits.
+  const codeDiverged = mode === "code" && !codeValid;
+
+  // With autosave, leaving is only unsafe while edits haven't reached the draft yet (debouncing,
+  // in flight, or failed) — or while the code view holds unparsed text. Both the in-app guard and
+  // the native beforeunload key off that; the modal below offers a save-and-leave.
   const blocker = useBlocker({
-    shouldBlockFn: () => dirty && !savingNavRef.current,
-    enableBeforeUnload: () => dirty && !savingNavRef.current,
+    shouldBlockFn: () => (autosave.hasUnsaved || codeDiverged) && !savingNavRef.current,
+    enableBeforeUnload: () => (autosave.hasUnsaved || codeDiverged) && !savingNavRef.current,
     withResolver: true,
   });
+
+  // An older draft of the agent being viewed (from a previous session, maybe another tab) — offer
+  // to resume it rather than silently editing beside it. Our own live draft is excluded.
+  const resumeQuery = useQuery({
+    queryKey: [...keys.drafts(), { agent: agentId ?? "" }],
+    queryFn: () => api.listDrafts({ agent_id: agentId as string }),
+    enabled: Boolean(agentId && !draftParam),
+  });
+  const [resumeDismissed, setResumeDismissed] = useState<string | null>(null);
+  const resumable = (resumeQuery.data ?? [])
+    .filter((d) => d.id !== autosave.draftId && d.id !== resumeDismissed)
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0];
 
   // Selecting a node or edge always reveals the inspector — that's where the selection's config is
   // edited, so a collapsed inspector would hide the very panel the click was meant to open.
@@ -209,22 +304,32 @@ export function Editor() {
     if (selection) setInspectorCollapsed(false);
   }, [selection]);
 
+  // A different document arrived (open draft, publish re-point, new): the previous test run's
+  // node lighting belongs to the old graph — clear it. The test panel itself is keyed by the
+  // same identity below, so its streams abort on the remount.
+  const seedKey = seed?.key;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clear only when the graph identity changes
+  useEffect(() => {
+    setRunState({});
+  }, [seedKey]);
+
   const onRevert = () => {
     if (savedSnapshot) {
       dispatch({ type: "commit", ir: savedSnapshot });
       setResyncKey((k) => k + 1); // revert may restore positions — re-seed them onto the canvas
       setSelection(null);
-      notify.dismiss("editor-save-error"); // clear a stale save error — the edits causing it are gone
+      notify.dismiss("editor-publish-error"); // clear a stale publish error — the edits causing it are gone
     }
   };
 
   // Live, in-editor validation — the FAST mirror of the backend's `validate_graph` (lib/validate).
-  // Surfaces structural problems inline so they're caught before Save, not as a 400.
+  // Surfaces structural problems inline so they're caught before Publish, not as a 400. Drafts
+  // save regardless — a work in progress is allowed to be broken.
   const issues = useMemo<ValidationIssue[]>(() => (ir ? validateGraph(ir) : []), [ir]);
   const errorCount = issues.filter((i) => i.severity === "error").length;
 
-  // Keyboard shortcuts (Cmd/Ctrl+S save, Esc deselect). Registered once; reads the latest handlers
-  // through a ref so the listener never needs re-binding (the handlers close over post-guard state).
+  // Keyboard shortcuts (Cmd/Ctrl+S saves the draft now, Esc deselect). Registered once; reads the
+  // latest handlers through a ref so the listener never needs re-binding.
   const actionsRef = useRef<{
     save: () => void;
     deselect: () => void;
@@ -269,10 +374,10 @@ export function Editor() {
     [],
   );
 
-  if (loadError || latestError) {
+  if (loadError || latestError || draftError) {
     return (
       <Centered>
-        <ErrorBanner error={loadError ?? latestError} />
+        <ErrorBanner error={loadError ?? latestError ?? draftError} />
       </Centered>
     );
   }
@@ -283,7 +388,10 @@ export function Editor() {
       </Centered>
     );
   }
-  if (!ir || (loadingExisting && isLoading) || resolvingLatest) {
+  // The draft branch gates on its own record being absent (not a query flag): an in-editor
+  // transition to ?draft=<id> keeps the previous document in `ir`, and rendering IT while the
+  // draft fetches would show the wrong graph for a beat.
+  if (!ir || (loadingExisting && isLoading) || (loadingDraft && !draftRec) || resolvingLatest) {
     return (
       <Centered>
         <Spinner label="Loading agent…" />
@@ -294,39 +402,45 @@ export function Editor() {
   const patchEnvelope = (patch: Partial<IRDocument>) =>
     dispatch({ type: "commit", ir: { ...ir, ...patch } });
 
-  const onSave = async () => {
-    setSaving(true);
+  const onPublish = async () => {
+    // The confirm modal STAYS OPEN (buttons disabled) while the POST is in flight: its overlay
+    // blocks canvas/input edits, so nothing can change the document mid-publish and be silently
+    // clobbered by the post-publish re-seed.
+    setPublishing(true);
     try {
       const detail = await saveAgent(ir, existsRef.current);
       existsRef.current = true;
       const hash = latestHash(detail);
       if (hash) setSavedHash(hash.contentHash);
       setSavedSnapshot(ir);
-      notify.dismiss("editor-save-error"); // a prior failure (e.g. version_conflict) is now resolved
-      // Refresh the registry caches so a freshly-saved version is visible everywhere it's consumed —
-      // notably the per-agent bench, which pins a version from this list. Without this, saving a new
-      // version (e.g. a model swap) leaves the bench running the STALE latest (the "model change
-      // didn't apply" bug): the cached agent detail never re-fetched the new version.
+      // The registry owns this content now — drop the bridging draft, reset the autosave baseline.
+      await autosave.markPublished(ir);
+      notify.dismiss("editor-publish-error"); // a prior failure (e.g. version_conflict) is now resolved
+      // Refresh the registry caches so a freshly-published version is visible everywhere it's
+      // consumed — notably the per-agent bench, which pins a version from this list. Without this,
+      // publishing a new version (e.g. a model swap) leaves the bench running the STALE latest.
       qc.invalidateQueries({ queryKey: ["agents"] });
       qc.invalidateQueries({ queryKey: ["agent", ir.id] });
       qc.invalidateQueries({ queryKey: ["agentVersion", ir.id] });
-      // Re-point the URL at the now-saved version so a reload re-opens it. Suppress
-      // the leave-guard for this programmatic nav (dirty hasn't recomputed to false yet this tick).
+      setConfirmPublish(false);
+      // Re-point the URL at the now-published version so a reload re-opens it (replace, so Back
+      // never lands on the now-deleted ?draft= entry). Suppress the leave-guard for this nav.
       savingNavRef.current = true;
-      navigate({ to: "/editor", search: { agent: ir.id, version: ir.version } });
+      navigate({ to: "/editor", search: { agent: ir.id, version: ir.version }, replace: true });
       window.setTimeout(() => {
         savingNavRef.current = false;
       }, 0);
     } catch (e) {
+      setConfirmPublish(false);
       const msg =
         e instanceof ApiError
           ? `${e.message} (${e.code})`
-          : ((e as Error).message ?? "save failed");
-      // One place for errors: the global toast. A stable id replaces a prior save error rather than
-      // stacking, and lets a later success/revert dismiss it (see onSave success + onRevert).
-      notify.error(msg, { id: "editor-save-error" });
+          : ((e as Error).message ?? "publish failed");
+      // One place for errors: the global toast. A stable id replaces a prior publish error rather
+      // than stacking, and lets a later success/revert dismiss it (see onPublish success + onRevert).
+      notify.error(msg, { id: "editor-publish-error" });
     } finally {
-      setSaving(false);
+      setPublishing(false);
     }
   };
 
@@ -340,16 +454,18 @@ export function Editor() {
   // viewport, so React Flow stays behind the adapter.
   const onPaletteAdd = (type: string) => applyIr(addNode(ir, type, defaultAddPosition(ir)));
 
-  // Keep the keyboard-shortcut handlers pointing at the current closures. Cmd/Ctrl+S honors the
-  // same validation gate as the Save button — no saving an invalid graph from the keyboard.
+  // Cmd/Ctrl+S flushes the draft save immediately — the draft has no validation gate (saving a
+  // broken work-in-progress is the feature). Publish stays a deliberate button click.
   actionsRef.current = {
     save: () => {
-      if (!saving && errorCount === 0 && !(mode === "code" && !codeValid)) onSave();
+      void autosave.flush();
     },
     deselect: () => setSelection(null),
     undo,
     redo,
   };
+
+  const publishDisabled = publishing || errorCount > 0 || codeDiverged;
 
   return (
     <div className="relative flex h-full flex-col">
@@ -448,32 +564,87 @@ export function Editor() {
               </span>
             )}
           </button>
-          {savedHash === null && !dirty ? (
-            <Badge tone="slate">not saved</Badge>
-          ) : dirty ? (
-            <Badge tone="amber">modified</Badge>
-          ) : (
-            <Badge tone="green">saved</Badge>
+          <SaveStatus autosave={autosave} savedHash={savedHash} dirty={dirty} />
+          {savedSnapshot && savedHash && (
+            <Button
+              onClick={onRevert}
+              disabled={!dirty}
+              title="Discard changes since the last published version"
+            >
+              Revert
+            </Button>
           )}
-          <Button onClick={onRevert} disabled={!dirty} title="Discard changes since the last save">
-            Revert
+          <Button
+            onClick={() => {
+              setTestOpen((o) => {
+                if (o) setRunState({}); // closing clears the canvas's run lighting
+                return !o;
+              });
+            }}
+            aria-pressed={testOpen}
+            title="Test-run the current graph without leaving the canvas"
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <Play size={13} aria-hidden /> Test
+            </span>
           </Button>
           <Button
             variant="primary"
-            onClick={onSave}
-            disabled={saving || errorCount > 0 || (mode === "code" && !codeValid)}
+            onClick={() => setConfirmPublish(true)}
+            disabled={publishDisabled}
             title={
               mode === "code" && !codeValid
-                ? "Fix the invalid JSON before saving"
+                ? "Fix the invalid JSON before publishing"
                 : errorCount > 0
-                  ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before saving`
-                  : "Save this agent (⌘S)"
+                  ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before publishing`
+                  : "Publish an immutable version everyone can see and run"
             }
           >
-            {saving ? "Saving…" : "Save agent"}
+            {publishing ? "Publishing…" : "Publish"}
           </Button>
         </div>
       </div>
+
+      {/* an older draft of this agent exists — offer to resume instead of editing beside it */}
+      {resumable && (
+        <div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+          <TriangleAlert size={13} aria-hidden className="shrink-0" />
+          <span>
+            A draft of this agent has unpublished changes (saved{" "}
+            <TimeAgo iso={resumable.updated_at} />
+            ).
+          </span>
+          <Button
+            className="h-6 px-2 text-xs"
+            onClick={() => navigate({ to: "/editor", search: { draft: resumable.id } })}
+          >
+            Open draft
+          </Button>
+          <Button
+            variant="ghost"
+            className="h-6 px-2 text-xs"
+            onClick={async () => {
+              try {
+                await api.deleteDraft(resumable.id);
+              } catch {
+                /* already gone */
+              }
+              qc.invalidateQueries({ queryKey: keys.drafts() });
+            }}
+          >
+            Discard it
+          </Button>
+          <button
+            type="button"
+            onClick={() => setResumeDismissed(resumable.id)}
+            title="Dismiss"
+            aria-label="Dismiss draft notice"
+            className="ml-auto text-amber-700/70 hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
 
       {/* Issues panel — FLOATS over the canvas (absolute) so toggling it never reflows the editor.
           Hovering an item flashes the node/edge it points at; clicking selects it. */}
@@ -549,113 +720,231 @@ export function Editor() {
         </div>
       )}
 
-      {/* body — Visual: three resizable columns (palette · canvas · inspector); Code: the raw IR */}
-      {mode === "code" ? (
-        <div className="min-h-0 flex-1">
-          <IRCodeEditor ir={ir} onChange={applyIr} onValidityChange={setCodeValid} />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {paletteCollapsed ? (
-            <CollapsedRail
-              side="left"
-              label="Nodes"
-              title="Show node palette"
-              onExpand={() => setPaletteCollapsed(false)}
-            />
-          ) : (
-            <>
-              <aside
-                className="relative min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[var(--c-bg)]"
-                style={{ width: paletteWidth }}
-              >
-                <CollapseButton side="left" onClick={() => setPaletteCollapsed(true)} />
-                <Palette onAdd={onPaletteAdd} />
-              </aside>
-              <ResizeHandle
-                width={paletteWidth}
-                onResize={setPaletteWidth}
+      {/* body — Visual: three resizable columns (palette · canvas · inspector); Code: the raw IR.
+          The test console docks below either view. */}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {mode === "code" ? (
+          <div className="min-h-0 flex-1">
+            <IRCodeEditor ir={ir} onChange={applyIr} onValidityChange={setCodeValid} />
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1">
+            {paletteCollapsed ? (
+              <CollapsedRail
                 side="left"
-                min={150}
-                max={420}
-                defaultWidth={280}
-                label="node palette"
+                label="Nodes"
+                title="Show node palette"
+                onExpand={() => setPaletteCollapsed(false)}
               />
-            </>
-          )}
-          <section className="min-h-0 min-w-0 flex-1">
-            {/* key by the opened-agent identity so the canvas remounts (and re-fits) when a different
-                agent is opened, but NOT on edits within the same agent. */}
-            <GraphCanvas
-              key={agentId ? `${agentId}@${version}` : "new"}
-              ir={ir}
-              onChange={applyIr}
-              selection={selection}
-              onSelect={setSelection}
-              reseedKey={reseedKey}
-              resyncKey={resyncKey}
-              highlight={highlight}
-              onUndo={undo}
-              onRedo={redo}
-              canUndo={canUndo}
-              canRedo={canRedo}
-              onTidy={onTidy}
-            />
-          </section>
-          {inspectorCollapsed ? (
-            <CollapsedRail
-              side="right"
-              label="Inspector"
-              title="Show inspector"
-              onExpand={() => setInspectorCollapsed(false)}
-            />
-          ) : (
-            <>
-              <ResizeHandle
-                width={inspectorWidth}
-                onResize={setInspectorWidth}
-                side="right"
-                min={260}
-                max={620}
-                defaultWidth={450}
-                label="inspector"
-              />
-              <aside
-                className="relative min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[var(--c-bg)]"
-                style={{ width: inspectorWidth }}
-              >
-                <CollapseButton side="right" onClick={() => setInspectorCollapsed(true)} />
-                <Inspector
-                  ir={ir}
-                  selection={selection}
-                  onChange={applyIr}
-                  onSelect={setSelection}
+            ) : (
+              <>
+                <aside
+                  className="relative min-h-0 shrink-0 overflow-hidden border-r border-slate-800 bg-[var(--c-bg)]"
+                  style={{ width: paletteWidth }}
+                >
+                  <CollapseButton side="left" onClick={() => setPaletteCollapsed(true)} />
+                  <Palette onAdd={onPaletteAdd} />
+                </aside>
+                <ResizeHandle
+                  width={paletteWidth}
+                  onResize={setPaletteWidth}
+                  side="left"
+                  min={150}
+                  max={420}
+                  defaultWidth={280}
+                  label="node palette"
                 />
-              </aside>
-            </>
-          )}
-        </div>
+              </>
+            )}
+            <section className="min-h-0 min-w-0 flex-1">
+              {/* key by the seeded identity so the canvas remounts (and re-fits) when a different
+                  document is opened, but NOT on edits — nor when a freshly minted draft id is
+                  adopted into the URL mid-session. */}
+              <GraphCanvas
+                key={seed?.key ?? "new"}
+                ir={ir}
+                onChange={applyIr}
+                selection={selection}
+                onSelect={setSelection}
+                reseedKey={reseedKey}
+                resyncKey={resyncKey}
+                highlight={highlight}
+                runState={runState}
+                onUndo={undo}
+                onRedo={redo}
+                canUndo={canUndo}
+                canRedo={canRedo}
+                onTidy={onTidy}
+              />
+            </section>
+            {inspectorCollapsed ? (
+              <CollapsedRail
+                side="right"
+                label="Inspector"
+                title="Show inspector"
+                onExpand={() => setInspectorCollapsed(false)}
+              />
+            ) : (
+              <>
+                <ResizeHandle
+                  width={inspectorWidth}
+                  onResize={setInspectorWidth}
+                  side="right"
+                  min={260}
+                  max={620}
+                  defaultWidth={450}
+                  label="inspector"
+                />
+                <aside
+                  className="relative min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[var(--c-bg)]"
+                  style={{ width: inspectorWidth }}
+                >
+                  <CollapseButton side="right" onClick={() => setInspectorCollapsed(true)} />
+                  <Inspector
+                    ir={ir}
+                    selection={selection}
+                    onChange={applyIr}
+                    onSelect={setSelection}
+                  />
+                </aside>
+              </>
+            )}
+          </div>
+        )}
+        {testOpen && (
+          <TestPanel
+            // Keyed by document identity: switching documents remounts the panel, whose unmount
+            // cleanup aborts both streams — a run can never keep lighting the wrong graph.
+            key={seed?.key ?? "new"}
+            ir={ir}
+            errorCount={errorCount}
+            codeInvalid={codeDiverged}
+            onClose={() => {
+              setTestOpen(false);
+              setRunState({});
+            }}
+            onRunState={setRunState}
+            onHoverNode={(id) => setHighlight(id ? { kind: "node", id } : null)}
+          />
+        )}
+      </div>
+
+      {/* publish confirmation — publishing is outward-facing (an immutable version everyone can
+          see and run), so it gets one deliberate step; drafts save silently in the background. */}
+      {confirmPublish && (
+        <Modal
+          title="Publish this agent?"
+          width="max-w-md"
+          // The overlay doubles as the edit lock while the POST is in flight (see onPublish) —
+          // no dismissing mid-publish.
+          onClose={() => {
+            if (!publishing) setConfirmPublish(false);
+          }}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-slate-300">
+              Publishing creates an immutable version of <span className="mono">{ir.id}</span> at{" "}
+              <span className="mono">v{ir.version}</span> that everyone can see, run, and build on.
+              To change it later, publish a new version.
+            </p>
+            {autosave.draftId && (
+              <p className="text-xs text-slate-500">The working draft is removed on success.</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button onClick={() => setConfirmPublish(false)} disabled={publishing}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={onPublish} disabled={publishing}>
+                {publishing ? "Publishing…" : `Publish v${ir.version}`}
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
 
-      {/* unsaved-changes guard: shown when an in-app navigation is blocked (the native browser
-          prompt covers tab close / reload via enableBeforeUnload). */}
+      {/* leave guard: only edits that haven't reached the draft yet are at risk (autosave covers
+          the rest); the native browser prompt covers tab close / reload via enableBeforeUnload. */}
       {blocker.status === "blocked" && (
         <Modal title="Leave with unsaved changes?" width="max-w-sm" onClose={() => blocker.reset()}>
           <div className="space-y-4">
             <p className="text-sm text-slate-300">
-              This agent has changes that haven’t been saved. If you leave now they’ll be lost.
+              {codeDiverged
+                ? "The code view has JSON that doesn’t parse yet — it can’t be saved to the draft and will be discarded if you leave."
+                : "The latest edits haven’t been saved to the draft yet. Save them before leaving?"}
             </p>
             <div className="flex justify-end gap-2">
               <Button onClick={() => blocker.reset()}>Stay</Button>
               <Button variant="danger" onClick={() => blocker.proceed()}>
                 Leave without saving
               </Button>
+              {/* Flushing while the code view is diverged would save the LAST VALID parse and
+                  silently drop the typed text — fixing the JSON is the only real save. */}
+              {!codeDiverged && (
+                <Button
+                  variant="primary"
+                  onClick={async () => {
+                    const ok = await autosave.flush();
+                    if (ok) blocker.proceed();
+                    else {
+                      notify.error("Draft save failed — staying on the editor", {
+                        id: "editor-draft-error",
+                      });
+                      blocker.reset();
+                    }
+                  }}
+                >
+                  Save draft &amp; leave
+                </Button>
+              )}
             </div>
           </div>
         </Modal>
       )}
     </div>
   );
+}
+
+// The autosave status, always visible in the toolbar: what the draft knows, what still hasn't
+// reached it, and (when clean with no draft) the publish state of the loaded document.
+function SaveStatus({
+  autosave,
+  savedHash,
+  dirty,
+}: {
+  autosave: DraftAutosave;
+  savedHash: string | null;
+  dirty: boolean;
+}) {
+  if (autosave.status === "saving") {
+    return <span className="text-[11px] text-slate-500">Saving draft…</span>;
+  }
+  if (autosave.status === "pending") {
+    return <span className="text-[11px] text-amber-700 dark:text-amber-400">Unsaved changes</span>;
+  }
+  if (autosave.status === "error") {
+    return (
+      <button
+        type="button"
+        onClick={() => void autosave.flush()}
+        title={autosave.error ?? "Draft save failed"}
+        className="rounded px-1.5 py-0.5 text-[11px] font-medium text-red-700 hover:bg-[var(--c-hover)] dark:text-red-300"
+      >
+        Draft save failed — retry
+      </button>
+    );
+  }
+  if (autosave.draftId) {
+    return (
+      <span className="text-[11px] text-slate-500">
+        Draft saved{" "}
+        <TimeAgo iso={autosave.lastSavedAt ? new Date(autosave.lastSavedAt).toISOString() : null} />
+      </span>
+    );
+  }
+  if (savedHash) {
+    return dirty ? <Badge tone="amber">modified</Badge> : <Badge tone="green">published</Badge>;
+  }
+  return <Badge tone="slate">not published</Badge>;
 }
 
 function Centered({ children }: { children: React.ReactNode }) {

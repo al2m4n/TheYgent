@@ -52,4 +52,4 @@ Everything runs where *you* point it: model weights download to `~/.theygent/inf
 1. **[Installation](installation.md)** — clone the repo, create `.env`, install the engines and dependencies.
 2. **[Running TheYgent](running.md)** — `make up`, then confirm everything is healthy with `make status` and `/readyz`.
 3. **[Your first chat](first-chat.md)** — install a small model from the Registries page and talk to it in New Chat.
-4. **[Your first agent](first-agent.md)** — build input → llm → output on the canvas, test-run it, and save it as a named agent.
+4. **[Your first agent](first-agent.md)** — build input → llm → output on the canvas, test it right there, and publish it as a named agent.

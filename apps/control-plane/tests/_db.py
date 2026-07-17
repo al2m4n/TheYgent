@@ -20,6 +20,7 @@ async def truncate(url: str) -> None:
     try:
         await conn.execute(
             "TRUNCATE message, run, chat_session, mcp_server, trigger, agent_version, agent, "
+            "agent_draft, "
             "span, node_io, agent_io_policy, "
             "bench_run, bench_case, bench_suite, bench_preset, "
             "connection, secret, gate_counter, "

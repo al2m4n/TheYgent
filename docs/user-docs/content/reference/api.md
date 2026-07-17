@@ -26,7 +26,7 @@ The interface uses these same endpoints, so anything you can do in the UI you ca
 
 ### Agents
 
-Saved agents are immutable, content-addressed versions. See [Saving agents](../building/saving-agents.md) and [Agent versioning](../concepts/versioning.md).
+Published agents are immutable, content-addressed versions. See [Drafts & publishing](../building/saving-agents.md) and [Agent versioning](../concepts/versioning.md).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -39,6 +39,20 @@ Saved agents are immutable, content-addressed versions. See [Saving agents](../b
 
 There is no endpoint to delete an agent or a version — published versions are permanent.
 
+### Drafts
+
+The editor's autosave tier: mutable work-in-progress graphs. A draft is **never validated as a graph** (a half-wired document must still save; only "the `ir` is a JSON object" is enforced → `400 invalid_draft`) and never hashed. The canvas layout (`view`) is stored alongside the document. See [Drafts & publishing](../building/saving-agents.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/drafts` | Create a draft. Body `{ir, agent_id?}` — `agent_id` links the draft to the published agent it edits (optional, immutable after create). `201`. |
+| PUT | `/drafts/{id}` | Replace the draft's document (the autosave write). Body `{ir}`. |
+| GET | `/drafts` | List drafts, most recently **edited** first (`limit` 1–200 default 50, `before` cursor, optional `agent_id` filter). Summaries only — no `ir`/`view`. |
+| GET | `/drafts/{id}` | The full draft, `ir` + `view` — what the editor reloads. |
+| DELETE | `/drafts/{id}` | Discard a draft. `204`. |
+
+Unknown ids are `404 draft_not_found`. Unlike versions, drafts are freely deletable — the editor deletes the working draft itself after a successful publish.
+
 ### Runs
 
 Statuses: `created → streaming → waiting → completed | failed`. See [Runs & sessions](../concepts/runs-and-sessions.md).
@@ -46,10 +60,10 @@ Statuses: `created → streaming → waiting → completed | failed`. See [Runs 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/runs` | Plain prompt run. Body `{input, model, params?, stream?, session_id?}`. `model` is a logical id. Streams SSE by default. |
-| POST | `/graphs/runs` | Run an inline IR graph. Body `{ir, input, stream?, session_id?}`. Invalid IR → `400 invalid_ir` (no run row created). |
-| POST | `/agents/{id}/runs` | Run a saved agent by reference. Body `{input, version?, content_hash?, session_id?, stream?}`. |
+| POST | `/graphs/runs` | Run an inline IR graph — no publish needed (this is what the editor's Test panel uses). Body `{ir, input, stream?, session_id?}`. Invalid IR → `400 invalid_ir` (no run row created). |
+| POST | `/agents/{id}/runs` | Run a published agent by reference. Body `{input, version?, content_hash?, session_id?, stream?}`. |
 | POST | `/agents/{id}/invoke` | Token-authed, non-interactive sibling of the above. Same body but `stream` defaults **false**. Requires a bearer token. |
-| POST | `/agents/{id}/durable-runs` | Run a saved agent on the durable runtime (the only way to run `human`/`subgraph`/`loop`/`map` agents). Returns `202 {run_id}`; poll `GET /runs/{id}`. Needs [durable mode](../running/durable.md). |
+| POST | `/agents/{id}/durable-runs` | Run a published agent on the durable runtime (the only way to run `human`/`subgraph`/`loop`/`map` agents). Returns `202 {run_id}`; poll `GET /runs/{id}`. Needs [durable mode](../running/durable.md). |
 | GET | `/runs` | List runs, newest first (`limit`, `before`). |
 | GET | `/runs/{id}` | Run detail, including `output`, `error`, `content_hash`, `trigger_id`, `awaiting_node`, `completed_at`. |
 | POST | `/runs/{id}/resume` | Deliver input to a run paused (`waiting`) at a `human` node. Body `{input}`. Returns `202`. |

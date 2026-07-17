@@ -118,6 +118,30 @@ export interface StoredVersion {
   view: Record<string, unknown> | null;
 }
 
+// ── control-plane drafts (snake_case) ────────────────────────────────────────
+// A draft is the MUTABLE work-in-progress counterpart of an agent version: autosaved from the
+// editor, allowed to be structurally invalid, never hashed. Publishing goes through the registry
+// (/agents) as before — a draft only bridges editing sessions. `agent_id` points at the registry
+// agent a draft edits (null for a never-published graph); `owner_id` is reserved for when user
+// accounts land (null today).
+
+export interface DraftSummary {
+  id: string;
+  agent_id: string | null;
+  owner_id: string | null;
+  name: string;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DraftRecord extends DraftSummary {
+  // Like StoredVersion: the IR arrives view-stripped with layout in the separate `view` block —
+  // re-attach via lib/agent.ts `fromDraft` before handing it to the adapter.
+  ir: IRDocument;
+  view: Record<string, unknown> | null;
+}
+
 // ── inference-plane model view (camelCase — the /admin/* convention) ─────────
 // A registered logical model the inference plane can serve. We surface its `logicalId` (what a
 // graph model binding forwards to the seam) + the engine `binding` so a binding can be declared
@@ -779,6 +803,37 @@ export const api = {
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
     ),
 
+  // ── control plane: drafts (the editor's autosave surface) ───────────────────
+  // The server strips `view` from the incoming IR and stores it alongside; a draft is never
+  // validated as a graph (a half-wired canvas must still save) and never hashed.
+  listDrafts: (params: { limit?: number; before?: string; agent_id?: string } = {}) => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
+    const qs = q.toString();
+    return request<{ drafts: DraftSummary[] }>(
+      CONTROL_PLANE_URL,
+      `/drafts${qs ? `?${qs}` : ""}`,
+    ).then((r) => r.drafts);
+  },
+
+  getDraft: (id: string) =>
+    request<DraftRecord>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`),
+
+  createDraft: (body: { ir: IRDocument; agent_id?: string | null }) =>
+    request<DraftRecord>(CONTROL_PLANE_URL, "/drafts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateDraft: (id: string, body: { ir: IRDocument }) =>
+    request<DraftRecord>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  deleteDraft: (id: string) =>
+    request<void>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   // Inference plane (separate base URL): the registered logical models, to populate the model
   // picker. Read-only; tolerated to fail (the picker falls back to free text if unreachable).
   listModels: () =>
@@ -1253,4 +1308,26 @@ export async function streamGet(path: string): Promise<StreamHandle> {
   if (!res.ok) throw await toError(res);
   if (!res.body) throw new ApiError("response had no body", 502, "no_body");
   return { events: readSSE(res.body, controller.signal), abort: () => controller.abort() };
+}
+
+// Browsers keep a `keepalive` fetch alive through page unload, but cap its body at 64KB — beyond
+// that the flush is skipped (the draft was still autosaved on the normal debounce moments earlier).
+const KEEPALIVE_BODY_LIMIT = 60_000;
+
+/**
+ * Fire-and-forget draft save that survives the page unloading (tab close / reload while an
+ * autosave is still pending). Fire-and-forget by design: there is nothing left to render a
+ * result into. Only updates an EXISTING draft — a draft id is minted on the normal path.
+ */
+export function flushDraftOnUnload(draftId: string, ir: IRDocument): void {
+  const body = JSON.stringify({ ir });
+  if (body.length > KEEPALIVE_BODY_LIMIT) return;
+  void fetch(`${CONTROL_PLANE_URL}/drafts/${encodeURIComponent(draftId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body,
+    keepalive: true,
+  }).catch(() => {
+    /* unload is already in progress — nothing to surface */
+  });
 }

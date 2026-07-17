@@ -62,6 +62,9 @@ interface Props {
   resyncKey?: number;
   // A node/edge to transiently flash (e.g. the one an issue points at, on hover) — display only.
   highlight?: Selection;
+  // Per-node execution state during an in-canvas test run (running | ok | err | skipped), joined
+  // from the run's trace spans by node id. Display only — a class on the node, never IR state.
+  runState?: Record<string, string>;
   // "minimal" strips the chrome (controls, minimap, help) — used by the bench, where the canvas is a
   // read-only preview and the controls would only clutter it.
   minimal?: boolean;
@@ -117,6 +120,7 @@ function GraphCanvasInner({
   reseedKey = 0,
   resyncKey = 0,
   highlight,
+  runState,
   minimal = false,
   onUndo,
   onRedo,
@@ -185,15 +189,18 @@ function GraphCanvasInner({
     );
   }, [selection, setRfNodes, setRfEdges]);
 
-  // Flash the node/edge the editor points at (e.g. hovering an issue). Toggles a `className` only —
-  // never touches the IR or RF's selection. Cleared when `highlight` goes null.
+  // Flash the node/edge the editor points at (e.g. hovering an issue) and wear the live test-run
+  // state. Both toggle a `className` only — never the IR or RF's selection. Cleared when the
+  // highlight goes null / the run states are cleared.
   useEffect(() => {
     setRfNodes((ns) =>
-      ns.map((n) => ({
-        ...n,
-        className:
-          highlight?.kind === "node" && highlight.id === n.id ? "theygent-flash" : undefined,
-      })),
+      ns.map((n) => {
+        const parts: string[] = [];
+        if (highlight?.kind === "node" && highlight.id === n.id) parts.push("theygent-flash");
+        const status = runState?.[n.id];
+        if (status) parts.push(`theygent-run-${status}`);
+        return { ...n, className: parts.length > 0 ? parts.join(" ") : undefined };
+      }),
     );
     setRfEdges((es) =>
       es.map((e) => ({
@@ -202,7 +209,7 @@ function GraphCanvasInner({
           highlight?.kind === "edge" && highlight.id === e.id ? "theygent-flash" : undefined,
       })),
     );
-  }, [highlight, setRfNodes, setRfEdges]);
+  }, [highlight, runState, setRfNodes, setRfEdges]);
 
   // Fit the view once, after nodes are first measured (an async-loaded agent would otherwise fit
   // against unmeasured nodes and clip off-screen). Never on edits — that would yank the user's pan.

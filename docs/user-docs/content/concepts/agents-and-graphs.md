@@ -23,12 +23,12 @@ The document is a small envelope of top-level fields. The keys are camelCase, an
 | `nodes` | The list of nodes: the steps of the agent. |
 | `edges` | The list of edges wiring node ports together. |
 | `view` | Canvas layout — node positions, viewport zoom, per-node icon overrides. Cosmetic only. |
-| `contentHash` | A derived fingerprint of the document (see [Layout is cosmetic](#layout-is-cosmetic)). Filled in by the server when you save. |
+| `contentHash` | A derived fingerprint of the document (see [Layout is cosmetic](#layout-is-cosmetic)). Filled in by the server when you publish. |
 | `metadata` | Optional free-form data you can attach; ignored by execution. |
 
 ### Identity: id and version
 
-An agent is identified by its `id`, and each saved snapshot by its `version`. Together they form the coordinate the registry uses. When you save an agent, that exact `(id, version)` pair becomes an immutable version — see [Saving agents](../building/saving-agents.md) and [Versioning](versioning.md).
+An agent is identified by its `id`, and each published snapshot by its `version`. Together they form the coordinate the registry uses. When you publish an agent, that exact `(id, version)` pair becomes an immutable version — see [Drafts & publishing](../building/saving-agents.md) and [Versioning](versioning.md).
 
 ### The models map
 
@@ -128,10 +128,10 @@ A few things to notice, all covered in more depth elsewhere:
 
 ## Creating and running agents
 
-A brand-new graph in the editor already contains an `input` node wired to an `output` node, so it validates and runs (it simply echoes its input) before you have changed anything. From there you add nodes, wire them, and configure them in the inspector. When it is ready, save it to the registry to mint an immutable version, then run it. See:
+A brand-new graph in the editor already contains an `input` node wired to an `output` node, so it validates and runs (it simply echoes its input) before you have changed anything. From there you add nodes, wire them, and configure them in the inspector — your work autosaves as a draft, and the editor's Test panel runs the graph in place at any point. When it is ready, publish it to the registry to mint an immutable version. See:
 
 - [The editor](../building/editor.md) — the canvas, palette, and inspector
-- [Saving agents](../building/saving-agents.md) — turning a graph into a named version
+- [Drafts & publishing](../building/saving-agents.md) — turning a graph into a named version
 - [Runs and sessions](runs-and-sessions.md) — what happens when an agent runs
 
 ## Related pages

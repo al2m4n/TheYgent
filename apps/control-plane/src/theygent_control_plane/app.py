@@ -106,6 +106,7 @@ from theygent_control_plane.store import (
     AgentStore,
     BenchStore,
     ConnectionStore,
+    DraftStore,
     McpStore,
     RunStore,
     TriggerStore,
@@ -228,6 +229,25 @@ class AddVersionRequest(BaseModel):
     # Add a new immutable version from an IR. The IR's id must match the URL agent id
     # (the version belongs to that agent); its ``version`` is the new coordinate.
     ir: dict[str, Any]
+
+
+class CreateDraftRequest(BaseModel):
+    # Autosave a work-in-progress graph from the editor. ``ir`` is typed ``Any`` (not
+    # ``dict``) so the app owns the 400 (``invalid_draft``) for a non-object document instead
+    # of FastAPI's generic 422 — and it is deliberately NOT validated/hashed: a draft may be a
+    # half-wired, invalid graph (that is the point; validation happens at publish, on /agents).
+    # The server pops ``view`` out of the document into its own column (the registry's ir/view
+    # split — layout is never part of the document). ``agent_id`` is the registry agent this
+    # draft edits (None for a never-published graph); immutable after create.
+    ir: Any
+    agent_id: str | None = None
+
+
+class UpdateDraftRequest(BaseModel):
+    # Replace the draft's document (the autosave loop). Same non-object → 400 ownership and
+    # view split as create; ``name``/``node_count`` are re-derived server-side on every save.
+    # No ``agent_id`` — the origin breadcrumb is immutable after create.
+    ir: Any
 
 
 class AgentRunRequest(BaseModel):
@@ -580,6 +600,7 @@ def create_app(
     store = RunStore()
     mcp_store = McpStore()
     agents = AgentStore()
+    drafts = DraftStore()  # autosaved editor drafts — mutable, never validated/hashed
     triggers = TriggerStore()
     bench = BenchStore()  # saved benchmark results + suites/cases + param presets
     rag_store = RagStore()  # retrieval sources/documents/chunks + hybrid search
@@ -2299,6 +2320,78 @@ def create_app(
                     break
             await asyncio.sleep(0.05)
         return JSONResponse({"run_id": run_id}, status_code=202)
+
+    # ── theygent-native API: /drafts (the editor's autosave surface) ──
+    # A draft is a mutable, autosaved, possibly-INVALID agent graph — the deliberate opposite of
+    # an agent version (immutable, content-addressed, validated). The editor autosaves here so a
+    # half-wired graph survives a tab close; publishing stays on the untouched /agents registry.
+    # No parse/validate/hash ever runs on a draft — the only shape rule is "the ir is a JSON
+    # object" — and ``view`` (layout) is split off into its own column, mirroring the registry's
+    # ir/view split. Purely additive; nothing here feeds a run.
+
+    def _split_draft_ir(raw: Any) -> tuple[dict[str, Any], Any] | JSONResponse:
+        # The one shape gate (a draft is otherwise anything): the ir must be a JSON object, so
+        # the derive/split below has something to read. The 400 is app-owned (``invalid_draft``),
+        # matching the house error shape. ``view`` is popped out of the document verbatim —
+        # layout is stored alongside, never inside, the draft ir (the registry's split).
+        if not isinstance(raw, dict):
+            return _error("draft ir must be a JSON object", status=400, code="invalid_draft")
+        ir = dict(raw)
+        view = ir.pop("view", None)
+        # A layout is an object or absent; a non-object ``view`` is not a layout — store no
+        # layout rather than 500 on the one typed column this surface has.
+        return ir, view if isinstance(view, dict) else None
+
+    @app.post("/drafts", status_code=201, dependencies=[Depends(require_auth)])
+    async def create_draft(req: CreateDraftRequest) -> Any:
+        split = _split_draft_ir(req.ir)
+        if isinstance(split, JSONResponse):
+            return split
+        ir, view = split
+        async with tx() as session:
+            draft = await drafts.create_draft(session, ir=ir, view=view, agent_id=req.agent_id)
+        logger.info("draft.created", extra={"draft_id": draft.id, "agent_id": req.agent_id})
+        return draft.model_dump(mode="json")
+
+    @app.put("/drafts/{draft_id}", dependencies=[Depends(require_auth)])
+    async def update_draft(draft_id: str, req: UpdateDraftRequest) -> Any:
+        split = _split_draft_ir(req.ir)
+        if isinstance(split, JSONResponse):
+            return split
+        ir, view = split
+        async with tx() as session:
+            draft = await drafts.update_draft(session, draft_id, ir=ir, view=view)
+        if draft is None:
+            return _error(f"unknown draft {draft_id!r}", status=404, code="draft_not_found")
+        return draft.model_dump(mode="json")
+
+    @app.get("/drafts", dependencies=[Depends(require_auth)])
+    async def list_drafts(
+        limit: int = Query(default=50, ge=1, le=200),
+        before: str | None = Query(default=None),
+        agent_id: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
+    ) -> Any:
+        # Paginated, newest-first list. Summaries are the full draft shape MINUS ir/view (the
+        # list stays light — a document can be large; the editor reloads it via GET /drafts/{id}).
+        rows = await drafts.list_drafts(session, limit=limit, before=before, agent_id=agent_id)
+        return {"drafts": [d.model_dump(mode="json", exclude={"ir", "view"}) for d in rows]}
+
+    @app.get("/drafts/{draft_id}", dependencies=[Depends(require_auth)])
+    async def get_draft(draft_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+        # The editor's reload source: the full draft, ir view-stripped with view alongside.
+        draft = await drafts.get_draft(session, draft_id)
+        if draft is None:
+            return _error(f"unknown draft {draft_id!r}", status=404, code="draft_not_found")
+        return draft.model_dump(mode="json")
+
+    @app.delete("/drafts/{draft_id}", status_code=204, dependencies=[Depends(require_auth)])
+    async def delete_draft(draft_id: str) -> Response:
+        async with tx() as session:
+            deleted = await drafts.delete_draft(session, draft_id)
+        if not deleted:
+            return _error(f"unknown draft {draft_id!r}", status=404, code="draft_not_found")
+        return Response(status_code=204)
 
     # ── theygent-native API: /triggers + invoke + hooks (the deploy primitive) ──
     # Triggers fire SAVED, PINNED agents through the one ``fire`` seam over the existing run path
