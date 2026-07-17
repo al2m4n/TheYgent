@@ -1,0 +1,32 @@
+# Shared non-secret configuration. THEYGENT_DURABLE=1 here (unlike the compose default):
+# in Kubernetes the control-plane can scale horizontally, and only durable mode moves cron
+# schedules onto DBOS where firing dedupes cluster-wide — the in-process dispatcher is
+# single-instance by design and would double-fire across replicas.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: theygent-config
+  namespace: theygent
+data:
+  THEYGENT_INFERENCE_PLANE_URL: http://inference-plane:8081/v1
+  # The dev access path is `kubectl port-forward` (interface on localhost:5174, planes on
+  # :8080/:8081) — so the browser origin is localhost. A real deployment sets the interface's
+  # public origin here AND rebuilds the interface image with VITE_* build args.
+  THEYGENT_CORS_ORIGINS: http://localhost:5174
+  THEYGENT_DURABLE: "1"
+---
+# Dev-grade credentials for the in-cluster Postgres. For anything beyond a local cluster,
+# replace this Secret (and add THEYGENT_SECRET_KEY — a Fernet key — so stored connection
+# secrets survive restarts; without it each process uses an ephemeral key and warns loudly):
+#   kubectl -n theygent create secret generic theygent-secrets \
+#     --from-literal=POSTGRES_PASSWORD=… --from-literal=DATABASE_URL=… \
+#     --from-literal=THEYGENT_SECRET_KEY=… --dry-run=client -o yaml | kubectl apply -f -
+apiVersion: v1
+kind: Secret
+metadata:
+  name: theygent-secrets
+  namespace: theygent
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: theygent
+  DATABASE_URL: postgresql+asyncpg://theygent:theygent@postgres:5432/theygent

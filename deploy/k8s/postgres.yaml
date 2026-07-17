@@ -1,0 +1,82 @@
+# In-cluster Postgres with pgvector — the dev/minikube default. A managed/external Postgres
+# replaces this file entirely: point DATABASE_URL (theygent-secrets) at it and drop this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+    spec:
+      containers:
+        - name: postgres
+          # pgvector ships in the image — migration 0015 does CREATE EXTENSION vector.
+          image: pgvector/pgvector:pg18-trixie
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_USER
+              value: theygent
+            - name: POSTGRES_DB
+              value: theygent
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            # Postgres 18 images keep the data dir under /var/lib/postgresql (not …/data).
+            - name: pgdata
+              mountPath: /var/lib/postgresql
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "theygent", "-d", "theygent"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "theygent", "-d", "theygent"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

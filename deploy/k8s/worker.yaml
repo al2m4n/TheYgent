@@ -1,0 +1,147 @@
+# The standalone durable worker (DBOS) — consumes the durable queue against the shared
+# Postgres. Scalable (HPA below) for queue throughput: concurrent replicas coordinate
+# through the database. One caveat to know when scaling: every worker launches with the same
+# durable executor identity, so a NEW replica's launch-time recovery re-claims workflows the
+# other replicas are mid-flight on; step checkpointing makes that converge correctly, but the
+# re-run is redundant work — prefer scaling on sustained load, not rapid flapping.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker
+    spec:
+      # Matches the image's numeric uid/gid; fsGroup makes fresh PVCs writable (see
+      # control-plane.yaml for the full rationale).
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      initContainers:
+        # PVCs (unlike Docker named volumes) never copy the image's /data skeleton — create
+        # it explicitly. HOME=/data/home is where stdio MCP launchers put their caches.
+        - name: init-data-dirs
+          image: theygent/worker:dev
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "mkdir -p /data/home /data/artifacts"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+        # Gate on Postgres being reachable AND migrations applied. The control-plane's
+        # initContainer is the single migrator; waiting (not migrating) here avoids two pods
+        # racing the same DDL on a fresh deploy, and stops the crash-loop-until-DB-resolves
+        # noise a bare start would produce.
+        - name: wait-for-db
+          image: theygent/worker:dev
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import asyncio, os, sys
+              import asyncpg
+
+              url = os.environ["DATABASE_URL"].replace("+asyncpg", "")
+
+              async def main() -> None:
+                  for _ in range(120):
+                      try:
+                          conn = await asyncpg.connect(url, timeout=3)
+                          try:
+                              version = await conn.fetchval("SELECT version_num FROM alembic_version")
+                          finally:
+                              await conn.close()
+                          if version:
+                              print(f"database ready (schema at {version})", flush=True)
+                              return
+                      except Exception as exc:
+                          print(f"waiting for database/migrations: {exc}", flush=True)
+                      await asyncio.sleep(2)
+                  sys.exit("database/migrations not ready in time")
+
+              asyncio.run(main())
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      containers:
+        - name: worker
+          image: theygent/worker:dev
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: theygent-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: DATABASE_URL
+            - name: THEYGENT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: THEYGENT_SECRET_KEY
+                  optional: true
+          volumeMounts:
+            # Shared with the control-plane: artifacts written by durable runs here are
+            # served by the API pods.
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: theygent-data
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: worker
+  namespace: theygent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 75

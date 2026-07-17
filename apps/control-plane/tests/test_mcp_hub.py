@@ -287,7 +287,16 @@ def _registry_transport() -> httpx.MockTransport:
 
 
 @pytest.fixture
-def hub_client(fake_inference, pg_url: str) -> TestClient:  # type: ignore[no-untyped-def]
+def hub_client(  # type: ignore[no-untyped-def]
+    fake_inference, pg_url: str, monkeypatch: pytest.MonkeyPatch
+) -> TestClient:
+    # Pin the launcher-availability probe: the install route 400s when a stdio launch
+    # command is missing on the HOST, and these tests must not depend on whether the
+    # machine running them happens to carry node/uv. The dedicated launcher test
+    # re-patches this to exercise the unavailable path.
+    monkeypatch.setattr(
+        "theygent_control_plane.app._stdio_launcher_available", lambda command: True
+    )
     registry = McpRegistryClient(
         [RegistryInfo(id="official", label="Official MCP Registry", url="http://reg.test")],
         http_factory=lambda: httpx.AsyncClient(transport=_registry_transport()),
@@ -383,6 +392,44 @@ def test_install_remote_with_oauth_skips_static_secrets(hub_client: TestClient) 
     conn = created.json()
     assert conn["config"]["auth"] == {"type": "oauth"}
     assert conn["hasSecret"] is False  # tokens arrive later, via the authorize flow
+
+
+def test_install_stdio_without_its_launcher_is_a_clear_400(
+    hub_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stdio install whose launch command can't run HERE (a container image without
+    docker/dnx, a host without node) must fail AT INSTALL with an actionable error — never
+    201-then-err-on-every-run."""
+    monkeypatch.setattr(
+        "theygent_control_plane.app._stdio_launcher_available", lambda command: False
+    )
+    detail = hub_client.get(
+        "/admin/mcp/catalog/entry",
+        params={"registry": "official", "name": "com.pulsemcp/remote-filesystem"},
+    ).json()
+    stdio = next(c for c in detail["candidates"] if c["kind"] == "stdio")
+    resp = hub_client.post(
+        "/admin/mcp/catalog/install",
+        json={
+            "registry": "official",
+            "name": "com.pulsemcp/remote-filesystem",
+            "candidateId": stdio["id"],
+            "connectionName": "gcs-files",
+            "values": {"GCS_BUCKET": "my-bucket", "GCS_PRIVATE_KEY": "top-secret"},
+        },
+    )
+    assert resp.status_code == 400, resp.text
+    err = resp.json()["error"]
+    assert err["code"] == "stdio_launcher_unavailable"
+    # The message must name the missing command and the alternatives that always work.
+    assert "npx" in err["message"]
+    assert "http/sse" in err["message"] and "openapi/graphql" in err["message"]
+    # …and nothing was persisted: the entry still shows as not installed.
+    detail_after = hub_client.get(
+        "/admin/mcp/catalog/entry",
+        params={"registry": "official", "name": "com.pulsemcp/remote-filesystem"},
+    ).json()
+    assert detail_after["entry"]["installed"] is False
 
 
 def test_install_missing_required_input_is_a_client_error(hub_client: TestClient) -> None:

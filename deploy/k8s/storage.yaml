@@ -1,0 +1,29 @@
+# Standalone claims (Postgres claims its own via volumeClaimTemplates).
+#
+# theygent-data is SHARED by the control-plane and the worker: durable runs executing on the
+# worker write artifacts there, and the control-plane API serves them. ReadWriteOnce keeps
+# those pods on one node — fine for minikube/single-node; a multi-node cluster needs a
+# ReadWriteMany storage class here (or an object-store artifact backend when one lands).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: theygent-data
+  namespace: theygent
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+# Inference-plane state: the logical-model registry + downloaded weights (HF cache).
+# Model weights are large — size to the models you actually pull.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: inference-data
+  namespace: theygent
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi

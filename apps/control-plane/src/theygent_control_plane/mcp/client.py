@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import shutil
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -274,6 +275,17 @@ class StdioMcpClient(_ActorMcpClient):
         )
 
     async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
+        # Resolve the launcher BEFORE spawning: the SDK's spawn failure surfaces as a bare
+        # FileNotFoundError that never names the command. A stdio server runs where THIS
+        # process runs — a host (or container image) without its launcher must produce an
+        # error that says so and names the way out, not an errno.
+        if shutil.which(self._params.command) is None:
+            raise McpConnectionError(
+                f"stdio launcher {self._params.command!r} is not installed on this host — "
+                "stdio MCP servers spawn as local subprocesses of the control-plane/worker. "
+                "Install the launcher there, or use a remote (http/sse) or generated "
+                "(openapi/graphql) connection, which work in any deployment"
+            )
         read, write = await stack.enter_async_context(stdio_client(self._params))
         return read, write
 

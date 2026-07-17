@@ -1,0 +1,158 @@
+# The control-plane API. Horizontally scalable (HPA below): with THEYGENT_DURABLE=1 (see
+# theygent-config) cron schedules run on DBOS, which dedupes firing cluster-wide — the
+# single-instance in-process dispatcher is bypassed, so N replicas never double-fire.
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: control-plane
+spec:
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: control-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-plane
+    spec:
+      # Matches the image's numeric uid/gid; fsGroup makes freshly-provisioned PVCs writable
+      # for the non-root user (block-storage classes mount them root-owned — minikube's
+      # permissive hostpath provisioner masks this, real clusters do not).
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      initContainers:
+        # PVCs (unlike Docker named volumes) never copy the image's /data skeleton — create
+        # it explicitly. HOME=/data/home is where stdio MCP launchers put their caches.
+        - name: init-data-dirs
+          image: theygent/control-plane:dev
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "mkdir -p /data/home /data/artifacts"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+        # Alembic before the API starts. `upgrade head` on an already-migrated schema is a
+        # cheap no-op read, so scale-ups and restarts pass straight through; only a genuinely
+        # fresh deploy applies DDL. (If two surge pods race a REAL migration during a rollout,
+        # Postgres's transactional DDL fails one cleanly and its init retry no-ops.)
+        - name: migrate
+          image: theygent/control-plane:dev
+          imagePullPolicy: IfNotPresent
+          command: ["alembic", "-c", "/app/alembic.ini", "upgrade", "head"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: DATABASE_URL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+      containers:
+        - name: control-plane
+          image: theygent/control-plane:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: theygent-config
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: DATABASE_URL
+            - name: THEYGENT_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: THEYGENT_SECRET_KEY
+                  optional: true
+            - name: THEYGENT_INVOKE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-secrets
+                  key: THEYGENT_INVOKE_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          # /readyz is honest readiness: Postgres AND the inference plane must answer. A pod
+          # therefore leaves the Service while inference is down — intended (requests would
+          # 500) — so give it room during a cold cluster start.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: theygent-data
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: control-plane
+  namespace: theygent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: control-plane
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

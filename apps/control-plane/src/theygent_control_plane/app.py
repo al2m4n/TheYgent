@@ -28,6 +28,7 @@ import html
 import json
 import logging
 import os
+import shutil
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -528,6 +529,13 @@ def _verify_signature(secret: str, raw: bytes, provided: str | None) -> bool:
     # Compare as BYTES: str compare_digest raises TypeError on non-ASCII, and this header is
     # attacker-controlled — a crafted byte must yield a clean False → 401, never a 500.
     return hmac.compare_digest(candidate.strip().encode("utf-8"), expected.encode("ascii"))
+
+
+def _stdio_launcher_available(command: str) -> bool:
+    """Whether a stdio MCP server's launch command resolves on THIS host (PATH lookup, or an
+    absolute path). Module-level so the hub-install route stays testable on hosts that do or
+    don't carry a given launcher."""
+    return bool(command) and shutil.which(command) is not None
 
 
 def _default_cors_origins() -> list[str]:
@@ -3417,6 +3425,23 @@ def create_app(
         invalid = _validate_connection("mcp_server", config)
         if invalid is not None:
             return invalid
+        # A stdio install must be able to SPAWN here: a 201 whose launcher is missing (a
+        # container image without docker/dnx, a host without node) is a silent trap that
+        # errs on every later run. Install-time only, and only for the hub (which targets
+        # this deployment by definition) — a hand-created connection may point at a
+        # differently-provisioned worker host and still fails clearly at connect.
+        if config.get("transport") == "stdio" and not _stdio_launcher_available(
+            str(config.get("command") or "")
+        ):
+            return _error(
+                f"the stdio launcher {config.get('command')!r} is not installed where the "
+                "control-plane runs, so this server could not spawn. Pick a remote "
+                "(http/sse) candidate or a generated (openapi/graphql) server instead, or "
+                "install the launcher (the container images bundle npx and uvx by default; "
+                "docker- and dnx-launched servers need those runtimes on the host).",
+                status=400,
+                code="stdio_launcher_unavailable",
+            )
         async with tx() as session:
             secret_ref = await secrets.create(session, secret_value) if secret_value else None
             conn = await connections.create(

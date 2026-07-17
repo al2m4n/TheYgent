@@ -47,11 +47,11 @@ INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
-.PHONY: help install engines migrate up start restart down status logs test test-py test-web gen-ir-types hooks lint docs-serve docs-build
+.PHONY: help install engines migrate up start restart down status logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
 
 help: ## Show this help
-	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 install: ## uv sync (Python workspace) + pnpm install (TS workspace)
 	@echo "==> uv sync"
@@ -144,11 +144,25 @@ start: ## Start inference-plane + control-plane + interface as background proces
 	@echo "Started (inference-plane :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT))."
 	@echo "Logs: make logs  |  Status: make status  |  Stop: make down  |  Restart: make restart"
 
-down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper pidfiles)
+# The compose stack publishes the SAME host ports, and on macOS/Linux those are LISTENed by
+# Docker's own process (com.docker.backend / docker-proxy) — killing it would take down the
+# whole Docker engine, not "the service". So both kill paths here skip Docker-owned pids and
+# point at `make docker-down` instead.
+down: ## Stop all bare-metal services (resolved by PORT; never touches the docker stack)
 	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; pidfile=$(RUN_DIR)/$$name.pid; \
 		recorded=""; if [ -f "$$pidfile" ]; then recorded=$$(cat "$$pidfile" 2>/dev/null); fi; \
-		listeners=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null || true); \
+		listeners=""; docker_owned=""; \
+		for pid in $$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null); do \
+			case "$$(ps -o comm= -p $$pid 2>/dev/null)" in \
+				*[Dd]ocker*) docker_owned="$$pid";; \
+				*) listeners="$$listeners $$pid";; \
+			esac; \
+		done; \
+		listeners=$${listeners# }; \
+		if [ -n "$$docker_owned" ] && [ -z "$$listeners" ]; then \
+			echo "==> $$name: :$$port is published by Docker (the compose stack) — use 'make docker-down'"; rm -f "$$pidfile"; continue; \
+		fi; \
 		if [ -z "$$listeners" ] && { [ -z "$$recorded" ] || ! kill -0 "$$recorded" 2>/dev/null; }; then \
 			echo "==> $$name: not running"; rm -f "$$pidfile"; continue; \
 		fi; \
@@ -158,8 +172,12 @@ down: ## Stop all services (resolved by PORT — robust to stale/missing/wrapper
 		fi; \
 		if [ -n "$$listeners" ]; then kill -TERM $$listeners 2>/dev/null || true; fi; \
 		n=0; while [ $$n -lt 20 ] && lsof -ti tcp:$$port -sTCP:LISTEN >/dev/null 2>&1; do sleep 0.25; n=$$((n+1)); done; \
-		straggler=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null || true); \
-		if [ -n "$$straggler" ]; then echo "   force-killing :$$port (pid $$straggler)"; kill -9 $$straggler 2>/dev/null || true; fi; \
+		for pid in $$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null); do \
+			case "$$(ps -o comm= -p $$pid 2>/dev/null)" in \
+				*[Dd]ocker*) ;; \
+				*) echo "   force-killing :$$port (pid $$pid)"; kill -9 $$pid 2>/dev/null || true;; \
+			esac; \
+		done; \
 		rm -f "$$pidfile"; \
 	done
 
@@ -167,10 +185,14 @@ status: ## Show whether each service is running (resolved by PORT)
 	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; \
 		pid=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null | head -1 || true); \
-		if [ -n "$$pid" ]; then echo "  $$name: running on :$$port (pid $$pid)"; else echo "  $$name: stopped"; fi; \
+		if [ -z "$$pid" ]; then echo "  $$name: stopped"; continue; fi; \
+		case "$$(ps -o comm= -p $$pid 2>/dev/null)" in \
+			*[Dd]ocker*) echo "  $$name: running on :$$port (docker — the compose stack)";; \
+			*) echo "  $$name: running on :$$port (pid $$pid)";; \
+		esac; \
 	done
 
-test: test-py test-web ## Run all tests (Python suites + interface unit tests)
+test: test-py test-web test-deploy ## Run all tests (Python suites + interface unit tests + deploy guards)
 
 test-py: ## Run Python tests for every package (excludes integration; pass ARGS=… to forward)
 	@for d in $(PY_TEST_DIRS); do \
@@ -182,6 +204,12 @@ test-web: ## Run interface unit tests (vitest)
 	@echo "==> vitest (apps/interface)"
 	pnpm --filter @theygent/interface test
 
+# Runs in the control-plane's env (pytest + pyyaml already there) — same precedent as
+# smoke-interface. Static contract checks only; docker/kubectl sub-checks skip when absent.
+test-deploy: ## Guard the containerization contracts (Dockerfiles · compose · deploy/k8s)
+	@echo "==> pytest deploy/tests"
+	uv run --package theygent-control-plane pytest deploy/tests
+
 gen-ir-types: ## Regenerate @theygent/ir-types from packages/ir (schema + TS + node registry)
 	@echo "==> generating ir-types from packages/ir"
 	pnpm --filter @theygent/ir-types generate
@@ -192,6 +220,49 @@ smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plan
 
 logs: ## Tail the logs of all services
 	@tail -n +1 -f $(RUN_DIR)/inference-plane.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log
+
+# ── The SECOND way of running the stack: containers. `make up` (bare-metal) stays the
+# first; both are supported. Postgres comes with the compose stack (pgvector image) on host
+# port 5433, clear of a bare-metal Postgres on 5432. For local MLX inference keep the
+# inference plane on the host and use the docker-compose.host-inference.yml overlay (see
+# that file's header).
+
+docker-build: ## Build all container images (incl. the worker)
+	docker compose --profile worker build
+
+docker-up: ## Bring up the containerized stack (postgres + migrate + planes + interface)
+	docker compose up -d --build
+	@echo ""
+	@echo "control-plane http://localhost:8080 · inference http://localhost:8081 · interface http://localhost:5174"
+	@echo "Worker (durable): THEYGENT_DURABLE=1 docker compose --profile worker up -d"
+
+docker-down: ## Stop the containerized stack (data volumes survive; drop them with `docker compose down -v`)
+	docker compose --profile worker down
+
+docker-logs: ## Tail logs of the containerized stack
+	docker compose logs -f
+
+# ── Kubernetes (deploy/k8s) — dev flow against minikube. The images are built locally by
+# compose and side-loaded; imagePullPolicy stays IfNotPresent.
+
+K8S_IMAGES := theygent/control-plane:dev theygent/inference-plane:dev theygent/worker:dev theygent/interface:dev
+
+# NOT `minikube image load`: with the docker driver it silently keeps an EXISTING same-tag
+# image (even with --overwrite), so a rebuilt :dev never reaches the cluster — pods keep
+# running stale code. save + load against minikube's own daemon replaces the tag reliably.
+k8s-load: docker-build ## Build images and load them into minikube (force-replaces same-tag images)
+	@for img in $(K8S_IMAGES); do \
+		echo "==> loading $$img into minikube"; \
+		docker save $$img -o /tmp/theygent-k8s-img.tar; \
+		( eval "$$(minikube -p minikube docker-env)" && docker load -i /tmp/theygent-k8s-img.tar ); \
+		rm -f /tmp/theygent-k8s-img.tar; \
+	done
+
+k8s-apply: ## Apply the Kubernetes manifests (kubectl apply -k deploy/k8s)
+	kubectl apply -k deploy/k8s
+
+k8s-delete: ## Tear down the Kubernetes resources (PVC data included)
+	kubectl delete -k deploy/k8s
 
 docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:8000)
 	uv run --project docs/user-docs mkdocs serve -f docs/user-docs/mkdocs.yml
