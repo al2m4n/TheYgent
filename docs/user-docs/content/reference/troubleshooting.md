@@ -148,19 +148,19 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix (if you want it to stop the run).** Wire the `err` port somewhere that handles the failure, rather than leaving it dead. See [Tools](../building/nodes/tools.md).
 
-## Agents and saving
+## Agents and publishing
 
-### `version_conflict` (409) when saving
+### `version_conflict` (409) when publishing
 
 **Cause.** You tried to publish different content under a version string that already exists. Published versions are immutable.
 
-**Fix.** Bump the `version` field in the editor toolbar and save again. (Re-saving *identical* content under the same version is a harmless no-op.)
+**Fix.** Bump the `version` field in the editor toolbar and publish again. (Re-publishing *identical* content under the same version is a harmless no-op.)
 
 ### `agent_exists` (409)
 
 **Cause.** You tried to create a brand-new agent with an id that's already taken.
 
-**Fix.** Publish it as a new *version* of that agent instead (`POST /agents/{id}/versions`). The editor does this automatically when you save a graph whose id already exists. See [Saving agents](../building/saving-agents.md).
+**Fix.** Publish it as a new *version* of that agent instead (`POST /agents/{id}/versions`). The editor does this automatically when you publish a graph whose id already exists. See [Drafts & publishing](../building/saving-agents.md).
 
 ## Triggers, webhooks, and invocation
 

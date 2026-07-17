@@ -38,7 +38,7 @@ Its configuration controls what the pause expects:
 | `onTimeout` | `fail` \| `default` | `fail` | On timeout, either fail the run or bind `default` and continue. |
 | `default` | any | — | The value used when `onTimeout` is `default`. |
 
-Save the agent (see [Saving agents](../building/saving-agents.md)) so it can be run durably.
+Publish the agent (see [Drafts & publishing](../building/saving-agents.md)) so it can be run durably.
 
 ### 2. Run it durably
 

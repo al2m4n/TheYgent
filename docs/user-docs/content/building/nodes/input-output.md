@@ -34,7 +34,7 @@ Both fields are **declarative**. They document what the agent expects and help t
 
 - **The whole input lands on `out`.** Downstream nodes read it with the bare `$in` token (the default in-port). To pull a field out of a structured input, drill into it — `$in.in.<field>` — from a node that reads it. See [Referencing inputs](../input-references.md).
 - **Composing several inputs.** The input node has a single `out` port; it does not split values for you. When an agent needs to combine several upstream values — say a document *and* a question — you give the **consuming** node (typically an [llm](llm.md)) more than one named in-port and wire a separate edge into each. That node then addresses them distinctly as `$in.<port>`. This is how multi-input agents work: a run input like `{"path": "...", "question": "..."}` fans out to nodes whose named ports each pick up their piece.
-- **Triggers live here, not as nodes.** When you select the input node, the inspector shows a read-only **Triggers** panel listing how this agent can be invoked (schedule, webhook, token). Triggers are added *after* saving the agent, not as graph nodes — see [Triggers and webhooks](../../running/triggers.md).
+- **Triggers live here, not as nodes.** When you select the input node, the inspector shows a read-only **Triggers** panel listing how this agent can be invoked (schedule, webhook, token). Triggers are added *after* publishing the agent, not as graph nodes — see [Triggers and webhooks](../../running/triggers.md).
 
 ### Example
 
@@ -92,7 +92,7 @@ For an `audio` or `image` result the value is a **reference** to a produced arti
 
 The output node has two rules worth knowing, because both surface as loud failures rather than silent surprises:
 
-- **Exactly one in-port.** An output node is a single-value consumer: it takes the value from one in-port. Declaring more than one in-port is a validation error — the editor will not let you save it, because which value is "the output" would be ambiguous.
+- **Exactly one in-port.** An output node is a single-value consumer: it takes the value from one in-port. Declaring more than one in-port is a validation error — the editor will not let you publish it, because which value is "the output" would be ambiguous.
 - **At most one output may run per run.** A graph is allowed to contain **several** output nodes — for example, a happy-path output and a refusal output on the two branches of a [guardrail](guardrail.md). But no more than one may actually execute in a single run. If two output nodes both go live, the run fails with a clear message: *a second output node executed — the run output would be ambiguous.* Route exclusive branches (with a [router](router.md) or a guardrail) so that exactly one output is reachable.
 - **Empty output is honest.** If the output node's in-port is fed only by a branch that was not taken — for example an upstream tool bound its `err` port and its success path was skipped — the run does not report a green empty success. It carries an honest error note explaining the upstream cause.
 

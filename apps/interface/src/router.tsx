@@ -85,10 +85,14 @@ const editorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/editor",
   component: Editor,
-  // Open an existing agent version via ?agent=<id>&version=<v>; absent ⇒ a new blank graph.
-  validateSearch: (search: Record<string, unknown>): { agent?: string; version?: string } => ({
+  // Open an existing agent version via ?agent=<id>&version=<v>, a draft via ?draft=<id> (which
+  // wins over agent/version — a draft knows the agent it edits); absent ⇒ a new blank graph.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { agent?: string; version?: string; draft?: string } => ({
     agent: typeof search.agent === "string" ? search.agent : undefined,
     version: typeof search.version === "string" ? search.version : undefined,
+    draft: typeof search.draft === "string" ? search.draft : undefined,
   }),
 });
 

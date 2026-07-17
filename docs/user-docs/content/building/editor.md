@@ -6,19 +6,22 @@ If you have never built an agent, walk through [your first agent](../getting-sta
 
 ## Opening the editor
 
-The editor lives at `/editor`. You reach it from the **Agents** page (the sidebar's first entry, at `/`):
+The editor lives at `/editor`. You reach it from the **Agents** page (in the sidebar, at `/agents`):
 
 - **New agent** opens a blank graph.
-- Clicking any agent card opens that agent's latest saved version for editing.
+- Clicking any agent card opens that agent's latest published version for editing.
+- Opening a **draft** (from the Drafts strip, a card's amber `draft` badge, or a `?draft=` URL) resumes that work-in-progress exactly where it left off.
 
-A blank graph is not empty. It arrives pre-seeded with an `input` node wired straight to an `output` node, named *Untitled agent*, version `0.1.0`. That starter graph already passes validation and runs — it simply echoes whatever you send it — so you can save and run immediately, then build outward.
+A blank graph is not empty. It arrives pre-seeded with an `input` node wired straight to an `output` node, named *Untitled agent*, version `0.1.0`. That starter graph already passes validation and runs — it simply echoes whatever you send it — so you can test and publish immediately, then build outward.
 
 ```mermaid
 graph LR
   IN["input"] --> OUT["output"]
 ```
 
-When you open an existing agent, the sidebar collapses to icons to give the canvas room. Opening an agent that has no saved versions shows an error rather than a blank canvas.
+When you open an existing agent, the sidebar collapses to icons to give the canvas room. Opening an agent that has no published versions shows an error rather than a blank canvas.
+
+As soon as you make a real edit, the editor starts **autosaving a draft** in the background — see [Drafts & publishing](saving-agents.md#drafts-the-automatic-tier). You never lose work to a reload again.
 
 ## The three columns
 
@@ -32,7 +35,7 @@ The workspace is three resizable columns:
 
 Drag the splitter between columns to resize (palette 150–420 px, inspector 260–620 px); double-click a splitter to reset it. Either side panel collapses to a thin labeled rail — selecting a node or edge auto-expands a collapsed inspector so you never lose the form.
 
-The toolbar across the top carries the agent's **id**, **name**, and **version** fields, a **visual / code** toggle, the saved content hash (display only), a validation indicator, a status badge, **Revert**, and **Save agent**. Those last few are covered under [Validation](#validation) and [Saving agents](saving-agents.md).
+The toolbar across the top carries the agent's **id**, **name**, and **version** fields, a **visual / code** toggle, the published content hash (display only), a validation indicator, the draft-save status (*Draft saved just now*, *Saving draft…*), **Revert**, **Test**, and **Publish**. Those last few are covered under [Validation](#validation), [Testing on the canvas](#testing-on-the-canvas), and [Drafts & publishing](saving-agents.md).
 
 ## The palette
 
@@ -99,7 +102,7 @@ The header shows the node's kind badge, its type, and its id, with a per-node **
 Several node types get purpose-built panels instead of the generic form — the `llm` model and message editors, the tool **Kind** picker, the guardrail **Check** picker, the pinned-body pickers for `subgraph`/`loop`/`map`, and the transcribe/speak parameter forms. Each is documented on that node's [reference page](nodes/index.md).
 
 !!! warning "Durable-only nodes"
-    Adding a `human`, `subgraph`, `loop`, or `map` node shows a banner: these run only on the durable runtime. Save the agent, then use **Run durably** (which needs the server's durable mode) or deploy it behind a trigger. The plain interactive **Run** path cannot execute them. See [durable runs](../running/durable.md).
+    Adding a `human`, `subgraph`, `loop`, or `map` node shows a banner: these run only on the durable runtime. Publish the agent, then use **Run durably** (which needs the server's durable mode) or deploy it behind a trigger. Neither the in-editor Test panel nor the plain interactive **Run** path can execute them. See [durable runs](../running/durable.md).
 
 #### The label and icon picker
 
@@ -151,13 +154,13 @@ If you have saved parameter presets (from the Bench), a **Load a preset…** dro
 
 The toolbar's **visual / code** toggle swaps the whole canvas for the full agent document as JSON — including the layout block — in an editor with syntax highlighting, line numbers, a fold gutter, **Fold all** / **Unfold all** / **Format** / **Copy** buttons, and find (++cmd+f++ / ++ctrl+f++). It autocompletes node types, kinds (`boundary` / `activity` / `orchestration`), channels (`data` / `control` / `tool`), bindings (`mlx` / `vllm` / `llamacpp` / `openai-compatible`), sources (`hf` / `local-path` / `url`), and common property names.
 
-Two linters run: JSON syntax and the structural graph checks. The status reads *✓ applied* or *✗ invalid JSON — not applied*. **Invalid JSON blocks both switching back to Visual and saving** — fix it first. This full document view is the place to hand-edit anything the forms don't reach.
+Two linters run: JSON syntax and the structural graph checks. The status reads *✓ applied* or *✗ invalid JSON — not applied*. **Invalid JSON blocks switching back to Visual, publishing, and test runs** — fix it first. Unparsed text also never reaches the draft (the draft holds the last valid state), so leaving while the JSON is broken warns you that the typed text would be discarded.
 
 ## Validation
 
 The editor validates continuously and mirrors the server's own checks, so what passes here is what the control plane will run. The toolbar indicator reads **valid** (green), **N warnings** (amber), or **N issues** (red), and toggles a floating **Issues** panel over the top-right of the canvas — hovering an issue flashes the offending node or edge, clicking it selects it.
 
-**Errors block Save.** While any exist, the Save button is disabled with *Fix N validation error(s) before saving.* You will see errors like:
+**Errors block Publish and test runs — never the draft.** While any exist, the Publish and Test-panel Run buttons are disabled with *Fix N validation error(s)…*, but the graph keeps autosaving as a draft (a work in progress is allowed to be broken). You will see errors like:
 
 | Situation | Message you see |
 |---|---|
@@ -178,7 +181,7 @@ The editor validates continuously and mirrors the server's own checks, so what p
 
 `input` nodes and tool nodes used purely as model capabilities are exempt from the "required in-port not connected" rule. Tool (capability) edges are excluded from cycle detection.
 
-**Warnings do not block Save** — they flag things worth a second look:
+**Warnings do not block Publish** — they flag things worth a second look:
 
 - graph has no nodes;
 - a `human` node whose `onTimeout` is `default` but with no default value set (a timeout would flow `null`);
@@ -187,25 +190,39 @@ The editor validates continuously and mirrors the server's own checks, so what p
 
 The code view runs the same structural graph checks as the visual canvas, so the same warnings and errors surface there too.
 
-## Running and testing
+## Testing on the canvas
 
-There is **no run button inside the editor.** Save the agent first, then run it from the **Agents** page: every agent card has a **Run** button that opens a bench modal. It is a split button — **Run** streams the agent interactively, and the caret menu offers **Run durably** (checkpointed; needs the server's durable mode). A durable-only agent shows a single **Run durably** button, because its nodes can't execute on the interactive path.
+You don't have to publish — or even finish — an agent to try it. The toolbar's **Test** button docks a test console under the canvas that runs the document **exactly as it sits on the canvas**, draft or not:
+
+1. Type an input (a **Text / JSON** selector handles agents that take an object input) and click **Run** — or press ++enter++ in the input field.
+2. **Watch the graph execute.** As each node runs it pulses on the canvas, then keeps its outcome: a green ring for success, red for an error, dimmed for a branch that was skipped. The answer streams into the panel as it is generated, with a model's thinking shown separately.
+3. **Inspect the details.** Once a run exists, the panel grows two tabs — **Output** (the streamed answer) and **Trace**, an embedded run waterfall showing every node's timing; hovering a waterfall row flashes that node on the canvas. The run id next to the tabs links to the full run page.
+4. **Stop** aborts a run mid-stream; closing the panel does too.
+
+A few rules, all mirrored from the server:
+
+- **Validation errors disable Run** (the same errors that block Publish) — the graph must be structurally sound to execute, even as a draft.
+- **Durable-only graphs can't test-run.** A graph containing `human`, `subgraph`, `loop`, or `map` needs the durable runtime — publish it and use **Run durably**.
+- **Test runs are real runs.** Each one is recorded under **Runs** like any other, so your test history is inspectable later.
+- Drag the panel's top edge to resize it; double-click to reset.
 
 ```mermaid
 graph LR
-  Build["Build on canvas"] --> Valid{"Valid?"}
-  Valid -->|no| Build
-  Valid -->|yes| Save["Save agent"]
-  Save --> Run["Run from the Agents page"]
+  Build["Build on canvas"] --> Test["Test in the editor"]
+  Test -->|iterate| Build
+  Test -->|happy| Pub["Publish"]
+  Pub --> Run["Run from the Agents page, chat, API, or a trigger"]
 ```
 
-For the full save flow — ids, versions, and conflicts — see [saving agents](saving-agents.md). For run output, statuses, and durable execution, see [running agents](../running/index.md) and [durable runs](../running/durable.md).
+Published agents also run from the **Agents** page: every agent card has a **Run** button that opens a bench modal. It is a split button — **Run** streams the agent interactively, and the caret menu offers **Run durably** (checkpointed; needs the server's durable mode). A durable-only agent shows a single **Run durably** button, because its nodes can't execute on the interactive path.
+
+For the full publish flow — ids, versions, and conflicts — see [drafts & publishing](saving-agents.md). For run output, statuses, and durable execution, see [running agents](../running/index.md) and [durable runs](../running/durable.md).
 
 ## Keyboard and mouse reference
 
 | Input | Action |
 |---|---|
-| ++cmd+s++ / ++ctrl+s++ | Save (only when validation passes) |
+| ++cmd+s++ / ++ctrl+s++ | Save the draft now (no validation gate — drafts may be broken) |
 | ++cmd+z++ / ++ctrl+z++ | Undo (history of 100 steps, including drags) |
 | ++cmd+shift+z++ / ++ctrl+y++ | Redo |
 | ++esc++ | Deselect |
@@ -218,12 +235,12 @@ For the full save flow — ids, versions, and conflicts — see [saving agents](
 Undo restores node positions too, so a mistaken drag is one keystroke away. Text fields keep their native undo while you are typing in them.
 
 !!! note "Leaving with unsaved work"
-    Navigating away inside the app with unsaved changes shows a *Leave with unsaved changes?* prompt; closing or reloading the tab triggers the browser's own warning. A pure layout change — dragging a node, changing an icon — does not count as "modified", because it never changes the agent's content hash.
+    Because drafts autosave, leaving the editor is almost always safe. The *Leave with unsaved changes?* prompt appears only when the very latest edits haven't reached the draft yet (they're still inside the autosave window, or a save failed) — and it offers **Save draft & leave** so one click does both. Closing or reloading the tab in that window triggers the browser's own warning, and the editor still fires a last-moment draft save on the way out.
 
 ## Related pages
 
 - [Referencing inputs](input-references.md) — the `$in` token language you use in message and tool fields
-- [Saving agents](saving-agents.md) — ids, immutable versions, and running what you save
+- [Drafts & publishing](saving-agents.md) — autosaved drafts, ids, immutable versions, and running what you publish
 - [Node reference](nodes/index.md) — every node type, its ports, and its configuration
 - [Nodes, ports and edges](../concepts/nodes-ports-edges.md) — the underlying graph model
 - [Models and engines](../concepts/models-and-engines.md) — logical model ids and bindings

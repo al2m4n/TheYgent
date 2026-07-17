@@ -57,7 +57,7 @@ The palette derives its list directly from the set of runnable node types, so th
 
 ## Durable-only nodes
 
-Four node types run **only** on the durable runtime, because they wait, recurse, or fan out over time: `human`, `subgraph`, `loop`, and `map`. A graph that contains any of them cannot run on the plain interactive path — save it, then use **Run durably** (or deploy it behind a trigger). The editor marks these nodes with a "Durable-only" banner. See [Durable runs](../../running/durable.md).
+Four node types run **only** on the durable runtime, because they wait, recurse, or fan out over time: `human`, `subgraph`, `loop`, and `map`. A graph that contains any of them cannot run on the plain interactive path (including the editor's Test panel) — publish it, then use **Run durably** (or deploy it behind a trigger). The editor marks these nodes with a "Durable-only" banner. See [Durable runs](../../running/durable.md).
 
 ## Reading a node on the canvas
 
@@ -80,4 +80,4 @@ A handful of type ids exist in the underlying schema but do not run yet and neve
 - [Nodes, ports and edges](../../concepts/nodes-ports-edges.md) — the model behind every node
 - [The editor](../editor.md) — the palette, canvas, and inspector in practice
 - [Referencing inputs](../input-references.md) — the `$in` templating grammar every node shares
-- [Saving agents](../saving-agents.md) — turn a graph into an immutable, runnable version
+- [Drafts & publishing](../saving-agents.md) — turn a graph into an immutable, runnable version

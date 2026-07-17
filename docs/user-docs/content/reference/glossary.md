@@ -8,7 +8,7 @@ One of the three node [kinds](#kind). Activity nodes do non-deterministic work w
 
 ### Agent
 
-A saved, runnable AI workflow: a [graph](#graph) of [nodes](#node) plus its model and tool [bindings](#binding), published under an id. You build agents in the [editor](../building/editor.md) and run them from the Bench, from chat, or behind a [trigger](#trigger). See [Agents & graphs](../concepts/agents-and-graphs.md).
+A published, runnable AI workflow: a [graph](#graph) of [nodes](#node) plus its model and tool [bindings](#binding), published under an id. You build agents in the [editor](../building/editor.md) (where work-in-progress lives as a [draft](#draft)) and run them from the Bench, from chat, or behind a [trigger](#trigger). See [Agents & graphs](../concepts/agents-and-graphs.md).
 
 ### Artifact
 
@@ -41,6 +41,10 @@ The `sha256:` fingerprint that gives an agent version its identity, computed ove
 ### Control plane
 
 The hosted orchestration service (default `http://localhost:8080`) that owns agents, runs, sessions, triggers, connections, artifacts, and observability, backed by your Postgres. It reaches the [inference plane](#inference-plane) over HTTP only and never runs models itself. See [Architecture](../concepts/index.md).
+
+### Draft
+
+The editor's autosaved work-in-progress: a mutable snapshot of the graph you are building, saved server-side as you edit. A draft may be structurally invalid, has no [content hash](#content-hash), and can't be run by reference or pinned — publishing graduates its content into an immutable [version](#version) and removes the draft. Drafts live in the **Drafts** strip on the Agents page. See [Drafts & publishing](../building/saving-agents.md).
 
 ### Durable run
 
@@ -113,6 +117,10 @@ One of the three node [kinds](#kind): deterministic control flow — `router`, `
 ### Port
 
 A named connection point on a [node](#node), on the in or out side, carrying a [channel](#channel) (`data`, `control`, or `tool`). A required in-port must be fed by exactly one data edge for the graph to validate. See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
+
+### Publish
+
+The deliberate act that turns the graph on the canvas into an immutable, content-addressed [version](#version) in the registry — visible to everyone who can reach the control plane, runnable by reference, and pinnable by triggers and composing agents. Contrast with the automatic [draft](#draft) tier. See [Drafts & publishing](../building/saving-agents.md).
 
 ### RAG source
 

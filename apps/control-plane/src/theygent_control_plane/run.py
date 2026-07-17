@@ -38,6 +38,13 @@ def new_connection_id() -> str:
     return f"con_{ULID()}"
 
 
+def new_draft_id() -> str:
+    """A fresh draft id (``drf_<ulid>``). The ``drf_`` prefix makes the id recognizable in
+    URLs/logs, mirroring ``con_<ulid>`` — and keeps a draft id visibly distinct from the
+    agent id it may eventually publish as."""
+    return f"drf_{ULID()}"
+
+
 class Run(BaseModel):
     """A single request, from creation to a terminal status.
 
@@ -172,6 +179,26 @@ class StoredVersion(BaseModel):
     content_hash: str
     seq: int
     created_at: datetime
+    ir: dict[str, Any]
+    view: dict[str, Any] | None = None
+
+
+class AgentDraft(BaseModel):
+    """A mutable, autosaved, possibly-invalid agent graph — the editor's work-in-progress,
+    the deliberate opposite of ``StoredVersion`` (immutable, content-addressed, validated).
+    The ``ir`` is never validated or hashed; ``view`` is the layout, split off exactly like the
+    registry's ir/view. ``agent_id`` is the registry agent this draft edits (``None`` for a
+    never-published graph; a plain breadcrumb, never an enforced link). ``owner_id`` is the
+    deferred per-user scoping slot (``None`` until identity lands). ``name``/``node_count`` are
+    derived list-view labels, re-derived from the ir on every write."""
+
+    id: str = Field(default_factory=new_draft_id)
+    agent_id: str | None = None
+    owner_id: str | None = None
+    name: str
+    node_count: int = 0
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
     ir: dict[str, Any]
     view: dict[str, Any] | None = None
 

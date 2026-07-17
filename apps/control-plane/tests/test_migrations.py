@@ -56,7 +56,7 @@ async def _tables(url: str) -> set[str]:
     try:
         names = (
             "'chat_session', 'run', 'message', 'mcp_server', 'agent', 'agent_version', "
-            "'trigger', 'span', 'node_io', 'agent_io_policy', "
+            "'agent_draft', 'trigger', 'span', 'node_io', 'agent_io_policy', "
             "'bench_suite', 'bench_case', 'bench_run', 'bench_preset', "
             "'secret', 'connection', 'gate_counter'"
         )
@@ -83,6 +83,20 @@ async def _run_columns(url: str) -> set[str]:
         await conn.close()
 
 
+async def _draft_columns(url: str) -> set[str]:
+    """The columns on ``agent_draft`` — the draft columns asserted at the COLUMN level like the
+    ``run`` columns above (a table-set check alone can't see a missing/extra column)."""
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        rows = await conn.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'agent_draft'"
+        )
+        return {r["column_name"] for r in rows}
+    finally:
+        await conn.close()
+
+
 def test_migration_round_trip(pg_url: str) -> None:
     scratch = _scratch_url(pg_url)
     asyncio.run(_recreate_scratch(pg_url))
@@ -103,6 +117,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "mcp_server",
             "agent",
             "agent_version",
+            "agent_draft",
             "trigger",
             "span",
             "node_io",
@@ -123,6 +138,19 @@ def test_migration_round_trip(pg_url: str) -> None:
             _run_columns(scratch)
         )
         assert "thread_id" not in asyncio.run(_run_columns(scratch))
+        # Same column-level proof for the draft table (the exact set — an extra or missing
+        # column in the migration is caught here, not by the table-set check).
+        assert asyncio.run(_draft_columns(scratch)) == {
+            "id",
+            "agent_id",
+            "owner_id",
+            "name",
+            "node_count",
+            "ir",
+            "view",
+            "created_at",
+            "updated_at",
+        }
         command.downgrade(cfg, "base")
         assert asyncio.run(_tables(scratch)) == set()  # torn fully back down
         command.upgrade(cfg, "head")
@@ -133,6 +161,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "mcp_server",
             "agent",
             "agent_version",
+            "agent_draft",
             "trigger",
             "span",
             "node_io",

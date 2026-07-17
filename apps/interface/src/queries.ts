@@ -6,6 +6,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { api } from "./lib/api";
+import { notify } from "./lib/notify";
 
 // Page size for the scroll-paginated lists (runs/sessions/agents). The control-plane list endpoints are
 // keyset-paginated: pass the LAST row's `id` as `before` to get the strictly-older next page, and a
@@ -43,6 +44,10 @@ export const keys = {
   session: (id: string) => ["session", id] as const,
   agents: () => ["agents"] as const,
   agent: (id: string) => ["agent", id] as const,
+  // Drafts live under their OWN prefix (not ["agents"]) — a broad agents invalidation refetches
+  // registry shapes; drafts are a different resource with different mutation cadence (autosave).
+  drafts: () => ["drafts"] as const,
+  draft: (id: string) => ["drafts", "detail", id] as const,
   models: () => ["models"] as const,
 };
 
@@ -194,6 +199,39 @@ export function useEngines() {
     refetchInterval: 10000,
     retry: false,
   });
+}
+
+// The drafts list (all of them, or just those editing one agent), most recently edited first —
+// one server-capped window (200), no infinite scroll: a working set anywhere near that size is a
+// hygiene problem the strip itself makes visible, not a pagination problem. The editor's autosave
+// writes drafts directly through `api` (a debounced background write is not a user mutation) and
+// invalidates ["drafts"] when a draft is created or discarded, so this list stays fresh without
+// polling.
+export function useDrafts(agentId?: string) {
+  return useQuery({
+    queryKey: agentId ? [...keys.drafts(), { agent: agentId }] : keys.drafts(),
+    queryFn: () => api.listDrafts(agentId ? { agent_id: agentId, limit: 200 } : { limit: 200 }),
+  });
+}
+
+export function useDraftMutations() {
+  const qc = useQueryClient();
+  return {
+    remove: useMutation({
+      mutationFn: (id: string) => api.deleteDraft(id),
+      onSuccess: () => {
+        qc.invalidateQueries({ queryKey: keys.drafts() });
+      },
+      // Discard closes its confirm dialog optimistically — a silent failure would leave the
+      // draft standing with no explanation. One toast, stable id, replaces rather than stacks.
+      onError: (e) => {
+        notify.error(e instanceof Error ? `Discard failed: ${e.message}` : "Discard failed", {
+          id: "draft-discard-error",
+        });
+        qc.invalidateQueries({ queryKey: keys.drafts() });
+      },
+    }),
+  };
 }
 
 // "Save as agent": a new agent id → create; an existing id → add a version. Each invalidates

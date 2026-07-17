@@ -4,7 +4,7 @@
 // invented here — we reuse whatever the registry exposes.
 
 import { type IRDocument, NODE_TYPES } from "@theygent/ir-types";
-import type { StoredVersion } from "./api";
+import type { DraftRecord, StoredVersion } from "./api";
 
 export const SCHEMA_VERSION = "1.0";
 
@@ -70,4 +70,10 @@ export function fromStoredVersion(sv: StoredVersion): IRDocument {
  * `view`, canonicalizes, hashes, and persists — the frontend computes NO hash. */
 export function toSavePayload(ir: IRDocument): { ir: IRDocument } {
   return { ir };
+}
+
+/** Merge a loaded draft (view-stripped IR + separate `view`) into one IRDocument, exactly like
+ * `fromStoredVersion` — drafts store layout the same way versions do, they just stay mutable. */
+export function fromDraft(d: DraftRecord): IRDocument {
+  return { ...d.ir, view: (d.view ?? undefined) as IRDocument["view"] };
 }
