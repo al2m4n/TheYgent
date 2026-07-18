@@ -1,8 +1,11 @@
 # theygent dev Makefile — one-command bring-up / tear-down of the local processes.
 #
-#   make up       install deps, run migrations, then spin up inference-plane + control-plane + interface
-#   make restart  stop everything and start it again (use this to pick up backend code changes)
-#   make down     stop everything started by `make up`
+#   make up       install deps, start Postgres (docker), run migrations, then spin up
+#                 inference-plane + control-plane + interface
+#   make restart  stop the app services and start them again (picks up backend code changes;
+#                 Postgres keeps running — only `make down` stops it)
+#   make down     stop everything started by `make up`, including the Postgres container
+#   make otel-up  spin up the sample observability stack (OTel collector → Tempo → Grafana)
 #
 # Services are tracked by the PORT they listen on, not by a recorded pid: `start` records `$!` only
 # as a hint (it is the uv/pnpm WRAPPER, not the server child that binds the port), so `down`/`status`
@@ -47,15 +50,32 @@ INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
-.PHONY: help install engines migrate up start restart down status logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
+# The dev Postgres is a single docker container this Makefile owns end-to-end: `pg-up` adopts an
+# existing container by NAME (so a hand-made one keeps its data) or creates it from the pgvector
+# image (the same one the test suite uses — migration 0015 needs CREATE EXTENSION vector) with a
+# named volume. `make down` stops it; `make restart` deliberately does NOT (bouncing the DB on
+# every code-change restart would drop pools for no reason).
+PG_CONTAINER ?= theygent-pg
+PG_IMAGE ?= pgvector/pgvector:pg16
+PG_HOST_PORT ?= 5432
+PG_VOLUME ?= theygent-pgdata
+
+# The sample observability stack (deploy/otel): OTel collector (:4318) → Tempo → Grafana (:3000).
+OTEL_COMPOSE := deploy/otel/docker-compose.yml
+
+.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## uv sync (Python workspace) + pnpm install (TS workspace)
+# --all-extras: the OTLP export deps are an optional extra (theygent-control-plane[otlp]) so the
+# core keeps no hard OTel dependency — but a dev machine wants them installed, and a bare
+# `uv sync` would UNINSTALL them again (sync is exact). The only extras in the workspace are the
+# two otlp ones, so this stays cheap.
+install: ## uv sync incl. extras (Python workspace) + pnpm install (TS workspace)
 	@echo "==> uv sync"
-	uv sync
+	uv sync --all-extras
 	@echo "==> pnpm install"
 	pnpm install
 
@@ -109,15 +129,39 @@ migrate: ## Apply control-plane Alembic migrations (alembic upgrade head)
 	fi
 	cd apps/control-plane && uv run alembic upgrade head
 
-up: install migrate start ## Full bring-up: install, migrate, then start all services
+up: install pg-up migrate start ## Full bring-up: install, Postgres, migrate, then start all services
 
-restart: down start ## Stop everything, then start it again (picks up code changes)
+restart: down-apps start ## Stop the app services, then start them again (Postgres keeps running)
+
+pg-up: ## Start the dev Postgres container (adopts an existing one; creates it on first run)
+	@if [ -n "$$(docker ps -q -f name=^$(PG_CONTAINER)$$)" ]; then \
+		echo "==> postgres: already running ($(PG_CONTAINER))"; \
+	elif [ -n "$$(docker ps -aq -f name=^$(PG_CONTAINER)$$)" ]; then \
+		echo "==> postgres: starting existing container $(PG_CONTAINER)"; \
+		docker start $(PG_CONTAINER) >/dev/null; \
+	else \
+		echo "==> postgres: creating $(PG_CONTAINER) ($(PG_IMAGE), :$(PG_HOST_PORT), volume $(PG_VOLUME))"; \
+		docker run -d --name $(PG_CONTAINER) \
+			-e POSTGRES_USER=theygent -e POSTGRES_PASSWORD=theygent -e POSTGRES_DB=theygent \
+			-p $(PG_HOST_PORT):5432 -v $(PG_VOLUME):/var/lib/postgresql/data \
+			$(PG_IMAGE) >/dev/null; \
+	fi
+	@n=0; until docker exec $(PG_CONTAINER) pg_isready -U theygent -d theygent >/dev/null 2>&1; do \
+		n=$$((n+1)); if [ $$n -gt 60 ]; then echo "postgres did not become ready in 30s"; exit 1; fi; sleep 0.5; \
+	done; echo "==> postgres: ready on :$(PG_HOST_PORT)"
+
+pg-down: ## Stop the dev Postgres container (data survives in its volume)
+	@if [ -n "$$(docker ps -q -f name=^$(PG_CONTAINER)$$)" ]; then \
+		echo "==> stopping postgres ($(PG_CONTAINER))"; docker stop $(PG_CONTAINER) >/dev/null; \
+	else \
+		echo "==> postgres: not running"; \
+	fi
 
 # Each service launches only if its port is free, so a relaunch over a still-running instance is
 # skipped LOUDLY instead of silently failing to bind and leaving the OLD process serving (the trap
 # that hid stale code). $$! (the uv/pnpm wrapper pid) is recorded only as a hint; `down` resolves the
 # real server by port.
-start: ## Start inference-plane + control-plane + interface as background processes
+start: pg-up ## Start inference-plane + control-plane + interface as background processes
 	@mkdir -p $(RUN_DIR)
 	@if lsof -ti tcp:$(INFERENCE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> inference-plane already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
@@ -148,7 +192,9 @@ start: ## Start inference-plane + control-plane + interface as background proces
 # Docker's own process (com.docker.backend / docker-proxy) — killing it would take down the
 # whole Docker engine, not "the service". So both kill paths here skip Docker-owned pids and
 # point at `make docker-down` instead.
-down: ## Stop all bare-metal services (resolved by PORT; never touches the docker stack)
+down: down-apps pg-down ## Stop all bare-metal services AND the dev Postgres container
+
+down-apps: ## Stop the app services only (resolved by PORT; never touches docker stacks or Postgres)
 	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; pidfile=$(RUN_DIR)/$$name.pid; \
 		recorded=""; if [ -f "$$pidfile" ]; then recorded=$$(cat "$$pidfile" 2>/dev/null); fi; \
@@ -181,7 +227,12 @@ down: ## Stop all bare-metal services (resolved by PORT; never touches the docke
 		rm -f "$$pidfile"; \
 	done
 
-status: ## Show whether each service is running (resolved by PORT)
+status: ## Show whether each service (and the dev Postgres) is running
+	@if [ -n "$$(docker ps -q -f name=^$(PG_CONTAINER)$$ 2>/dev/null)" ]; then \
+		echo "  postgres: running (docker $(PG_CONTAINER), :$(PG_HOST_PORT))"; \
+	else \
+		echo "  postgres: stopped"; \
+	fi
 	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; \
 		pid=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null | head -1 || true); \
@@ -241,6 +292,25 @@ docker-down: ## Stop the containerized stack (data volumes survive; drop them wi
 
 docker-logs: ## Tail logs of the containerized stack
 	docker compose logs -f
+
+# ── Sample observability stack (deploy/otel) — the quickest way to SEE the OTLP export the
+# Settings → Telemetry page configures: an OTel collector receiving on :4318, forwarding to
+# Tempo (trace store), with Grafana on :3000 pre-provisioned (Tempo datasource + a traces
+# dashboard, anonymous login). Entirely separate from the app compose stack.
+
+otel-up: ## Start the sample OTel stack (collector :4318 → Tempo → Grafana :3000)
+	docker compose -f $(OTEL_COMPOSE) up -d
+	@echo ""
+	@echo "Collector ready. In Settings → Telemetry set the OTLP endpoint to:"
+	@echo "    http://127.0.0.1:4318/v1/traces"
+	@echo "enable export, hit 'Test connection', then run any agent."
+	@echo "Grafana: http://localhost:3000 (dashboard: TheYgent → Traces, no login needed)"
+
+otel-down: ## Stop the sample OTel stack (Tempo's trace volume survives)
+	docker compose -f $(OTEL_COMPOSE) down
+
+otel-logs: ## Tail the sample OTel stack (the collector's debug exporter prints every span)
+	docker compose -f $(OTEL_COMPOSE) logs -f otel-collector
 
 # ── Kubernetes (deploy/k8s) — dev flow against minikube. The images are built locally by
 # compose and side-loaded; imagePullPolicy stays IfNotPresent.

@@ -35,6 +35,10 @@ class CrawlConfig:
     root_url: str
     max_pages: int = DEFAULT_MAX_PAGES
     render_js: bool = False
+    # Polite by default (docs sites are someone else's server); tunable per deployment through
+    # the platform settings the ingest service reads at crawl start.
+    desired_concurrency: int = 2
+    max_concurrency: int = 4
 
 
 @dataclass(frozen=True)
@@ -147,9 +151,11 @@ async def crawl_site(
         "max_requests_per_crawl": config.max_pages,
         "respect_robots_txt_file": True,
         "storage_client": MemoryStorageClient(),  # per-crawl, in-memory, nothing on disk
-        # Polite by default (docs sites are someone else's server); both knobs set because the
-        # library's desired default exceeds a low max.
-        "concurrency_settings": ConcurrencySettings(desired_concurrency=2, max_concurrency=4),
+        # Both knobs set because the library's desired default exceeds a low max.
+        "concurrency_settings": ConcurrencySettings(
+            desired_concurrency=config.desired_concurrency,
+            max_concurrency=config.max_concurrency,
+        ),
         "configure_logging": False,  # never hijack the app's logging config
     }
 

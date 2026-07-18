@@ -13,6 +13,7 @@ migration and these models in lock-step by hand.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -664,3 +665,18 @@ class RagChunkRow(Base):
         Index("ix_rag_chunk_document", "document_id"),
         Index("ix_rag_chunk_tsv", "tsv", postgresql_using="gin"),
     )
+
+
+class PlatformSettingRow(Base):
+    """One STORED platform setting (migration ``0017_platform_setting``). The catalog of valid
+    keys/types/defaults/env-precedence lives in code (``settings.py``); this row exists only when
+    a user explicitly set the key, so "reset to default" is a row delete — never a sentinel. For a
+    sensitive key, ``value`` is the ``{"secret_ref", "names"}`` envelope pointing at an encrypted
+    ``secret`` row; plaintext never lands here. Keys no longer in the catalog are ignored at
+    resolution and surfaced as orphaned (deletable, never a boot failure)."""
+
+    __tablename__ = "platform_setting"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)  # dotted catalog key
+    value: Mapped[Any] = mapped_column(JSONB, nullable=False)  # any JSON value (never SQL NULL)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)

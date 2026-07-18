@@ -24,7 +24,8 @@ async def truncate(url: str) -> None:
             "span, node_io, agent_io_policy, "
             "bench_run, bench_case, bench_suite, bench_preset, "
             "connection, secret, gate_counter, "
-            "rag_chunk, rag_document, rag_source "
+            "rag_chunk, rag_document, rag_source, "
+            "platform_setting "
             "RESTART IDENTITY CASCADE"
         )
     finally:

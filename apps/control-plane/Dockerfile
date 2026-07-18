@@ -35,14 +35,14 @@ COPY apps/worker/pyproject.toml apps/worker/
 COPY packages/ir/pyproject.toml packages/ir/
 COPY packages/gateway-client/pyproject.toml packages/gateway-client/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-install-workspace --package theygent-control-plane
+    uv sync --locked --no-dev --no-install-workspace --package theygent-control-plane --extra otlp
 
 # Source layer: only the members this service actually imports.
 COPY packages/ir/src packages/ir/src
 COPY packages/gateway-client/src packages/gateway-client/src
 COPY apps/control-plane/src apps/control-plane/src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-editable --package theygent-control-plane
+    uv sync --locked --no-dev --no-editable --package theygent-control-plane --extra otlp
 
 # runtime-base-0: no launchers (WITH_MCP_LAUNCHERS=0).
 FROM ${PYTHON_BASE} AS runtime-base-0

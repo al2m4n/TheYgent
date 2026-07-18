@@ -21,7 +21,7 @@ import asyncio
 import contextlib
 import os
 import shutil
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -133,16 +133,46 @@ def _call_timeout_s() -> float:
         return 120.0
 
 
+#: Default ceiling for establishing one connection (spawn/handshake). Overridable per client
+#: via the ``connect_timeout`` source — the platform-settings accessor in the app wiring.
+_DEFAULT_CONNECT_TIMEOUT_S = 30.0
+
+#: A timeout knob: a fixed float, a zero-arg callable resolved at use time (the live-settings
+#: accessor), or ``None`` for the built-in default behavior.
+TimeoutSource = float | Callable[[], float] | None
+
+
+def _resolve_timeout(source: TimeoutSource, fallback: Callable[[], float]) -> float:
+    """Resolve a timeout source to seconds, degrading to ``fallback`` on any bad value — a
+    misconfigured knob must never turn into an unbounded (or crashed) connect/call."""
+    try:
+        value = float(source()) if callable(source) else float(source)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback()
+    return value if value > 0 else fallback()
+
+
 class _ActorMcpClient:
     """A persistent MCP connection owned by a single background task.
     Transport-agnostic: a subclass provides :meth:`_open_transport`; everything else (the queue /
-    serve / reconnect contract) is shared so stdio and http behave identically."""
+    serve / reconnect contract) is shared so stdio and http behave identically.
 
-    def __init__(self) -> None:
+    ``call_timeout``/``connect_timeout`` accept a float or a zero-arg callable (resolved at
+    serve/connect time, so live settings apply to the NEXT connection without rebuilding
+    factories); ``None`` keeps the built-in env-read/default behavior."""
+
+    def __init__(
+        self,
+        *,
+        call_timeout: TimeoutSource = None,
+        connect_timeout: TimeoutSource = None,
+    ) -> None:
         self._queue: asyncio.Queue[_Call | None] = asyncio.Queue()
         self._task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
         self._tools: list[McpToolDescriptor] = []
+        self._call_timeout = call_timeout
+        self._connect_timeout = connect_timeout
 
     async def _open_transport(self, stack: AsyncExitStack) -> tuple[Any, Any]:
         """Open the transport on the actor task and return its ``(read, write)`` streams. Stdio
@@ -151,17 +181,35 @@ class _ActorMcpClient:
         raise NotImplementedError
 
     async def connect(self) -> None:
-        """Open the transport and initialize the session on a dedicated task. Raises
-        :class:`McpConnectionError` if the transport won't open or the handshake fails."""
+        """Open the transport and initialize the session on a dedicated task, bounded by the
+        connect timeout. Raises :class:`McpConnectionError` if the transport won't open, the
+        handshake fails, or the connection isn't ready in time.
+
+        The timeout lives INSIDE connect, deliberately: an *external*
+        ``asyncio.wait_for(client.connect(), t)`` would cancel only the awaiting coroutine and
+        leak a zombie — the spawned stdio child and the orphaned actor task keep running,
+        because cancellation bypasses any ``except Exception`` cleanup. ``close()`` is the one
+        correct teardown path, so EVERY exit here (timeout, failure, cancellation) runs it on
+        the actor before re-raising."""
 
         loop = asyncio.get_running_loop()
         self._ready = loop.create_future()
         self._task = loop.create_task(self._run())
+        timeout = _resolve_timeout(self._connect_timeout, lambda: _DEFAULT_CONNECT_TIMEOUT_S)
         try:
-            await self._ready
-        except Exception as exc:
+            await asyncio.wait_for(asyncio.shield(self._ready), timeout)
+        except TimeoutError:
             await self.close()
-            raise McpConnectionError(str(exc)) from exc
+            raise McpConnectionError(
+                f"MCP connect timed out after {timeout:.0f}s (spawn/handshake never completed)"
+            ) from None
+        except BaseException as exc:
+            # Any failure OR cancellation: tear the actor down before propagating, so no
+            # transport context / subprocess outlives a failed connect.
+            await self.close()
+            if isinstance(exc, Exception):
+                raise McpConnectionError(str(exc)) from exc
+            raise  # cancellation propagates as itself, after cleanup
 
     async def _run(self) -> None:
         assert self._ready is not None
@@ -175,7 +223,8 @@ class _ActorMcpClient:
                     McpToolDescriptor(t.name, t.description, dict(t.inputSchema or {}))
                     for t in listed.tools
                 ]
-                self._ready.set_result(None)
+                if not self._ready.done():  # a timed-out connect may have abandoned the wait
+                    self._ready.set_result(None)
                 await self._serve(session)
         except Exception as exc:
             # A failure before ready surfaces to connect(); after ready, it ends the task and the
@@ -191,7 +240,9 @@ class _ActorMcpClient:
                     pending[2].set_exception(McpConnectionError("MCP connection closed"))
 
     async def _serve(self, session: ClientSession) -> None:
-        timeout = _call_timeout_s()
+        # Resolved once at serve start (the existing per-connection semantics): a changed live
+        # setting applies to the NEXT established/reconnected connection, not an open one.
+        timeout = _resolve_timeout(self._call_timeout, _call_timeout_s)
         while True:
             item = await self._queue.get()
             if item is None:  # close sentinel
@@ -246,14 +297,26 @@ class _ActorMcpClient:
     async def close(self) -> None:
         if self._task is None:
             return
-        if not self._task.done():
+        # The graceful path (close sentinel + bounded drain) only makes sense for a connection
+        # that actually became ready — its actor is in _serve and will honor the sentinel. A
+        # connection still mid-spawn/handshake (a failed or timed-out connect) never reads the
+        # queue, so waiting on it would just stall teardown; cancel it directly.
+        became_ready = (
+            self._ready is not None
+            and self._ready.done()
+            and not self._ready.cancelled()
+            and self._ready.exception() is None
+        )
+        if not self._task.done() and became_ready:
             with contextlib.suppress(Exception):
                 self._queue.put_nowait(None)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(self._task), timeout=5)
         if not self._task.done():
             self._task.cancel()
-            with contextlib.suppress(Exception):
+            # Awaiting a just-cancelled task raises CancelledError — expected teardown here,
+            # not a cancellation of close() itself, so it is absorbed explicitly.
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
         self._task = None
 
@@ -268,8 +331,10 @@ class StdioMcpClient(_ActorMcpClient):
         args: Sequence[str] = (),
         env: Mapping[str, str] | None = None,
         cwd: str | None = None,
+        call_timeout: TimeoutSource = None,
+        connect_timeout: TimeoutSource = None,
     ) -> None:
-        super().__init__()
+        super().__init__(call_timeout=call_timeout, connect_timeout=connect_timeout)
         self._params = StdioServerParameters(
             command=command, args=list(args), env=dict(env) if env else None, cwd=cwd
         )
@@ -302,8 +367,10 @@ class HttpMcpClient(_ActorMcpClient):
         url: str,
         headers: Mapping[str, str] | None = None,
         auth: httpx.Auth | None = None,
+        call_timeout: TimeoutSource = None,
+        connect_timeout: TimeoutSource = None,
     ) -> None:
-        super().__init__()
+        super().__init__(call_timeout=call_timeout, connect_timeout=connect_timeout)
         self._url = url
         self._headers = dict(headers) if headers else None
         self._auth = auth
@@ -327,8 +394,10 @@ class SseMcpClient(_ActorMcpClient):
         url: str,
         headers: Mapping[str, str] | None = None,
         auth: httpx.Auth | None = None,
+        call_timeout: TimeoutSource = None,
+        connect_timeout: TimeoutSource = None,
     ) -> None:
-        super().__init__()
+        super().__init__(call_timeout=call_timeout, connect_timeout=connect_timeout)
         self._url = url
         self._headers = dict(headers) if headers else None
         self._auth = auth

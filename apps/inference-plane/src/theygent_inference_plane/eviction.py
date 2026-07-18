@@ -42,6 +42,11 @@ class ResourceBudget:
     #: wedge the whole plane (an idle evictable engine never gets freed). Defaults to 0 → the policy
     #: falls back to ``len(resident)`` (the pre-fix behavior) when a caller does not supply it.
     resident_total: int = 0
+    #: how many pending loads this budget must make room for. Admission passes the default (1):
+    #: the classic "free a slot for the incoming engine". Ceiling *enforcement* (a ceiling lowered
+    #: at runtime, with nothing being admitted) passes 0 so the policy frees exactly the excess
+    #: over the ceiling — with the admission-shaped +1 it would evict one engine too many.
+    incoming_count: int = 1
 
 
 class ResourceProbe(Protocol):
@@ -91,13 +96,14 @@ class CountAndPriorityPolicy:
         budget: ResourceBudget,
     ) -> list[str]:
         need = 0
-        # The incoming load takes one slot: free enough to stay within the ceiling. Count ALL
-        # resident engines (including non-evictable in-flight/draining ones), not just the evictable
-        # subset handed to us — otherwise a stuck draining engine's slot is invisible and we
-        # under-evict, wedging the plane while an idle engine sits evictable. ``resident_total``
-        # defaults to 0 → fall back to ``len(resident)`` for callers that don't supply it.
+        # Each pending load takes a slot (admission: 1; ceiling enforcement: 0): free enough to
+        # stay within the ceiling. Count ALL resident engines (including non-evictable
+        # in-flight/draining ones), not just the evictable subset handed to us — otherwise a stuck
+        # draining engine's slot is invisible and we under-evict, wedging the plane while an idle
+        # engine sits evictable. ``resident_total`` defaults to 0 → fall back to ``len(resident)``
+        # for callers that don't supply it.
         total_resident = max(budget.resident_total, len(resident))
-        over_count = (total_resident + 1) - budget.max_resident
+        over_count = (total_resident + budget.incoming_count) - budget.max_resident
         if over_count > 0:
             need = over_count
         if budget.over_watermark:

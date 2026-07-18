@@ -62,7 +62,9 @@ services:
     restart: unless-stopped
     environment:
       THEYGENT_CORS_ORIGINS: http://localhost:5174
-      THEYGENT_MAX_RESIDENT: ${THEYGENT_MAX_RESIDENT:-2}
+      # Pass-through-empty: empty == unset, so the resident-engine ceiling stays a live
+      # UI knob by default; an operator exporting a value pins it (locked in the UI).
+      THEYGENT_MAX_RESIDENT: ${THEYGENT_MAX_RESIDENT:-}
     ports:
       - "8081:8081"
     volumes:

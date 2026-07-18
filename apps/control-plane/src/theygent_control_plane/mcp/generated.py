@@ -51,8 +51,10 @@ from theygent_control_plane.mcp.client import (
     McpConnectionError,
     McpServerConfig,
     McpToolDescriptor,
+    TimeoutSource,
     _ActorMcpClient,
     _call_timeout_s,
+    _resolve_timeout,
 )
 
 
@@ -63,12 +65,16 @@ class GeneratedServerError(RuntimeError):
     failure (:class:`McpConnectionError`) on a server that built fine."""
 
 
-def _upstream_timeout(options: dict[str, Any]) -> float:
-    """The upstream httpx timeout: ``options.timeoutSeconds``, defaulting to the shared MCP
-    per-call ceiling so a slow upstream fails inside the actor's own timeout, not after it."""
+def _upstream_timeout(options: dict[str, Any], call_timeout: TimeoutSource = None) -> float:
+    """The upstream httpx timeout: ``options.timeoutSeconds``, defaulting to the SAME resolved
+    per-call ceiling the actor enforces (``call_timeout`` — the live-settings accessor when one
+    is threaded in, else the env/default read). Resolving both from one source keeps the
+    ordering options > setting > env/default in one place: a raised call-timeout setting must
+    reach the upstream client too, or the actor would wait on an httpx client that already
+    cancelled at the old ceiling."""
     raw = options.get("timeoutSeconds")
     if raw is None:
-        return _call_timeout_s()
+        return _resolve_timeout(call_timeout, _call_timeout_s)
     try:
         return float(raw)
     except (TypeError, ValueError) as exc:
@@ -104,7 +110,10 @@ def _route_maps(options: dict[str, Any]) -> list[RouteMap] | None:
 
 
 def build_openapi_server(
-    config: McpServerConfig, *, transport: httpx.AsyncBaseTransport | None = None
+    config: McpServerConfig,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    call_timeout: TimeoutSource = None,
 ) -> tuple[FastMCP, httpx.AsyncClient]:
     """Build an MCP server from ``config.spec`` (a parsed OpenAPI 3.0/3.1 document): one tool
     per operation, calls forwarded to ``config.url`` with ``config.headers`` (the upstream auth,
@@ -113,13 +122,14 @@ def build_openapi_server(
 
     ``transport`` is a TEST-ONLY seam: it substitutes the upstream httpx transport (e.g. a
     ``MockTransport``) so the suite exercises real request/response flow without a socket.
-    Production callers never pass it."""
+    Production callers never pass it. ``call_timeout`` is the per-call ceiling source the
+    upstream timeout falls back to when the config sets no ``timeoutSeconds``."""
     if not isinstance(config.spec, dict) or not config.spec:
         raise GeneratedServerError("openapi config has no parsed spec document")
     client = httpx.AsyncClient(
         base_url=config.url or "",
         headers=config.headers,
-        timeout=_upstream_timeout(config.options),
+        timeout=_upstream_timeout(config.options, call_timeout),
         transport=transport,
     )
     try:
@@ -135,21 +145,25 @@ def build_openapi_server(
 
 
 def build_graphql_server(
-    config: McpServerConfig, *, transport: httpx.AsyncBaseTransport | None = None
+    config: McpServerConfig,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    call_timeout: TimeoutSource = None,
 ) -> tuple[FastMCP, httpx.AsyncClient]:
     """Build the two-generic-tool MCP server over the GraphQL endpoint at ``config.url``
     (``config.headers`` = upstream auth). The schema is introspected through the authed client
     on first use and cached for the server instance's lifetime. Returns the server AND the
     upstream httpx client; the CALLER owns closing the client.
 
-    ``transport`` is the same TEST-ONLY upstream-transport seam as
-    :func:`build_openapi_server`."""
+    ``transport`` and ``call_timeout`` are the same seams as :func:`build_openapi_server`."""
     if not config.url:
         raise GeneratedServerError("graphql config has no endpoint url")
     endpoint = config.url
     allow_mutations = bool(config.options.get("allowMutations", False))
     client = httpx.AsyncClient(
-        headers=config.headers, timeout=_upstream_timeout(config.options), transport=transport
+        headers=config.headers,
+        timeout=_upstream_timeout(config.options, call_timeout),
+        transport=transport,
     )
     server = FastMCP("generated-graphql")
     schema_cache: list[GraphQLSchema] = []
@@ -227,17 +241,28 @@ class GeneratedMcpClient(_ActorMcpClient):
     ``transport`` is the builders' TEST-ONLY upstream-transport seam, forwarded verbatim."""
 
     def __init__(
-        self, config: McpServerConfig, *, transport: httpx.AsyncBaseTransport | None = None
+        self,
+        config: McpServerConfig,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        call_timeout: TimeoutSource = None,
+        connect_timeout: TimeoutSource = None,
     ) -> None:
-        super().__init__()
+        super().__init__(call_timeout=call_timeout, connect_timeout=connect_timeout)
         self._config = config
         self._transport = transport
 
     def _build(self) -> tuple[FastMCP, httpx.AsyncClient]:
+        # The client's own call-timeout source doubles as the upstream fallback, so the actor
+        # ceiling and the upstream httpx timeout resolve from the same knob.
         if self._config.transport == "openapi":
-            return build_openapi_server(self._config, transport=self._transport)
+            return build_openapi_server(
+                self._config, transport=self._transport, call_timeout=self._call_timeout
+            )
         if self._config.transport == "graphql":
-            return build_graphql_server(self._config, transport=self._transport)
+            return build_graphql_server(
+                self._config, transport=self._transport, call_timeout=self._call_timeout
+            )
         raise GeneratedServerError(
             f"transport {self._config.transport!r} is not a generated-server transport"
         )
@@ -259,7 +284,8 @@ class GeneratedMcpClient(_ActorMcpClient):
                     McpToolDescriptor(t.name, t.description, dict(t.inputSchema or {}))
                     for t in listed.tools
                 ]
-                self._ready.set_result(None)
+                if not self._ready.done():  # a timed-out connect may have abandoned the wait
+                    self._ready.set_result(None)
                 await self._serve(session)
         except Exception as exc:
             # Mirrors the base task's contract: before ready the failure surfaces to connect()

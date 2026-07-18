@@ -22,6 +22,7 @@ from theygent_control_plane.mcp.client import (
     McpServerConfig,
     SseMcpClient,
     StdioMcpClient,
+    TimeoutSource,
 )
 from theygent_control_plane.mcp.generated import GeneratedMcpClient
 from theygent_control_plane.mcp.manager import ClientFactory
@@ -33,17 +34,29 @@ from theygent_control_plane.mcp.manager import ClientFactory
 OAuthBuilder = Callable[[str, str], httpx.Auth]
 
 
-def build_client_factory(*, oauth: OAuthBuilder | None = None) -> ClientFactory:
+def build_client_factory(
+    *,
+    oauth: OAuthBuilder | None = None,
+    call_timeout: TimeoutSource = None,
+    connect_timeout: TimeoutSource = None,
+) -> ClientFactory:
     """Build the full transport-dispatching factory for ``McpManager(client_factory=...)``.
 
     A closure over the collaborators rather than a class: the factory's only job is dispatch,
-    and the collaborators are fixed for the process lifetime."""
+    and the collaborators are fixed for the process lifetime. ``call_timeout``/
+    ``connect_timeout`` (a float or a live-settings accessor) reach EVERY client built here —
+    resolved at connect/serve time, so a changed setting applies to the next connection without
+    rebuilding this factory."""
 
     def factory(config: McpServerConfig) -> McpClient:
+        timeouts: dict[str, TimeoutSource] = {
+            "call_timeout": call_timeout,
+            "connect_timeout": connect_timeout,
+        }
         if config.transport in ("openapi", "graphql"):
             # Upstream auth is already resolved into ``headers`` server-side; the generated
             # server needs no token hook of its own.
-            return GeneratedMcpClient(config)
+            return GeneratedMcpClient(config, **timeouts)
         auth: httpx.Auth | None = None
         if config.oauth_connection is not None:
             if oauth is None:
@@ -54,11 +67,17 @@ def build_client_factory(*, oauth: OAuthBuilder | None = None) -> ClientFactory:
                 )
             auth = oauth(config.oauth_connection, config.url or "")
         if config.transport == "http":
-            return HttpMcpClient(url=config.url or "", headers=config.headers, auth=auth)
+            return HttpMcpClient(
+                url=config.url or "", headers=config.headers, auth=auth, **timeouts
+            )
         if config.transport == "sse":
-            return SseMcpClient(url=config.url or "", headers=config.headers, auth=auth)
+            return SseMcpClient(url=config.url or "", headers=config.headers, auth=auth, **timeouts)
         return StdioMcpClient(
-            command=config.command or "", args=config.args, env=config.env, cwd=config.cwd
+            command=config.command or "",
+            args=config.args,
+            env=config.env,
+            cwd=config.cwd,
+            **timeouts,
         )
 
     return factory

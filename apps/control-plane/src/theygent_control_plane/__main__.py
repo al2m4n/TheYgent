@@ -33,17 +33,25 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int) -> int:
+    """An int env var where EMPTY equals UNSET (the deployment-manifest convention:
+    ``VAR: ${VAR:-}`` passes an empty string through, and ``int("")`` would crash-loop the
+    container)."""
+    raw = (os.environ.get(name) or "").strip()
+    return int(raw) if raw else default
+
+
 def main() -> None:
     app = create_app(
-        inference_base_url=os.environ.get(
-            "THEYGENT_INFERENCE_PLANE_URL", "http://127.0.0.1:8081/v1"
-        ),
+        # `or` (not a get() default) so an EMPTY env var also falls back — empty == unset.
+        inference_base_url=os.environ.get("THEYGENT_INFERENCE_PLANE_URL")
+        or "http://127.0.0.1:8081/v1",
         durable=_env_flag("THEYGENT_DURABLE"),
     )
     uvicorn.run(
         app,
-        host=os.environ.get("THEYGENT_CONTROL_PLANE_HOST", "127.0.0.1"),
-        port=int(os.environ.get("THEYGENT_CONTROL_PLANE_PORT", "8080")),
+        host=os.environ.get("THEYGENT_CONTROL_PLANE_HOST") or "127.0.0.1",
+        port=_env_int("THEYGENT_CONTROL_PLANE_PORT", 8080),
     )
 
 

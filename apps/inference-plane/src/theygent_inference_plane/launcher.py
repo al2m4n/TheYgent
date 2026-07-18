@@ -263,6 +263,11 @@ class LlamaCppLauncher:
     def not_ready_reason(self) -> str | None:
         return self._reason
 
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server binary (diagnostics; nothing spawned)."""
+        return self._binary
+
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._binary is not None
         cmd = [self._binary, "--host", "127.0.0.1", "--port", str(port)]
@@ -380,6 +385,12 @@ class WhisperCppLauncher:
     def not_ready_reason(self) -> str | None:
         return self._reason
 
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server command (diagnostics; nothing spawned).
+        Module-style servers render as their full command (``…/python -m x.server``)."""
+        return " ".join(self._command) if self._command else None
+
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._command is not None
         cmd = [
@@ -462,6 +473,12 @@ class MlxAudioLauncher:
     @property
     def not_ready_reason(self) -> str | None:
         return self._reason
+
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server command (diagnostics; nothing spawned).
+        Module-style servers render as their full command (``…/python -m x.server``)."""
+        return " ".join(self._command) if self._command else None
 
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._command is not None
@@ -636,6 +653,12 @@ class MlxLauncher:
     def not_ready_reason(self) -> str | None:
         return self._reason
 
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server command (diagnostics; nothing spawned).
+        Module-style servers render as their full command (``…/python -m x.server``)."""
+        return " ".join(self._command) if self._command else None
+
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._command is not None
         # mlx_lm.server takes the model id/path directly; for local-path it is the
@@ -724,6 +747,12 @@ class MlxVlmLauncher:
     @property
     def not_ready_reason(self) -> str | None:
         return self._reason
+
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server command (diagnostics; nothing spawned).
+        Module-style servers render as their full command (``…/python -m x.server``)."""
+        return " ".join(self._command) if self._command else None
 
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._command is not None
@@ -838,6 +867,12 @@ class ImageServerLauncher:
     def not_ready_reason(self) -> str | None:
         return self._reason
 
+    @property
+    def resolved_path(self) -> str | None:
+        """The resolved generator CLI (diagnostics; nothing spawned). The wrapper server
+        is this package's own module — the CLI is the piece that can be missing."""
+        return self._binary
+
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._binary is not None
         return [
@@ -878,6 +913,16 @@ class EngineUnavailableError(RuntimeError):
 class EngineReadiness:
     ready: bool
     reason: str | None
+
+
+@dataclass(frozen=True)
+class BinaryStatus:
+    """One (engine, modality) key's resolved server binary — the diagnostics view."""
+
+    engine: str
+    modality: str
+    path: str | None
+    resolved: bool
 
 
 class ManagedLauncherSet:
@@ -953,3 +998,19 @@ class ManagedLauncherSet:
             self._display(key): EngineReadiness(launcher.ready, launcher.not_ready_reason)
             for key, launcher in self._by_key.items()
         }
+
+    def binaries(self) -> list[BinaryStatus]:
+        """Resolved server binaries per registered (engine, modality) key — pure
+        introspection for diagnostics. Reuses each launcher's construction-time
+        resolution: nothing is spawned, nothing raises; a missing binary reports
+        ``path=None`` / ``resolved=False`` (the same fact ``/readyz`` surfaces as
+        not-ready, here with the resolved path when there is one)."""
+        return [
+            BinaryStatus(
+                engine=engine,
+                modality=modality,
+                path=getattr(launcher, "resolved_path", None),
+                resolved=launcher.ready,
+            )
+            for (engine, modality), launcher in self._by_key.items()
+        ]

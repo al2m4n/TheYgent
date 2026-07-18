@@ -170,11 +170,18 @@ class OAuthBroker:
     """Pending interactive flows, keyed by connection id (one active per connection) and by the
     OAuth ``state`` parameter (how the browser callback finds its flow)."""
 
-    def __init__(self, redirect_url: str) -> None:
-        self.redirect_url = redirect_url
+    def __init__(self, redirect_url: str | Callable[[], str]) -> None:
+        # A plain string OR a zero-arg accessor (the live-settings seam): the redirect URL is
+        # read per authorize flow — at ``:start`` time, when the provider is built — so a
+        # changed deployment URL applies to the next flow without a restart.
+        self._redirect_url = redirect_url
         self._active: dict[str, _AuthorizeSession] = {}
         self._by_state: dict[str, _AuthorizeSession] = {}
         self._last_error: dict[str, str] = {}
+
+    @property
+    def redirect_url(self) -> str:
+        return self._redirect_url() if callable(self._redirect_url) else self._redirect_url
 
     # ── the two SDK handlers, scoped to a connection ──────────────────────────
 

@@ -72,6 +72,11 @@ class VllmLauncher:
     def not_ready_reason(self) -> str | None:
         return self._reason
 
+    @property
+    def resolved_path(self) -> str | None:
+        """The construction-time resolved server command (diagnostics; nothing spawned)."""
+        return " ".join(self._command) if self._command else None
+
     def _build_command(self, binding: ManagedBinding, port: int) -> list[str]:
         assert self._command is not None
         # `vllm serve <model>` exposes an OpenAI-compatible surface on a CUDA device.

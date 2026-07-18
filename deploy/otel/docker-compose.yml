@@ -1,0 +1,48 @@
+# Sample observability stack — the quickest way to SEE the span export the Settings →
+# Telemetry page configures. Three containers, entirely separate from the app compose stack:
+#
+#   otel-collector  receives OTLP (:4318 http / :4317 grpc on the host) and forwards to Tempo;
+#                   its debug exporter also prints every span (see `make otel-logs`)
+#   tempo           stores the traces (single-binary, local storage in a named volume)
+#   grafana         pre-provisioned Tempo datasource + a traces dashboard; anonymous login
+#
+# Bring up with `make otel-up`, point the control plane at http://127.0.0.1:4318/v1/traces
+# (Settings → Telemetry → OTLP export), then open http://localhost:3000.
+name: theygent-otel
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4318:4318" # OTLP/HTTP — what theygent's exporter speaks
+      - "4317:4317" # OTLP/gRPC — for anything else on this machine
+    depends_on:
+      - tempo
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    # No host ports: only the collector (ingest) and Grafana (query) talk to it, in-network.
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      # A local sample stack: skip the login ceremony entirely.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
+
+volumes:
+  tempo-data:

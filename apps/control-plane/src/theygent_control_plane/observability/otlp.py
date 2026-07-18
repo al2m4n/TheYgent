@@ -75,21 +75,29 @@ class OtlpSpanSink:
 
 
 def build_otlp_sink(
-    *, endpoint: str | None = None, send: SendFn | None = None
+    *,
+    endpoint: str | None = None,
+    send: SendFn | None = None,
+    headers: dict[str, str] | None = None,
+    redact_attrs: frozenset[str] | None = None,
 ) -> OtlpSpanSink | None:
     """Construct the OTLP sink **iff** an endpoint is configured (env set → on, unset → off).
     ``send`` is injectable for tests; otherwise the real OpenTelemetry OTLP/HTTP exporter is built
     **lazily** — if the SDK isn't installed the request degrades to off with a warning (the core has
     no hard OTel dep). Returns ``None`` when export is off, so the caller can assert which
     sinks
-    exist (the ``test_two_sink_wiring`` claim)."""
+    exist (the ``test_two_sink_wiring`` claim).
+
+    ``headers`` ride on every export request (collector auth) and reach the exporter verbatim;
+    ``redact_attrs`` overrides the env-derived redaction set when given (``None`` keeps the
+    env-derived behavior, so existing callers are untouched)."""
     resolved = endpoint if endpoint is not None else os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
     if not resolved and send is None:
         return None  # the always-local default: only the Postgres sink exists
-    redact = _redact_attrs_from_env()
+    redact = redact_attrs if redact_attrs is not None else _redact_attrs_from_env()
     if send is not None:
         return OtlpSpanSink(send=send, redact_attrs=redact)
-    real = _build_real_send(resolved)
+    real = _build_real_send(resolved, headers=headers)
     if real is None:
         return None
     real_send, real_shutdown = real
@@ -98,6 +106,8 @@ def build_otlp_sink(
 
 def _build_real_send(
     endpoint: str | None,
+    *,
+    headers: dict[str, str] | None = None,
 ) -> tuple[SendFn, Callable[[], None]] | None:
     """Lazily build a real OTLP/HTTP exporter-backed ``(send, shutdown)`` pair. Returns ``None``
     (with a warning) if the OpenTelemetry SDK isn't installed — so requesting export without the
@@ -127,7 +137,7 @@ def _build_real_send(
     # trace. Spans are instead reconstructed as ReadableSpans carrying the SAME deterministic
     # trace/span/parent ids the local store keeps — the exported trace nests exactly like the
     # in-UI waterfall, stable across a crash-resumed run's worker hops.
-    processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
+    processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
     resource = Resource.create({"service.name": "theygent-control-plane"})
     sampled = TraceFlags(TraceFlags.SAMPLED)
 
@@ -184,3 +194,75 @@ def _build_real_send(
         )
 
     return send, processor.shutdown
+
+
+def probe_otlp_endpoint(
+    *,
+    endpoint: str,
+    headers: dict[str, str] | None = None,
+    redact_attrs: frozenset[str] = frozenset(),
+    timeout_s: float = 10.0,
+) -> tuple[bool, str | None]:
+    """One-shot collector reachability probe — returns ``(ok, error)``. Blocking; run off the
+    loop via ``asyncio.to_thread``.
+
+    The batch pipeline cannot answer "can this collector be reached?": ``BatchSpanProcessor``
+    only enqueues on ``on_end`` and the batched ``export()`` swallows failures by design. So the
+    probe builds a FRESH ``OTLPSpanExporter`` exactly the way :func:`_build_real_send` builds the
+    real one (same endpoint string semantics, same ``headers``), exports one synthetic span
+    synchronously, and maps the result. ``timeout_s`` is passed to the exporter so its internal
+    retry/backoff cannot run long. The span is payload-free, passes through the same redact-attrs
+    filter as real exports, and never touches the local span table. SDK missing → an honest
+    ``(False, "…not installed…")``, mirroring ``_build_real_send``'s degrade-to-off."""
+    try:  # the same lazy, OPTIONAL import discipline as _build_real_send
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import ReadableSpan
+        from opentelemetry.sdk.trace.export import SpanExportResult
+        from opentelemetry.trace import SpanContext, SpanKind, TraceFlags
+        from opentelemetry.trace.status import Status, StatusCode
+    except ImportError:
+        return False, (
+            "opentelemetry SDK not installed — install the OTLP optional dependency to "
+            "export spans (the in-UI waterfall is unaffected)"
+        )
+
+    import hashlib
+    import time
+
+    attributes = {"theygent.probe": True}
+    redacted = {k: ("[redacted]" if k in redact_attrs else v) for k, v in attributes.items()}
+    digest = hashlib.sha256(b"theygent:otlp-test").hexdigest()
+    context = SpanContext(
+        trace_id=int(digest[:32], 16),
+        span_id=int(digest[32:48], 16),
+        is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    )
+    start = time.time_ns()
+    span = ReadableSpan(
+        name="otlp.test",
+        context=context,
+        parent=None,
+        resource=Resource.create({"service.name": "theygent-control-plane"}),
+        attributes=redacted,
+        events=[],
+        links=[],
+        kind=SpanKind.INTERNAL,
+        status=Status(StatusCode.OK),
+        start_time=start,
+        end_time=start,
+    )
+    exporter = OTLPSpanExporter(endpoint=endpoint, headers=headers, timeout=timeout_s)
+    try:
+        result = exporter.export([span])
+    except Exception as exc:  # transport/auth failures come back as the honest error string
+        return False, str(exc)
+    finally:
+        try:
+            exporter.shutdown()
+        except Exception:  # pragma: no cover - best-effort teardown of a one-shot exporter
+            pass
+    if result == SpanExportResult.SUCCESS:
+        return True, None
+    return False, f"collector at {endpoint!r} rejected the export ({result.name})"

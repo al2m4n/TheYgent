@@ -69,6 +69,11 @@ class LocalArtifactStore:
         self._dir = base_dir or default_artifact_dir()
         os.makedirs(self._dir, exist_ok=True)
 
+    @property
+    def base_dir(self) -> str:
+        """Where artifacts land — read-only diagnostics (the settings boot block)."""
+        return self._dir
+
     async def put(self, data: bytes, content_type: str) -> dict[str, object]:
         """Store ``data``, return its reference (``{ref, contentType, bytes}``). The bytes live on
         disk (an artifact); only the reference is journaled/returned."""

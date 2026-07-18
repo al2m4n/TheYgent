@@ -153,6 +153,78 @@ class EngineManager:
             for lid in list(self._resident):
                 await self._terminate_locked(lid)
 
+    def set_max_resident(self, value: int) -> None:
+        """Update the resident ceiling. A *raised* ceiling simply admits more engines; a
+        *lowered* one only bites on the next admission — call :meth:`enforce_ceiling` to
+        apply it to already-resident engines now."""
+        self._max_resident = value
+
+    async def enforce_ceiling(self) -> None:
+        """Bring the resident count back under the ceiling NOW.
+
+        Eviction otherwise runs only at admission time (``_make_room_locked``), so a
+        ceiling lowered at runtime would not free anything until the next model load.
+        Under the manager lock: offer the evictable engines (``inflight == 0``, not
+        draining) to the eviction policy with a **no-incoming** budget (nothing is being
+        admitted — the policy's admission math reserves a +1 slot that must not apply
+        here) and evict the selected excess immediately. If the count is still over
+        because the remaining engines are busy, mark the excess draining — lowest
+        priority first, then least-recently-used, mirroring the policy's victim order —
+        so each tears down when its in-flight work completes (the same drain-on-idle
+        semantics as ``:evict`` on a busy engine). An in-flight request is never killed.
+
+        The same sweep re-runs from the release path whenever an engine's last in-flight
+        request completes: a lease taken during the drain window cancels that engine's
+        pending drain ("wanted again"), so without idle-time re-assertion a single
+        well-timed request would leave the plane above a lowered ceiling forever under
+        steady reuse.
+        """
+        async with self._lock:
+            await self._enforce_ceiling_locked()
+
+    async def _enforce_ceiling_locked(self) -> None:
+        live = [e for e in self._resident.values() if not e.terminated]
+        if len(live) <= self._max_resident:
+            return
+        evictable = [
+            ResidentView(e.logical_id, e.priority, e.last_used)
+            for e in live
+            if e.inflight == 0 and not e.draining
+        ]
+        budget = ResourceBudget(
+            self._max_resident,
+            self._probe.over_watermark(),
+            # Draining engines free their slots on release — credit them here so the
+            # policy frees only the uncovered excess (evicting an idle engine to cover a
+            # slot a drain is already about to free would overshoot below the ceiling).
+            resident_total=len(live) - sum(1 for e in live if e.draining),
+            incoming_count=0,
+        )
+        # No pending load exists; the placeholder pairs with incoming_count=0 above so
+        # the policy frees exactly the excess (select_victims keeps its one signature).
+        victims = self._policy.select_victims(evictable, PendingLoad("", 0), budget)
+        for vid in victims:
+            await self._terminate_locked(vid)
+        remaining = [e for e in self._resident.values() if not e.terminated]
+        # Already-draining engines free their slots on release; only the shortfall
+        # beyond those needs marking.
+        excess = len(remaining) - self._max_resident
+        to_drain = excess - sum(1 for e in remaining if e.draining)
+        if to_drain <= 0:
+            return
+        candidates = sorted(
+            (e for e in remaining if not e.draining),
+            key=lambda e: (e.priority, e.last_used),
+        )
+        for eng in candidates[:to_drain]:
+            if eng.inflight > 0:
+                eng.draining = True
+            else:
+                # Belt-and-suspenders: a policy that under-selected leaves an idle
+                # engine here — free it now rather than parking it in a draining
+                # state nothing would ever release.
+                await self._terminate_locked(eng.logical_id)
+
     # ── introspection (management plane) ────────────────────────────────
 
     def state(self, logical_id: str) -> dict[str, Any]:
@@ -207,6 +279,13 @@ class EngineManager:
             eng.last_used = self._clock.now()
             if eng.draining and eng.inflight == 0 and not eng.terminated:
                 await self._terminate_locked(eng.logical_id)
+            if eng.inflight == 0:
+                # Re-assert the ceiling when an engine goes idle (a no-op at or under it).
+                # A lease during the drain window cleared the engine's pending drain
+                # ("wanted again"), and admission-time eviction only fires for
+                # non-resident loads — without this sweep, a lowered ceiling would stay
+                # un-enforced forever while the same engines are steadily reused.
+                await self._enforce_ceiling_locked()
 
     async def _ensure_up_locked(self, logical_id: str) -> _Resident:
         binding = self._registry.require(logical_id)

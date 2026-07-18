@@ -22,7 +22,13 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from theygent_control_plane.rag.chunking import Chunk, chunk_markdown, embedding_text
+from theygent_control_plane.rag.chunking import (
+    DEFAULT_MAX_TOKENS,
+    DEFAULT_OVERLAP_TOKENS,
+    Chunk,
+    chunk_markdown,
+    embedding_text,
+)
 from theygent_control_plane.rag.crawl import CrawlConfig, CrawledPage, crawl_site
 from theygent_control_plane.rag.parse import parse_document
 from theygent_control_plane.rag.store import RagSource, RagStore
@@ -66,11 +72,16 @@ class IngestService:
         *,
         store: RagStore | None = None,
         embed_batch: int = _EMBED_BATCH,
+        settings: Any | None = None,
     ) -> None:
+        # ``settings`` is the platform-settings service (an object with ``async get(key)``) the
+        # ingest knobs — chunking budget/overlap, crawl concurrency — are read from at the start
+        # of each ingest run. Optional so tests and minimal wirings keep the compiled defaults.
         self._sessionmaker = sessionmaker
         self._gateway = gateway
         self._store = store or RagStore()
         self._embed_batch = embed_batch
+        self._settings = settings
         self._jobs: dict[str, _SourceJob] = {}
 
     # ── public surface (the endpoints call these) ────────────────────────
@@ -201,6 +212,19 @@ class IngestService:
 
     # ── the two ingest shapes ────────────────────────────────────────────
 
+    async def _setting(self, key: str, fallback: Any) -> Any:
+        """One platform setting, read at ingest-run start ("live at next ingest/crawl"); the
+        compiled default when no settings service is wired."""
+        if self._settings is None:
+            return fallback
+        return await self._settings.get(key)
+
+    async def _chunk_params(self) -> tuple[int, int]:
+        return (
+            int(await self._setting("rag.chunk_max_tokens", DEFAULT_MAX_TOKENS)),
+            int(await self._setting("rag.chunk_overlap_tokens", DEFAULT_OVERLAP_TOKENS)),
+        )
+
     async def _run_crawl(self, job: _SourceJob, source: RagSource) -> None:
         try:
             async with self._sessionmaker() as session, session.begin():
@@ -211,13 +235,27 @@ class IngestService:
                     error=None,
                     progress=dict(job.counters),
                 )
+            max_concurrency = int(
+                await self._setting("rag.crawl_max_concurrency", CrawlConfig.max_concurrency)
+            )
+            desired_concurrency = min(
+                int(
+                    await self._setting(
+                        "rag.crawl_desired_concurrency", CrawlConfig.desired_concurrency
+                    )
+                ),
+                max_concurrency,  # the two knobs are independent; desired may never exceed max
+            )
             config = CrawlConfig(
                 root_url=str(source.config.get("root_url") or "").strip(),
                 max_pages=int(source.config.get("max_pages") or CrawlConfig.max_pages),
                 render_js=bool(source.config.get("render_js") or False),
+                desired_concurrency=desired_concurrency,
+                max_concurrency=max_concurrency,
             )
             if not config.root_url:
                 raise ValueError("crawl source has no root_url configured")
+            chunk_max, chunk_overlap = await self._chunk_params()
 
             async def on_visit(_url: str) -> None:
                 job.counters["pages"] += 1
@@ -225,7 +263,13 @@ class IngestService:
 
             async def on_page(page: CrawledPage) -> None:
                 await self._ingest_text(
-                    job, source, uri=page.url, title=page.title, markdown=page.markdown
+                    job,
+                    source,
+                    uri=page.url,
+                    title=page.title,
+                    markdown=page.markdown,
+                    chunk_max_tokens=chunk_max,
+                    chunk_overlap_tokens=chunk_overlap,
                 )
 
             await crawl_site(config, on_page, on_visit=on_visit)
@@ -256,8 +300,15 @@ class IngestService:
             parsed = await asyncio.to_thread(
                 parse_document, data, filename=filename, content_type=content_type
             )
+            chunk_max, chunk_overlap = await self._chunk_params()
             await self._ingest_text(
-                job, source, uri=filename, title=parsed.title, markdown=parsed.text
+                job,
+                source,
+                uri=filename,
+                title=parsed.title,
+                markdown=parsed.text,
+                chunk_max_tokens=chunk_max,
+                chunk_overlap_tokens=chunk_overlap,
             )
         except asyncio.CancelledError:
             job.cancelled = True
@@ -271,7 +322,15 @@ class IngestService:
     # ── the shared pipeline: text → chunks → embeddings → rows ──────────
 
     async def _ingest_text(
-        self, job: _SourceJob, source: RagSource, *, uri: str, title: str | None, markdown: str
+        self,
+        job: _SourceJob,
+        source: RagSource,
+        *,
+        uri: str,
+        title: str | None,
+        markdown: str,
+        chunk_max_tokens: int = DEFAULT_MAX_TOKENS,
+        chunk_overlap_tokens: int = DEFAULT_OVERLAP_TOKENS,
     ) -> None:
         content_hash = f"sha256:{hashlib.sha256(markdown.encode('utf-8')).hexdigest()}"
         async with self._sessionmaker() as session:
@@ -288,7 +347,9 @@ class IngestService:
         # so a transient embedding outage mid-re-crawl degrades to "stale content + an honest
         # failed row", never to lost retrieval content.
         try:
-            chunks = chunk_markdown(markdown)
+            chunks = chunk_markdown(
+                markdown, max_tokens=chunk_max_tokens, overlap_tokens=chunk_overlap_tokens
+            )
             embeddings = await self._embed_all(source.embedding_model, chunks)
             async with self._sessionmaker() as session, session.begin():
                 if embeddings:

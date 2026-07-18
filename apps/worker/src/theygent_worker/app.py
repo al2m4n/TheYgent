@@ -25,8 +25,14 @@ from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.mcp import McpManager
 from theygent_control_plane.mcp.factory import build_client_factory
 from theygent_control_plane.mcp.oauth import worker_oauth_builder
+from theygent_control_plane.observability import Telemetry
 from theygent_control_plane.rag import RagRetriever
 from theygent_control_plane.secrets import SecretStore, secret_keys_from_env
+from theygent_control_plane.settings import (
+    SettingsService,
+    otlp_sink_from_settings,
+    register_telemetry_hooks,
+)
 from theygent_control_plane.store import (
     AgentStore,
     ConnectionStore,
@@ -53,11 +59,12 @@ async def build_runtime(
     inference_base_url: str,
     mcp: McpManager | None = None,
     fast_polling: bool = False,
-) -> tuple[DurableRuntime, McpManager, GatewayClient, AsyncEngine]:
+) -> tuple[DurableRuntime, McpManager, GatewayClient, AsyncEngine, SettingsService]:
     """Assemble (but do not launch) the worker's durable runtime + its dependencies. Returns the
     runtime, the MCP manager (registry rehydrated), the gateway (provider-retry OFF — DBOS owns
-    retry), and the SQLAlchemy engine so the caller can dispose it. Factored out so a test can
-    drive the worker's exact wiring without the blocking loop."""
+    retry), the SQLAlchemy engine so the caller can dispose it, and the platform-settings
+    service (the caller starts/stops its refresher). Factored out so a test can drive the
+    worker's exact wiring without the blocking loop."""
     engine = db.create_engine(database_url)
     sessionmaker = db.create_sessionmaker(engine)
     # The connection/secret seam — the worker resolves tool + MCP auth exactly like the API
@@ -66,14 +73,22 @@ async def build_runtime(
     connections = ConnectionStore()
     secrets = SecretStore.from_keys(secret_keys_from_env())
     tool_resolver = DbConnectionResolver(sessionmaker, connections, secrets)
+    # The worker resolves platform settings against the SAME table the API writes — an empty
+    # table resolves to the env>default values this process read before settings existed, so
+    # behavior is unchanged until someone actually stores a value.
+    settings = SettingsService(sessionmaker=sessionmaker, secrets=secrets)
+    await settings.load()
     if mcp is None:
         # No user sits at the worker, so interactive authorization can't happen here — the
         # factory's token flows refresh silently and fail fast with an actionable message when
         # a browser round-trip would be needed. Generated (openapi/graphql) servers build the
-        # same way as in the API process.
+        # same way as in the API process. MCP timeouts ride in as live accessors, resolved per
+        # new/reconnected connection — the same seam as the API process.
         mcp = McpManager(
             client_factory=build_client_factory(
-                oauth=worker_oauth_builder(sessionmaker, connections, secrets)
+                oauth=worker_oauth_builder(sessionmaker, connections, secrets),
+                call_timeout=settings.accessor("mcp.call_timeout_s"),
+                connect_timeout=settings.accessor("mcp.connect_timeout_s"),
             )
         )
     # Rehydrate the MCP registry so mcp_tool activities can connect (connections stay
@@ -83,6 +98,18 @@ async def build_runtime(
         for name, cfg in await mcp_store.list_servers(session):
             await mcp.register(name, cfg)
     gateway = GatewayClient(inference_base_url, max_retries=0)
+    # The worker's OWN Telemetry, built from effective settings exactly like the API process:
+    # capture bounds resolved through the service (env caps hold) and the OTLP sink honoring
+    # the kill switch (stored otlp_enabled=false beats an ambient endpoint env var). Passing it
+    # in — with the live-apply hooks registered — is what makes a capture/export change reach
+    # unattended durable runs, not only the API replica that took the PATCH.
+    telemetry = Telemetry(
+        sessionmaker=sessionmaker,
+        otlp_sink=await otlp_sink_from_settings(settings),
+        ceiling=await settings.get("telemetry.io_capture"),
+        max_bytes=await settings.get("telemetry.io_capture_max_bytes"),
+    )
+    register_telemetry_hooks(settings, telemetry)
     runtime = DurableRuntime(
         database_url=database_url,
         gateway=gateway,
@@ -91,21 +118,25 @@ async def build_runtime(
         agents=AgentStore(),
         triggers=TriggerStore(),
         sessionmaker=sessionmaker,
+        telemetry=telemetry,  # settings-resolved — never the runtime's own env-only fallback
         # The same step-time seams the control-plane's in-process runtime gets: auth
         # resolution, gate counters, and artifact storage — one behavior, two deployables.
         tool_auth=tool_resolver,
         gates=GateBackend(sessionmaker),
         artifacts=LocalArtifactStore(),
         # Retrieval backend for rag activities — embeds over the same gateway (logical ids),
-        # searches the shared Postgres. Same behavior as the control-plane's runtime.
-        rag=RagRetriever(sessionmaker, gateway),
+        # searches the shared Postgres. Same behavior as the control-plane's runtime, incl. the
+        # platform default for nodes that don't set top_k explicitly.
+        rag=RagRetriever(
+            sessionmaker, gateway, default_top_k=settings.accessor("rag.default_top_k")
+        ),
         fast_polling=fast_polling,
         # A distinct, stable executor identity per process role: launch-time recovery then claims
         # only workflows THIS role's crashed process left pending, never ones the (healthy) API
         # process is mid-step on.
         executor_id="worker",
     )
-    return runtime, mcp, gateway, engine
+    return runtime, mcp, gateway, engine, settings
 
 
 async def run_worker() -> None:
@@ -121,10 +152,13 @@ async def run_worker() -> None:
         or os.environ.get("THEYGENT_INFERENCE_PLANE_BASE_URL")
         or "http://127.0.0.1:8081/v1"
     )
-    runtime, mcp, gateway, engine = await build_runtime(
+    runtime, mcp, gateway, engine, settings = await build_runtime(
         database_url=database_url, inference_base_url=inference_base_url
     )
     runtime.launch()
+    # The cross-process live-apply loop: without it, a capture/export settings change made on
+    # the API would never reach this process — exactly the unattended runs where it matters.
+    settings.start_refresher()
     triggers = TriggerStore()
     sessionmaker = db.create_sessionmaker(engine)
     async with sessionmaker() as session:
@@ -134,7 +168,13 @@ async def run_worker() -> None:
     try:
         await asyncio.Event().wait()  # block until cancelled (SIGINT) — DBOS threads do the work
     finally:
+        await settings.stop_refresher()
         runtime.shutdown()
         await gateway.aclose()
         await mcp.close_all()
+        # Flush the CURRENT sink off the holder (a live change may have swapped it) so the tail
+        # of exported spans survives shutdown.
+        final_sink = runtime.telemetry.otlp if runtime.telemetry is not None else None
+        if final_sink is not None:
+            await asyncio.to_thread(final_sink.shutdown)
         await engine.dispose()

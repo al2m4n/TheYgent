@@ -27,7 +27,7 @@ COPY apps/worker/pyproject.toml apps/worker/
 COPY packages/ir/pyproject.toml packages/ir/
 COPY packages/gateway-client/pyproject.toml packages/gateway-client/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-install-workspace --package theygent-worker
+    uv sync --locked --no-dev --no-install-workspace --package theygent-worker --extra otlp
 
 # The worker imports the control-plane's durable package + stores, so its source ships too.
 COPY packages/ir/src packages/ir/src
@@ -35,7 +35,7 @@ COPY packages/gateway-client/src packages/gateway-client/src
 COPY apps/control-plane/src apps/control-plane/src
 COPY apps/worker/src apps/worker/src
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-editable --package theygent-worker
+    uv sync --locked --no-dev --no-editable --package theygent-worker --extra otlp
 
 # runtime-base-0: no launchers (WITH_MCP_LAUNCHERS=0).
 FROM ${PYTHON_BASE} AS runtime-base-0
