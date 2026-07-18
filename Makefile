@@ -50,6 +50,10 @@ INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
 
+# The marketing site (apps/web) is static — a plain file server is the whole story, but it must be
+# a server (not file://) because the page uses root-relative /styles.css and /assets/... paths.
+WEB_PORT ?= 4321
+
 # The dev Postgres is a single docker container this Makefile owns end-to-end: `pg-up` adopts an
 # existing container by NAME (so a hand-made one keeps its data) or creates it from the pgvector
 # image (the same one the test suite uses — migration 0015 needs CREATE EXTENSION vector) with a
@@ -63,7 +67,7 @@ PG_VOLUME ?= theygent-pgdata
 # The sample observability stack (deploy/otel): OTel collector (:4318) → Tempo → Grafana (:3000).
 OTEL_COMPOSE := deploy/otel/docker-compose.yml
 
-.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
+.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -339,3 +343,25 @@ docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:80
 
 docs-build: ## Build the user docs site (strict — broken links fail the build)
 	uv run --project docs/user-docs mkdocs build --strict -f docs/user-docs/mkdocs.yml
+
+web-up: ## Serve the marketing site (apps/web) in the background (http://localhost:4321)
+	@mkdir -p $(RUN_DIR)
+	@if lsof -ti tcp:$(WEB_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "==> web already on :$(WEB_PORT) — skipping ('make web-down' stops it)"; \
+	else \
+		echo "==> starting web (marketing site, :$(WEB_PORT))"; \
+		nohup python3 -m http.server $(WEB_PORT) --directory apps/web > $(RUN_DIR)/web.log 2>&1 & \
+		echo $$! > $(RUN_DIR)/web.pid; \
+	fi
+	@echo "Marketing site: http://localhost:$(WEB_PORT)  |  Log: $(RUN_DIR)/web.log  |  Stop: make web-down"
+
+web-down: ## Stop the marketing-site server (resolved by port, like down-apps)
+	@pids=$$(lsof -ti tcp:$(WEB_PORT) -sTCP:LISTEN 2>/dev/null || true); \
+	if [ -z "$$pids" ]; then echo "==> web: not running"; rm -f $(RUN_DIR)/web.pid; exit 0; fi; \
+	echo "==> stopping web (:$(WEB_PORT))"; \
+	kill -TERM $$pids 2>/dev/null || true; \
+	n=0; while [ $$n -lt 20 ] && lsof -ti tcp:$(WEB_PORT) -sTCP:LISTEN >/dev/null 2>&1; do sleep 0.25; n=$$((n+1)); done; \
+	for pid in $$(lsof -ti tcp:$(WEB_PORT) -sTCP:LISTEN 2>/dev/null); do \
+		echo "   force-killing :$(WEB_PORT) (pid $$pid)"; kill -9 $$pid 2>/dev/null || true; \
+	done; \
+	rm -f $(RUN_DIR)/web.pid

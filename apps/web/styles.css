@@ -205,6 +205,17 @@ h3 {
   outline-offset: 2px;
   border-radius: 4px;
 }
+/* clip-path clips an outside outline entirely — cut-corner controls need the ring drawn
+   inside the border box, where the polygon keeps it visible. */
+.btn:focus-visible,
+.chip:focus-visible {
+  outline: 2px solid var(--periwinkle);
+  outline-offset: -4px;
+}
+.btn-primary:focus-visible,
+.chip.is-on:focus-visible {
+  outline-color: #fff;
+}
 
 /* ── The ramp text, diamond glyph & dots (the facet motif in miniature) ────── */
 .ramp-text {
@@ -399,12 +410,16 @@ h3 {
   font-size: 1.12rem;
   letter-spacing: -0.03em;
 }
-.brand-mark {
-  width: 26px;
+/* the full lockup ships as two theme-tuned SVGs; CSS picks the one matching the theme */
+.brand-lockup {
   height: 26px;
+  width: auto;
 }
-.brand-word {
-  color: var(--text);
+[data-theme="dark"] .only-light {
+  display: none;
+}
+[data-theme="light"] .only-dark {
+  display: none;
 }
 .nav-links {
   display: flex;
@@ -514,11 +529,14 @@ h3 {
 .eyebrow {
   display: inline-flex;
   align-items: center;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   letter-spacing: 0.02em;
   color: var(--text-2);
-  text-transform: lowercase;
   margin-bottom: 18px;
+  padding: 6px 13px;
+  border: 1px solid var(--border-2);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--elev) 72%, transparent);
 }
 .section h2 {
   font-size: clamp(30px, 4.4vw, 46px);
@@ -533,7 +551,8 @@ h3 {
 /* dotted canvas on the "plain" sections */
 .hero::before,
 .build::before,
-.caps::before {
+.caps::before,
+.cta-final::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -546,7 +565,8 @@ h3 {
 }
 .hero > *,
 .build > *,
-.caps > * {
+.caps > *,
+.cta-final > * {
   position: relative;
   z-index: 1;
 }
@@ -845,6 +865,93 @@ h3 {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* ═══════════════════════════ NODE TICKER ═══════════════════════════════════ */
+/* The palette scrolling by: two identical groups, the track slides -50% and loops
+   seamlessly. Edge fade via mask on the viewport (not the wrapper, so the pause
+   control escapes the fade); hover or the checkbox pauses; reduced-motion leaves
+   it static, unmasked, with the pointless pause control hidden. */
+.ticker {
+  position: relative;
+  border-block: 1px solid var(--border);
+  background: color-mix(in oklab, var(--surface) 60%, var(--bg));
+  padding-block: 13px;
+}
+.ticker-viewport {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 12%, #000 88%, transparent);
+}
+.ticker-track {
+  display: flex;
+  width: max-content;
+  animation: ticker-scroll 48s linear infinite;
+}
+.ticker:hover .ticker-track,
+.ticker-pause:checked ~ .ticker-viewport .ticker-track {
+  animation-play-state: paused;
+}
+/* visually-hidden but focusable checkbox; the label is the visible pause/play chip */
+.ticker-pause {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  clip-path: inset(50%);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ticker-pause-ui {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 0.56rem;
+  color: var(--text-3);
+  background: var(--elev);
+  border: 1px solid var(--border-2);
+  border-radius: 50%;
+  cursor: pointer;
+}
+.ticker-pause-ui:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.ticker-pause:focus-visible + .ticker-pause-ui {
+  outline: 2px solid var(--periwinkle);
+  outline-offset: 2px;
+}
+.ticker-pause-ui .tp-play,
+.ticker-pause:checked + .ticker-pause-ui .tp-pause {
+  display: none;
+}
+.ticker-pause:checked + .ticker-pause-ui .tp-play {
+  display: inline;
+}
+.ticker-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-right: 16px;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+.ticker .dia {
+  margin-right: 0;
+  top: 0;
+}
+@keyframes ticker-scroll {
+  to {
+    transform: translateX(-50%);
   }
 }
 
@@ -1309,6 +1416,31 @@ h3 {
   margin-top: 30px;
 }
 
+/* ═══════════════════════════ FINAL CTA ═════════════════════════════════════ */
+.cta-final {
+  text-align: center;
+  overflow: hidden;
+  padding-block: clamp(76px, 10vw, 128px);
+}
+.cta-lockup {
+  width: min(480px, 78vw);
+  height: auto;
+  margin-inline: auto;
+  filter: drop-shadow(0 24px 70px var(--cta-shadow));
+}
+.cta-final h2 {
+  margin-top: 38px;
+  font-size: clamp(28px, 4vw, 44px);
+}
+.cta-lede {
+  margin-inline: auto;
+  max-width: 52ch;
+}
+.cta-final .cta-row {
+  justify-content: center;
+  margin-top: 32px;
+}
+
 /* ═══════════════════════════ FOOTER ════════════════════════════════════════ */
 .footer {
   border-top: 1px solid var(--border);
@@ -1320,6 +1452,9 @@ h3 {
   grid-template-columns: 1.4fr 1fr;
   gap: 40px;
   padding-bottom: 40px;
+}
+.footer .brand-lockup {
+  height: 30px;
 }
 .footer-tag {
   margin-top: 16px;
@@ -1366,7 +1501,9 @@ h3 {
 }
 
 /* ═══════════════════════════ REVEAL ════════════════════════════════════════ */
-.reveal {
+/* Hidden-until-revealed is gated on html.js (added by the inline head script) so a
+   JS-off visitor gets the fully visible page instead of blank sections. */
+html.js .reveal {
   opacity: 0;
   transform: translateY(16px);
   transition:
@@ -1374,7 +1511,7 @@ h3 {
     transform 0.6s ease;
   will-change: opacity, transform;
 }
-.reveal.in {
+html.js .reveal.in {
   opacity: 1;
   transform: none;
 }
@@ -1465,6 +1602,19 @@ h3 {
     stroke-dasharray: 3 10;
     opacity: 0.5;
   }
+  .ticker-track {
+    animation: none;
+  }
+  /* the fade only serves the moving marquee — unmasked, the static strip's first
+     label stays legible; with nothing moving the pause control is pointless */
+  .ticker-viewport {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .ticker-pause,
+  .ticker-pause-ui {
+    display: none;
+  }
   .caret {
     animation: none;
     opacity: 0.6;
@@ -1472,7 +1622,7 @@ h3 {
   .run-dot {
     animation: none;
   }
-  .reveal {
+  html.js .reveal {
     opacity: 1;
     transform: none;
   }

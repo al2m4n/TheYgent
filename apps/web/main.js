@@ -65,10 +65,10 @@
 
     var MAP = {
       mlx: { runson: "Apple Silicon", note: "MLX serves it on Apple Silicon — the Neural Engine and GPU." },
-      vllm: { runson: "an NVIDIA GPU", note: "vLLM serves it on an NVIDIA GPU with CUDA batching." },
-      llamacpp: { runson: "any machine", note: "llama.cpp runs it anywhere the binary builds — CPU or GPU." },
+      vllm: { runson: "An NVIDIA GPU", note: "vLLM serves it on an NVIDIA GPU with CUDA batching." },
+      llamacpp: { runson: "Any machine", note: "llama.cpp runs it anywhere the binary builds — CPU or GPU." },
       "openai-compatible": {
-        runson: "an API you register",
+        runson: "An API you register",
         note: "Reached over HTTP with a key stored on your machine — nothing routed through us."
       }
     };
@@ -125,7 +125,7 @@
         var text = (btn.getAttribute("data-copy") || "").replace(/&#10;/g, "\n");
         var done = function () {
           var prev = btn.textContent;
-          btn.textContent = "copied";
+          btn.textContent = "Copied";
           btn.classList.add("copied");
           window.setTimeout(function () {
             btn.textContent = prev;
