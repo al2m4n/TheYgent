@@ -15,6 +15,12 @@ dependencies = [
     "dbos>=2",
 ]
 
+[project.optional-dependencies]
+# The worker exports durable-run spans through the control-plane's OTLP sink module, so the
+# export extra rides along: an image built with it can ship spans; without it the sink degrades
+# to an honest "SDK not installed" (the local span store is unaffected either way).
+otlp = ["theygent-control-plane[otlp]"]
+
 [project.scripts]
 theygent-worker = "theygent_worker.__main__:main"
 

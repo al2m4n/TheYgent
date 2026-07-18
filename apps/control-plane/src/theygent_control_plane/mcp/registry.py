@@ -165,11 +165,10 @@ class InstallPlan:
 # ── registries (built-ins + the env allowlist) ────────────────────────────────────────────────────
 
 
-def default_registries() -> list[RegistryInfo]:
-    """The two public registries plus any self-hosted ones from ``THEYGENT_MCP_REGISTRIES``.
-    A malformed env value raises loudly — silently dropping a registry the user configured
-    would defeat the allowlist it exists for."""
-    registries = [
+def builtin_registries() -> list[RegistryInfo]:
+    """The two public registries every install carries. Extra self-hosted ones come from the
+    env allowlist (:func:`default_registries`) or the platform settings surface."""
+    return [
         RegistryInfo(
             id="official",
             label="Official MCP Registry",
@@ -177,6 +176,13 @@ def default_registries() -> list[RegistryInfo]:
         ),
         RegistryInfo(id="github", label="GitHub MCP Registry", url="https://api.mcp.github.com"),
     ]
+
+
+def default_registries() -> list[RegistryInfo]:
+    """The two public registries plus any self-hosted ones from ``THEYGENT_MCP_REGISTRIES``.
+    A malformed env value raises loudly — silently dropping a registry the user configured
+    would defeat the allowlist it exists for."""
+    registries = builtin_registries()
     raw = os.environ.get(_REGISTRIES_ENV, "").strip()
     if not raw:
         return registries
@@ -648,6 +654,13 @@ class McpRegistryClient:
 
     def registries(self) -> list[RegistryInfo]:
         return list(self._registries.values())
+
+    def set_registries(self, registries: list[RegistryInfo]) -> None:
+        """Replace the browsable registry set in place (the live-settings apply path — extra
+        self-hosted registries can change at runtime). The response cache is dropped so a page
+        cached under a removed/replaced registry can never serve again."""
+        self._registries = {r.id: r for r in registries}
+        self._cache.clear()
 
     def _registry(self, registry: str) -> RegistryInfo:
         try:

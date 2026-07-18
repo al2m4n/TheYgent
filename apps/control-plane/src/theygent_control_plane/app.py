@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import shutil
+import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -42,6 +43,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text as sa_text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
@@ -72,16 +74,18 @@ from theygent_control_plane.mcp.oauth import DbTokenStorage, OAuthBroker, broker
 from theygent_control_plane.mcp.registry import (
     McpRegistryClient,
     McpRegistryError,
+    RegistryInfo,
     build_install,
+    builtin_registries,
 )
 from theygent_control_plane.observability import (
     INPROC_EXECUTOR,
     CaptureLevel,
     SpanBus,
     Telemetry,
-    build_otlp_sink,
     now_ns,
 )
+from theygent_control_plane.observability.otlp import probe_otlp_endpoint
 from theygent_control_plane.rag import IngestService, RagRetriever, RagStore
 from theygent_control_plane.rag.ingest import IngestBusy
 from theygent_control_plane.rag.parse import supported_extension
@@ -102,6 +106,13 @@ from theygent_control_plane.run import (
     new_ulid,
 )
 from theygent_control_plane.secrets import SecretStore, secret_keys_from_env
+from theygent_control_plane.settings import (
+    SettingsService,
+    SettingsValidationError,
+    bootstrap_value,
+    otlp_sink_from_settings,
+    register_telemetry_hooks,
+)
 from theygent_control_plane.store import (
     AgentStore,
     BenchStore,
@@ -458,9 +469,18 @@ class UpdateRagSourceRequest(BaseModel):
 
 class RagQueryRequest(BaseModel):
     # Test/inspect retrieval against one source — the same backend the ``rag`` node calls.
+    # ``top_k`` default None = "no explicit choice": the retriever applies the platform default
+    # (rag.default_top_k). An explicit value behaves exactly as before.
     query: str
-    top_k: int = Field(default=5, ge=1, le=50)
+    top_k: int | None = Field(default=None, ge=1, le=50)
     min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class OtlpTestRequest(BaseModel):
+    # POST /settings/otlp:test — optional overrides so the UI can probe a collector BEFORE
+    # saving; absent fields fall back to the effective stored/env endpoint + headers.
+    endpoint: str | None = None
+    headers: dict[str, str] | None = None
 
 
 # The Fernet-key resolution lives in secrets.py (`secret_keys_from_env`) — the worker reads the
@@ -588,6 +608,7 @@ def create_app(
     dispatcher_interval_s: float = 5.0,
     durable: bool = False,
     dbos_fast_polling: bool = False,
+    settings_refresh_s: float = 15.0,
 ) -> FastAPI:
     # Durable mode re-points the unattended ``fire()`` seam (schedules + webhooks) at the
     # DBOS durable worker and replaces the in-process dispatcher with DBOS dynamic schedules.
@@ -611,16 +632,28 @@ def create_app(
     # when unset, SecretStore makes an ephemeral key with a loud warning (dev-only — see
     # secrets.py).
     connections = ConnectionStore()
-    secrets = SecretStore.from_keys(
-        secret_key if secret_key is not None else secret_keys_from_env()
-    )
+    resolved_secret_keys = secret_key if secret_key is not None else secret_keys_from_env()
+    secrets = SecretStore.from_keys(resolved_secret_keys)
+    secret_key_ephemeral = not resolved_secret_keys  # surfaced in the settings boot block
     # The observability seam. One live SpanBus for the /trace/stream side-channel (shared with
-    # the in-process durable runtime so its spans stream too), and the opt-in OTLP sink —
-    # constructed ONLY when OTEL_EXPORTER_OTLP_ENDPOINT is set (else None — the always-local
-    # default). The Telemetry object (the capture wrapper's home) needs the sessionmaker, so it
-    # is built in the lifespan once that exists; these two are its inputs.
+    # the in-process durable runtime so its spans stream too). The Telemetry object (the capture
+    # wrapper's home) needs the sessionmaker, so it is built in the lifespan once that exists —
+    # and its OTLP sink + capture bounds now come from EFFECTIVE platform settings (env pin/cap
+    # over stored over default), resolved there too.
     span_bus = SpanBus()
-    otlp_sink = build_otlp_sink()
+    # The platform-settings service is lifespan-built (it needs the sessionmaker); this holder
+    # lets constructor-time collaborators (the OAuth broker, the MCP client factory) carry LIVE
+    # accessors that resolve through the service once it exists and fall back to the sync
+    # env>default bootstrap before that.
+    _settings_holder: dict[str, SettingsService | None] = {"svc": None}
+
+    def _live_setting(key: str) -> Any:
+        svc = _settings_holder["svc"]
+        return svc.value(key) if svc is not None else bootstrap_value(key)
+
+    def _live_accessor(key: str):
+        return lambda: _live_setting(key)
+
     # A single per-deploy bearer token gates the unattended invoke + webhook-management surfaces.
     # NOT RBAC/SSO/multi-user (those are far later). Resolved at construction so a test can inject
     # one and the env drives production. When UNSET, the deploy surfaces are closed (deny-by-
@@ -639,16 +672,16 @@ def create_app(
         return impl(config) if impl is not None else default_client_factory(config)
 
     mcp = mcp_manager or McpManager(client_factory=_late_factory)
-    # Where the authorization server sends the user's browser back after consent. Default
-    # matches the local API port; a non-default bind or reverse proxy overrides via env.
-    oauth_redirect_url = os.environ.get(
-        "THEYGENT_OAUTH_REDIRECT_URL", "http://localhost:8080/mcp/oauth/callback"
-    )
-    oauth_broker = OAuthBroker(oauth_redirect_url)
+    # Where the authorization server sends the user's browser back after consent — a LIVE
+    # accessor read per authorize flow, so the settings value (env-pinned via
+    # THEYGENT_OAUTH_REDIRECT_URL) applies to the next flow without a restart.
+    oauth_broker = OAuthBroker(_live_accessor("mcp.oauth_redirect_url"))
     # Registry browsing (the MCP hub catalog): one client speaking the shared subregistry API
     # shape against every configured registry; per-request TTL caching lives inside it.
-    # Injectable so the fast suite can serve fixture registries without network.
+    # Injectable so the fast suite can serve fixture registries without network — an injected
+    # client is never touched by the extra-registries settings hook below.
     mcp_registry = mcp_registry_client or McpRegistryClient()
+    mcp_registry_injected = mcp_registry_client is not None
     # Resolved at startup, not import, so importing the factory has no side effects and a
     # missing DATABASE_URL fails loudly in the lifespan rather than silently.
     db_url = database_url or os.environ.get("DATABASE_URL")
@@ -661,13 +694,31 @@ def create_app(
         engine = db.create_engine(db_url)
         app.state.engine = engine
         app.state.sessionmaker = db.create_sessionmaker(engine)
+        # The platform-settings service — built FIRST so every later collaborator resolves its
+        # initial values through the same effective (env > stored > default) precedence a later
+        # PATCH re-applies live. `load()` sets the hook baseline without firing hooks (boot
+        # wiring applies the initial values explicitly right here).
+        settings_service = SettingsService(sessionmaker=app.state.sessionmaker, secrets=secrets)
+        await settings_service.load()
+        _settings_holder["svc"] = settings_service
+        app.state.settings = settings_service
         # The capture wrapper's process resource — writes span/node_io through this sessionmaker
         # (the normal data layer, never @DBOS.transaction) and publishes live span events to the
-        # shared bus. The interactive walker reaches it via WalkContext.run_trace below.
+        # shared bus. The interactive walker reaches it via WalkContext.run_trace below. Capture
+        # bounds and the OTLP sink come from effective settings: the sink honors the kill switch
+        # (stored otlp_enabled=false beats an ambient endpoint env var — export is never
+        # env-forced on).
         telemetry = Telemetry(
-            sessionmaker=app.state.sessionmaker, span_bus=span_bus, otlp_sink=otlp_sink
+            sessionmaker=app.state.sessionmaker,
+            span_bus=span_bus,
+            otlp_sink=await otlp_sink_from_settings(settings_service),
+            ceiling=await settings_service.get("telemetry.io_capture"),
+            max_bytes=await settings_service.get("telemetry.io_capture_max_bytes"),
         )
         app.state.telemetry = telemetry
+        # Live-apply: capture bounds as attribute sets; the OTLP sink as a locked
+        # build → swap Telemetry.otlp → flush-the-old (SpanScope re-reads the holder per span).
+        register_telemetry_hooks(settings_service, telemetry)
         # The DB-backed connection resolver — the server-side auth seam an http tool /
         # connection-backed mcp_tool resolves through, at step time. Built once (needs the
         # sessionmaker); injected into the interactive WalkContext and the durable resources so the
@@ -676,11 +727,29 @@ def create_app(
         app.state.tool_resolver = tool_resolver
         # The full MCP client factory (generated openapi/graphql servers + user-authorized
         # token auth via the broker) needs the sessionmaker, so it lands in the late-binding
-        # holder here. Test-injected managers keep their fake factory untouched.
+        # holder here. Test-injected managers keep their fake factory untouched. The two MCP
+        # timeouts ride in as live accessors, resolved at connect/serve time — so a changed
+        # setting applies to the next established/reconnected server.
         _factory_holder["impl"] = build_client_factory(
-            oauth=broker_oauth_builder(oauth_broker, app.state.sessionmaker, connections, secrets)
+            oauth=broker_oauth_builder(oauth_broker, app.state.sessionmaker, connections, secrets),
+            call_timeout=_live_accessor("mcp.call_timeout_s"),
+            connect_timeout=_live_accessor("mcp.connect_timeout_s"),
         )
         app.state.oauth_broker = oauth_broker
+        # Extra self-hosted MCP registries are a live setting: rebuild the browsable set on
+        # change (and once at boot, so stored extras land). An injected (test) registry client
+        # is never touched.
+        if not mcp_registry_injected:
+
+            async def _apply_registries() -> None:
+                extras = await settings_service.get("mcp.extra_registries")
+                mcp_registry.set_registries(
+                    builtin_registries()
+                    + [RegistryInfo(id=e["id"], label=e["label"], url=e["url"]) for e in extras]
+                )
+
+            settings_service.register_hook("mcp.extra_registries", _apply_registries)
+            await _apply_registries()
         # The gate backend (ratelimit counter + quota usage-read). Built once; injected
         # into the interactive WalkContext + durable resources so gates behave identically on both.
         gate_backend = GateBackend(app.state.sessionmaker)
@@ -693,9 +762,20 @@ def create_app(
         # (embeds over the gateway with the source's logical model id, then hybrid-searches
         # Postgres); the ingest service runs crawl/parse → chunk → embed as in-process background
         # tasks with progress on the source row.
-        rag_retriever = RagRetriever(app.state.sessionmaker, gw, store=rag_store)
+        rag_retriever = RagRetriever(
+            app.state.sessionmaker,
+            gw,
+            store=rag_store,
+            # The platform default for queries/nodes that don't set top_k explicitly.
+            default_top_k=_live_accessor("rag.default_top_k"),
+        )
         app.state.rag = rag_retriever
-        rag_ingest = IngestService(app.state.sessionmaker, gw, store=rag_store)
+        rag_ingest = IngestService(
+            app.state.sessionmaker,
+            gw,
+            store=rag_store,
+            settings=settings_service,  # chunking + crawl knobs, read per ingest run
+        )
         app.state.rag_ingest = rag_ingest
         # Sweep runs left non-terminal by a crash to `failed` before serving, so a
         # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
@@ -795,9 +875,13 @@ def create_app(
             app.state.dispatcher = dispatcher
             if start_dispatcher:
                 dispatcher.start()
+        # The cross-process live-apply loop: re-reads platform_setting, diffs, re-runs hooks —
+        # what makes a "live" setting true on a replica that didn't handle the PATCH.
+        settings_service.start_refresher(settings_refresh_s)
         try:
             yield
         finally:
+            await settings_service.stop_refresher()
             # Stop in-flight retrieval ingests first (they write through the sessionmaker).
             await rag_ingest.shutdown()
             if app.state.dispatcher is not None:
@@ -807,16 +891,21 @@ def create_app(
                 await app.state.durable_gateway.aclose()
             await mcp.close_all()  # tear down every live MCP connection
             await gw.aclose()
-            if otlp_sink is not None:
+            # Flush the CURRENT holder's sink, not a boot-time variable: a live settings change
+            # may have swapped Telemetry.otlp since boot, and flushing the stale one would both
+            # lose the new sink's tail spans and double-shut the old.
+            final_sink = telemetry.otlp
+            if final_sink is not None:
                 # Flush the batched exporter off the loop — without this the tail of a run's
                 # exported spans dies with the process.
-                await asyncio.to_thread(otlp_sink.shutdown)
+                await asyncio.to_thread(final_sink.shutdown)
             await engine.dispose()
 
     app = FastAPI(title="theygent control-plane", lifespan=lifespan)
+    resolved_cors_origins = cors_origins if cors_origins is not None else _default_cors_origins()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=cors_origins if cors_origins is not None else _default_cors_origins(),
+        allow_origins=resolved_cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -2183,6 +2272,155 @@ def create_app(
         )
         return view.model_dump(mode="json")
 
+    # ── platform settings (/settings) ─────────────────────────────────────
+    # The runtime-editable knobs (telemetry export, capture bounds, MCP timeouts/registries,
+    # RAG defaults) over the typed catalog in settings.py. GET/PATCH share one shape; PATCH is
+    # atomic validate+persist then best-effort live hooks (apply_errors). The boot block below
+    # is read-only diagnostics for the boot-structural facts that must NEVER be stored settings
+    # (topology is the sovereignty one: a stored topology flip could default raw payloads into
+    # a hosted Postgres).
+
+    def _boot_entry(
+        key: str, value: Any, description: str, warning: str | None = None
+    ) -> dict[str, Any]:
+        return {"key": key, "value": value, "description": description, "warning": warning}
+
+    def _boot_block() -> list[dict[str, Any]]:
+        topology = (os.environ.get("THEYGENT_TOPOLOGY") or "local").strip().lower()
+        if topology != "hosted":
+            topology = "local"
+        entries = [
+            _boot_entry(
+                "durable",
+                durable,
+                "Whether the unattended fire path (schedules + webhooks) runs on the durable "
+                "runtime. Process-global; set THEYGENT_DURABLE and restart to change.",
+            ),
+            _boot_entry(
+                "topology",
+                topology,
+                "The deployment topology (THEYGENT_TOPOLOGY) driving the I/O-capture default. "
+                "Deliberately never a stored setting: a writable topology could flip a hosted "
+                "deploy to 'local' and default raw payloads into cloud storage.",
+            ),
+            _boot_entry(
+                "inference_plane_url",
+                inference_base_url,
+                "The inference plane's OpenAI-compatible base URL the gateway targets "
+                "(THEYGENT_INFERENCE_PLANE_URL).",
+            ),
+            _boot_entry(
+                "cors_origins",
+                list(resolved_cors_origins),
+                "Browser origins allowed to call this API (THEYGENT_CORS_ORIGINS).",
+            ),
+            _boot_entry(
+                "artifact_dir",
+                app.state.artifacts.base_dir,
+                "Where audio/image artifacts are stored (THEYGENT_ARTIFACT_DIR).",
+            ),
+            _boot_entry(
+                "invoke_token_set",
+                bool(token),
+                "Whether the bearer token gating the unattended invoke surfaces is configured "
+                "(THEYGENT_INVOKE_TOKEN).",
+                warning=None
+                if token
+                else "No invoke token is set — the unattended invoke/webhook-management "
+                "surfaces are closed (deny-by-default) until one is configured.",
+            ),
+            _boot_entry(
+                "secret_key_ephemeral",
+                secret_key_ephemeral,
+                "Whether the at-rest secret encryption key is an ephemeral in-process one "
+                "(THEYGENT_SECRET_KEY unset).",
+                warning="THEYGENT_SECRET_KEY is unset — stored secrets are encrypted with an "
+                "ephemeral key and will NOT survive a restart (dev-only posture)."
+                if secret_key_ephemeral
+                else None,
+            ),
+        ]
+        # Host + database name only — never credentials, never the DSN.
+        with contextlib.suppress(Exception):  # a malformed DSN must not break the page
+            url = make_url(db_url or "")
+            entries.append(
+                _boot_entry(
+                    "database",
+                    {"host": url.host, "database": url.database},
+                    "The Postgres this control plane persists to (DATABASE_URL — host and "
+                    "database name only).",
+                )
+            )
+        return entries
+
+    async def _settings_payload() -> dict[str, Any]:
+        svc: SettingsService = app.state.settings
+        snap = await svc.snapshot()
+        return {
+            "settings": snap["settings"],
+            "boot": _boot_block(),
+            "orphaned": snap["orphaned"],
+        }
+
+    @app.get("/settings", dependencies=[Depends(require_auth)])
+    async def get_settings() -> Any:
+        if not authorize(LOCAL_PRINCIPAL, "settings:read", "platform"):
+            return _error("not permitted to read platform settings", status=403, code="forbidden")
+        return await _settings_payload()
+
+    @app.patch("/settings", dependencies=[Depends(require_auth)])
+    async def patch_settings(changes: dict[str, Any]) -> Any:
+        # Body: {key: value|null, ...}. Atomic: any invalid key → 422 and NOTHING stored; null
+        # resets a key to default (and deletes an orphaned row). Post-commit live hooks are
+        # best-effort — their failures come back per-key in apply_errors, never a rollback.
+        if not authorize(LOCAL_PRINCIPAL, "settings:write", "platform"):
+            return _error("not permitted to change platform settings", status=403, code="forbidden")
+        svc: SettingsService = app.state.settings
+        try:
+            apply_errors = await svc.patch(changes)
+        except SettingsValidationError as exc:
+            return _error(exc.summary(), status=422, code="invalid_setting")
+        if changes:
+            logger.info("settings.patched", extra={"keys": sorted(changes)})
+        return {**await _settings_payload(), "apply_errors": apply_errors}
+
+    @app.post("/settings/otlp:test", dependencies=[Depends(require_auth)])
+    async def test_otlp_collector(req: OtlpTestRequest) -> Any:
+        # One-shot collector probe: a fresh exporter built exactly as the real export path
+        # builds one (same endpoint semantics + headers), one synthetic payload-free span,
+        # bounded timeout. The batch pipeline can't answer reachability (it swallows failures
+        # by design), and the span never touches the local span table. Body overrides let the
+        # UI test values BEFORE saving them.
+        if not authorize(LOCAL_PRINCIPAL, "settings:write", "platform"):
+            return _error("not permitted to test the collector", status=403, code="forbidden")
+        svc: SettingsService = app.state.settings
+        endpoint = req.endpoint or await svc.get("telemetry.otlp_endpoint")
+        if not endpoint:
+            return _error(
+                "no OTLP endpoint to test — pass one in the body or set "
+                "telemetry.otlp_endpoint first",
+                status=422,
+                code="invalid_setting",
+            )
+        headers = (
+            req.headers
+            if req.headers is not None
+            else await svc.resolve_sensitive("telemetry.otlp_headers")
+        )
+        redact = frozenset(await svc.get("telemetry.otlp_redact_attrs"))
+        started = time.perf_counter()
+        ok, error = await asyncio.to_thread(
+            probe_otlp_endpoint,
+            endpoint=endpoint,
+            headers=headers,
+            redact_attrs=redact,
+        )
+        return {
+            "ok": ok,
+            "error": error,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+        }
+
     async def _resolve_agent_ir(
         agent_id: str, *, version: str | None, content_hash_pin: str | None
     ) -> tuple[IRDocument | None, JSONResponse | None]:
@@ -2898,11 +3136,18 @@ def create_app(
             )
         # Cheap gates BEFORE buffering the body: the source must exist, and the declared size
         # must fit the cap (the post-read check below covers a lying/absent Content-Length —
-        # raw-body uploads buffer in memory, so unbounded input is a memory hazard).
+        # raw-body uploads buffer in memory, so unbounded input is a memory hazard). The cap is
+        # a live setting, read per request; the compiled constant is the no-service fallback.
+        settings_svc: SettingsService | None = getattr(app.state, "settings", None)
+        max_upload = (
+            int(await settings_svc.get("rag.max_upload_bytes"))
+            if settings_svc is not None
+            else _RAG_MAX_UPLOAD_BYTES
+        )
         declared = request.headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > _RAG_MAX_UPLOAD_BYTES:
+        if declared and declared.isdigit() and int(declared) > max_upload:
             return _error(
-                f"document exceeds the {_RAG_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB upload limit",
+                f"document exceeds the {max_upload // (1024 * 1024)} MiB upload limit",
                 status=413,
                 code="document_too_large",
             )
@@ -2914,9 +3159,9 @@ def create_app(
         data = await request.body()
         if not data:
             return _error("empty document body", status=400, code="invalid_rag_document")
-        if len(data) > _RAG_MAX_UPLOAD_BYTES:
+        if len(data) > max_upload:
             return _error(
-                f"document exceeds the {_RAG_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB upload limit",
+                f"document exceeds the {max_upload // (1024 * 1024)} MiB upload limit",
                 status=413,
                 code="document_too_large",
             )

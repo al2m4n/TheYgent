@@ -3,10 +3,10 @@
 // Raw inference payloads (prompts, images, audio in/out) go DIRECTLY to the inference base URL in
 // the user's trust domain (the localhost sidecar on desktop, the user's own infra self-hosted) —
 // they are NEVER routed through the control plane (theygent must never be an involuntary MITM).
-// So everything here targets INFERENCE_URL and nothing else; the control plane only ever sees the
+// So everything here targets the inference base URL and nothing else; the control plane only ever sees the
 // metrics + digests the bench records afterwards (lib/api.ts → /bench/*).
 
-import { ApiError, INFERENCE_URL } from "../lib/api";
+import { ApiError, inferenceUrl } from "../lib/api";
 import type { Usage } from "./metrics";
 
 function dataPlaneHeaders(): Record<string, string> {
@@ -45,7 +45,7 @@ export async function* streamChat(
   params: Record<string, unknown>,
   signal?: AbortSignal,
 ): AsyncGenerator<ChatChunk> {
-  const res = await fetch(`${INFERENCE_URL}/v1/chat/completions`, {
+  const res = await fetch(`${inferenceUrl()}/v1/chat/completions`, {
     method: "POST",
     signal,
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
@@ -96,7 +96,7 @@ export async function embed(
   input: string | string[],
   params: Record<string, unknown>,
 ): Promise<EmbeddingsResult> {
-  const res = await fetch(`${INFERENCE_URL}/v1/embeddings`, {
+  const res = await fetch(`${inferenceUrl()}/v1/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
     body: JSON.stringify({ model, input, ...params }),
@@ -114,7 +114,7 @@ export async function transcribe(
   form.set("model", model);
   form.set("file", file, "audio" in file ? "audio" : (file as File).name || "audio.wav");
   for (const [k, v] of Object.entries(params)) if (v) form.set(k, v);
-  const res = await fetch(`${INFERENCE_URL}/v1/audio/transcriptions`, {
+  const res = await fetch(`${inferenceUrl()}/v1/audio/transcriptions`, {
     method: "POST",
     headers: dataPlaneHeaders(), // NO Content-Type — the browser sets the multipart boundary
     body: form,
@@ -136,7 +136,7 @@ export async function speak(
   params: Record<string, unknown>,
 ): Promise<SpeakResult> {
   const start = performance.now();
-  const res = await fetch(`${INFERENCE_URL}/v1/audio/speech`, {
+  const res = await fetch(`${inferenceUrl()}/v1/audio/speech`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
     body: JSON.stringify({ model, input, ...params }),
@@ -175,7 +175,7 @@ export async function generateImage(
   params: Record<string, unknown>,
 ): Promise<GeneratedImage> {
   const start = performance.now();
-  const res = await fetch(`${INFERENCE_URL}/v1/images/generations`, {
+  const res = await fetch(`${inferenceUrl()}/v1/images/generations`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...dataPlaneHeaders() },
     body: JSON.stringify({ model, prompt, response_format: "b64_json", ...params }),

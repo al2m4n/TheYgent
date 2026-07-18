@@ -30,8 +30,10 @@ logger = logging.getLogger("theygent.control_plane.governance")
 
 #: The permissions this module gates on. ``trace:read`` and ``io:read`` gate the two read surfaces
 #: (timing vs. payloads — deliberately distinct so "not captured" and "captured but not visible to
-#: you" can be different answers); ``agent:configure`` gates editing an agent's capture policy.
-Permission = Literal["trace:read", "io:read", "agent:configure"]
+#: you" can be different answers); ``agent:configure`` gates editing an agent's capture policy;
+#: ``settings:read``/``settings:write`` gate the platform-settings surface (read and write are
+#: separate axes for the same reason trace/io are).
+Permission = Literal["trace:read", "io:read", "agent:configure", "settings:read", "settings:write"]
 
 
 @dataclass(frozen=True)

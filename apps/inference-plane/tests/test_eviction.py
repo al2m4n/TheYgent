@@ -8,6 +8,7 @@ and memory-pressure arbitration are pure, fast, and deterministic.
 from __future__ import annotations
 
 import asyncio
+from contextlib import AsyncExitStack
 
 import pytest
 from _payloads import managed_payload
@@ -108,6 +109,20 @@ def test_policy_no_total_falls_back_to_len_resident() -> None:
     policy = CountAndPriorityPolicy()
     resident = [ResidentView("a", priority=1, last_used=1)]
     assert policy.select_victims(resident, PendingLoad("x", 1), ResourceBudget(3)) == []
+
+
+def test_policy_no_incoming_budget_frees_exactly_the_excess() -> None:
+    # Ceiling enforcement passes incoming_count=0 (nothing is being admitted): with 3
+    # resident and a ceiling of 2 the policy must free exactly 1 — the admission-shaped
+    # default (+1 incoming) would take one victim too many.
+    policy = CountAndPriorityPolicy()
+    resident = [
+        ResidentView("a", priority=1, last_used=10),
+        ResidentView("b", priority=1, last_used=20),
+        ResidentView("c", priority=1, last_used=30),
+    ]
+    budget = ResourceBudget(max_resident=2, resident_total=3, incoming_count=0)
+    assert policy.select_victims(resident, PendingLoad("", 0), budget) == ["a"]
 
 
 def test_policy_watermark_forces_one_even_with_room() -> None:
@@ -224,6 +239,146 @@ async def test_evict_is_idempotent_when_not_resident() -> None:
     _register(reg, "a")
     await mgr.evict("a")  # never loaded -> no-op, no error
     assert mgr.state("a")["resident"] is False
+
+
+# ── runtime ceiling changes (enforce_ceiling) ───────────────────────────
+
+
+async def test_enforce_ceiling_evicts_idle_excess_immediately() -> None:
+    # Admission-time eviction alone would leave a lowered ceiling unenforced until the
+    # next model load; enforce_ceiling applies it NOW, in policy order (priority, LRU).
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=3)
+    _register(reg, "old", priority=1)
+    _register(reg, "mid", priority=1)
+    _register(reg, "vip", priority=9)
+    await mgr.warm("old")
+    clock.advance(1)
+    await mgr.warm("mid")
+    clock.advance(1)
+    await mgr.warm("vip")
+
+    mgr.set_max_resident(1)
+    await mgr.enforce_ceiling()
+
+    assert mgr.state("old")["resident"] is False  # lowest priority + least recently used
+    assert mgr.state("mid")["resident"] is False
+    assert mgr.state("vip")["resident"] is True
+    assert sum(1 for h in launcher.handles if h.terminated) == 2
+
+
+async def test_enforce_ceiling_noop_when_at_or_under() -> None:
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
+    _register(reg, "a")
+    _register(reg, "b")
+    await mgr.warm("a")
+    await mgr.warm("b")
+
+    await mgr.enforce_ceiling()  # at the ceiling — nothing to do
+    mgr.set_max_resident(5)
+    await mgr.enforce_ceiling()  # raised — nothing to do either
+
+    assert mgr.state("a")["resident"] is True
+    assert mgr.state("b")["resident"] is True
+    assert not any(h.terminated for h in launcher.handles)
+
+
+async def test_enforce_ceiling_drains_busy_engine_and_never_kills_inflight() -> None:
+    # A busy engine over the ceiling is marked draining (the :evict-on-busy semantics):
+    # it keeps serving its in-flight request and tears down only when it goes idle.
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
+    _register(reg, "busy")
+    _register(reg, "kept")
+
+    async with mgr.lease("busy"):
+        clock.advance(1)
+        async with mgr.lease("kept"):
+            pass  # "kept" is now idle and more recently used than "busy"
+
+        mgr.set_max_resident(1)
+        await mgr.enforce_ceiling()
+
+        # The idle engine was the policy's victim; the busy one survives untouched.
+        assert mgr.state("kept")["resident"] is False
+        state = mgr.state("busy")
+        assert state["resident"] is True
+        assert state["draining"] is False
+        assert state["inflight"] == 1
+
+        # Lower again with ONLY the busy engine resident: still never killed — marked
+        # draining instead, and it keeps serving.
+        mgr.set_max_resident(0)
+        await mgr.enforce_ceiling()
+        state = mgr.state("busy")
+        assert state["resident"] is True
+        assert state["draining"] is True
+        assert launcher.handles[0].terminated is False
+
+    # Lease released → drained → torn down.
+    assert mgr.state("busy")["resident"] is False
+    assert launcher.handles[0].terminated is True
+
+
+async def test_enforce_ceiling_counts_already_draining_slots_once() -> None:
+    # An engine already draining will free its slot on release — enforce_ceiling must not
+    # drain a second engine to cover the same excess.
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
+    _register(reg, "draining")
+    _register(reg, "steady")
+
+    async with mgr.lease("draining"):
+        await mgr.evict("draining")  # busy → draining
+        async with mgr.lease("steady"):
+            mgr.set_max_resident(1)
+            await mgr.enforce_ceiling()
+            # The draining engine already covers the excess; "steady" is left alone.
+            assert mgr.state("steady")["draining"] is False
+            assert mgr.state("steady")["resident"] is True
+
+    assert mgr.state("draining")["resident"] is False  # drained on release
+    assert mgr.state("steady")["resident"] is True
+
+
+async def test_lease_during_drain_window_does_not_defeat_a_lowered_ceiling() -> None:
+    # A ceiling lowered under three busy engines can only mark the excess draining. A
+    # data-plane lease during that drain window clears the flag ("wanted again") — which
+    # must not cancel enforcement forever: the release path re-asserts the ceiling when an
+    # engine goes idle, so once the in-flight work completes the resident count converges
+    # to the new maximum. No in-flight request is ever killed along the way.
+    reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
+    mgr = EngineManager(reg, launcher, clock=clock, max_resident=3)
+    for lid in ("a", "b", "c"):
+        _register(reg, lid)
+
+    async with AsyncExitStack() as stack:
+        await stack.enter_async_context(mgr.lease("a"))
+        clock.advance(1)
+        await stack.enter_async_context(mgr.lease("b"))
+        clock.advance(1)
+        await stack.enter_async_context(mgr.lease("c"))
+
+        mgr.set_max_resident(2)
+        await mgr.enforce_ceiling()
+        # All three are busy: nothing is killed, the LRU one is marked draining.
+        assert mgr.state("a")["draining"] is True
+        assert not any(h.terminated for h in launcher.handles)
+
+        # The drain-window lease: "a" is wanted again, its pending drain is cancelled.
+        async with mgr.lease("a"):
+            assert mgr.state("a")["draining"] is False
+            assert mgr.state("a")["inflight"] == 2
+        # The extra lease released, but "a" is still held busy by the outer lease — the
+        # plane sits over the ceiling with no drain flag anywhere (the failure state the
+        # release-path re-assertion exists for).
+        assert len(mgr.resident_engines()) == 3
+        assert not any(e["draining"] for e in mgr.resident_engines())
+
+    # All work completed → the ceiling was re-asserted on release and the count converged.
+    assert len(mgr.resident_engines()) == 2
+    assert sum(1 for h in launcher.handles if h.terminated) == 1
 
 
 # Concurrent cold-start singleflight: two simultaneous first-calls to a cold model

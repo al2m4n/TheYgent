@@ -799,12 +799,20 @@ async def execute_tool(
     return ActivityOutcome(ok=True, value=value)
 
 
+def rag_top_k(node_config: Mapping[str, Any] | None, config: Any) -> int | None:
+    """The node's AUTHORED top_k, or ``None`` when the raw config never set one — validation
+    fills the schema default, so only the raw document can tell "explicitly 5" from "unset".
+    ``None`` lets the retriever apply the platform default without touching explicit choices."""
+    raw = node_config or {}
+    return config.top_k if ("topK" in raw or "top_k" in raw) else None
+
+
 async def execute_rag(
     retriever: Any,
     *,
     source: str,
     query: str,
-    top_k: int,
+    top_k: int | None,
     min_similarity: float | None,
 ) -> ActivityOutcome:
     """Run one retrieval against the injected backend (``WalkContext.rag`` /
@@ -1619,7 +1627,7 @@ async def execute_tool_call(
             rag,
             source=rcfg.source,
             query=str(call.arguments.get("query") or ""),
-            top_k=rcfg.top_k,
+            top_k=rag_top_k(rag_node.config, rcfg),
             min_similarity=rcfg.min_similarity,
         )
 
@@ -2579,7 +2587,7 @@ async def _walk_rag(
             ctx.rag,
             source=config.source,
             query=query,
-            top_k=config.top_k,
+            top_k=rag_top_k(node.config, config),
             min_similarity=config.min_similarity,
         )
     _bind_outcome(node, outcome, values, live_handles)

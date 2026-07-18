@@ -1,0 +1,55 @@
+{
+  "uid": "theygent-traces",
+  "title": "TheYgent · Traces",
+  "tags": ["theygent"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "type": "text",
+      "title": "",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "### Getting spans here\n1. `make otel-up` (this stack) and open **Settings → Telemetry** in the TheYgent interface.\n2. Set the OTLP endpoint to `http://127.0.0.1:4318/v1/traces`, enable export, and hit **Test connection** — the synthetic `otlp.test` span shows up below.\n3. Run any agent; each run exports one trace whose spans nest exactly like the in-app run waterfall (same deterministic ids). Attributes you listed under *redact attrs* arrive as `[redacted]`; node I/O payloads never leave the machine at all."
+      }
+    },
+    {
+      "type": "table",
+      "title": "Recent traces",
+      "description": "TraceQL search results — click a trace ID to open the full span view.",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"theygent-control-plane\"}",
+          "limit": 20,
+          "tableType": "traces"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Traces with failed spans",
+      "description": "Any run containing a span whose node ended err — the exporter maps theygent's err status to OTel STATUS_ERROR, so this is the ‘what broke recently’ view.",
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{resource.service.name=\"theygent-control-plane\" && status=error}",
+          "limit": 20,
+          "tableType": "traces"
+        }
+      ]
+    }
+  ]
+}

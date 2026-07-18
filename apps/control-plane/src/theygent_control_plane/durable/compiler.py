@@ -115,6 +115,7 @@ from theygent_control_plane.walker import (
     llm_models,
     mcp_config_from_connection,
     merge_usage,
+    rag_top_k,
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
@@ -365,7 +366,7 @@ async def _rag_step(
     node_id: str,
     source: str,
     query: str,
-    top_k: int,
+    top_k: int | None,
     min_similarity: float | None,
 ) -> dict[str, Any]:
     """Retrieval as a durable step — the query is resolved deterministically in the workflow
@@ -430,7 +431,7 @@ async def _durable_tool_call(
             node_id,
             rcfg.source,
             str(call.arguments.get("query") or ""),
-            rcfg.top_k,
+            rag_top_k(rag_node.config, rcfg),
             rcfg.min_similarity,
         )
         return ActivityOutcome(ok=o["ok"], value=o["value"])
@@ -1259,7 +1260,7 @@ async def _durable_walk(
                             node.id,
                             rcfg.source,
                             rag_query,
-                            rcfg.top_k,
+                            rag_top_k(node.config, rcfg),
                             rcfg.min_similarity,
                         )
                         rag_outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])

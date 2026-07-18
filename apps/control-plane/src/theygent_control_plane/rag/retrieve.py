@@ -8,6 +8,7 @@ never imports an embedding library).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from theygent_control_plane.rag.store import RagStore
@@ -22,6 +23,7 @@ class RetrievalError(RuntimeError):
 
 
 MAX_TOP_K = 50
+DEFAULT_TOP_K = 5
 
 
 class RagRetriever:
@@ -31,26 +33,34 @@ class RagRetriever:
         gateway: Any,
         *,
         store: RagStore | None = None,
+        default_top_k: Callable[[], int] | None = None,
     ) -> None:
+        # ``default_top_k`` is the platform-settings accessor consulted when a caller passes
+        # ``top_k=None`` (a query/node that did not set one explicitly). Explicit values are
+        # never touched by it.
         self._sessionmaker = sessionmaker
         self._gateway: GatewayClient = gateway
         self._store = store or RagStore()
+        self._default_top_k = default_top_k
 
     async def retrieve(
         self,
         *,
         source_id: str,
         query: str,
-        top_k: int = 5,
+        top_k: int | None = DEFAULT_TOP_K,
         min_similarity: float | None = None,
     ) -> dict[str, Any]:
         """Embed ``query`` with the source's pinned model, hybrid-search its chunks, and return
         a serializable result (the ``rag`` node's step output / the model-facing tool result).
-        Raises :class:`RetrievalError` with an actionable message on every failure shape —
+        ``top_k=None`` means "no explicit choice" — the platform default applies. Raises
+        :class:`RetrievalError` with an actionable message on every failure shape —
         unknown source, nothing ingested yet, embedding failure."""
         query = (query or "").strip()
         if not query:
             raise RetrievalError("retrieval query is empty")
+        if top_k is None:
+            top_k = int(self._default_top_k()) if self._default_top_k is not None else DEFAULT_TOP_K
         top_k = max(1, min(int(top_k), MAX_TOP_K))
 
         async with self._sessionmaker() as session:

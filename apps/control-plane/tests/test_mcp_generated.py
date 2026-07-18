@@ -209,6 +209,33 @@ async def test_builders_honor_timeout_seconds() -> None:
     await upstream.aclose()
 
 
+async def test_upstream_timeout_follows_the_injected_call_timeout() -> None:
+    # With no options.timeoutSeconds the upstream httpx timeout must resolve from the SAME
+    # call-timeout source the actor ceiling uses (the live-settings accessor), not the
+    # env-only default — otherwise a raised call timeout never reaches the upstream client
+    # and the actor waits on requests httpx already cancelled at the old ceiling.
+    _server, upstream = build_openapi_server(_openapi_config(), call_timeout=lambda: 300.0)
+    assert upstream.timeout == httpx.Timeout(300.0)
+    await upstream.aclose()
+    _server, upstream = build_graphql_server(
+        McpServerConfig(transport="graphql", url="http://gql.test"), call_timeout=45.0
+    )
+    assert upstream.timeout == httpx.Timeout(45.0)
+    await upstream.aclose()
+    # An explicit options.timeoutSeconds still wins over the injected source.
+    _server, upstream = build_openapi_server(
+        _openapi_config(timeoutSeconds=7.5), call_timeout=lambda: 300.0
+    )
+    assert upstream.timeout == httpx.Timeout(7.5)
+    await upstream.aclose()
+    # And the client threads its own call-timeout source into the build, so a factory-built
+    # generated server (which receives the accessor) resolves the upstream timeout from it.
+    client = GeneratedMcpClient(_openapi_config(), call_timeout=lambda: 300.0)
+    _server, upstream = client._build()
+    assert upstream.timeout == httpx.Timeout(300.0)
+    await upstream.aclose()
+
+
 # ── the GraphQL upstream: a REAL schema executed by graphql-core inside the mock ──────────────
 
 _GQL_SDL = """

@@ -23,11 +23,11 @@ import { TimeAgo } from "../components/TimeAgo";
 import { Badge, Card, Page, SectionHeading, buttonClass, linkClass } from "../components/ui";
 import { Skeleton } from "../components/ui/skeleton";
 import {
-  CONTROL_PLANE_URL,
-  INFERENCE_URL,
   type ModelView,
   type PlaneHealth,
   api,
+  controlPlaneUrl,
+  inferenceUrl,
   residentEngines,
 } from "../lib/api";
 import { engineTone, statusTone, toneOf } from "../lib/categories";
@@ -353,7 +353,7 @@ function InferencePlaneCard({
 }) {
   const offline = state === "offline";
   return (
-    <PlaneCardShell icon={Cpu} title="Inference plane" url={INFERENCE_URL} state={state}>
+    <PlaneCardShell icon={Cpu} title="Inference plane" url={inferenceUrl()} state={state}>
       {offline ? (
         <p className="text-xs text-muted-foreground">
           Unreachable — the inference plane is user-controlled and runs separately. Start it, then
@@ -421,7 +421,7 @@ function ControlPlaneCard({
 }) {
   const offline = state === "offline";
   return (
-    <PlaneCardShell icon={Server} title="Control plane" url={CONTROL_PLANE_URL} state={state}>
+    <PlaneCardShell icon={Server} title="Control plane" url={controlPlaneUrl()} state={state}>
       {offline ? (
         <p className="text-xs text-muted-foreground">
           Unreachable — agents, runs, chats, and memory live here. Start the control plane to see

@@ -58,7 +58,7 @@ async def _tables(url: str) -> set[str]:
             "'chat_session', 'run', 'message', 'mcp_server', 'agent', 'agent_version', "
             "'agent_draft', 'trigger', 'span', 'node_io', 'agent_io_policy', "
             "'bench_suite', 'bench_case', 'bench_run', 'bench_preset', "
-            "'secret', 'connection', 'gate_counter'"
+            "'secret', 'connection', 'gate_counter', 'platform_setting'"
         )
         rows = await conn.fetch(
             f"SELECT to_regclass('public.' || t) AS reg FROM unnest(ARRAY[{names}]) AS t"
@@ -129,6 +129,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "secret",
             "connection",
             "gate_counter",
+            "platform_setting",
         }  # built
         # Column-level proof for the trigger-related run columns (a column add/drop is
         # invisible to the table-set check above, so the round-trip could silently regress
@@ -173,6 +174,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "secret",
             "connection",
             "gate_counter",
+            "platform_setting",
         }  # rebuilt
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))  # cols rebuilt
     finally:

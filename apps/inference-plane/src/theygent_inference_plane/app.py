@@ -14,12 +14,12 @@ import contextlib
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
 from starlette.background import BackgroundTask
 from theygent_ir import Capabilities, ManagedBinding, Modality, parse_registration
 
@@ -51,6 +51,7 @@ from theygent_inference_plane.launcher import (
     MlxLauncher,
     MlxVlmLauncher,
     WhisperCppLauncher,
+    _hf_hub_dir,
 )
 from theygent_inference_plane.manager import (
     EngineManager,
@@ -59,6 +60,14 @@ from theygent_inference_plane.manager import (
     Upstream,
 )
 from theygent_inference_plane.registry import Registry, UnknownLogicalId
+from theygent_inference_plane.settings import (
+    MAX_RESIDENT_DEFAULT,
+    MAX_RESIDENT_ENV_VAR,
+    MAX_RESIDENT_MAX,
+    MAX_RESIDENT_MIN,
+    SettingsStore,
+    resolve_max_resident,
+)
 from theygent_inference_plane.vllm_engine import VllmLauncher
 
 _REAP_INTERVAL_SEC = 30.0
@@ -102,6 +111,17 @@ class ImagesRequest(BaseModel):
 
     model: str
     prompt: str
+
+
+class SettingsPatch(BaseModel):
+    # The writable settings surface (management plane, camelCase). Strict and closed:
+    # an unknown key, a non-integer (bools included), or an out-of-bounds ceiling is a
+    # 422, never silently ignored. `null` = reset to default (delete the stored value).
+    model_config = ConfigDict(extra="forbid")
+
+    max_resident: Annotated[StrictInt, Field(ge=MAX_RESIDENT_MIN, le=MAX_RESIDENT_MAX)] | None = (
+        Field(alias="maxResident")
+    )
 
 
 # Map an OpenAI `response_format` to the audio MIME type for the TTS response body.
@@ -185,7 +205,7 @@ def create_app(
     clock: Clock | None = None,
     probe: ResourceProbe | None = None,
     policy: EvictionPolicy | None = None,
-    max_resident: int = 2,
+    max_resident: int | None = None,
     enable_reaper: bool = True,
     cors_origins: list[str] | None = None,
     state_path: Path | None = None,
@@ -203,6 +223,16 @@ def create_app(
     credential_store = CredentialStore(
         state_path.with_name("credentials.json") if state_path is not None else None
     )
+    # Writable platform settings — settings.json, a peer of registry.json/credentials.json in the
+    # same local state dir (never the control plane); in-memory when `state_path` is None.
+    settings_store = SettingsStore(
+        state_path.with_name("settings.json") if state_path is not None else None
+    )
+    # The resident-engine ceiling: explicit argument (the env-injection seam — the entrypoint
+    # passes THEYGENT_MAX_RESIDENT through only when set AND non-empty, so a value here is
+    # env-PINNED and /admin/settings refuses writes) > the stored settings.json value > the
+    # coded default. The resolved source is what /admin/settings reports.
+    max_resident_setting = resolve_max_resident(max_resident, settings_store)
     # One launcher per (engine, modality), behind a single dispatcher so the manager stays
     # engine-agnostic (MLX/vLLM — and now the non-chat modalities — added with zero EngineManager
     # changes). Tests inject a single fake launcher that serves every binding. llama.cpp serves
@@ -239,7 +269,7 @@ def create_app(
         clock=clock,
         probe=probe,
         policy=policy,
-        max_resident=max_resident,
+        max_resident=max_resident_setting.value,
     )
     gateway = Gateway()
     # Discovery + in-plane install. The catalog provider (HF today; the seam takes MCP/Apify
@@ -249,7 +279,9 @@ def create_app(
     # plane. `model_dir` is where installed weights land (used by the real downloader).
     catalog: CatalogProvider = catalog_provider or HuggingFaceProvider()
     _model_dir = model_dir or (Path.home() / ".theygent" / "inference" / "models")
-    downloads = downloader or Downloader(registry, _model_dir)
+    # The credential store rides into the downloader so the reserved HF_TOKEN credential can
+    # authenticate gated-repo downloads — resolved locally, per download, never logged.
+    downloads = downloader or Downloader(registry, _model_dir, credentials=credential_store)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -288,6 +320,11 @@ def create_app(
     app.state.catalog = catalog
     app.state.downloader = downloads
     app.state.credential_store = credential_store
+    app.state.settings_store = settings_store
+    # Environment facts for /admin/diagnostics (and anything else that needs to know where
+    # this plane keeps its state): the registry file path (None = in-memory) + the model dir.
+    app.state.state_path = state_path
+    app.state.model_dir = _model_dir
 
     # ── management plane: /admin/* ──────────────────────────────────────
 
@@ -322,6 +359,10 @@ def create_app(
     async def list_engines() -> dict[str, Any]:
         # Running managed engines + resident state. Count-based arbitration,
         # so no RAM/VRAM bytes yet — maxResident is the ceiling the policy enforces.
+        # `maxResident` here is a deliberate read-only SNAPSHOT duplicate: this route is the
+        # runtime view (what ceiling is the manager enforcing right now, next to the engines
+        # it applies to), while /admin/settings is the writable home carrying value+source.
+        # Existing consumers of this shape keep working; writes go through /admin/settings.
         return {"maxResident": manager.max_resident, "resident": manager.resident_engines()}
 
     @app.get("/admin/models/{logical_id}")
@@ -399,6 +440,90 @@ def create_app(
             )
         await manager.evict(logical_id)
         return JSONResponse(_model_view(logical_id))
+
+    # ── management plane: /admin/settings + /admin/diagnostics ──────────
+    # The settings resource carries ONLY settable knobs (read-write symmetric: everything in a
+    # GET can be PATCHed); read-only environment facts live in /admin/diagnostics. Both are
+    # named additive extensions of the management plane — camelCase, strict shapes.
+
+    def _settings_view() -> dict[str, Any]:
+        # Source is recomputed per request so it stays honest across writes: env-pinned wins
+        # for the process lifetime; otherwise a stored value, else the coded default.
+        if max_resident_setting.pinned:
+            source = "env"
+        elif settings_store.max_resident is not None:
+            source = "stored"
+        else:
+            source = "default"
+        return {
+            "maxResident": {
+                # The manager's ceiling is the live truth (the PATCH hook updates it in place).
+                "value": manager.max_resident,
+                "default": MAX_RESIDENT_DEFAULT,
+                "source": source,
+                "envVar": MAX_RESIDENT_ENV_VAR,
+                # "live": a change applies NOW — idle excess engines are evicted immediately,
+                # busy ones drain and tear down when their in-flight work completes.
+                "apply": "live",
+            }
+        }
+
+    @app.get("/admin/settings")
+    async def get_settings() -> dict[str, Any]:
+        return _settings_view()
+
+    @app.patch("/admin/settings")
+    async def patch_settings(request: Request) -> Response:
+        raw = await request.json()
+        try:
+            patch = SettingsPatch.model_validate(raw)
+        except ValidationError as exc:
+            return _openai_error(
+                f"invalid settings payload: {exc.errors()}",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_settings",
+            )
+        if max_resident_setting.pinned:
+            return _openai_error(
+                f"maxResident is pinned by the {MAX_RESIDENT_ENV_VAR} environment variable on "
+                "this host and cannot be changed here; unset the variable (or leave it empty) "
+                "and restart the inference plane to make it editable",
+                status=422,
+                type_="invalid_request_error",
+                code="env_pinned",
+            )
+        # Persist (null deletes the stored value = reset to default), then apply live: point
+        # the manager at the resolved ceiling and enforce it immediately. Never evicts an
+        # engine with an in-flight request — busy excess engines drain and die on idle.
+        settings_store.set_max_resident(patch.max_resident)
+        manager.set_max_resident(resolve_max_resident(None, settings_store).value)
+        await manager.enforce_ceiling()
+        return JSONResponse(_settings_view())
+
+    @app.get("/admin/diagnostics")
+    async def diagnostics() -> dict[str, Any]:
+        # Read-only environment facts. Binary paths reuse each launcher's construction-time
+        # resolution — nothing is spawned, nothing raises; a missing binary is reported as
+        # status "missing" with a null path (the same fact /readyz folds into not-ready).
+        binaries: list[dict[str, Any]] = []
+        if isinstance(engine_launcher, ManagedLauncherSet):
+            binaries = [
+                {
+                    "engine": b.engine,
+                    "modality": b.modality,
+                    "path": b.path,
+                    "status": "resolved" if b.resolved else "missing",
+                }
+                for b in engine_launcher.binaries()
+            ]
+        return {
+            "stateDir": str(state_path.parent) if state_path is not None else None,
+            "modelDir": str(_model_dir),
+            "hfHome": _hf_hub_dir(),
+            "persistent": state_path is not None,
+            "binaries": binaries,
+        }
 
     # ── management plane: /admin/credentials (user-side named secrets) ───
     # A local named-secret store for reachable bindings' `secret://NAME` refs. Values are

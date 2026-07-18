@@ -30,11 +30,27 @@ from typing import Any, Literal
 from theygent_ir import ManagedBinding
 
 from theygent_inference_plane.catalog import InstallPlan
+from theygent_inference_plane.credentials import CredentialStore
 from theygent_inference_plane.registry import Registry
 
 DownloadStatus = Literal["downloading", "registering", "done", "error", "cancelled"]
 
 _POLL_INTERVAL_SEC = 0.5
+
+#: Reserved credential name for gated-repo downloads. The user PUTs it to
+#: ``/admin/credentials/HF_TOKEN`` (browser → inference plane directly — the token lives
+#: in the user's trust domain and never transits the control plane) or exports it as an
+#: env var; either way it resolves HERE and is handed straight to huggingface_hub.
+HF_TOKEN_NAME = "HF_TOKEN"
+
+
+def _hf_token(store: CredentialStore | None) -> str | None:
+    """The gated-download token, when the user configured one — ``None`` otherwise
+    (huggingface_hub's own default behavior is unchanged). Store first, then the process
+    env: the same order ``secret://NAME`` refs resolve. The value goes straight into the
+    hub call — never logged, never echoed."""
+    token = store.get(HF_TOKEN_NAME) if store is not None else None
+    return token or os.environ.get(HF_TOKEN_NAME) or None
 
 
 def _sanitize(repo: str) -> str:
@@ -62,20 +78,23 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def _hf_fetch(plan: InstallPlan, dest_dir: Path) -> Path:
+def _hf_fetch(plan: InstallPlan, dest_dir: Path, *, token: str | None = None) -> Path:
     """Real download into ``dest_dir`` (under the plane's model dir). Returns the path to register:
-    the GGUF file for llamacpp, the snapshot directory for mlx."""
+    the GGUF file for llamacpp, the snapshot directory for mlx. ``token`` authenticates gated
+    repos; ``None`` leaves huggingface_hub's own env/config behavior untouched."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     if plan.engine == "llamacpp":
         from huggingface_hub import hf_hub_download
 
         assert plan.filename is not None
-        out = hf_hub_download(repo_id=plan.repo, filename=plan.filename, local_dir=str(dest_dir))
+        out = hf_hub_download(
+            repo_id=plan.repo, filename=plan.filename, local_dir=str(dest_dir), token=token
+        )
         return Path(out)
     # mlx: snapshot the whole repo into a flat local dir; mlx_lm.server runs from the directory.
     from huggingface_hub import snapshot_download
 
-    out = snapshot_download(repo_id=plan.repo, local_dir=str(dest_dir))
+    out = snapshot_download(repo_id=plan.repo, local_dir=str(dest_dir), token=token)
     return Path(out)
 
 
@@ -125,10 +144,18 @@ class Downloader:
         *,
         fetch: Callable[[InstallPlan, Path], Path] | None = None,
         dir_size: Callable[[Path], int] | None = None,
+        credentials: CredentialStore | None = None,
     ) -> None:
         self._registry = registry
         self._model_dir = model_dir
-        self._fetch = fetch or _hf_fetch
+        self._credentials = credentials
+        # The default fetch resolves the reserved HF_TOKEN credential PER DOWNLOAD (not at
+        # construction), so a token added over /admin/credentials applies to the next
+        # install without a restart. The fetch seam's (plan, dest) signature is unchanged —
+        # injected test fakes never see the token.
+        self._fetch = fetch or (
+            lambda plan, dest: _hf_fetch(plan, dest, token=_hf_token(self._credentials))
+        )
         self._dir_size = dir_size or _dir_size
         self._jobs: dict[str, DownloadJob] = {}
         self._tasks: set[asyncio.Task[None]] = set()

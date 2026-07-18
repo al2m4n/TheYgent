@@ -1,14 +1,35 @@
-// App-level settings — the platform's own configuration, reached from the rail's Configuration
-// group. Distinct from the profile's USER settings (identity, theme): what lives here concerns
-// how this installation talks to its planes, not who is using it. Today that is the local
-// endpoints + credentials seam; more platform configuration (retrieval stores, defaults,
-// telemetry opt-ins) slots in as sections below.
+// App-level settings — the platform-configuration surface, reached from the rail's Configuration
+// group. Distinct from the profile's USER settings (identity, theme — those stay in the profile
+// modal): what lives here concerns how this installation behaves, not who is using it.
+//
+// One dirty-state form (the control-plane settings catalog) lives HERE and is shared by the
+// Telemetry / RAG / MCP tabs, so staged edits survive tab switches; each tab saves only its own
+// group. The Inference tab talks to the inference plane's own settings/diagnostics resources —
+// a separate trust domain the browser reaches directly.
 
 import { LocalCredentials } from "../components/LocalCredentials";
+import { InferenceTab } from "../components/settings/InferenceTab";
+import { McpTab } from "../components/settings/McpTab";
+import { OverviewTab } from "../components/settings/OverviewTab";
+import { RagTab } from "../components/settings/RagTab";
+import { TelemetryTab } from "../components/settings/TelemetryTab";
+import { usePlatformSettingsForm } from "../components/settings/useSettingsForm";
 import { Page } from "../components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+
+const TABS = [
+  { value: "overview", label: "Overview" },
+  { value: "inference", label: "Inference" },
+  { value: "telemetry", label: "Telemetry" },
+  { value: "rag", label: "RAG" },
+  { value: "mcp", label: "MCP" },
+  { value: "credentials", label: "Credentials" },
+] as const;
 
 export function Settings() {
+  const form = usePlatformSettingsForm();
+
   return (
     <Page className="space-y-4">
       <div>
@@ -19,26 +40,46 @@ export function Settings() {
         </p>
       </div>
 
-      <Card>
-        <CardHeader className="border-b">
-          <CardTitle>Endpoints &amp; credentials</CardTitle>
-          <CardDescription>
-            Where this installation reaches its planes, and the credential names it holds locally.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <LocalCredentials />
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="overview">
+        <TabsList>
+          {TABS.map((t) => (
+            <TabsTrigger key={t.value} value={t.value}>
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>More to come</CardTitle>
-          <CardDescription>
-            Retrieval (RAG) stores, run defaults, and telemetry preferences will be configured here.
-          </CardDescription>
-        </CardHeader>
-      </Card>
+        <TabsContent value="overview">
+          <OverviewTab form={form} />
+        </TabsContent>
+        <TabsContent value="inference">
+          <InferenceTab />
+        </TabsContent>
+        <TabsContent value="telemetry">
+          <TelemetryTab form={form} />
+        </TabsContent>
+        <TabsContent value="rag">
+          <RagTab form={form} />
+        </TabsContent>
+        <TabsContent value="mcp">
+          <McpTab form={form} />
+        </TabsContent>
+        <TabsContent value="credentials">
+          <Card>
+            <CardHeader className="border-b">
+              <CardTitle>Local credentials — inference plane</CardTitle>
+              <CardDescription>
+                Named secrets for hosted-model registrations (referenced as secret://NAME). They
+                live in the INFERENCE plane's machine-local store — on the machine that runs your
+                models, write-only, never sent to theygent.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <LocalCredentials />
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </Page>
   );
 }

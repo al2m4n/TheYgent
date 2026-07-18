@@ -1,0 +1,28 @@
+# Collector pipeline for the sample stack: receive OTLP, batch, forward to Tempo.
+# The debug exporter prints a line per span so `make otel-logs` shows spans ARRIVING —
+# the honest middle checkpoint between "theygent says exported" and "Grafana shows it".
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/tempo, debug]

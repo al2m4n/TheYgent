@@ -18,16 +18,68 @@ import type {
 } from "./runtypes";
 import { type SSEEvent, readSSE } from "./sse";
 
+// Build-time defaults for the two plane base URLs (env value, else localhost). Kept exported for
+// display fallbacks and existing imports — but every actual HTTP call resolves the base PER CALL
+// via controlPlaneUrl()/inferenceUrl() below, so a browser-local override applies everywhere.
 export const CONTROL_PLANE_URL =
   (import.meta.env.VITE_CONTROL_PLANE_URL as string | undefined)?.replace(/\/$/, "") ??
   "http://localhost:8080";
 
 // The inference plane is a SEPARATE, user-controlled service (the two-plane split). The interface
-// reads its registered logical models DIRECTLY (like the cockpit) to populate the model picker —
-// it is never proxied through the control-plane. Read-only `/admin/models`; declares no engine.
+// reads its registered logical models DIRECTLY to populate the model picker — it is never proxied
+// through the control-plane. Read-only `/admin/models`; declares no engine.
 export const INFERENCE_URL =
   (import.meta.env.VITE_INFERENCE_URL as string | undefined)?.replace(/\/$/, "") ??
   "http://localhost:8081";
+
+// ── browser-local endpoint overrides ─────────────────────────────────────────
+// One SPA build can point at another install: the Settings page stores per-plane base-URL
+// overrides in localStorage ("this browser only" — never a server-side setting). Resolution per
+// call: override > VITE_* env value > localhost default. Guarded for non-DOM (test) environments.
+
+export type Plane = "control" | "inference";
+
+const OVERRIDE_KEYS: Record<Plane, string> = {
+  control: "theygent.url.control",
+  inference: "theygent.url.inference",
+};
+
+function readOverride(plane: Plane): string | null {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(OVERRIDE_KEYS[plane]);
+    const trimmed = raw?.trim().replace(/\/+$/, "");
+    return trimmed ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The stored overrides (null = none). For the Settings editor's inputs. */
+export function getEndpointOverrides(): Record<Plane, string | null> {
+  return { control: readOverride("control"), inference: readOverride("inference") };
+}
+
+/** Set (or clear, with null/empty) one plane's browser-local base-URL override. */
+export function setEndpointOverride(plane: Plane, url: string | null): void {
+  try {
+    const trimmed = url?.trim().replace(/\/+$/, "");
+    if (trimmed) localStorage.setItem(OVERRIDE_KEYS[plane], trimmed);
+    else localStorage.removeItem(OVERRIDE_KEYS[plane]);
+  } catch {
+    // no localStorage (tests / privacy mode) — overrides simply don't apply.
+  }
+}
+
+/** The EFFECTIVE control-plane base URL for a call being made right now. */
+export function controlPlaneUrl(): string {
+  return readOverride("control") ?? CONTROL_PLANE_URL;
+}
+
+/** The EFFECTIVE inference-plane base URL for a call being made right now. */
+export function inferenceUrl(): string {
+  return readOverride("inference") ?? INFERENCE_URL;
+}
 
 // The static dev token the control-plane's no-op `require_auth` accepts (same seam as the
 // cockpit). Centralised so swapping in a real token flow later touches only this function.
@@ -415,8 +467,9 @@ export interface PlaneHealth {
   /** "ready" | "not-ready" | "ok" | "offline" — the plane's own word, or our fallback. */
   status: string;
   reason?: string | null;
-  /** Control-plane /readyz echoes registered MCP servers; inference /readyz its per-engine readiness. */
-  mcp?: { servers?: Record<string, unknown> } | null;
+  /** Control-plane /readyz echoes registered MCP servers (an array of entries, not a map);
+   * inference /readyz its per-engine readiness. */
+  mcp?: { servers?: { name?: string; transport?: string; connected?: boolean }[] } | null;
   engines?: Record<string, { ready: boolean; reason?: string | null }> | null;
 }
 
@@ -607,6 +660,117 @@ export interface BenchPresetRecord extends BenchPresetInput {
   updated_at: string;
 }
 
+// ── platform settings (control plane, snake_case) ────────────────────────────
+// The typed settings catalog the Settings page renders from. Precedence per key:
+// explicit env > stored > default. Two DISTINCT env states: `env_pinned` locks the field in the
+// UI, `env_capped` keeps it editable but the effective value = min(env cap, stored). A sensitive
+// entry's `value` reads as {set, names} — the actual values never return; writes send a FULL
+// replacement map (or null to clear); an omitted key is unchanged.
+
+export type SettingType =
+  | "int"
+  | "float"
+  | "bool"
+  | "str"
+  | "enum"
+  | "list[str]"
+  | "list[registry]"
+  | "secret";
+export type SettingSource = "env" | "stored" | "default";
+export type SettingGroup = "telemetry" | "mcp" | "rag";
+
+/** The read shape of a `secret` value: presence + non-secret names only. */
+export interface SensitiveValue {
+  set: boolean;
+  names: string[];
+}
+
+export interface SettingConstraints {
+  min?: number;
+  max?: number;
+  choices?: string[];
+}
+
+export interface SettingEntry {
+  key: string;
+  /** The EFFECTIVE value (after env pin/cap resolution). */
+  value: unknown;
+  /** What is persisted (null when nothing stored). */
+  stored_value: unknown;
+  default: unknown;
+  type: SettingType;
+  source: SettingSource;
+  env_var: string | null;
+  env_pinned: boolean;
+  env_capped: boolean;
+  env_cap_value: unknown;
+  /** The honest apply story, e.g. "live", "live (next connect)". */
+  apply: string;
+  restart_pending: boolean;
+  /** A stored value that no longer validates — resolved to default, never half-applied. */
+  stored_invalid: boolean;
+  constraints: SettingConstraints | null;
+  description: string;
+  group: SettingGroup;
+}
+
+/** A boot-structural, never-UI-settable fact (read-only diagnostics; warnings render loud). */
+export interface BootEntry {
+  key: string;
+  value: unknown;
+  description: string;
+  warning: string | null;
+}
+
+export interface SettingsView {
+  settings: SettingEntry[];
+  boot: BootEntry[];
+  /** Stored keys no longer in the catalog (after an upgrade) — deletable via PATCH {key: null}. */
+  orphaned: string[];
+}
+
+/** PATCH echoes the post-write state + per-key live-apply hook failures (value still stored). */
+export interface SettingsPatchResult extends SettingsView {
+  apply_errors: Record<string, string>;
+}
+
+export interface OtlpTestResult {
+  ok: boolean;
+  error: string | null;
+  latency_ms: number;
+}
+
+// ── inference-plane settings + diagnostics (camelCase — the /admin/* convention) ──
+// A separate trust domain with its own store: /admin/settings carries ONLY settable knobs;
+// read-only environment facts live on /admin/diagnostics.
+
+export interface InferenceSettingEntry {
+  value: number;
+  default: number;
+  source: SettingSource;
+  envVar: string;
+  apply: string;
+}
+
+export interface InferenceSettings {
+  maxResident: InferenceSettingEntry;
+}
+
+export interface DiagnosticsBinary {
+  engine: string;
+  modality: string;
+  path: string | null;
+  status: "resolved" | "missing";
+}
+
+export interface InferenceDiagnostics {
+  stateDir: string | null;
+  modelDir: string | null;
+  hfHome: string;
+  persistent: boolean;
+  binaries: DiagnosticsBinary[];
+}
+
 export const api = {
   // ── control-plane runs + sessions (the operator surface, ported from the cockpit) ──
   listRuns: (params: { limit?: number; before?: string } = {}) => {
@@ -614,17 +778,17 @@ export const api = {
     if (params.limit) q.set("limit", String(params.limit));
     if (params.before) q.set("before", params.before);
     const qs = q.toString();
-    return request<{ runs: Run[] }>(CONTROL_PLANE_URL, `/runs${qs ? `?${qs}` : ""}`).then(
+    return request<{ runs: Run[] }>(controlPlaneUrl(), `/runs${qs ? `?${qs}` : ""}`).then(
       (r) => r.runs,
     );
   },
 
-  getRun: (id: string) => request<Run>(CONTROL_PLANE_URL, `/runs/${encodeURIComponent(id)}`),
+  getRun: (id: string) => request<Run>(controlPlaneUrl(), `/runs/${encodeURIComponent(id)}`),
 
   // Exact overview totals for the dashboard tiles — one COUNT(*) per table, distinct from the
   // paginated lists (which only expose a page window, so a client can't derive a true total).
   getStats: () =>
-    request<{ runs: number; sessions: number; agents: number }>(CONTROL_PLANE_URL, "/stats"),
+    request<{ runs: number; sessions: number; agents: number }>(controlPlaneUrl(), "/stats"),
 
   // ── artifacts (audio in/out for an agent run) ────────────────────────────────
   // An audio agent is orchestrated by the control-plane walker, so its input/output audio crosses
@@ -635,7 +799,7 @@ export const api = {
   uploadArtifact: async (
     blob: Blob,
   ): Promise<{ ref: string; contentType: string; bytes: number }> => {
-    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts`, {
+    const res = await fetch(`${controlPlaneUrl()}/artifacts`, {
       method: "POST",
       headers: { "Content-Type": blob.type || "application/octet-stream", ...authHeaders() },
       body: blob,
@@ -644,7 +808,7 @@ export const api = {
     return res.json();
   },
   downloadArtifact: async (ref: string): Promise<Blob> => {
-    const res = await fetch(`${CONTROL_PLANE_URL}/artifacts/${encodeURIComponent(ref)}`, {
+    const res = await fetch(`${controlPlaneUrl()}/artifacts/${encodeURIComponent(ref)}`, {
       headers: authHeaders(),
     });
     if (!res.ok) throw await toError(res);
@@ -657,18 +821,18 @@ export const api = {
     if (params.before) q.set("before", params.before);
     const qs = q.toString();
     return request<{ sessions: SessionSummary[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/sessions${qs ? `?${qs}` : ""}`,
     ).then((r) => r.sessions);
   },
 
   getSession: (id: string) =>
-    request<SessionDetail>(CONTROL_PLANE_URL, `/sessions/${encodeURIComponent(id)}`),
+    request<SessionDetail>(controlPlaneUrl(), `/sessions/${encodeURIComponent(id)}`),
 
   // Create — or idempotently ensure — a session. An existing id returns the row (replacing
   // `metadata` wholesale iff provided); a missing id has the server generate one.
   createSession: (body: { id?: string; metadata?: Record<string, unknown> }) =>
-    request<SessionSummary>(CONTROL_PLANE_URL, "/sessions", {
+    request<SessionSummary>(controlPlaneUrl(), "/sessions", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -680,14 +844,14 @@ export const api = {
     body: { user_content: string; assistant_content: string },
   ) =>
     request<{ messages: SessionMessage[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/sessions/${encodeURIComponent(sessionId)}/turns`,
       { method: "POST", body: JSON.stringify(body) },
     ),
 
   // Delete a session and its messages; runs that pointed at it stay, detached (session_id → null).
   deleteSession: (sessionId: string) =>
-    request<void>(CONTROL_PLANE_URL, `/sessions/${encodeURIComponent(sessionId)}`, {
+    request<void>(controlPlaneUrl(), `/sessions/${encodeURIComponent(sessionId)}`, {
       method: "DELETE",
     }),
 
@@ -697,7 +861,7 @@ export const api = {
   // chat trace) reads this one fetcher; if observability is absent the caller degrades to a note.
   getTrace: (runId: string) =>
     request<{ runId: string; status: string; spans: Span[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/runs/${encodeURIComponent(runId)}/trace`,
     ).then((r) => r.spans),
 
@@ -705,18 +869,18 @@ export const api = {
   // as a 200 with inputs/outputs null + a `reason` — never an error, so the timeline stays legible.
   getNodeIo: (runId: string, nodeId: string) =>
     request<NodeIo>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/runs/${encodeURIComponent(runId)}/nodes/${encodeURIComponent(nodeId)}/io`,
     ),
 
   getIoPolicy: (agentId: string) =>
-    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(agentId)}/io-policy`),
+    request<IoPolicy>(controlPlaneUrl(), `/agents/${encodeURIComponent(agentId)}/io-policy`),
 
   putIoPolicy: (
     agentId: string,
     body: { io_capture: CaptureLevel; io_retention_seconds?: number | null },
   ) =>
-    request<IoPolicy>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(agentId)}/io-policy`, {
+    request<IoPolicy>(controlPlaneUrl(), `/agents/${encodeURIComponent(agentId)}/io-policy`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
@@ -727,31 +891,31 @@ export const api = {
     if (params.before) q.set("before", params.before);
     const qs = q.toString();
     return request<{ agents: AgentSummary[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/agents${qs ? `?${qs}` : ""}`,
     ).then((r) => r.agents);
   },
 
   getAgent: (id: string) =>
-    request<AgentDetail>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(id)}`),
+    request<AgentDetail>(controlPlaneUrl(), `/agents/${encodeURIComponent(id)}`),
 
   getAgentVersion: (id: string, version: string) =>
     request<StoredVersion>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/agents/${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}`,
     ),
 
   // Create a new agent + its first version. The id/version come FROM the IR. The body is `{ ir }`
   // where `ir` carries its `view` block; the server strips `view`, hashes, persists.
   createAgent: (body: { ir: IRDocument; name?: string }) =>
-    request<AgentDetail>(CONTROL_PLANE_URL, "/agents", {
+    request<AgentDetail>(controlPlaneUrl(), "/agents", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   // Add a new immutable version to an existing agent (the IR's `version` is the new coordinate).
   addAgentVersion: (id: string, body: { ir: IRDocument }) =>
-    request<AgentDetail>(CONTROL_PLANE_URL, `/agents/${encodeURIComponent(id)}/versions`, {
+    request<AgentDetail>(controlPlaneUrl(), `/agents/${encodeURIComponent(id)}/versions`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -763,7 +927,7 @@ export const api = {
     body: { input?: unknown; version?: string; content_hash?: string; stream?: boolean },
   ) =>
     request<{ runId: string; status: string; output?: string; error?: string }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/agents/${encodeURIComponent(id)}/runs`,
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
     ),
@@ -776,7 +940,7 @@ export const api = {
     body: { input?: unknown; version?: string; content_hash?: string },
   ) =>
     request<{ run_id: string }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/agents/${encodeURIComponent(id)}/durable-runs`,
       { method: "POST", body: JSON.stringify(body) },
     ),
@@ -786,7 +950,7 @@ export const api = {
   // isn't waiting; 422 when the node's declared input schema requires keys the payload lacks.
   resumeRun: (runId: string, input: unknown) =>
     request<{ runId: string; status: string; awaitingNode?: string | null }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/runs/${encodeURIComponent(runId)}/resume`,
       { method: "POST", body: JSON.stringify({ input }) },
     ),
@@ -798,7 +962,7 @@ export const api = {
   // structured output comes back JSON-serialized in `output` (app.py `_coerce_output`). Mirrors `runAgent`.
   runGraph: (body: { ir: IRDocument; input?: unknown; stream?: boolean }) =>
     request<{ runId: string; status: string; output?: string; error?: string }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       "/graphs/runs",
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
     ),
@@ -811,43 +975,43 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
     const qs = q.toString();
     return request<{ drafts: DraftSummary[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/drafts${qs ? `?${qs}` : ""}`,
     ).then((r) => r.drafts);
   },
 
   getDraft: (id: string) =>
-    request<DraftRecord>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`),
+    request<DraftRecord>(controlPlaneUrl(), `/drafts/${encodeURIComponent(id)}`),
 
   createDraft: (body: { ir: IRDocument; agent_id?: string | null }) =>
-    request<DraftRecord>(CONTROL_PLANE_URL, "/drafts", {
+    request<DraftRecord>(controlPlaneUrl(), "/drafts", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   updateDraft: (id: string, body: { ir: IRDocument }) =>
-    request<DraftRecord>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`, {
+    request<DraftRecord>(controlPlaneUrl(), `/drafts/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
 
   deleteDraft: (id: string) =>
-    request<void>(CONTROL_PLANE_URL, `/drafts/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    request<void>(controlPlaneUrl(), `/drafts/${encodeURIComponent(id)}`, { method: "DELETE" }),
 
   // Inference plane (separate base URL): the registered logical models, to populate the model
   // picker. Read-only; tolerated to fail (the picker falls back to free text if unreachable).
   listModels: () =>
-    request<{ models: ModelView[] }>(INFERENCE_URL, "/admin/models").then((r) => r.models),
+    request<{ models: ModelView[] }>(inferenceUrl(), "/admin/models").then((r) => r.models),
 
   // ── control plane: connections (the tool/MCP auth seam) ─────────────────────
   // The secret is write-only (create/patch); the wire never returns it (only `hasSecret`).
   listConnections: () =>
-    request<{ connections: ConnectionRecord[] }>(CONTROL_PLANE_URL, "/connections").then(
+    request<{ connections: ConnectionRecord[] }>(controlPlaneUrl(), "/connections").then(
       (r) => r.connections,
     ),
 
   createConnection: (body: CreateConnectionBody) =>
-    request<ConnectionRecord>(CONTROL_PLANE_URL, "/connections", {
+    request<ConnectionRecord>(controlPlaneUrl(), "/connections", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -856,26 +1020,26 @@ export const api = {
     id: string,
     body: { name?: string; config?: Record<string, unknown>; secret?: string; enabled?: boolean },
   ) =>
-    request<ConnectionRecord>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}`, {
+    request<ConnectionRecord>(controlPlaneUrl(), `/connections/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
 
   deleteConnection: (id: string) =>
-    request<void>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}`, {
+    request<void>(controlPlaneUrl(), `/connections/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
 
   // ── control plane: triggers (surfaced on the input node) ─────────────────────
   listTriggers: () =>
-    request<{ triggers: TriggerRecord[] }>(CONTROL_PLANE_URL, "/triggers").then((r) => r.triggers),
+    request<{ triggers: TriggerRecord[] }>(controlPlaneUrl(), "/triggers").then((r) => r.triggers),
 
   // ── control plane: retrieval sources (RAG) ──────────────────────────────────
   listRagSources: () =>
-    request<{ sources: RagSource[] }>(CONTROL_PLANE_URL, "/rag/sources").then((r) => r.sources),
+    request<{ sources: RagSource[] }>(controlPlaneUrl(), "/rag/sources").then((r) => r.sources),
 
   getRagSource: (id: string) =>
-    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`),
+    request<RagSource>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}`),
 
   createRagSource: (body: {
     name: string;
@@ -883,37 +1047,37 @@ export const api = {
     embedding_model: string;
     config?: Record<string, unknown>;
   }) =>
-    request<RagSource>(CONTROL_PLANE_URL, "/rag/sources", {
+    request<RagSource>(controlPlaneUrl(), "/rag/sources", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   updateRagSource: (id: string, body: { name?: string; config?: Record<string, unknown> }) =>
-    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`, {
+    request<RagSource>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
 
   deleteRagSource: (id: string) =>
-    request<void>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}`, {
+    request<void>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
 
   listRagDocuments: (id: string) =>
     request<{ documents: RagDocument[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/rag/sources/${encodeURIComponent(id)}/documents`,
     ).then((r) => r.documents),
 
   // Start (or re-run) a crawl. Returns the source already flipped to "ingesting" — hand it to
   // `trackIngest` so the global center polls it to completion.
   ingestRagSource: (id: string) =>
-    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}:ingest`, {
+    request<RagSource>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}:ingest`, {
       method: "POST",
     }),
 
   cancelRagIngest: (id: string) =>
-    request<RagSource>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}:cancel`, {
+    request<RagSource>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}:cancel`, {
       method: "POST",
     }),
 
@@ -921,7 +1085,7 @@ export const api = {
   // the file's mime, not multipart; the filename rides the query string.
   uploadRagDocument: async (id: string, file: File): Promise<RagSource> => {
     const res = await fetch(
-      `${CONTROL_PLANE_URL}/rag/sources/${encodeURIComponent(id)}/documents?filename=${encodeURIComponent(file.name)}`,
+      `${controlPlaneUrl()}/rag/sources/${encodeURIComponent(id)}/documents?filename=${encodeURIComponent(file.name)}`,
       {
         method: "POST",
         headers: { "Content-Type": file.type || "application/octet-stream", ...authHeaders() },
@@ -934,47 +1098,47 @@ export const api = {
 
   // The query tester: retrieve top matches from one source (the same call a rag node makes).
   queryRagSource: (id: string, body: { query: string; top_k?: number; min_similarity?: number }) =>
-    request<RagQueryResult>(CONTROL_PLANE_URL, `/rag/sources/${encodeURIComponent(id)}/query`, {
+    request<RagQueryResult>(controlPlaneUrl(), `/rag/sources/${encodeURIComponent(id)}/query`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   // Control-plane registered MCP servers — to populate the mcp_tool `server` picker + the MCP page.
   listMcpServers: () =>
-    request<{ servers: McpServerSummary[] }>(CONTROL_PLANE_URL, "/admin/mcp/servers").then(
+    request<{ servers: McpServerSummary[] }>(controlPlaneUrl(), "/admin/mcp/servers").then(
       (r) => r.servers,
     ),
 
   // ── control plane: MCP server registry (the MCP page — define/manage servers) ─
   // Register or update a stdio MCP server. `env` stays in the user's trust domain.
   putMcpServer: (name: string, cfg: McpServerConfig) =>
-    request<McpServerSummary>(CONTROL_PLANE_URL, `/admin/mcp/servers/${encodeURIComponent(name)}`, {
+    request<McpServerSummary>(controlPlaneUrl(), `/admin/mcp/servers/${encodeURIComponent(name)}`, {
       method: "PUT",
       body: JSON.stringify(cfg),
     }),
 
   deleteMcpServer: (name: string) =>
-    request<void>(CONTROL_PLANE_URL, `/admin/mcp/servers/${encodeURIComponent(name)}`, {
+    request<void>(controlPlaneUrl(), `/admin/mcp/servers/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
 
   // Capability probe — connects lazily, returns the cached tool list (a 503 if the server won't spawn).
   getMcpTools: (name: string) =>
     request<{ tools: McpToolDescriptor[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/admin/mcp/servers/${encodeURIComponent(name)}/tools`,
     ).then((r) => r.tools),
 
   warmMcpServer: (name: string) =>
     request<McpServerSummary>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/admin/mcp/servers/${encodeURIComponent(name)}:warm`,
       { method: "POST" },
     ),
 
   closeMcpServer: (name: string) =>
     request<McpServerSummary>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/admin/mcp/servers/${encodeURIComponent(name)}:close`,
       { method: "POST" },
     ),
@@ -984,20 +1148,20 @@ export const api = {
   // capability probe, warm, close — plus the interactive authorization flow for remote servers.
   getConnectionMcpTools: (id: string) =>
     request<{ tools: McpToolDescriptor[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/connections/${encodeURIComponent(id)}/mcp/tools`,
     ).then((r) => r.tools),
 
   warmConnectionMcp: (id: string) =>
     request<{ id: string; connected: boolean }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/connections/${encodeURIComponent(id)}/mcp:warm`,
       { method: "POST" },
     ),
 
   closeConnectionMcp: (id: string) =>
     request<{ id: string; connected: boolean }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/connections/${encodeURIComponent(id)}/mcp:close`,
       { method: "POST" },
     ),
@@ -1006,17 +1170,17 @@ export const api = {
   // connection. `pending` means "open authorizationUrl in the browser and poll the status".
   startConnectionMcpOauth: (id: string) =>
     request<McpOauthStart>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/connections/${encodeURIComponent(id)}/mcp-oauth:start`,
       { method: "POST" },
     ),
 
   getConnectionMcpOauth: (id: string) =>
-    request<McpOauthStatus>(CONTROL_PLANE_URL, `/connections/${encodeURIComponent(id)}/mcp-oauth`),
+    request<McpOauthStatus>(controlPlaneUrl(), `/connections/${encodeURIComponent(id)}/mcp-oauth`),
 
   // ── control plane: MCP hub catalog (browse registries, install as connections) ─
   listMcpRegistries: () =>
-    request<{ registries: McpRegistryInfo[] }>(CONTROL_PLANE_URL, "/admin/mcp/registries").then(
+    request<{ registries: McpRegistryInfo[] }>(controlPlaneUrl(), "/admin/mcp/registries").then(
       (r) => r.registries,
     ),
 
@@ -1029,12 +1193,12 @@ export const api = {
     if (params.limit) q.set("limit", String(params.limit));
     if (params.cursor) q.set("cursor", params.cursor);
     const qs = q.toString();
-    return request<McpCatalogPage>(CONTROL_PLANE_URL, `/admin/mcp/catalog${qs ? `?${qs}` : ""}`);
+    return request<McpCatalogPage>(controlPlaneUrl(), `/admin/mcp/catalog${qs ? `?${qs}` : ""}`);
   },
 
   getMcpCatalogEntry: (registry: string, name: string, version = "latest") => {
     const q = new URLSearchParams({ registry, name, version });
-    return request<McpCatalogDetail>(CONTROL_PLANE_URL, `/admin/mcp/catalog/entry?${q}`);
+    return request<McpCatalogDetail>(controlPlaneUrl(), `/admin/mcp/catalog/entry?${q}`);
   },
 
   // Install one hub entry as an `mcp_server` connection. Secret-flagged values are routed to the
@@ -1048,7 +1212,7 @@ export const api = {
     values: Record<string, string>;
     useOauth?: boolean;
   }) =>
-    request<ConnectionRecord>(CONTROL_PLANE_URL, "/admin/mcp/catalog/install", {
+    request<ConnectionRecord>(controlPlaneUrl(), "/admin/mcp/catalog/install", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -1062,7 +1226,7 @@ export const api = {
     allowMutations?: boolean;
     connection?: string;
   }) =>
-    request<GeneratedPreview>(CONTROL_PLANE_URL, "/admin/mcp/generated:preview", {
+    request<GeneratedPreview>(controlPlaneUrl(), "/admin/mcp/generated:preview", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -1083,17 +1247,17 @@ export const api = {
   // ── inference plane: model + engine registry (the "Installed" tab) ─────────
   // Register / lifecycle / capabilities all on the user-controlled inference plane, called
   // directly (no new routes added here).
-  getEngines: () => request<EnginesView>(INFERENCE_URL, "/admin/engines"),
+  getEngines: () => request<EnginesView>(inferenceUrl(), "/admin/engines"),
 
   // ── plane liveness (the dashboard status widgets) ───────────────────────────
   // Each plane is probed on its OWN base URL (the two-plane split — the interface reaches both
   // directly). A 503 not-ready is a status, not an error; only an unreachable plane is "offline".
-  controlHealth: () => probeReady(CONTROL_PLANE_URL),
-  inferenceHealth: () => probeReady(INFERENCE_URL),
+  controlHealth: () => probeReady(controlPlaneUrl()),
+  inferenceHealth: () => probeReady(inferenceUrl()),
 
   getModelCapabilities: (logicalId: string) =>
     request<Capabilities>(
-      INFERENCE_URL,
+      inferenceUrl(),
       `/admin/models/${encodeURIComponent(logicalId)}/capabilities`,
     ),
 
@@ -1101,39 +1265,39 @@ export const api = {
   // Manage `secret://NAME` refs for reachable bindings. Values are write-only (never returned);
   // the list is names + hasValue only. All on the user-controlled inference plane, called directly.
   listCredentials: () =>
-    request<{ credentials: Credential[] }>(INFERENCE_URL, "/admin/credentials").then(
+    request<{ credentials: Credential[] }>(inferenceUrl(), "/admin/credentials").then(
       (r) => r.credentials,
     ),
 
   putCredential: (name: string, value: string) =>
-    request<Credential>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+    request<Credential>(inferenceUrl(), `/admin/credentials/${encodeURIComponent(name)}`, {
       method: "PUT",
       body: JSON.stringify({ value }),
     }),
 
   deleteCredential: (name: string) =>
-    request<void>(INFERENCE_URL, `/admin/credentials/${encodeURIComponent(name)}`, {
+    request<void>(inferenceUrl(), `/admin/credentials/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
 
   putModel: (logicalId: string, body: unknown) =>
-    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {
+    request<ModelView>(inferenceUrl(), `/admin/models/${encodeURIComponent(logicalId)}`, {
       method: "PUT",
       body: JSON.stringify(body),
     }),
 
   deleteModel: (logicalId: string) =>
-    request<void>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}`, {
+    request<void>(inferenceUrl(), `/admin/models/${encodeURIComponent(logicalId)}`, {
       method: "DELETE",
     }),
 
   warmModel: (logicalId: string) =>
-    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}:warm`, {
+    request<ModelView>(inferenceUrl(), `/admin/models/${encodeURIComponent(logicalId)}:warm`, {
       method: "POST",
     }),
 
   evictModel: (logicalId: string) =>
-    request<ModelView>(INFERENCE_URL, `/admin/models/${encodeURIComponent(logicalId)}:evict`, {
+    request<ModelView>(inferenceUrl(), `/admin/models/${encodeURIComponent(logicalId)}:evict`, {
       method: "POST",
     }),
 
@@ -1158,13 +1322,13 @@ export const api = {
     if (params.size) q.set("size", params.size);
     if (params.modality) q.set("modality", params.modality);
     const qs = q.toString();
-    return request<CatalogList>(INFERENCE_URL, `/admin/catalog/models${qs ? `?${qs}` : ""}`);
+    return request<CatalogList>(inferenceUrl(), `/admin/catalog/models${qs ? `?${qs}` : ""}`);
   },
 
   // `ref` is a provider id like "org/name"; the route is a {repo:path} converter, so the slash is
   // part of the path — do NOT percent-encode it (that would break the match).
   getCatalogModel: (ref: string) =>
-    request<CatalogEntry>(INFERENCE_URL, `/admin/catalog/models/${ref}`),
+    request<CatalogEntry>(inferenceUrl(), `/admin/catalog/models/${ref}`),
 
   installCatalogModel: (body: {
     repo: string;
@@ -1172,22 +1336,22 @@ export const api = {
     variantId: string;
     logicalId: string;
   }) =>
-    request<DownloadJob>(INFERENCE_URL, "/admin/catalog/install", {
+    request<DownloadJob>(inferenceUrl(), "/admin/catalog/install", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   getDownload: (id: string) =>
-    request<DownloadJob>(INFERENCE_URL, `/admin/catalog/downloads/${encodeURIComponent(id)}`),
+    request<DownloadJob>(inferenceUrl(), `/admin/catalog/downloads/${encodeURIComponent(id)}`),
 
   listDownloads: () =>
-    request<{ downloads: DownloadJob[] }>(INFERENCE_URL, "/admin/catalog/downloads").then(
+    request<{ downloads: DownloadJob[] }>(inferenceUrl(), "/admin/catalog/downloads").then(
       (r) => r.downloads,
     ),
 
   cancelDownload: (id: string) =>
     request<DownloadJob>(
-      INFERENCE_URL,
+      inferenceUrl(),
       `/admin/catalog/downloads/${encodeURIComponent(id)}:cancel`,
       { method: "POST" },
     ),
@@ -1196,7 +1360,7 @@ export const api = {
   // Persists what the bench PRODUCED — never raw data-plane payloads (those go straight to the
   // inference plane). All under the control-plane base URL.
   recordBenchRun: (body: BenchRunInput) =>
-    request<BenchRunRecord>(CONTROL_PLANE_URL, "/bench/runs", {
+    request<BenchRunRecord>(controlPlaneUrl(), "/bench/runs", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -1214,33 +1378,33 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
     const qs = q.toString();
     return request<{ runs: BenchRunRecord[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/bench/runs${qs ? `?${qs}` : ""}`,
     ).then((r) => r.runs);
   },
 
   compareBenchRuns: (a: string, b: string) =>
     request<BenchCompare>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/bench/compare?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
     ),
 
   createSuite: (body: BenchSuiteInput) =>
-    request<BenchSuiteRecord>(CONTROL_PLANE_URL, "/bench/suites", {
+    request<BenchSuiteRecord>(controlPlaneUrl(), "/bench/suites", {
       method: "POST",
       body: JSON.stringify(body),
     }),
 
   listSuites: () =>
-    request<{ suites: BenchSuiteRecord[] }>(CONTROL_PLANE_URL, "/bench/suites").then(
+    request<{ suites: BenchSuiteRecord[] }>(controlPlaneUrl(), "/bench/suites").then(
       (r) => r.suites,
     ),
 
   getSuite: (id: string) =>
-    request<BenchSuiteRecord>(CONTROL_PLANE_URL, `/bench/suites/${encodeURIComponent(id)}`),
+    request<BenchSuiteRecord>(controlPlaneUrl(), `/bench/suites/${encodeURIComponent(id)}`),
 
   createPreset: (body: BenchPresetInput) =>
-    request<BenchPresetRecord>(CONTROL_PLANE_URL, "/bench/presets", {
+    request<BenchPresetRecord>(controlPlaneUrl(), "/bench/presets", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -1250,15 +1414,48 @@ export const api = {
     for (const [k, v] of Object.entries(params)) if (v != null) q.set(k, String(v));
     const qs = q.toString();
     return request<{ presets: BenchPresetRecord[] }>(
-      CONTROL_PLANE_URL,
+      controlPlaneUrl(),
       `/bench/presets${qs ? `?${qs}` : ""}`,
     ).then((r) => r.presets);
   },
 
   deletePreset: (id: string) =>
-    request<void>(CONTROL_PLANE_URL, `/bench/presets/${encodeURIComponent(id)}`, {
+    request<void>(controlPlaneUrl(), `/bench/presets/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+
+  // ── control plane: platform settings (the Settings page) ────────────────────
+  getSettings: () => request<SettingsView>(controlPlaneUrl(), "/settings"),
+
+  // Bulk write: {key: value} sets, {key: null} resets to default (or deletes an orphaned row);
+  // omitted keys are untouched. Validation is atomic (any invalid key → 422, nothing stored);
+  // live-apply hook failures come back per-key in `apply_errors` without rolling back the store.
+  patchSettings: (body: Record<string, unknown>) =>
+    request<SettingsPatchResult>(controlPlaneUrl(), "/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  // One-shot collector reachability probe. Body overrides let the UI test the CURRENT unsaved
+  // endpoint/headers before persisting them; omitted fields fall back to the stored settings.
+  testOtlp: (body: { endpoint?: string; headers?: Record<string, string> } = {}) =>
+    request<OtlpTestResult>(controlPlaneUrl(), "/settings/otlp:test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ── inference plane: settings + diagnostics (separate trust domain) ─────────
+  getInferenceSettings: () => request<InferenceSettings>(inferenceUrl(), "/admin/settings"),
+
+  // null = reset to default. An env-pinned knob answers 422 {"error":{"code":"env_pinned"}}.
+  patchInferenceSettings: (body: { maxResident: number | null }) =>
+    request<InferenceSettings>(inferenceUrl(), "/admin/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  getInferenceDiagnostics: () =>
+    request<InferenceDiagnostics>(inferenceUrl(), "/admin/diagnostics"),
 };
 
 // ── streaming (the run composer + live trace; ported from the cockpit) ───────
@@ -1284,7 +1481,7 @@ export async function streamRun(
   body: unknown,
 ): Promise<StreamHandle> {
   const controller = new AbortController();
-  const res = await fetch(`${CONTROL_PLANE_URL}${path}`, {
+  const res = await fetch(`${controlPlaneUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
@@ -1301,7 +1498,7 @@ export async function streamRun(
  */
 export async function streamGet(path: string): Promise<StreamHandle> {
   const controller = new AbortController();
-  const res = await fetch(`${CONTROL_PLANE_URL}${path}`, {
+  const res = await fetch(`${controlPlaneUrl()}${path}`, {
     headers: { ...authHeaders() },
     signal: controller.signal,
   });
@@ -1322,7 +1519,7 @@ const KEEPALIVE_BODY_LIMIT = 60_000;
 export function flushDraftOnUnload(draftId: string, ir: IRDocument): void {
   const body = JSON.stringify({ ir });
   if (body.length > KEEPALIVE_BODY_LIMIT) return;
-  void fetch(`${CONTROL_PLANE_URL}/drafts/${encodeURIComponent(draftId)}`, {
+  void fetch(`${controlPlaneUrl()}/drafts/${encodeURIComponent(draftId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body,
