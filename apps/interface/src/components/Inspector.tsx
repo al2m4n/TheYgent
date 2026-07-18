@@ -398,7 +398,7 @@ function NodePanel({
 
 /** The agent's triggers, surfaced on the `input` node. Triggers are NOT graph nodes — "run every
  * hour" is a `schedule` trigger, not a clock inside the durable workflow. Read-only here (list what
- * fires this saved agent); creating one is the deploy step (`POST /triggers`). */
+ * fires this published agent); creating one is the deploy step (`POST /triggers`). */
 function TriggerPanel({ agentId }: { agentId: string }) {
   const {
     data: triggers,
@@ -422,7 +422,7 @@ function TriggerPanel({ agentId }: { agentId: string }) {
       ) : mine.length === 0 ? (
         <p className="text-[11px] text-slate-600">
           No triggers. Save the agent, then add a schedule, webhook, or HTTP trigger to run it
-          unattended — triggers are how a saved agent is invoked, not graph nodes.
+          unattended — triggers are how a published agent is invoked, not graph nodes.
         </p>
       ) : (
         <div className="space-y-1">
@@ -2127,7 +2127,7 @@ function AgentPicker({
       value={value}
       loading={isLoading}
       options={(agents ?? []).map((a) => a.id)}
-      hint="the saved agent this node composes — then pin a version below"
+      hint="the published agent this node composes — then pin a version below"
       onChange={onChange}
     />
   );

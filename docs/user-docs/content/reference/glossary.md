@@ -144,7 +144,7 @@ One node in a run's trace: a timed bar in the [observability](../running/observa
 
 ### Trigger
 
-A deployed entry point that fires a saved, pinned agent unattended: a `schedule` (cron) or a `webhook` (an HTTP POST with an HMAC signature). A saved agent can also be reached through the always-on token-invoke endpoint, which is gated by `THEYGENT_INVOKE_TOKEN` rather than created as a trigger. See [Triggers & webhooks](../running/triggers.md).
+A deployed entry point that fires a published, pinned agent unattended: a `schedule` (cron) or a `webhook` (an HTTP POST with an HMAC signature). A published agent can also be reached through the always-on token-invoke endpoint, which is gated by `THEYGENT_INVOKE_TOKEN` rather than created as a trigger. See [Triggers & webhooks](../running/triggers.md).
 
 ### Version
 

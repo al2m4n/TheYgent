@@ -10,7 +10,7 @@ A published agent has a stable id and a series of versions. Each version, once p
 
 This immutability is what makes an agent safe to deploy. A [trigger](../running/triggers.md), a [durable run](../running/durable.md), or a parent agent that composes this one can pin a specific version and trust that it will never shift under them.
 
-Agents and their versions are permanent once created — there is no delete for a published agent or an individual version. (Sessions, triggers, connections, drafts, and registered models can be deleted; agent history cannot.)
+While an agent exists, its history is append-only: there is no way to edit or remove an *individual* version. You can, however, delete the **whole agent** — from the Agents page or `DELETE /agents/{id}` — which removes it with all of its versions and triggers in one step; past runs and chats survive, keeping the agent id and content hash they ran against. See [Exporting and deleting agents](../building/saving-agents.md#exporting-and-deleting-agents). Immutability is per-version, never a lock on the agent's existence.
 
 ## The content hash: meaning, not layout
 

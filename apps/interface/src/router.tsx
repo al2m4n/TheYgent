@@ -31,7 +31,7 @@ function NotFound() {
 
 const rootRoute = createRootRoute({ component: Root, notFoundComponent: NotFound });
 
-// The dashboard is the home page (`/`); the saved-agents grid lives at `/agents`.
+// The dashboard is the home page (`/`); the published-agents grid lives at `/agents`.
 const dashboardRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",

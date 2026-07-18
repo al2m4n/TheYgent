@@ -1,6 +1,6 @@
 # Chat
 
-**New Chat** is the one conversation surface for everything you have registered: talk to any model in your inference plane or to any saved agent, with streaming answers, a separate display for a reasoning model's thinking, and automatic session recording. If you have not installed a model yet, start with [your first chat](../getting-started/first-chat.md).
+**New Chat** is the one conversation surface for everything you have registered: talk to any model in your inference plane or to any published agent, with streaming answers, a separate display for a reasoning model's thinking, and automatic session recording. If you have not installed a model yet, start with [your first chat](../getting-started/first-chat.md).
 
 ## Starting a conversation
 
@@ -9,7 +9,7 @@
 3. Pick the target in the searchable select ("Select a model…" or "Select an agent…"). For an agent there is also a **Version** picker — it defaults to the latest version, labeled `v<version> · latest · <hash>`.
 4. Type your message and press ++enter++. ++shift+enter++ inserts a newline, and pressing Enter mid-composition with an input method editor never sends.
 
-If the pickers are empty you will see "No models registered yet — install one under Registries first" or "No saved agents yet — build one on the canvas first" — see [installing models](../models/installing.md) and [building your first agent](../getting-started/first-agent.md).
+If the pickers are empty you will see "No models registered yet — install one under Registries first" or "No published agents yet — build one on the canvas first" — see [installing models](../models/installing.md) and [building your first agent](../getting-started/first-agent.md).
 
 Once the conversation starts, the model — or the agent and its version — is **pinned**: the picker locks so every turn goes to the same target. The **New chat** button starts a fresh conversation (and a fresh session) when you want to switch.
 
@@ -18,7 +18,7 @@ Once the conversation starts, the model — or the agent and its version — is 
 | Target | What each turn is | Notes |
 |---|---|---|
 | **Model** | A direct conversation with one model, addressed by its logical id | Text chats run through the control plane so history is replayed server-side; requests default to `max_tokens: 2048` |
-| **Agent** | A run of the saved agent's graph, with your message as the input | The agent's whole pipeline executes — tools, routing, guardrails and all |
+| **Agent** | A run of the published agent's graph, with your message as the input | The agent's whole pipeline executes — tools, routing, guardrails and all |
 
 Badges next to the picker tell you what you selected:
 

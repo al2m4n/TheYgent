@@ -23,7 +23,7 @@ The palette derives its list directly from the set of runnable node types, so th
 | `input` | The agent's entry point — carries the run input into the graph. | [Input & output](input-output.md) |
 | `output` | The agent's exit — the value that reaches it becomes the run result. | [Input & output](input-output.md) |
 | `human` | Pauses the run for a person to supply input or approve. Durable-only. | [Human approval](human.md) |
-| `subgraph` | Runs another saved agent as a single step. Durable-only. | [Subgraph, loop & map](orchestration.md) |
+| `subgraph` | Runs another published agent as a single step. Durable-only. | [Subgraph, loop & map](orchestration.md) |
 
 ## Compute & Tools (activity)
 
@@ -49,8 +49,8 @@ The palette derives its list directly from the set of runnable node types, so th
 | `router` | Sends the run down exactly one named branch, chosen at runtime. | [Router](router.md) |
 | `transform` | Reshapes a value with a deterministic template — no model, no I/O. | [Transform](transform.md) |
 | `guardrail` | Checks a value and routes it to a `pass` or `block` port. | [Guardrail](guardrail.md) |
-| `loop` | Runs a saved agent repeatedly, feeding each output into the next. Durable-only. | [Subgraph, loop & map](orchestration.md) |
-| `map` | Runs a saved agent once per list element, optionally in parallel. Durable-only. | [Subgraph, loop & map](orchestration.md) |
+| `loop` | Runs a published agent repeatedly, feeding each output into the next. Durable-only. | [Subgraph, loop & map](orchestration.md) |
+| `map` | Runs a published agent once per list element, optionally in parallel. Durable-only. | [Subgraph, loop & map](orchestration.md) |
 
 !!! info "The `guardrail` exception"
     A guardrail's kind depends on how you configure it: an inline rule check is `orchestration`, while a model-judge check is an `activity` (it makes a real model call). The editor sets the right kind for you — you never touch it. In the palette it lives under **Control flow**. See [Guardrail](guardrail.md).

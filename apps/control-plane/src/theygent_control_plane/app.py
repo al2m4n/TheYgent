@@ -28,6 +28,7 @@ import html
 import json
 import logging
 import os
+import re
 import shutil
 import time
 from collections.abc import AsyncIterator
@@ -127,6 +128,13 @@ from theygent_control_plane.store import (
 )
 from theygent_control_plane.tool_resolve import DbConnectionResolver
 from theygent_control_plane.tools import DEFAULT_REGISTRY
+from theygent_control_plane.transfer import (
+    FORMAT_VERSION,
+    INCLUDE_SECTIONS,
+    apply_import_bundle,
+    build_export_bundle,
+    resolve_include,
+)
 from theygent_control_plane.walker import (
     EngineNameNotAllowed,
     RouterError,
@@ -485,6 +493,11 @@ class OtlpTestRequest(BaseModel):
 
 # The Fernet-key resolution lives in secrets.py (`secret_keys_from_env`) — the worker reads the
 # same keys, and two copies of "how keys are read" would eventually disagree.
+
+#: The exact ref shape LocalArtifactStore.put mints: ``art_`` + a 26-char Crockford-base32 ULID.
+#: PUT /artifacts/{ref} accepts caller-chosen refs, so it must enforce the full shape — a mere
+#: prefix check admits ``art_X.type`` (another artifact's content-type sidecar) or a NUL byte.
+_ARTIFACT_REF_RE = re.compile(r"art_[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}")
 
 
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
@@ -1668,6 +1681,103 @@ def create_app(
             return _error(f"unknown artifact {ref!r}", status=404, code="artifact_not_found")
         return Response(content=data, media_type=content_type)
 
+    @app.put("/artifacts/{ref}", dependencies=[Depends(require_auth)])
+    async def put_artifact(ref: str, request: Request) -> Any:
+        # Preserve-ref restore for imported artifacts: a bundle's run outputs / node payloads
+        # embed `art_` ids, so restoring the bytes must land them under the SAME id or every
+        # imported reference dangles. The ref must be exactly the shape POST /artifacts mints
+        # (`art_` + a 26-char ULID) — anything looser lets a crafted zip entry target another
+        # artifact's `.type` sidecar (`art_X.type` IS a file this store owns) or smuggle a NUL
+        # byte into open(). Skip-on-exists: an existing ref is NEVER overwritten (artifacts are
+        # immutable history; a same-bundle re-import carries identical bytes anyway) — the
+        # stored metadata returns with 200/created:false, a fresh write with 201/created:true.
+        if _ARTIFACT_REF_RE.fullmatch(ref) is None:
+            return _error("not a stored artifact id", status=400, code="invalid_artifact_ref")
+        data = await request.body()
+        if not data:
+            return _error("empty artifact body", status=400, code="empty_artifact")
+        content_type = request.headers.get("content-type") or "application/octet-stream"
+        stored = await app.state.artifacts.put_with_ref(ref, data, content_type)
+        return JSONResponse(stored, status_code=201 if stored.get("created") else 200)
+
+    # ── transfer: /export + /import (the portable control-plane bundle) ─────────
+    # The control-plane half of the export artifact (the browser assembles the zip; registry
+    # state stays on the inference plane — the plane boundary). Export reads the DB directly
+    # because the public wire is lossy exactly where fidelity matters (run.params is on no
+    # response, GET /connections elides config.spec); import is id-preserving, idempotent, and
+    # skip-on-exists. Secrets never enter a bundle in either direction — see transfer.py.
+
+    @app.post("/export", dependencies=[Depends(require_auth)])
+    async def export_bundle(request: Request, session: AsyncSession = Depends(get_session)) -> Any:
+        # The body is read raw, not via a pydantic model (the /import posture): ``include`` is a
+        # non-empty subset of the bundle sections (agents | runs | traces | sessions | mcp | rag;
+        # ``traces`` implies ``runs`` — the server adds them), and EVERY malformed request — a
+        # non-list include, non-string elements, a non-object body — must be the documented 400
+        # ``invalid_include`` in the house envelope, never FastAPI's generic 422 ``{detail}``.
+        try:
+            body = await request.json()
+        except Exception:
+            body = None
+        include = resolve_include(body.get("include")) if isinstance(body, dict) else None
+        if include is None:
+            return _error(
+                "include must be a non-empty subset of: " + " | ".join(sorted(INCLUDE_SECTIONS)),
+                status=400,
+                code="invalid_include",
+            )
+        # A whole-install export aggregates every sensitive read at once — through the authz
+        # chokepoint so RBAC tightens it with the per-resource reads, no retrofit.
+        if not authorize(LOCAL_PRINCIPAL, "transfer:export", None):
+            return _error("not permitted to export", status=403, code="forbidden")
+        bundle = await build_export_bundle(session, include=include)
+        logger.info("transfer.exported", extra={"include": sorted(include)})
+        return bundle
+
+    @app.post("/import", dependencies=[Depends(require_auth)])
+    async def import_bundle(request: Request) -> Any:
+        if not authorize(LOCAL_PRINCIPAL, "transfer:import", None):
+            return _error("not permitted to import", status=403, code="forbidden")
+        # The body is a raw bundle, not a pydantic model: the app owns the 400 shape for a
+        # non-bundle body (`invalid_bundle`), and an unknown future format_version must fail
+        # with its own stable code, not a schema error.
+        try:
+            bundle = await request.json()
+        except Exception:
+            bundle = None
+        if not isinstance(bundle, dict) or "format_version" not in bundle:
+            return _error(
+                "body must be a control-plane bundle object carrying format_version",
+                status=400,
+                code="invalid_bundle",
+            )
+        if bundle.get("format_version") != FORMAT_VERSION:
+            return _error(
+                f"unsupported bundle format_version {bundle.get('format_version')!r}; this "
+                f"control plane imports version {FORMAT_VERSION}",
+                status=400,
+                code="unsupported_bundle_version",
+            )
+
+        async def _register_mcp(name: str, cfg: McpServerConfig) -> None:
+            # Mirror the PUT /admin/mcp/servers behavior: the imported registration is usable
+            # without a restart (the lifespan rehydrate covers the next boot).
+            await mcp.register(name, cfg)
+
+        report = await apply_import_bundle(
+            bundle,
+            tx=tx,
+            agents=agents,
+            triggers=triggers,
+            policy_store=app.state.telemetry.policy_store,
+            sync_schedule=_sync_schedule,
+            register_mcp=_register_mcp,
+        )
+        logger.info(
+            "transfer.imported",
+            extra={"sections": sorted(k for k in report if k != "warnings")},
+        )
+        return {"report": report}
+
     # ── theygent-native API: /graphs/runs (the IR walker) ───────────
     # The consumer of the IR seam: validate an IRDocument, walk it node by node, and
     # produce a Run exactly as /runs does — but IR-driven. A graph run is still a
@@ -2220,6 +2330,22 @@ def create_app(
                 code="agent_version_not_found",
             )
         return sv.model_dump(mode="json")
+
+    @app.delete("/agents/{agent_id}", dependencies=[Depends(require_auth)])
+    async def delete_agent(agent_id: str) -> Response:
+        # A deliberate contract extension to the append-only registry: remove an agent AND its
+        # hard-FK'd dependents (triggers — including any mirrored DBOS schedule, the io-policy
+        # row, every version) in ONE transaction. Versions stay immutable while they exist; this
+        # removes the whole identity, never rewrites one. Drafts keep their agent_id breadcrumb
+        # and runs keep graph_id/content_hash lineage — both survive by design (no FK).
+        async with tx() as session:
+            trigger_ids = await agents.delete_agent(session, agent_id)
+        if trigger_ids is None:
+            return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
+        for trigger_id in trigger_ids:
+            await _drop_schedule(trigger_id)  # same mirror-drop as DELETE /triggers
+        logger.info("agent.deleted", extra={"agent_id": agent_id, "triggers": len(trigger_ids)})
+        return Response(status_code=204)
 
     @app.get("/agents/{agent_id}/io-policy", dependencies=[Depends(require_auth)])
     async def get_io_policy(agent_id: str, session: AsyncSession = Depends(get_session)) -> Any:

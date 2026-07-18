@@ -31,6 +31,7 @@ from theygent_ir import ManagedBinding
 
 from theygent_inference_plane.catalog import InstallPlan
 from theygent_inference_plane.credentials import CredentialStore
+from theygent_inference_plane.installs import InstallStore
 from theygent_inference_plane.registry import Registry
 
 DownloadStatus = Literal["downloading", "registering", "done", "error", "cancelled"]
@@ -99,12 +100,25 @@ def _hf_fetch(plan: InstallPlan, dest_dir: Path, *, token: str | None = None) ->
 
 
 class DownloadJob:
-    """One install in flight. Mutated by the running task; read by the progress endpoint."""
+    """One install in flight. Mutated by the running task; read by the progress endpoint.
 
-    def __init__(self, job_id: str, plan: InstallPlan, dest_dir: Path) -> None:
+    ``binding_template`` (set by the registry-import path) is the full binding to register on
+    completion — modality/params/lifecycle/fallback preserved from the exporting machine, only
+    the weights path rewritten. ``None`` (a plain catalog install) derives the binding from the
+    plan as before."""
+
+    def __init__(
+        self,
+        job_id: str,
+        plan: InstallPlan,
+        dest_dir: Path,
+        *,
+        binding_template: ManagedBinding | None = None,
+    ) -> None:
         self.id = job_id
         self.plan = plan
         self.dest_dir = dest_dir
+        self.binding_template = binding_template
         self.status: DownloadStatus = "downloading"
         self.done_bytes: int = 0
         self.total_bytes: int | None = plan.total_bytes
@@ -145,10 +159,15 @@ class Downloader:
         fetch: Callable[[InstallPlan, Path], Path] | None = None,
         dir_size: Callable[[Path], int] | None = None,
         credentials: CredentialStore | None = None,
+        installs: InstallStore | None = None,
     ) -> None:
         self._registry = registry
         self._model_dir = model_dir
         self._credentials = credentials
+        # The install-provenance sidecar (installs.json): a completed install records its
+        # repo + variant here — the only durable capture point, since this job table is
+        # in-memory — so /admin/export can carry faithful re-download metadata.
+        self._installs = installs
         # The default fetch resolves the reserved HF_TOKEN credential PER DOWNLOAD (not at
         # construction), so a token added over /admin/credentials applies to the next
         # install without a restart. The fetch seam's (plan, dest) signature is unchanged —
@@ -165,10 +184,12 @@ class Downloader:
         self._seq += 1
         return f"dl-{self._seq}"
 
-    def start(self, plan: InstallPlan) -> DownloadJob:
+    def start(
+        self, plan: InstallPlan, *, binding_template: ManagedBinding | None = None
+    ) -> DownloadJob:
         job_id = self._next_id()
         dest_dir = self._model_dir / _sanitize(plan.repo)
-        job = DownloadJob(job_id, plan, dest_dir)
+        job = DownloadJob(job_id, plan, dest_dir, binding_template=binding_template)
         self._jobs[job_id] = job
         task = asyncio.create_task(self._run(job))
         job.task = task
@@ -178,6 +199,15 @@ class Downloader:
 
     def get(self, job_id: str) -> DownloadJob | None:
         return self._jobs.get(job_id)
+
+    def active_for(self, logical_id: str) -> DownloadJob | None:
+        """The non-terminal job for ``logical_id``, if one is in flight. Registration happens
+        only on completion, so a registry lookup alone cannot see a pending install — anything
+        that must not double-download (the import path) checks here first."""
+        for job in self._jobs.values():
+            if job.plan.logical_id == logical_id and job.status in ("downloading", "registering"):
+                return job
+        return None
 
     def list(self) -> JobList:
         return list(self._jobs.values())
@@ -215,15 +245,28 @@ class Downloader:
             job.done_bytes = job.total_bytes
         job.status = "registering"
         try:
-            # Carry the plan's modality onto the binding so the manager spawns the right server
-            # (e.g. an installed VLM registers modality="vision" → mlx_vlm.server); default chat.
-            binding = ManagedBinding(
-                binding=job.plan.engine,
-                source="local-path",
-                model=str(path),
-                modality=job.plan.modality,
-            )
+            if job.binding_template is not None:
+                # A registry import re-download: register the EXPORTED binding faithfully —
+                # modality/params/lifecycle/fallback are the source machine's truth — with
+                # only the weights path rewritten onto this machine.
+                binding = job.binding_template.model_copy(update={"model": str(path)})
+            else:
+                # Carry the plan's modality onto the binding so the manager spawns the right
+                # server (e.g. an installed VLM registers modality="vision" → mlx_vlm.server);
+                # default chat.
+                binding = ManagedBinding(
+                    binding=job.plan.engine,
+                    source="local-path",
+                    model=str(path),
+                    modality=job.plan.modality,
+                )
             self._registry.put(job.plan.logical_id, binding)
+            if self._installs is not None:
+                # Record repo + variant provenance durably alongside the registration — for
+                # llamacpp the variant is the plan's gguf filename; "" is a whole MLX repo.
+                self._installs.put(
+                    job.plan.logical_id, repo=job.plan.repo, variant_id=job.plan.filename or ""
+                )
         except Exception as exc:
             job.status = "error"
             job.error = f"download ok but registration failed: {exc}"

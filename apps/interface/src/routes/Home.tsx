@@ -5,9 +5,9 @@
 // modified), and a footer with the author + a Bench action. Click a card to open the agent on the
 // canvas. A search + sort bar sits on top.
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Bot, ChevronRight, NotebookPen, Plus } from "lucide-react";
+import { Bot, ChevronRight, Download, NotebookPen, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentBench } from "../bench/AgentBench";
 import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
@@ -27,6 +27,7 @@ import {
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardFooter } from "../components/ui/card";
+import { Checkbox } from "../components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../components/ui/collapsible";
 import {
   Empty,
@@ -58,6 +59,8 @@ import {
 } from "../components/ui/table";
 import { fromStoredVersion } from "../lib/agent";
 import { type AgentDetail, type AgentSummary, type DraftSummary, api } from "../lib/api";
+import { notify } from "../lib/notify";
+import { buildAgentsExportZip, saveBlob } from "../lib/transfer";
 import { useInView } from "../lib/useInView";
 import { useViewMode } from "../lib/viewMode";
 import { flattenPages, useAgentsInfinite, useDraftMutations, useDrafts } from "../queries";
@@ -72,6 +75,7 @@ const SORT_LABEL: Record<Sort, string> = {
 };
 
 export function Home() {
+  const qc = useQueryClient();
   const { data, isLoading, error, fetchNextPage, hasNextPage, isFetchingNextPage } =
     useAgentsInfinite();
   const agents = useMemo(() => flattenPages(data), [data]);
@@ -80,6 +84,115 @@ export function Home() {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("modified");
   const [view, setView] = useViewMode("agents", "grid");
+
+  // Per-agent export/delete + the selection mode's bulk actions. Selection lives at page level so
+  // the grid and list renderings share it; the pending-item states drive per-row busy text.
+  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<AgentSummary | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState<string | null>(null);
+
+  const removeAgent = useMutation({
+    mutationFn: (id: string) => api.deleteAgent(id),
+    onSuccess: (_res, id) => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      qc.invalidateQueries({ queryKey: ["agent", id] });
+      qc.invalidateQueries({ queryKey: ["stats"] });
+      // A deleted agent must leave the select-mode set — a stale id would abort the bulk export
+      // (its GET 404s) and fabricate bulk-delete failures for an agent that is already gone.
+      setSelectedIds((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      notify.success("Agent deleted");
+    },
+    onError: (e) =>
+      notify.error(e instanceof Error ? `Delete failed: ${e.message}` : "Delete failed"),
+  });
+  const deletingId = removeAgent.isPending ? (removeAgent.variables ?? null) : null;
+
+  // Single-agent export: the latest version's IR with its layout re-embedded, as one JSON file.
+  // The hash inside is opaque metadata — the server re-canonicalizes and re-hashes on import.
+  const exportAgent = async (a: AgentSummary) => {
+    setExportingId(a.id);
+    try {
+      const detail = await api.getAgent(a.id);
+      const latest = detail.versions[0]; // newest first
+      if (!latest) {
+        notify.error("This agent has no published versions to export.");
+        return;
+      }
+      const sv = await api.getAgentVersion(a.id, latest.version);
+      const blob = new Blob([JSON.stringify(fromStoredVersion(sv), null, 2)], {
+        type: "application/json",
+      });
+      saveBlob(blob, `theygent-agent-${a.id}-v${sv.version}.json`);
+    } catch (e) {
+      notify.error(e instanceof Error ? `Export failed: ${e.message}` : "Export failed");
+    } finally {
+      setExportingId(null);
+    }
+  };
+
+  const toggleSelected = (id: string, on: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const exportSelected = async () => {
+    setBulkBusy("Exporting…");
+    try {
+      const result = await buildAgentsExportZip([...selectedIds]);
+      notify.success(`Exported ${result.filename}`);
+    } catch (e) {
+      notify.error(e instanceof Error ? `Export failed: ${e.message}` : "Export failed");
+    } finally {
+      setBulkBusy(null);
+    }
+  };
+
+  // Sequential on purpose: each delete is its own server-side transaction, and the running
+  // progress text stays honest. One failure never stops the rest.
+  const deleteSelected = async () => {
+    setConfirmBulkDelete(false);
+    const ids = [...selectedIds];
+    const failed: string[] = [];
+    let done = 0;
+    for (const id of ids) {
+      setBulkBusy(`Deleting ${done + failed.length + 1}/${ids.length}…`);
+      try {
+        await api.deleteAgent(id);
+        done += 1;
+        // Deselect as each delete lands, so a partial failure leaves exactly the failed ids
+        // selected — never a stale selection of agents that no longer exist.
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      } catch {
+        failed.push(id);
+      }
+    }
+    setBulkBusy(null);
+    qc.invalidateQueries({ queryKey: ["agents"] });
+    qc.invalidateQueries({ queryKey: ["stats"] });
+    if (failed.length > 0) {
+      // Stay in select mode with the failed ids still ticked — the user sees what remains.
+      notify.error(`Could not delete ${failed.length} of ${ids.length}: ${failed.join(", ")}`);
+    } else {
+      setSelectMode(false);
+      notify.success(`Deleted ${done} agent${done === 1 ? "" : "s"}`);
+    }
+  };
 
   // Work-in-progress drafts (the editor's autosaves) — most recently edited first. A draft that
   // edits a published agent also badges that agent's card/row below.
@@ -122,13 +235,26 @@ export function Home() {
             Your published agents — open one on the canvas, bench it, or create a new one.
           </p>
         </div>
-        <Link
-          to="/editor"
-          search={{ agent: undefined, version: undefined }}
-          className={buttonClass("primary", "shrink-0")}
-        >
-          <Plus size={14} /> New agent
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          {agents.length > 0 && (
+            <Button
+              variant={selectMode ? "secondary" : "outline"}
+              onClick={() => {
+                setSelectMode((m) => !m);
+                setSelectedIds(new Set());
+              }}
+            >
+              {selectMode ? "Done" : "Select"}
+            </Button>
+          )}
+          <Link
+            to="/editor"
+            search={{ agent: undefined, version: undefined }}
+            className={buttonClass("primary")}
+          >
+            <Plus size={14} /> New agent
+          </Link>
+        </div>
       </div>
 
       {isLoading && <Spinner />}
@@ -191,6 +317,41 @@ export function Home() {
             }
           />
 
+          {selectMode && (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card px-3 py-2">
+              <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+                <Checkbox
+                  aria-label="Select all"
+                  checked={shown.length > 0 && shown.every((a) => selectedIds.has(a.id))}
+                  onCheckedChange={(v) =>
+                    setSelectedIds(v === true ? new Set(shown.map((a) => a.id)) : new Set())
+                  }
+                />
+                Select all ({shown.length})
+              </label>
+              <span className="text-xs text-muted-foreground">{selectedIds.size} selected</span>
+              <div className="ml-auto flex items-center gap-2">
+                {bulkBusy && <span className="text-xs text-muted-foreground">{bulkBusy}</span>}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={selectedIds.size === 0 || !!bulkBusy}
+                  onClick={() => void exportSelected()}
+                >
+                  Export selected
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={selectedIds.size === 0 || !!bulkBusy}
+                  onClick={() => setConfirmBulkDelete(true)}
+                >
+                  Delete selected
+                </Button>
+              </div>
+            </div>
+          )}
+
           {shown.length === 0 ? (
             <Empty className="border py-10">
               <EmptyDescription>No agents match the current filters.</EmptyDescription>
@@ -203,11 +364,29 @@ export function Home() {
                   agent={a}
                   draft={draftByAgent.get(a.id)}
                   onBench={() => setBenchAgentId(a.id)}
+                  onExport={() => void exportAgent(a)}
+                  onDelete={() => setConfirmDelete(a)}
+                  exporting={exportingId === a.id}
+                  deleting={deletingId === a.id}
+                  selectMode={selectMode}
+                  selected={selectedIds.has(a.id)}
+                  onToggleSelect={(on) => toggleSelected(a.id, on)}
                 />
               ))}
             </div>
           ) : (
-            <AgentTable agents={shown} draftByAgent={draftByAgent} onBench={setBenchAgentId} />
+            <AgentTable
+              agents={shown}
+              draftByAgent={draftByAgent}
+              onBench={setBenchAgentId}
+              onExport={(a) => void exportAgent(a)}
+              onDelete={setConfirmDelete}
+              exportingId={exportingId}
+              deletingId={deletingId}
+              selectMode={selectMode}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelected}
+            />
           )}
 
           {/* Scroll sentinel: pulls the next (older) page as it nears the viewport — no button. */}
@@ -221,6 +400,49 @@ export function Home() {
       )}
 
       {benchAgentId && <BenchModal agentId={benchAgentId} onClose={() => setBenchAgentId(null)} />}
+
+      {confirmDelete && (
+        <ConfirmDialog
+          title={`Delete ${confirmDelete.name}?`}
+          message={
+            <>
+              Deletes the agent <strong>{confirmDelete.name}</strong>{" "}
+              <span className="mono">({confirmDelete.id})</span> and ALL its versions and triggers.
+              Past runs and chats are kept. This cannot be undone.
+            </>
+          }
+          challenge={{
+            instruction: (
+              <>
+                Type <strong>{confirmDelete.name}</strong> to confirm.
+              </>
+            ),
+            expected: confirmDelete.name,
+          }}
+          onConfirm={() => {
+            removeAgent.mutate(confirmDelete.id);
+            setConfirmDelete(null);
+          }}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {confirmBulkDelete && (
+        <ConfirmDialog
+          title={`Delete ${selectedIds.size} agent${selectedIds.size === 1 ? "" : "s"}?`}
+          message="Deletes each selected agent and ALL its versions and triggers. Past runs and chats are kept. This cannot be undone."
+          challenge={{
+            instruction: (
+              <>
+                Type <strong>{selectedIds.size}</strong> to confirm.
+              </>
+            ),
+            expected: String(selectedIds.size),
+          }}
+          onConfirm={() => void deleteSelected()}
+          onCancel={() => setConfirmBulkDelete(false)}
+        />
+      )}
     </Page>
   );
 }
@@ -344,26 +566,50 @@ function AgentTable({
   agents,
   draftByAgent,
   onBench,
+  onExport,
+  onDelete,
+  exportingId,
+  deletingId,
+  selectMode,
+  selectedIds,
+  onToggleSelect,
 }: {
   agents: AgentSummary[];
   draftByAgent: Map<string, DraftSummary>;
   onBench: (id: string) => void;
+  onExport: (a: AgentSummary) => void;
+  onDelete: (a: AgentSummary) => void;
+  exportingId: string | null;
+  deletingId: string | null;
+  selectMode: boolean;
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string, on: boolean) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
+            {selectMode && <TableHead className="w-8" />}
             <TableHead>Agent</TableHead>
             <TableHead>Version</TableHead>
             <TableHead>Versions</TableHead>
             <TableHead>Updated</TableHead>
-            <TableHead className="text-right">Run</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {agents.map((a) => (
             <TableRow key={a.id}>
+              {selectMode && (
+                <TableCell>
+                  <Checkbox
+                    aria-label={`Select ${a.name}`}
+                    checked={selectedIds.has(a.id)}
+                    onCheckedChange={(v) => onToggleSelect(a.id, v === true)}
+                  />
+                </TableCell>
+              )}
               <TableCell>
                 <Link
                   to="/editor"
@@ -398,9 +644,29 @@ function AgentTable({
                 <TimeAgo iso={a.updated_at} />
               </TableCell>
               <TableCell className="text-right">
-                <Button size="sm" disabled={!a.latest_version} onClick={() => onBench(a.id)}>
-                  Run
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    aria-label={`Export ${a.name}`}
+                    disabled={!a.latest_version || exportingId === a.id}
+                    onClick={() => onExport(a)}
+                  >
+                    {exportingId === a.id ? "Exporting…" : "Export"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    aria-label={`Delete ${a.name}`}
+                    disabled={deletingId === a.id}
+                    onClick={() => onDelete(a)}
+                  >
+                    {deletingId === a.id ? "Deleting…" : "Delete"}
+                  </Button>
+                  <Button size="sm" disabled={!a.latest_version} onClick={() => onBench(a.id)}>
+                    Run
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}
@@ -434,10 +700,24 @@ function AgentCard({
   agent,
   draft,
   onBench,
+  onExport,
+  onDelete,
+  exporting,
+  deleting,
+  selectMode,
+  selected,
+  onToggleSelect,
 }: {
   agent: AgentSummary;
   draft: DraftSummary | undefined;
   onBench: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+  exporting: boolean;
+  deleting: boolean;
+  selectMode: boolean;
+  selected: boolean;
+  onToggleSelect: (on: boolean) => void;
 }) {
   const { seed, reroll } = useThumbVariant(agent.id);
   const hasVersion = !!agent.latest_version;
@@ -516,6 +796,18 @@ function AgentCard({
         </div>
       </Link>
 
+      {/* Selection checkbox — a sibling of the link (its own click target), so ticking a card
+          never navigates into the editor. */}
+      {selectMode && (
+        <label className="absolute top-2 left-2 z-10 flex cursor-pointer items-center rounded-md border border-border/60 bg-background/80 p-1 backdrop-blur-sm">
+          <Checkbox
+            aria-label={`Select ${agent.name}`}
+            checked={selected}
+            onCheckedChange={(v) => onToggleSelect(v === true)}
+          />
+        </label>
+      )}
+
       {/* "possibility of change" — only meaningful for the placeholder identicon (a graph preview is
           derived from the IR). Sibling of the link so it's its own click target. */}
       {showIdenticon && (
@@ -531,9 +823,32 @@ function AgentCard({
 
       <CardFooter className="justify-between border-t px-3 py-2">
         <span className="text-[11px] text-muted-foreground">By me</span>
-        <Button size="sm" disabled={!hasVersion} onClick={onBench}>
-          Run
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`Export ${agent.name}`}
+            title="Export — download the latest version as JSON"
+            disabled={!hasVersion || exporting}
+            onClick={onExport}
+          >
+            <Download />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            className="text-destructive hover:text-destructive"
+            aria-label={`Delete ${agent.name}`}
+            title="Delete this agent"
+            disabled={deleting}
+            onClick={onDelete}
+          >
+            <Trash2 />
+          </Button>
+          <Button size="sm" disabled={!hasVersion} onClick={onBench}>
+            Run
+          </Button>
+        </div>
       </CardFooter>
     </Card>
   );

@@ -685,7 +685,7 @@ function RecentAgentsPanel({
       {loading && agents.length === 0 ? (
         <ListSkeleton />
       ) : agents.length === 0 ? (
-        <EmptyNote>No saved agents yet — build one on the canvas.</EmptyNote>
+        <EmptyNote>No published agents yet — build one on the canvas.</EmptyNote>
       ) : (
         <ul className="space-y-0.5">
           {ordered.map((a) => {

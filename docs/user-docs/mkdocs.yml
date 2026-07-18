@@ -127,6 +127,8 @@ nav:
       - Triggers & Webhooks: running/triggers.md
       - Observability: running/observability.md
       - The Bench: running/bench.md
+  - Import & Export:
+      - import-export/index.md
   - Reference:
       - API Reference: reference/api.md
       - Environment Variables: reference/environment.md

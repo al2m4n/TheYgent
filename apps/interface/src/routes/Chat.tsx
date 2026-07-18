@@ -1,4 +1,4 @@
-// The New Chat page: pick what to talk to — a registered model or a saved agent — and go.
+// The New Chat page: pick what to talk to — a registered model or a published agent — and go.
 // Every conversation is a session (created on the first message, listed under Recents and Chats).
 // Transports by target:
 //   - a text model / agent → streamed control-plane runs (server replays history, appends turns);
@@ -121,7 +121,7 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
     imageOutput: agentImageOut,
     disabledNote:
       kind === "agent"
-        ? "No saved agents yet — build one on the canvas first."
+        ? "No published agents yet — build one on the canvas first."
         : isEmbeddings
           ? "Embeddings models don't chat — bench them from Registries."
           : "No models registered yet — install one under Registries first.",
@@ -154,7 +154,7 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
     <div className="flex h-full min-h-0 flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold text-foreground">New Chat</h1>
-        {/* What to talk to — a model or a saved agent. This and the target below both freeze once
+        {/* What to talk to — a model or a published agent. This and the target below both freeze once
             the conversation starts (the session's target is fixed); "New chat" starts over. */}
         <NativeSelect
           className="w-32"

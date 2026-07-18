@@ -33,7 +33,7 @@ The editor toolbar carries three text fields that identify the agent:
 
 | Field | What it is |
 |---|---|
-| **id** | The agent's stable identifier (for example `agent.triage`). It is the registry coordinate together with the version. Once the agent exists in the registry this field is locked — an id is permanent. |
+| **id** | The agent's stable identifier (for example `agent.triage`). It is the registry coordinate together with the version. Once the agent exists in the registry this field is locked — an id is never renamed (only [deleting the whole agent](#exporting-and-deleting-agents) frees it). |
 | **name** | A human-readable display name. You can change it on any new version. |
 | **version** | The version string you are publishing, for example `0.1.0`. You bump this yourself. |
 
@@ -110,12 +110,32 @@ curl http://localhost:8080/agents/agent.triage/runs \
 
 You can pin a specific version with `"version"` or a specific hash with `"content_hash"`; otherwise the latest published version runs. There is also a token-authed, non-interactive `POST /agents/{id}/invoke` for unattended callers, and a fire-and-poll `POST /agents/{id}/durable-runs` for durable execution. Drafts have their own small CRUD surface (`/drafts`) that the editor drives. The full surface is in the [API reference](../reference/api.md).
 
-!!! note "Agents are permanent — drafts are not"
-    There is no delete for agents, agent versions, or runs — once published, a version stays in the registry. (Sessions, triggers, connections, MCP servers, and **drafts** can be deleted.) Publish a new version rather than trying to remove an old one; discard a draft freely.
+## Exporting and deleting agents
+
+Beyond Run, every agent on the Agents page carries two more actions — a download icon and a trash icon in the card footer (grid view), or **Export** / **Delete** buttons in the Actions column (list view).
+
+### Export an agent as JSON
+
+**Export** downloads the agent's **latest version** as a single JSON file, named like `theygent-agent-agent.triage-v0.2.0.json` — the full graph with its canvas layout embedded. The file is self-contained: hand it to someone else (or your other machine) and import it through **Settings → Import / Export**, where it lands as a published agent again. The content hash in the file is informational only — the receiving server validates the document and recomputes the hash itself, exactly like a publish.
+
+### Delete an agent
+
+**Delete** asks for a typed confirmation: the dialog names the agent, and the **Delete** button stays disabled until you type the agent's name exactly. Confirming removes the agent and **all** its versions and triggers in one step (a deployed schedule stops firing). Past runs and chats are kept — they still show the agent id and content hash they ran against — and any draft that was editing the agent survives in the Drafts strip. Deletion cannot be undone; the only way back is re-importing or re-publishing the agent.
+
+### Select mode: bulk export and delete
+
+The **Select** button in the page header switches the page into selection mode: each card (or row) gains a checkbox, with **Select all** over the currently filtered set. The bulk bar then offers:
+
+- **Export selected** — one zip containing the selected agents with **every** version of each (not just the latest), importable through **Settings → Import / Export** like any bundle.
+- **Delete selected** — one typed confirmation (type the number of selected agents to arm the button), then the agents are deleted one at a time with a running progress count; a failure on one never stops the rest.
+
+!!! note "Versions are immutable — the agent is deletable"
+    While an agent exists, its history is append-only: you can never edit or remove a *single* published version, so anything pinned to one keeps behaving identically. What you can do is delete the **whole agent**, versions and all. Runs are never deletable; sessions, triggers, connections, MCP servers, and **drafts** can be deleted individually as before. To retire one version, publish a new one instead.
 
 ## Related pages
 
 - [The editor](editor.md) — building, validating, and testing before you publish
 - [Agent versioning](../concepts/versioning.md) — content hashing and immutability, in depth
+- [Import & export](../import-export/index.md) — moving whole installs (or agent bundles) between machines
 - [Running agents](../running/index.md) — statuses, output, and the run list
 - [Triggers and webhooks](../running/triggers.md) — deploying a published agent behind a schedule or webhook

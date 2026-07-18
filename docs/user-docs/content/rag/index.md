@@ -76,7 +76,7 @@ Drop a **rag** node in the editor and pick the source in its inspector. Two wiri
 
 See the [rag node reference](../building/nodes/rag.md) for ports, configuration, and the result shape.
 
-Agents reference a source by its stable id, so re-crawling or uploading more documents **never changes a saved agent's version** — the agent always searches the source's current content.
+Agents reference a source by its stable id, so re-crawling or uploading more documents **never changes a published agent's version** — the agent always searches the source's current content.
 
 ## Managing sources
 
