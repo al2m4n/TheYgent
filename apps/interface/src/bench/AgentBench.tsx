@@ -35,9 +35,9 @@ import { applyPresetToBinding } from "./preset";
 export function AgentBench({ agent }: { agent: AgentDetail }) {
   // Default the pin to the LATEST version (the detail endpoint returns versions seq-desc, newest
   // first) and KEEP following it as fresh data arrives — until the user deliberately picks one.
-  // Capturing `versions[0]` once in useState was the "model change didn't apply" bug: if react-query
-  // served stale cached detail at mount (then re-fetched the new version), the pin stuck to the old
-  // version. `picked ?? latest` recomputes from the freshest `agent` every render.
+  // Capturing `versions[0]` once in useState would pin to whatever react-query had cached at mount
+  // — if a re-fetch then brings a newer version, the pin sticks to the old one and a model change
+  // silently doesn't apply. `picked ?? latest` recomputes from the freshest `agent` every render.
   const latest = agent.versions[0]?.version ?? "";
   const [picked, setPicked] = useState<string | null>(null);
   const version = picked ?? latest;

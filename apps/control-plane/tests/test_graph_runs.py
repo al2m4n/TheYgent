@@ -44,10 +44,10 @@ def _graph_run(client: TestClient, *, stream: bool, session_id: str | None = Non
 
 
 def test_durable_only_node_rejected_on_interactive_path(client: TestClient) -> None:
-    # F8 regression: a durable-only node (human/subgraph/loop/map) run on the INTERACTIVE
-    # /graphs/runs walker must return a CLEAR ``durable_required`` 400 BEFORE a Run — not the
-    # walker's raw NotImplementedError mis-mapped to a 502 inference_error "not implemented yet"
-    # (which falsely told a builder the human node doesn't exist; it just needs durable mode).
+    # A durable-only node (human/subgraph/loop/map) run on the INTERACTIVE /graphs/runs walker
+    # must return a CLEAR ``durable_required`` 400 BEFORE a Run — not the walker's raw
+    # NotImplementedError mis-mapped to a 502 inference_error "not implemented yet" (which would
+    # falsely tell a builder the human node doesn't exist; it just needs durable mode).
     ir = {
         "schemaVersion": "1.0",
         "id": "agt_human_interactive",

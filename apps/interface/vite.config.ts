@@ -3,9 +3,9 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// SPA only (same posture as the cockpit — no SSR, Vite-served, never bundled into FastAPI).
-// The interface runs on :5174 so it can sit alongside the cockpit (:5173) during dev. Both call
-// the control-plane directly; the control-plane CORS allows both dev origins.
+// SPA only — no SSR, Vite-served, never bundled into FastAPI.
+// The interface runs on :5174 in dev and calls the control-plane directly; the control-plane
+// CORS allows this dev origin.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -19,8 +19,8 @@ export default defineConfig({
   // (e.g. `/logo/…`) rather than imported, so the same URL resolves in dev and in the build.
   publicDir: "static",
   server: {
-    // Defaults to :5174 (alongside the cockpit on :5173). A PORT override lets a second instance
-    // run on a free port (e.g. a preview server beside an already-running `pnpm dev`).
+    // Defaults to :5174. A PORT override lets a second instance run on a free port
+    // (e.g. a preview server beside an already-running `pnpm dev`).
     port: Number(process.env.PORT) || 5174,
     strictPort: !process.env.PORT,
   },

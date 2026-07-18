@@ -61,7 +61,7 @@ export function useDraftAutosave(seed: DraftSeed | null, ir: IRDocument | null):
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Mutable machinery, deliberately outside React state: the debounce timer, the persisted
+  // Mutable machinery kept outside React state: the debounce timer, the persisted
   // snapshot, and a generation counter that invalidates in-flight saves when the seed changes
   // (an await can't be cancelled, but a stale one must not write refs for the next document).
   const genRef = useRef(0);
@@ -190,8 +190,8 @@ export function useDraftAutosave(seed: DraftSeed | null, ir: IRDocument | null):
   // Known, accepted race: if a debounced save is in flight when the page hides, this keepalive
   // (carrying the NEWEST snapshot) can land before the older in-flight PUT, which then wins —
   // one edit-burst reverts until the next autosave. Fixing it needs a server-side sequence
-  // guard on the draft row (a deliberate contract extension for later); firing the newest
-  // snapshot beats guaranteed loss when the tab actually closes.
+  // guard on the draft row; firing the newest snapshot beats guaranteed loss when the tab
+  // actually closes.
   useEffect(() => {
     const flushIfHiding = () => {
       const snap = currentRef.current;

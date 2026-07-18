@@ -11,7 +11,7 @@ split), so an MLX-backed agent's wired tool never executes — the raw ``<|pytho
 returned verbatim. This module is the gateway-level adapter that rewrites that text into structured
 ``tool_calls``, so the control plane stays untouched.
 
-DELIBERATE + REMOVABLE (see ``[[contract-extensions-are-deliberate]]``). This is a named adapter
+REMOVABLE BY DESIGN. This is a named adapter
 gated to the MLX chat path (``Upstream.needs_tool_parse``); when a tool-aware MLX server ships
 (emitting native ``tool_calls``), flip the gate off for it and delete this module. It NEVER runs for
 engines that already emit structured calls (llama.cpp, hosted OpenAI) — double-parsing is the hazard

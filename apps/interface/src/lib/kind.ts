@@ -13,7 +13,7 @@ export function expectedKind(node: { type: string; config?: unknown }): Kind | u
   if (node.type === "guardrail") {
     const check = (node.config as { check?: { type?: string } } | undefined)?.check;
     // Only a model check maps to `activity`; anything else — including an unset check — is
-    // `orchestration`, matching the server's derivation and the freshly-dropped default.
+    // `orchestration`, matching the server's derivation.
     return check?.type === "model" ? "activity" : "orchestration";
   }
   return kindForType(node.type);

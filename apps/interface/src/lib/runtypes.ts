@@ -1,13 +1,13 @@
-// Run / session / trace wire shapes for the operator surface (Runs, Sessions, Compose) ported from
-// the cockpit (apps/web). Consumed as-is (the backend contracts are frozen; the UI adapts).
+// Run / session / trace wire shapes for the operator surface (Runs, Sessions, Compose).
+// Consumed as-is (the backend contracts are frozen; the UI adapts).
 //
 // Two conventions coexist by surface and we honor both rather than normalize:
 //  - /runs + /sessions payloads are snake_case (session_id, created_at) — the run surface.
 //  - SSE frames are camelCase (runId) — see the SSE frame types at the bottom + lib/sse.ts.
 //
 // The agent-registry + inference-plane (camelCase /admin/*) shapes the interface already needs for
-// the canvas live in lib/api.ts; this file adds only the run/session/trace shapes the cockpit views
-// brought with them.
+// the canvas live in lib/api.ts; this file holds only the run/session/trace shapes the operator
+// views need.
 
 // `waiting` is a durable run paused at a human node (awaiting resume); the reconcile sweep leaves
 // it alone. A run is live while created/streaming and terminal at completed/failed.

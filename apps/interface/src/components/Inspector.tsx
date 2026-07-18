@@ -1233,8 +1233,7 @@ function LlmToolsPanel({
   const config = (node?.config ?? {}) as Record<string, unknown>;
   // tool_choice is EITHER an OpenAI string (auto/required/none) OR a named-function object
   // ({type:"function",function:{name}}) that forces one tool. Read both so a Code-authored forced
-  // choice survives editing here (an earlier version collapsed the object to "auto" and rewrote it
-  // on every edit — a silent data loss).
+  // choice survives editing here — collapsing the object form to a string would silently lose it.
   const rawChoice = config.toolChoice;
   const namedChoice =
     rawChoice &&
@@ -1381,7 +1380,7 @@ function toMessages(value: unknown): ChatMessage[] {
 }
 
 // Keep system turn(s) first — OpenAI chat semantics steer behavior from the system message, and a
-// system turn placed after the user input is weakly honored (see the math-tutor debugging). A stable
+// system turn placed after the user input is weakly honored by many models. A stable
 // partition: systems first in their existing order, everything else after in its existing order. So
 // adding a system turn (or flipping a role to system) snaps it to the top, in the wizard AND when a
 // JSON edit is committed; reordering among same-role turns is preserved.
@@ -1430,7 +1429,7 @@ function MessagesEditor({ value, onChange }: { value: unknown; onChange: (v: unk
   const addRow = () => commit([...rows, { key: `m${idRef.current++}`, role: "user", content: "" }]);
 
   // The chat builder: a role dropdown + text box per turn. Editing the raw `messages` array as JSON
-  // now lives in the node-level Code view, so there's no per-field JSON toggle here. A rich (vision)
+  // lives in the node-level Code view, so there's no per-field JSON toggle here. A rich (vision)
   // turn still falls back to a per-turn JSON box inside its own row.
   return (
     <div className="space-y-1.5">
@@ -3235,7 +3234,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// A compact sidebar empty-state hint — deliberately NOT the shared dashed-box Empty from ./ui
+// A compact sidebar empty-state hint — NOT the shared dashed-box Empty from ./ui
 // (that treatment is sized for full list pages) and named apart from it so the two can't be
 // import-swapped by accident.
 function EmptyHint({ children }: { children: React.ReactNode }) {

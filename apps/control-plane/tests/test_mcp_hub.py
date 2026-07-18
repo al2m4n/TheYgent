@@ -54,7 +54,7 @@ def _conn(config: dict[str, Any], secret: str | None = None) -> ResolvedConnecti
 
 
 async def test_http_secret_without_auth_block_stays_bearer() -> None:
-    # The pre-auth-block default: a bare secret on an http connection is a bearer token.
+    # With no auth block declared, a bare secret on an http connection is a bearer token.
     cfg = await mcp_config_from_connection(
         _conn({"transport": "http", "url": "http://s.test/mcp"}, secret="tok")
     )

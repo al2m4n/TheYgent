@@ -1,6 +1,6 @@
 // A PLACEHOLDER agent thumbnail: a deterministic identicon — a symmetric pixel grid on a colour
-// picked from the agent id (so every agent gets a stable, distinct avatar). This stands in until we
-// decide on a real thumbnail (an upload, a generated image, …); to swap it, replace the render here
+// picked from the agent id (so every agent gets a stable, distinct avatar). This stands in until a
+// real thumbnail source exists (an upload, a generated image, …); to swap it, replace the render here
 // and nothing else changes. The "Change" affordance re-rolls the placeholder; the chosen variant
 // persists per agent in localStorage — it is pure UI chrome, NEVER the agent IR.
 

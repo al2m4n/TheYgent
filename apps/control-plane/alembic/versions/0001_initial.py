@@ -4,8 +4,8 @@ Revision ID: 0001_initial
 Revises:
 Create Date: 2026-06-17
 
-The control-plane's first tables. ULID string ids throughout (consistency with the earlier
-Run.id). Ordering keys off explicit columns (message.position), never timestamps —
+The control-plane's first tables. ULID string ids throughout. Ordering keys off
+explicit columns (message.position), never timestamps —
 clock skew across horizontally-scaled instances makes those unreliable. Hand-written
 and fully reversible; the round-trip test exercises upgrade head -> downgrade base.
 """

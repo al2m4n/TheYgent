@@ -122,7 +122,7 @@ def test_trace_unknown_run_is_404(client: TestClient) -> None:
 def test_prompt_run_is_traced_too(client: TestClient) -> None:
     # A plain /runs prompt run (no IR/walker — Compose's default "prompt" mode) is also a run, so it
     # gets a trace: a run-root span + one `llm` node span (the generation), with the prompt as input
-    # and the answer as output. Without this it showed "No trace recorded for this run".
+    # and the answer as output. Without this the run would show "No trace recorded for this run".
     r = client.post("/runs", json={"input": "what is 2+2", "model": "triage-fast", "stream": False})
     assert r.status_code == 200, r.text
     run_id = r.json()["runId"]
@@ -277,8 +277,8 @@ def test_prompt_run_stream_captures_reasoning(pg_url: str) -> None:
 
 
 def test_prompt_run_non_stream_captures_reasoning(pg_url: str) -> None:
-    # The non-stream completion used to DISCARD the split-out thinking; both the inline <think>
-    # form and the separate reasoning_content message field now land in the captured outputs.
+    # The non-stream completion must not discard the split-out thinking: both the inline <think>
+    # form and the separate reasoning_content message field land in the captured outputs.
     for mode, expected in (("inline_think", INLINE_THINKING), ("reasoning", "thinking step...")):
         with FakeInference(mode=mode) as server:
             app = create_app(inference_base_url=server.v1_url, database_url=pg_url)

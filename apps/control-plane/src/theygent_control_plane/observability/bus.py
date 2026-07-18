@@ -3,7 +3,7 @@
 The durable ``span`` table is the **durable record** the static ``GET /runs/{id}/trace`` reads; this
 bus is the **ephemeral live view** ``GET /runs/{id}/trace/stream`` subscribes to so the waterfall
 *grows* as a run executes — exactly the relationship :class:`~...durable.bus.DeltaBus` has to the
-persisted ``Run`` output (D7): durability lives in the store, this is the live observation, no
+persisted ``Run`` output: durability lives in the store, this is the live observation, no
 persistence and no replay. The wrapper publishes an ``open`` event when a span starts (an in-flight
 amber bar appears) and a ``close`` event when it ends (the bar settles green/red, gaining its
 duration). A reconnecting cockpit renders completed spans from ``/trace`` and the rest from here.

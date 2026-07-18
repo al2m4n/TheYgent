@@ -109,8 +109,8 @@ class BlockingInference:
 class TransientFailInference:
     """A real SSE server that returns 503 ``engine_unavailable`` for the first ``fail_count`` calls,
     then streams ``content``. Models a transient inference failure (an engine warming up) so a test
-    can prove DBOS step-level retry covers what the earlier gateway retry used to (the 503
-    regression the durable gateway's ``max_retries=0`` would otherwise re-introduce)."""
+    can prove DBOS step-level retry absorbs it — the durable gateway runs with ``max_retries=0``
+    so DBOS owns retry, and without the step retry a single transient 503 would fail the run."""
 
     def __init__(self, *, fail_count: int = 1, content: str = "RECOVERED") -> None:
         self.fail_count = fail_count
@@ -179,7 +179,7 @@ async def _durable_sideeffect_tool(*, value: Any = None) -> dict[str, Any]:
     n = _SIDE_EFFECT["count"]
     _SIDE_EFFECT["entered"].set()
     if n == 1:  # the crash victim: block forever (the test destroys DBOS mid-step; never returns)
-        while True:  # noqa: ASYNC110 — deliberately un-returning; the process is "crashed"
+        while True:  # noqa: ASYNC110 — never returns; the process is "crashed"
             await asyncio.sleep(0.05)
     return {"count": n, "value": value}
 

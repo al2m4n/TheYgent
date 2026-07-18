@@ -6,9 +6,9 @@ Resolution order:
   3. optional ``python -m <module>`` fallback if the module is importable here
   4. none -> fail loudly; the service surfaces this as /readyz not-ready.
 
-Bundling these binaries is a Tauri-sidecar concern, deferred. Each managed engine
-(llama.cpp, MLX, vLLM) is an external server the user installs; we only launch and
-supervise it.
+Bundling these binaries is a desktop-shell (Tauri sidecar) concern, out of scope here.
+Each managed engine (llama.cpp, MLX, vLLM) is an external server the user installs; we
+only launch and supervise it.
 """
 
 from __future__ import annotations

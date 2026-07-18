@@ -1,6 +1,6 @@
 """Shared constants/helpers for the containerization contract tests.
 
-Deliberately NOT in conftest.py: tests import from here by name, and a module named
+Kept OUT of conftest.py: tests import from here by name, and a module named
 ``conftest`` collides across suites when several are collected in one pytest run.
 """
 

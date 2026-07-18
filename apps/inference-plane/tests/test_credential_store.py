@@ -81,7 +81,7 @@ def test_resolve_prefers_store_then_env(monkeypatch: pytest.MonkeyPatch) -> None
 def test_resolve_requires_scheme_and_errors_when_missing() -> None:
     assert resolve_credential(None) is None
     with pytest.raises(CredentialResolutionError):
-        resolve_credential("env:OPENAI_API_KEY")  # the old, wrong placeholder form
+        resolve_credential("env:OPENAI_API_KEY")  # not the secret:// scheme → rejected
     with pytest.raises(CredentialResolutionError):
         resolve_credential("secret://NOWHERE", CredentialStore())
 

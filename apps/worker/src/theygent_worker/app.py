@@ -69,13 +69,13 @@ async def build_runtime(
     sessionmaker = db.create_sessionmaker(engine)
     # The connection/secret seam — the worker resolves tool + MCP auth exactly like the API
     # process (server-side, inside the step, same env-provided keys); without it every
-    # connection-backed http/mcp step on this topology bound `err`.
+    # connection-backed http/mcp step on this topology would bind `err`.
     connections = ConnectionStore()
     secrets = SecretStore.from_keys(secret_keys_from_env())
     tool_resolver = DbConnectionResolver(sessionmaker, connections, secrets)
     # The worker resolves platform settings against the SAME table the API writes — an empty
-    # table resolves to the env>default values this process read before settings existed, so
-    # behavior is unchanged until someone actually stores a value.
+    # table resolves to the env>default values, so behavior is unchanged until someone
+    # actually stores a value.
     settings = SettingsService(sessionmaker=sessionmaker, secrets=secrets)
     await settings.load()
     if mcp is None:

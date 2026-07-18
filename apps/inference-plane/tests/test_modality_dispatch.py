@@ -1,12 +1,12 @@
 """Fast suite — the (engine, modality) launcher dispatch + per-(engine,modality) readiness.
 
-The load-bearing seam: ``ManagedLauncherSet`` grew its key from the engine alone to
-``(engine, modality)`` so one engine can serve several modalities (mlx: ``mlx_lm.server`` chat vs
-``mlx_vlm.server`` vision; llama.cpp: ``llama-server`` ± ``--embeddings``) — and the EngineManager
-stays UNTOUCHED (it still calls one ``launch(binding)``). These prove routing, the chat fallback,
-the bare-key back-compat, the FAIL-CLOSED rejection (no chat fallback for a non-chat modality), the
-composite /readyz keys, and the new launchers' command shapes — nothing about real MLX/llama.cpp
-weights (those are the env-gated integration tests).
+The load-bearing seam: ``ManagedLauncherSet`` keys launchers by ``(engine, modality)`` so one
+engine can serve several modalities (mlx: ``mlx_lm.server`` chat vs ``mlx_vlm.server`` vision;
+llama.cpp: ``llama-server`` ± ``--embeddings``) — while the EngineManager stays untouched (it
+calls one ``launch(binding)``). These prove routing, the chat fallback, the bare-key back-compat,
+the FAIL-CLOSED rejection (no chat fallback for a non-chat modality), the composite /readyz keys,
+and the launchers' command shapes — nothing about real MLX/llama.cpp weights (those are the
+env-gated integration tests).
 """
 
 from __future__ import annotations
@@ -85,8 +85,8 @@ def test_unregistered_non_chat_modality_is_rejected_not_served_by_chat() -> None
 
 
 def test_bare_string_key_normalizes_to_chat() -> None:
-    # Back-compat: a chat-only set built with bare engine keys (the earlier shape, still used by the
-    # /readyz stubs) routes a default (chat) binding unchanged.
+    # Back-compat: a chat-only set built with bare engine keys (still used by the /readyz stubs)
+    # routes a default (chat) binding unchanged.
     chat = _RecordingLauncher()
     s = ManagedLauncherSet({"mlx": chat})
     asyncio.run(s.launch(_binding("mlx", "chat")))
@@ -275,7 +275,7 @@ def test_chat_and_embeddings_same_weights_are_separate_residents() -> None:
         assert {"w-chat", "w-embed"} <= ids  # two distinct residents for the same weights
 
 
-# ── the new launchers build the right command (no spawn) ─────────────────────
+# ── the launchers build the right command (no spawn) ─────────────────────────
 # binary_path=sys.executable is a real executable on every host, so resolution succeeds without the
 # engine being installed; we never spawn it, only inspect the argv the launcher would run.
 

@@ -24,7 +24,7 @@ def _chat(model: str, *, stream: bool = False) -> dict:
     return {"model": model, "messages": _MESSAGES, "stream": stream}
 
 
-# 1. Register, no spawn — proves laziness.
+# Register, no spawn — proves laziness.
 def test_register_does_not_spawn(client: TestClient, launcher: FakeUpstreamLauncher) -> None:
     r = client.put("/admin/models/triage-fast", json=managed_payload())
     assert r.status_code == 200
@@ -38,7 +38,7 @@ def test_register_does_not_spawn(client: TestClient, launcher: FakeUpstreamLaunc
     assert launcher.launch_count == 0
 
 
-# 2. Lazy spawn on first call.
+# Lazy spawn on first call.
 def test_lazy_spawn_on_first_call(
     client: TestClient, app: FastAPI, launcher: FakeUpstreamLauncher
 ) -> None:
@@ -53,7 +53,7 @@ def test_lazy_spawn_on_first_call(
     assert app.state.manager.state("triage-fast")["resident"] is True
 
 
-# 3. SSE streaming.
+# SSE streaming.
 def test_streaming_sse(client: TestClient) -> None:
     client.put("/admin/models/triage-fast", json=managed_payload())
     contents: list[str] = []
@@ -75,7 +75,7 @@ def test_streaming_sse(client: TestClient) -> None:
     assert "".join(contents) == FULL_MESSAGE
 
 
-# 4. Warm is idempotent with run — warm loads it, the call reuses it.
+# Warm is idempotent with run — warm loads it, the call reuses it.
 def test_warm_then_run_single_spawn(client: TestClient, app: FastAPI) -> None:
     client.put("/admin/models/triage-fast", json=managed_payload())
     w = client.post("/admin/models/triage-fast:warm")
@@ -88,7 +88,7 @@ def test_warm_then_run_single_spawn(client: TestClient, app: FastAPI) -> None:
     assert app.state.manager.spawn_count == 1
 
 
-# 5. Evict frees, then re-spawns — re-spawn proves a resource was released.
+# Evict frees, then re-spawns — re-spawn proves a resource was released.
 def test_evict_frees_then_respawns(
     client: TestClient, app: FastAPI, launcher: FakeUpstreamLauncher
 ) -> None:
@@ -107,7 +107,7 @@ def test_evict_frees_then_respawns(
     assert launcher.launch_count == 2
 
 
-# 6. Capabilities before inference — the compiler depends on this.
+# Capabilities before inference — the compiler depends on this.
 def test_capabilities_without_completion(client: TestClient) -> None:
     client.put("/admin/models/triage-fast", json=managed_payload())
     r = client.get("/admin/models/triage-fast/capabilities")
@@ -119,7 +119,7 @@ def test_capabilities_without_completion(client: TestClient) -> None:
     assert caps["maxContext"] == 4096
 
 
-# 7. Logical-id invariant — engine names are not valid models on /v1/*.
+# Logical-id invariant — engine names are not valid models on /v1/*.
 @pytest.mark.parametrize("engine", ["llamacpp", "mlx", "vllm"])
 def test_engine_name_rejected_on_v1(client: TestClient, engine: str) -> None:
     r = client.post("/v1/chat/completions", json=_chat(engine))
@@ -127,7 +127,7 @@ def test_engine_name_rejected_on_v1(client: TestClient, engine: str) -> None:
     assert r.json()["error"]["code"] == "model_not_found"
 
 
-# 10. Custom-method routing — {logical_id} captures correctly before :warm/:evict.
+# Custom-method routing — {logical_id} captures correctly before :warm/:evict.
 def test_custom_method_routing(client: TestClient) -> None:
     client.put("/admin/models/triage-fast", json=managed_payload())
     w = client.post("/admin/models/triage-fast:warm")

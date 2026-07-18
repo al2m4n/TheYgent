@@ -3,7 +3,7 @@
 vLLM's slot in theygent is NVIDIA/CUDA high-throughput GPU serving. This
 launcher targets ``vllm serve`` on a CUDA host. Its real path has **never run green
 here** — its integration test is CUDA-gated and skips clean. "Written and type-checks"
-is NOT "works" (the llama.cpp integration taught this lesson early).
+is NOT "works".
 
 The governing rule: **no CUDA/VRAM assumption may escape this module.** The
 ``EngineManager``, ``EvictionPolicy`` and gateway stay engine-agnostic; vLLM's GPU-ness

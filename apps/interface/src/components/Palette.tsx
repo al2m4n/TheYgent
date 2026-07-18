@@ -20,7 +20,7 @@ const KIND_TONE: Record<string, string> = {
   orchestration: "amber",
 };
 
-// Types the palette deliberately hides because they're a *kind* of another node rather than a
+// Types the palette hides because they're a *kind* of another node rather than a
 // separate drag target. `mcp_tool` is the MCP kind of the one "Tool" node (chosen in the inspector).
 const HIDDEN_PALETTE_TYPES = new Set(["mcp_tool"]);
 

@@ -3,9 +3,9 @@
 This is the load-bearing seam (the ``EngineLauncher`` protocol): every managed
 engine implements the *same* ``EngineLauncher`` protocol, so the fast suite is
 everything-real-except-the-weights via a fake, and the ``EngineManager`` stays
-engine-agnostic. Adding MLX (engine #2) and vLLM (#3) required **zero EngineManager
-caller changes** — the manager still calls a single ``launch(binding)``; dispatch to
-the right engine lives in ``ManagedLauncherSet``.
+engine-agnostic. Adding an engine requires **zero EngineManager caller changes** —
+the manager only ever calls a single ``launch(binding)``; dispatch to the right
+engine lives in ``ManagedLauncherSet``.
 
 Engine-specific reality (do not assume one engine's shape for another):
   * llama.cpp — capabilities via ``/props`` (real ``n_ctx``).
@@ -111,7 +111,7 @@ async def _spawn_openai_server(
     stdout+stderr go to an anonymous temp file rather than being discarded: when the engine
     crashes at startup (a missing Metal/CUDA runtime, an unresolvable model, bad flags) its
     traceback is the only thing that says *why*, so we fold the tail into the raised error. A
-    temp file (not a PIPE) is used deliberately — a long-lived server whose output nobody drains
+    temp file (not a PIPE) is used because a long-lived server whose output nobody drains
     would eventually block on a full pipe buffer. The parent's handle is dropped once startup
     resolves; the child keeps its own fd and the file is reclaimed when the engine exits.
     """
@@ -501,7 +501,7 @@ class MlxAudioLauncher:
         return MlxAudioHandle(proc, base_url)
 
 
-# ── MLX (managed, the Tier-A milestone — proven on Apple Silicon) ────────
+# ── MLX (managed, proven on Apple Silicon) ──────────────────────────────
 
 
 def _hf_hub_dir() -> str:
@@ -718,9 +718,8 @@ class MlxVlmLauncher:
     """Spawns ``mlx_vlm.server`` for an Apple-Silicon VLM — the MLX ``vision`` modality.
 
     UNPROVEN until its env-gated integration test runs green here (mlx-vlm is not installed by
-    default); "written + type-checks" is not "works" — a lesson learned from the first engine
-    integration. Same protocol/lifecycle shape as ``MlxLauncher`` — the manager cannot tell them
-    apart.
+    default); "written + type-checks" is not "works". Same protocol/lifecycle shape as
+    ``MlxLauncher`` — the manager cannot tell them apart.
     """
 
     ENV_VAR = "THEYGENT_MLX_VLM_BIN"
@@ -929,8 +928,8 @@ class ManagedLauncherSet:
     """Routes ``launch(binding)`` to the per-``(engine, modality)`` launcher.
 
     Implements ``EngineLauncher`` itself, so ``EngineManager`` is handed a single launcher and never
-    learns there are several engines OR several modalities — the whole reason engine #2/#3 (and now
-    the non-chat modalities) dropped in without touching the manager. ``launch(binding)`` keeps its
+    learns there are several engines OR several modalities — which is what lets a new engine or
+    modality drop in without touching the manager. ``launch(binding)`` keeps its
     exact signature; the key is private to this set.
 
     The dispatch key spans ``(engine, modality)`` so one engine can

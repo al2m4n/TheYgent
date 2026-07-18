@@ -1,8 +1,7 @@
 """Platform settings — a typed catalog over ``platform_setting``, with an honest apply story.
 
-The knobs that used to be env-vars-read-once or compile-time constants (telemetry export, I/O
-capture bounds, MCP timeouts/registries, RAG ingest/retrieval defaults) become editable at
-runtime. Three rules keep the surface honest:
+Telemetry export, I/O capture bounds, MCP timeouts/registries, and RAG ingest/retrieval defaults
+are editable at runtime. Three rules keep the surface honest:
 
 1. **Precedence: explicit env > stored > default** — "explicit" means set AND non-empty (the
    empty-string-equals-unset convention every entrypoint already uses). An env-**pinned** key is
@@ -91,9 +90,8 @@ class SettingSpec:
 
 
 def _otlp_default_enabled() -> bool:
-    # Back-compat default only: an ambient endpoint used to switch export on, so it still
-    # *defaults* export on — but a stored false always wins (the kill switch). The env var
-    # never PINS export on.
+    # An ambient endpoint only *defaults* export on — a stored false always wins (the kill
+    # switch). The env var never PINS export on.
     return bool((os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or "").strip())
 
 

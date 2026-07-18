@@ -475,7 +475,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "``llm`` node config. ``model`` names a key in ``IRDocument.models``; ``messages`` is the\nprompt template \u2014 content fields use the port-addressed substitution token language shared with\n``tool``/``mcp_tool``/``router``: ``$in`` is the default in-port ``in``, ``$in.<port>`` selects\na named in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An\nunknown port or token fails loudly, never silent literal pass-through. (``$input`` was the\noriginal spelling, renamed to ``$in``; the segment after ``$in.`` is a port name.)\n\nA message ``content`` may be a list of OpenAI content parts (text + image_url), not only a\nstring, so a graph can drive a vision model (on ``/v1/chat/completions``). The ``$in`` grammar\napplies inside each text part and each image url, so an image enters from an in-port\n(``$in.image``); a plain-string ``content`` is unchanged and hashes identically (see\n``_Message``).",
+        "description": "``llm`` node config. ``model`` names a key in ``IRDocument.models``; ``messages`` is the\nprompt template \u2014 content fields use the port-addressed substitution token language shared with\n``tool``/``mcp_tool``/``router``: ``$in`` is the default in-port ``in``, ``$in.<port>`` selects\na named in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An\nunknown port or token fails loudly, never silent literal pass-through. (The segment after\n``$in.`` is a port name.)\n\nA message ``content`` may be a list of OpenAI content parts (text + image_url), not only a\nstring, so a graph can drive a vision model (on ``/v1/chat/completions``). The ``$in`` grammar\napplies inside each text part and each image url, so an image enters from an in-port\n(``$in.image``); a plain-string ``content`` is unchanged and hashes identically (see\n``_Message``).",
         "properties": {
           "maxToolIterations": {
             "default": 8,
@@ -940,7 +940,7 @@
     "rag": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``rag`` activity node config \u2014 retrieve from a saved retrieval source.\n\n``source`` is the STABLE id of a control-plane retrieval source (``rag_<ulid>``) \u2014 the same\nreference discipline as a connection id: the id is hashed content, the documents behind it\nare not, so re-ingesting/re-crawling a source never bumps an agent's ``contentHash``. The\nembedding model is pinned ON the source (control-plane side), deliberately NOT here \u2014 a\n``models`` key would weld an inference binding to retrieval identity.\n\nTwo wirings, like a tool node: as a STEP (``data`` edges), ``query`` is the query template\n(``$in`` grammar; ``None`` = the default in-port's whole value); as a CAPABILITY (a ``tool``\nedge into an llm's ``tools`` port), the model calls it with ``{query}`` and ``description``\nis the \"use this when\u2026\" hint \u2014 ``query`` is ignored there (the model supplies it).",
+        "description": "``rag`` activity node config \u2014 retrieve from a saved retrieval source.\n\n``source`` is the STABLE id of a control-plane retrieval source (``rag_<ulid>``) \u2014 the same\nreference discipline as a connection id: the id is hashed content, the documents behind it\nare not, so re-ingesting/re-crawling a source never bumps an agent's ``contentHash``. The\nembedding model is pinned ON the source (control-plane side), NOT here \u2014 a\n``models`` key would weld an inference binding to retrieval identity.\n\nTwo wirings, like a tool node: as a STEP (``data`` edges), ``query`` is the query template\n(``$in`` grammar; ``None`` = the default in-port's whole value); as a CAPABILITY (a ``tool``\nedge into an llm's ``tools`` port), the model calls it with ``{query}`` and ``description``\nis the \"use this when\u2026\" hint \u2014 ``query`` is ignored there (the model supplies it).",
         "properties": {
           "description": {
             "anyOf": [
@@ -1036,7 +1036,7 @@
     "ratelimit": {
       "configSchema": {
         "additionalProperties": false,
-        "description": "``ratelimit`` activity node config \u2014 the lean per-key gate seam. ``key_expr`` resolves the\ncaller key from a trigger token / webhook signature or a ``$in`` field. Denies past ``limit``\nrequests in ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: \"deny\"``\nemits the ``deny`` port (a clean 429-style result); ``policy: \"wait\"`` (a bounded suspend) is\nNAMED but not yet built \u2014 start with deny.",
+        "description": "``ratelimit`` activity node config \u2014 the lean per-key gate seam. ``key_expr`` resolves the\ncaller key from a trigger token / webhook signature or a ``$in`` field. Denies past ``limit``\nrequests in ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: \"deny\"``\nemits the ``deny`` port (a clean 429-style result); ``policy: \"wait\"`` (a bounded suspend) is\nreserved but not implemented \u2014 only ``deny`` runs today.",
         "properties": {
           "keyExpr": {
             "title": "Keyexpr",

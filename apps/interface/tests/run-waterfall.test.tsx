@@ -205,7 +205,7 @@ describe("RunWaterfall", () => {
     // The whole loop is shown on the node row (not scoped to one call). findBy waits for the io.
     expect(await within(detail).findByText("Tool calls")).toBeInTheDocument();
     expect(within(detail).getByText("http_fetch")).toBeInTheDocument();
-    // The args AND — the point of the change — the RESULT the tool returned both render.
+    // Both the args AND the RESULT the tool returned render.
     expect(within(detail).getByText(/https:\/\/example\.com/)).toBeInTheDocument();
     expect(within(detail).getByText(/Example Domain/)).toBeInTheDocument();
     // The reserved `tool_calls` entry is pulled out of the Output ports (no raw lowercase label).

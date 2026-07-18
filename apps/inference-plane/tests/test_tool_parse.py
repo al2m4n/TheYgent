@@ -15,7 +15,7 @@ from theygent_inference_plane import tool_parse
 from theygent_inference_plane.manager import EngineManager, Upstream, _Resident
 from theygent_ir.registration import ManagedBinding
 
-# The literal string the failing bench run returned (run 01KW9G8345...): a Llama python_tag call.
+# A literal string observed from a real mlx run: a Llama python_tag call emitted as content.
 OBSERVED = '<|python_tag|>{"name": "n_tool_4", "parameters": {"all": false, "filters": {"label": "docker"}}}'  # noqa: E501
 OFFERED = {"n_tool_4"}
 

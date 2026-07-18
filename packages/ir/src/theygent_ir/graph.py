@@ -1,10 +1,9 @@
 """The Agent Graph IR — the builder ↔ runtime seam.
 
-This is the hard-to-reverse decision the IR first exercises: the IR is the input
-format the walker executes, the no-code builder will *write*, the registry will *version*,
-and observability will *map spans onto*. The inference-plane registration payload
-(``registration.py``) froze first; this module adds the document envelope, nodes/edges,
-model bindings, and the determinism-class ``kind`` taxonomy.
+The IR is the input format the walker executes, the no-code builder writes, the registry
+versions, and observability maps spans onto. This module defines the document envelope,
+nodes/edges, model bindings, and the determinism-class ``kind`` taxonomy; the inference-plane
+registration payload lives in ``registration.py``.
 
 Two rules this module encodes, both load-bearing:
 
@@ -79,9 +78,7 @@ _PER_INSTANCE_KIND_TYPES: frozenset[str] = frozenset({"guardrail"})
 
 #: The node ``type``s the walker actually executes. Every other known ``type`` is a valid IR
 #: shape with a dispatcher branch that raises ``NotImplementedError`` — adding it later is an
-#: additive walker handler, not a refactor. The initial walker shipped ``input``/``output``/``llm``;
-#: ``tool`` (first non-llm activity) and ``router`` (first orchestration node) were added next;
-#: ``mcp_tool`` (an external MCP server's tool, same contract over a new transport) followed.
+#: additive walker handler, not a refactor.
 #: ``human``/``subgraph`` (``boundary``) and ``loop``/``map`` (``orchestration``) are the
 #: additive-lowering types. They run ONLY on the durable runtime (each lowers onto a DBOS
 #: primitive: ``recv`` / child workflow / bounded inline repetition / durable-queue fan-out);
@@ -173,9 +170,7 @@ class HttpTool(_Wire):
     # The request shape lives here too, so the binding is a COMPLETE, reusable tool the llm
     # tool-loop invokes by reference (no wired node) — one HttpTool serves both invocation modes.
     # Auth stays in ``connection`` (injected server-side), never a slot. All optional, so a
-    # node-wired http binding is unchanged; the contentHash shift on a graph that USES such a
-    # binding is the same additive typed-field evolution Port.role made without a schemaVersion
-    # bump.
+    # node-wired http binding that omits them is unaffected.
     # For an http tool used by an llm, the validator requires ``description`` + ``parameter_schema``
     # AND that the schema's top-level properties equal the ``$in.*`` slots referenced by
     # ``url_template``/``body_template`` (slot↔property equivalence).
@@ -222,11 +217,10 @@ ToolBinding = Annotated[BuiltinTool | HttpTool | McpTool, Field(discriminator="k
 # ── nodes & edges ─────────────────────────────────────────────────────────────
 
 
-# ``tool`` joins ``data``/``control`` as a port role + edge channel. A ``tool`` handle on an
-# ``llm`` (its ``tools`` in-port) receives capability edges from configured tool nodes — the model
-# may CALL those tools (autonomous tool-calling), distinct from a ``data`` edge (the tool runs
-# as a step, output flows) and a ``control`` edge (pure sequencing). Additive value: every existing
-# port/edge keeps ``data``/``control``, so old IRs parse + hash unchanged (no schemaVersion bump).
+# The port roles / edge channels. A ``tool`` handle on an ``llm`` (its ``tools`` in-port)
+# receives capability edges from configured tool nodes — the model may CALL those tools
+# (autonomous tool-calling), distinct from a ``data`` edge (the tool runs as a step, output
+# flows) and a ``control`` edge (pure sequencing).
 PortRole = Literal["data", "control", "tool"]
 
 
@@ -354,13 +348,11 @@ _ContentPart = Annotated[_TextContentPart | _ImageContentPart, Field(discriminat
 
 
 class _Message(_Wire):
-    # ``content`` is EITHER a plain string (the original shape, unchanged) OR a list of OpenAI
-    # content parts (text + image_url) so a vision agent can carry an image. The union is
-    # backward-compatible by construction: a string validates as ``str`` and serializes
-    # byte-for-byte as before, so an existing IR's ``contentHash`` is UNMOVED (the canonical dump
-    # is identical). A list ``content`` is the new multimodal form. Only a list ``content`` changes
-    # the hash; a string does not — so ``schemaVersion`` is NOT bumped (the addition is purely
-    # additive + back-compat).
+    # ``content`` is EITHER a plain string OR a list of OpenAI content parts (text + image_url)
+    # so a vision agent can carry an image. Load-bearing invariant: a string validates as ``str``
+    # and serializes byte-for-byte as a bare string (never wrapped in a list/object), so a
+    # string-content IR's ``contentHash`` is stable — only a list ``content`` (the multimodal
+    # form) changes the hash.
     role: Literal["system", "user", "assistant"]
     content: str | list[_ContentPart]
 
@@ -389,8 +381,8 @@ class LlmConfig(_Wire):
     prompt template — content fields use the port-addressed substitution token language shared with
     ``tool``/``mcp_tool``/``router``: ``$in`` is the default in-port ``in``, ``$in.<port>`` selects
     a named in-port (so one node composes multiple upstreams), ``$in.<port>.<field>`` drills in. An
-    unknown port or token fails loudly, never silent literal pass-through. (``$input`` was the
-    original spelling, renamed to ``$in``; the segment after ``$in.`` is a port name.)
+    unknown port or token fails loudly, never silent literal pass-through. (The segment after
+    ``$in.`` is a port name.)
 
     A message ``content`` may be a list of OpenAI content parts (text + image_url), not only a
     string, so a graph can drive a vision model (on ``/v1/chat/completions``). The ``$in`` grammar
@@ -409,8 +401,8 @@ class LlmConfig(_Wire):
     # EMPTY (the default) is a single-shot completion (the loop branch is taken only when ``tools``
     # is non-empty). ``tool_choice`` follows the OpenAI vocabulary; ``max_tool_iterations`` bounds
     # the loop (>= 1, validated). ``Node.config`` is hashed as the opaque authored dict (not
-    # hydrated through this model), so adding these does NOT shift any llm graph's contentHash —
-    # no schemaVersion bump. There is NO compile-time model-capability gate (plane-split: no
+    # hydrated through this model), so a graph that omits these fields hashes unchanged.
+    # There is NO compile-time model-capability gate (plane-split: no
     # inference Capabilities here) — a model that ignores ``tools`` emits no tool_calls, the loop
     # runs zero iterations, you get plain content.
     tools: list[str] = Field(default_factory=list)
@@ -649,7 +641,7 @@ class RagConfig(_Wire):
     ``source`` is the STABLE id of a control-plane retrieval source (``rag_<ulid>``) — the same
     reference discipline as a connection id: the id is hashed content, the documents behind it
     are not, so re-ingesting/re-crawling a source never bumps an agent's ``contentHash``. The
-    embedding model is pinned ON the source (control-plane side), deliberately NOT here — a
+    embedding model is pinned ON the source (control-plane side), NOT here — a
     ``models`` key would weld an inference binding to retrieval identity.
 
     Two wirings, like a tool node: as a STEP (``data`` edges), ``query`` is the query template
@@ -711,7 +703,7 @@ class RateLimitConfig(_Wire):
     caller key from a trigger token / webhook signature or a ``$in`` field. Denies past ``limit``
     requests in ``window_seconds`` per key, backed by a trivial Postgres counter. ``policy: "deny"``
     emits the ``deny`` port (a clean 429-style result); ``policy: "wait"`` (a bounded suspend) is
-    NAMED but not yet built — start with deny."""
+    reserved but not implemented — only ``deny`` runs today."""
 
     key_expr: str
     limit: int

@@ -4,8 +4,8 @@
 subprocess, JSON-RPC over stdin/stdout) and ``HttpMcpClient`` (streamable-HTTP / SSE to a remote
 server) are the two transports — both wrap the official ``mcp`` SDK. **The SDK is wrapped here and
 nowhere else** (same discipline as ``gateway-client`` wrapping the OpenAI SDK): the rest of the
-control-plane imports only this module's protocol + dataclasses, never ``mcp`` directly. (Stdio
-shipped first; http was added against the SAME protocol — the node contract is identical.)
+control-plane imports only this module's protocol + dataclasses, never ``mcp`` directly. Both
+transports satisfy the same protocol — the node contract is identical.
 
 The hard part this module owns: a **persistent** connection that survives across request tasks. The
 SDK's transport / ``ClientSession`` are anyio context managers whose cancel scopes must be entered
@@ -106,7 +106,7 @@ class McpClient(Protocol):
 def _result_value(result: types.CallToolResult) -> Any:
     """Reduce an MCP tool result to one value: prefer the **text** content (the clean, portable
     form — a string tool returns its string, the filesystem server returns the file body), falling
-    back to structured content only when there's no text. Text is preferred deliberately: many
+    back to structured content only when there's no text. Text is preferred because many
     servers (FastMCP included) wrap a scalar return as ``structuredContent={"result": ...}``, and a
     downstream ``$in.a.b`` ref re-parses a JSON-string value anyway — so the text is the least
     surprising binding for the ``ok`` handle."""
@@ -185,7 +185,7 @@ class _ActorMcpClient:
         connect timeout. Raises :class:`McpConnectionError` if the transport won't open, the
         handshake fails, or the connection isn't ready in time.
 
-        The timeout lives INSIDE connect, deliberately: an *external*
+        The timeout lives INSIDE connect: an *external*
         ``asyncio.wait_for(client.connect(), t)`` would cancel only the awaiting coroutine and
         leak a zombie — the spawned stdio child and the orphaned actor task keep running,
         because cancellation bypasses any ``except Exception`` cleanup. ``close()`` is the one

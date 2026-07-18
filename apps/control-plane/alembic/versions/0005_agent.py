@@ -4,13 +4,12 @@ Revision ID: 0005_agent
 Revises: 0004_mcp_server
 Create Date: 2026-06-22
 
-The first genuinely paid control-plane surface: turns "paste the whole IR every run"
-into "an agent is a saved, named, versioned thing you invoke". Two tables, both plain
-conventional rows (no new heavy deps):
+An agent is a saved, named, versioned thing invoked by reference (instead of pasting the whole
+IR on every run). Two tables, both plain conventional rows:
 
 * ``agent`` — the stable agent identity (``id``), constant across versions. ``owner_id`` /
-  ``workspace_id`` are deliberately omitted: a scoping column slots in later WITHOUT a
-  reshape for the Team-tier shared registry — single-user localhost until then.
+  ``workspace_id`` are omitted: a scoping column slots in later WITHOUT a
+  reshape for a shared registry — single-user localhost until then.
 * ``agent_version`` — immutable, content-addressed versions. The ``(agent_id, version)`` UNIQUE
   index is the immutability guard: one ``content_hash`` per coordinate, forever — the promise
   that pinned deploys depend on. ``ir`` is the canonical, view-stripped IR document; ``view`` is
@@ -20,7 +19,7 @@ conventional rows (no new heavy deps):
 This is the CONTROL-PLANE registry (stores IR + metadata, never inference data — plane boundary).
 Model bindings inside the IR still resolve at the inference plane at run time; nothing here forces
 inference data across the seam. Hand-written and fully reversible (the round-trip test exercises
-upgrade head -> downgrade base, now including these).
+upgrade head -> downgrade base).
 """
 
 from __future__ import annotations
@@ -47,7 +46,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("created_at", _TZ, nullable=False),
         sa.Column("updated_at", _TZ, nullable=False),
-        # owner_id / workspace_id deliberately omitted now; column slots in later.
+        # owner_id / workspace_id omitted; a scoping column slots in later.
     )
     op.create_table(
         "agent_version",

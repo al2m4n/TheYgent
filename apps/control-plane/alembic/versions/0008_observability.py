@@ -4,14 +4,13 @@ Revision ID: 0008_observability
 Revises: 0007_human_waiting
 Create Date: 2026-06-24
 
-Turns the earlier per-node "log timeline" stub into a real timing **waterfall** with click-through
-per-node I/O — without coupling the UI to any external trace backend. Three new
-``public`` tables, all plain convention rows (no new heavy deps):
+A timing **waterfall** with click-through per-node I/O — without coupling the UI to any
+external trace backend. Three new ``public`` tables, all plain convention rows:
 
 * ``span`` — the timeline rows; one per emitted span (a run-root span, a node span, or a phase
   span). This is what the in-UI waterfall reads — NOT the DBOS journal (spans for the
   timeline, journal for resume, both keyed by ``run_id`` but serving different masters, so swapping
-  the durable runtime later does not move the waterfall). **Deliberate deviations recorded here:**
+  the durable runtime later does not move the waterfall). **Non-obvious choices:**
   - ``start_ns``/``end_ns`` are **epoch nanoseconds (BIGINT)**, not TIMESTAMPTZ — OTel is
     ns-resolution and the waterfall needs clean integer arithmetic (``end-start`` = duration,
     ``next.start - prev.end`` = gap). ``created_at`` stays TIMESTAMPTZ (a different concern).
@@ -35,8 +34,8 @@ per-node I/O — without coupling the UI to any external trace backend. Three ne
   deferred principal slot (NULL in single-user; filled by the Governance/Identity layer).
   This adds NO identity/role/grant tables — only this one policy table.
 
-Hand-written and fully reversible (the round-trip test exercises upgrade head → downgrade base,
-now including these three tables). ``dbos`` ordering is unchanged; Alembic owns ``public``.
+Hand-written and fully reversible (the round-trip test exercises upgrade head → downgrade base).
+Alembic owns ``public``; the ``dbos`` schema is managed separately.
 """
 
 from __future__ import annotations

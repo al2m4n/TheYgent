@@ -461,7 +461,7 @@ async def _durable_tool_call(
             values=call.arguments, declared=props | frozenset(call.arguments.keys())
         )
         idem = binding.idempotency_key
-        if idem:  # D9 at-least-once: a write tool called twice in one loop mustn't collide
+        if idem:  # at-least-once: a write tool called twice in one loop mustn't collide
             idem = f"{idem}-{node_id}-{iteration}-{call.id}"
         cfg = ToolConfig(
             tool=call.name,
@@ -621,7 +621,7 @@ async def _imagine_step(
     return {"ok": out.ok, "value": out.value}
 
 
-# ── app-DB steps (idempotent — at-least-once safe, D6) ──────────────────────────────
+# ── app-DB steps (idempotent — at-least-once safe) ──────────────────────────────
 
 
 @DBOS.step(**_RETRY)
@@ -653,7 +653,7 @@ async def _create_run_step(
     chash: str | None,
     trigger_id: str | None,
 ) -> None:
-    """Idempotently create the Run row with id == the DBOS workflow id (D6), so a resumed run reuses
+    """Idempotently create the Run row with id == the DBOS workflow id, so a resumed run reuses
     the same row and ``GET /runs/{id}`` correlates across a crash. ON CONFLICT DO NOTHING makes a
     step re-execution a no-op."""
     res = _res()

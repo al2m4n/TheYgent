@@ -9,8 +9,8 @@ the durable resources so it owns the DB and the walker never opens a session:
   builds no new metering pipeline): ``usage_tokens`` sums ``gen_ai.usage.total_tokens`` across the
   agent's spans in the window; the node denies past ``budget_tokens``.
 
-Granularity is per-KEY now; per-USER is deferred until identity/auth work lands — so quota usage is
-scoped to the AGENT (per-user attribution off spans needs the identity work; recorded, not faked).
+Granularity is per-KEY; per-USER attribution needs an identity/auth layer that does not exist yet,
+so quota usage is scoped to the AGENT.
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ class GateBackend:
         re-meter). Joins span→run on ``run_id``, filters ``run.graph_id``. The llm capture writes
         the attribute on each ``model.generate`` span from the usage the server reports; when none
         is recorded (an upstream that reports no usage), returns 0 — an honest 'no usage measured →
-        allow'. Per-USER attribution is deferred until identity/auth work lands."""
+        allow'. Per-USER attribution needs an identity/auth layer that does not exist yet."""
         window_seconds = max(1, int(window_seconds))
         since = now().timestamp() - window_seconds
         token_expr = func.coalesce(SpanRow.attributes["gen_ai.usage.total_tokens"].as_float(), 0.0)

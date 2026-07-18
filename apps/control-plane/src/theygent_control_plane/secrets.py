@@ -11,7 +11,6 @@ secret (``THEYGENT_SECRET_KEY``), not a per-tenant envelope key. The hard-to-rev
 *shape* — secrets behind a ``secret_ref``, never inline in the IR — which a real vault slots behind
 unchanged. Migrating the at-rest mechanism (env Fernet key → KMS/HSM/Vault) is a swap of THIS
 module's internals; the ``secret_ref`` contract the rest of the system depends on does not move.
-Migrating the at-rest mechanism (env Fernet key → KMS/HSM/Vault) is recorded as a deferred upgrade.
 
 Key rotation rides on ``MultiFernet``: ``THEYGENT_SECRET_KEY`` may be a comma-separated list — the
 FIRST key encrypts new/rotated material, ALL keys can decrypt, so an operator rotates by prepending

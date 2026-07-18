@@ -38,9 +38,7 @@ def _ports(values: dict, declared: list[str] | None = None) -> _PortInputs:
     )
 
 
-def test_two_input_composition_is_the_f2_1_proof(
-    client: TestClient, fake_inference: FakeInference
-) -> None:
+def test_two_input_composition(client: TestClient, fake_inference: FakeInference) -> None:
     # THE headline: two upstream nodes feed the `file` and `question` in-ports of one llm node, and
     # the rendered prompt contains BOTH values in the right places.
     ir = two_input_llm_ir(
@@ -145,7 +143,7 @@ def test_duplicate_edge_to_one_in_port_is_rejected_at_validation(client: TestCli
     assert "runId" not in resp.json()
 
 
-# ── #2: single-value consumers (output / router) must take exactly one in-port ──
+# ── single-value consumers (output / router) must take exactly one in-port ──
 # The sharpest seam: "consume one value" meets "a node could be wired to many ports". A multi-port
 # output/router must error LOUDLY (the unknown-port philosophy), never silently pick a default port.
 
@@ -174,7 +172,7 @@ def test_router_with_two_in_ports_errors_loudly(client: TestClient) -> None:
     assert "single-value consumer" in msg
 
 
-# ── #3: absent (optional / fed-null) in-port resolver semantics ──
+# ── absent (optional / fed-null) in-port resolver semantics ──
 # An ABSENT port value (declared-but-unfed optional, or fed-with-null) resolves to the canonical
 # absent value, rendered PER SITE — "" inline, JSON null in structured args. Drilling
 # SHORT-CIRCUITS to absent (no error); fed-with-null collapses to the same. Pinned here so agents
@@ -215,9 +213,9 @@ def test_fed_with_null_collapses_to_absent() -> None:
     )
 
 
-# ── structured (object) run input — the gap the real path caught ──
+# ── structured (object) run input ──
 # A multi-input agent's run input is naturally an OBJECT the graph drills with $in.in.<field>;
-# /graphs/runs accepts it (the request `input` is Any, not str — a deliberate contract extension).
+# /graphs/runs accepts it (the request `input` is Any, not str).
 
 
 def test_object_run_input_flows_through_graphs_runs(

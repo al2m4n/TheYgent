@@ -488,8 +488,8 @@ def test_unbounded_loop_rejected_at_compile() -> None:
 
 
 def test_non_positive_max_depth_rejected_at_compile() -> None:
-    # maxDepth 0 (or negative) passed every static check and only failed when the durable depth
-    # guard tripped at run time — now rejected at validation, for every pinned-body type.
+    # maxDepth 0 (or negative) would otherwise only trip the durable depth guard at run time —
+    # it is rejected at validation instead, for every pinned-body type.
     zero = _subgraph_ir("agt_depth0", "agt_child", content_hash_pin="deadbeef", max_depth=0)
     with pytest.raises(GraphValidationError, match="maxDepth"):
         validate_graph(parse_document(zero))
@@ -799,8 +799,8 @@ async def test_subgraph_mutual_recursion_bounded_by_max_depth(pg_url: str) -> No
 
 async def test_subgraph_multi_port_input_mapping(pg_url: str) -> None:
     # A subgraph node with TWO in-ports maps to the child as a {port: value} object the child drills
-    # with $in.in.<port> — the named-port mapping at the composition seam, built AND tested (not
-    # deferred). echo tools feed distinct values into ports a and b.
+    # with $in.in.<port> — the named-port mapping at the composition seam. echo tools feed distinct
+    # values into ports a and b.
     await reset_dbos_schema(pg_url)
     child = _llm_body("agt_mp_child", prompt="$in.in.a-$in.in.b")
     _, child_hash, _ = canonical_ir(child)
@@ -969,8 +969,8 @@ async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
 
 async def test_resume_refuses_waiting_run_without_awaiting_node(pg_url: str) -> None:
     # A waiting run always records its awaiting node (mark_waiting writes both); a row that says
-    # waiting but records none cannot be targeted — the old bare-topic fallback 202'd a send
-    # nothing would ever recv. Refused loudly instead.
+    # waiting but records none cannot be targeted — a bare-topic send would be accepted while
+    # nothing ever recvs it. Refused loudly instead.
     await reset_dbos_schema(pg_url)
     with FakeInference() as fake:
         app = create_app(
@@ -999,7 +999,7 @@ async def test_rule_guardrail_before_input_preserves_run_input(pg_url: str) -> N
     # A rule guardrail with an OPTIONAL, unfed in-port has zero indegree, so topo order can visit
     # it BEFORE an input node that sorts after it. The guardrail branch must evaluate its own
     # in-port value under a branch-local name — rebinding the workflow's `input_value` there
-    # corrupted the run input every later input node bound.
+    # would corrupt the run input every later input node binds.
     await reset_dbos_schema(pg_url)
     ir = _doc(
         [

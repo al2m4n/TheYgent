@@ -1,6 +1,6 @@
 // The FULL Lucide icon set (all ~1,700 icons), for the icon picker's "search every icon" experience.
 //
-// This module statically imports lucide's complete `icons` map, so it is DELIBERATELY heavy. It is
+// This module statically imports lucide's complete `icons` map, so it is heavy. It is
 // only ever reached through a dynamic `import()` (the lazy `IconPickerGrid`, and `NodeIcon`'s fallback
 // for a non-curated override), so Vite splits it into its own chunk — the main canvas bundle stays
 // lean and the full set loads on demand the first time someone opens the picker or renders a custom

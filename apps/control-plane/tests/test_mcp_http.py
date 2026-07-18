@@ -58,7 +58,7 @@ def http_mcp_server() -> Iterator[str]:
         thread.join(timeout=5)
 
 
-# ── the HttpMcpClient transport (the new piece) ───────────────────────────────────────────────────
+# ── the HttpMcpClient transport ───────────────────────────────────────────────────
 
 
 def test_http_mcp_client_lists_and_calls() -> None:

@@ -93,11 +93,10 @@ def test_policy_no_eviction_when_room_available() -> None:
 
 
 def test_policy_counts_nonevictable_slots() -> None:
-    # Regression (live wedge): an idle evictable engine coexists with a stuck/draining engine the
-    # policy is NOT handed (only evictable engines are passed). With ``resident_total`` = the TRUE
-    # count (2) and max 2, the incoming load must evict the idle one. Pre-fix the policy saw only
-    # ``len(resident)`` = 1, computed 1+1 <= 2, evicted nothing → the manager then wedged at
-    # NoCapacity even though ``idle`` was perfectly evictable.
+    # An idle evictable engine coexists with a stuck/draining engine the policy is NOT handed
+    # (only evictable engines are passed). The policy must budget against ``resident_total`` =
+    # the TRUE count (2), not ``len(resident)`` = 1 — otherwise it computes 1+1 <= 2, evicts
+    # nothing, and the manager wedges at NoCapacity even though ``idle`` is perfectly evictable.
     policy = CountAndPriorityPolicy()
     resident = [ResidentView("idle", priority=1, last_used=1)]
     budget = ResourceBudget(max_resident=2, resident_total=2)
@@ -105,7 +104,7 @@ def test_policy_counts_nonevictable_slots() -> None:
 
 
 def test_policy_no_total_falls_back_to_len_resident() -> None:
-    # Backward-compat: callers that don't supply resident_total (default 0) keep the old behavior.
+    # Callers that don't supply resident_total (default 0) fall back to len(resident).
     policy = CountAndPriorityPolicy()
     resident = [ResidentView("a", priority=1, last_used=1)]
     assert policy.select_victims(resident, PendingLoad("x", 1), ResourceBudget(3)) == []
@@ -138,7 +137,6 @@ def test_policy_watermark_forces_one_even_with_room() -> None:
 # ── manager lifecycle (async) ───────────────────────────────────────────
 
 
-# Plan test #8.
 async def test_idle_eviction() -> None:
     reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
     mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
@@ -164,7 +162,6 @@ async def test_keep_warm_survives_reap() -> None:
     assert mgr.state("pinned")["resident"] is True
 
 
-# Plan test #9.
 async def test_memory_pressure_evicts_lowest_priority() -> None:
     reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
     probe = _FlagProbe(over=False)
@@ -213,10 +210,10 @@ async def test_evict_drains_inflight_then_terminates() -> None:
 
 
 async def test_stuck_draining_engine_does_not_wedge_idle_eviction() -> None:
-    # Regression for the live wedge found during the test session: a permanently-draining engine
-    # (in-flight forever — e.g. a hung model subprocess) must NOT block loading a new model when a
-    # DIFFERENT resident engine is idle/evictable. Pre-fix the policy under-counted the draining
-    # engine's slot and the manager raised NoCapacityError; now it evicts the idle engine and loads.
+    # A permanently-draining engine (in-flight forever — e.g. a hung model subprocess) must NOT
+    # block loading a new model when a DIFFERENT resident engine is idle/evictable: the policy
+    # must count the draining engine's slot, evict the idle engine, and load — never raise
+    # NoCapacityError.
     reg, launcher, clock = Registry(), _NoopLauncher(), ManualClock()
     mgr = EngineManager(reg, launcher, clock=clock, max_resident=2)
     _register(reg, "idle")

@@ -136,7 +136,7 @@ export function defaultIconFor(nodeType: string): string {
 
 // A Lucide icon name is lowercase kebab (e.g. `shield-check`, `volume-2`). The user may pick ANY of
 // them in the inspector, so we trust any override that matches this shape; a non-matching override —
-// e.g. a legacy emoji saved before the switch to Lucide — degrades to the type default instead of
+// e.g. a legacy emoji stored by an older build — degrades to the type default instead of
 // rendering as a broken glyph. (A kebab string that isn't a real icon falls back to the gear at
 // render time via `NodeIcon`, so this stays a cheap, allocation-free check.)
 const LUCIDE_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;

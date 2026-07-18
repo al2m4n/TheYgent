@@ -1,6 +1,6 @@
-"""Tier A proof — MLX against a REAL mlx_lm.server on Apple Silicon (brief sec 1-2).
+"""MLX against a REAL mlx_lm.server on Apple Silicon.
 
-This is the milestone: MLX is "supported" only because this runs green. Skipped by
+MLX is "supported" only because this runs green. Skipped by
 default (`-m 'not integration'`) and skips clean when prerequisites are absent. Run::
 
     THEYGENT_MLX_MODEL=mlx-community/Qwen2.5-0.5B-Instruct-4bit \

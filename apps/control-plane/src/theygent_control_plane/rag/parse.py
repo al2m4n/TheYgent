@@ -1,6 +1,6 @@
 """Uploaded document bytes → markdown-ish text, behind one function.
 
-markitdown is the deliberate lightweight choice: pure-Python converters (pdfminer, mammoth,
+markitdown is the lightweight choice: pure-Python converters (pdfminer, mammoth,
 python-pptx, pandas) with no ML weights to bundle — right for a locally-shipped product. Plain
 text and markdown short-circuit it entirely. Scanned-PDF OCR is out of scope here (a heavier,
 model-backed parser is an additive upgrade behind this same function).

@@ -512,8 +512,8 @@ describe("port editing", () => {
   });
 
   it("renamePort on a router out-port rewires the edge sourced from it (the router branch)", () => {
-    // Build the two-branch router shape (local/remote) from a fresh router — the exact thing the
-    // Wizard couldn't do before: a router's branches ARE its out-ports.
+    // Build the two-branch router shape (local/remote) from a fresh router — a router's branches
+    // ARE its out-ports.
     let ir = addNode(sampleGraph(), "router", { x: 0, y: 0 });
     const routerId = ir.nodes?.at(-1)?.id as string;
     ir = addPort(ir, routerId, "out"); // now out: [out, out2]

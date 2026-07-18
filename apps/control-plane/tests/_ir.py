@@ -117,7 +117,7 @@ def _doc(nodes: list[dict], edges: list[dict], *, models: dict | None = None) ->
     # order. Honors this module's contract: a fresh deep copy each call, without disturbing another.
     return {
         "schemaVersion": "1.0",
-        "id": "agt_m6_test",
+        "id": "agt_router_test",
         "name": "m6-test",
         "version": "0.1.0",
         "models": copy.deepcopy(models) if models else {},

@@ -40,7 +40,7 @@ import { Textarea as BaseTextarea } from "./ui/textarea";
 
 type Variant = "primary" | "default" | "ghost" | "danger";
 
-// The app's historical variant names, mapped onto the component library's: `primary` is the one
+// The app's variant names, mapped onto the component library's: `primary` is the one
 // blue action, `default` is the bordered neutral button, `danger` the soft-red destructive.
 const VARIANT: Record<Variant, "default" | "outline" | "ghost" | "destructive"> = {
   primary: "default",
@@ -270,7 +270,7 @@ export function Modal({
         // Dismiss ONLY when the pointer lands on the backdrop itself. While a modal layer is open
         // the primitive turns off pointer events on <body>; surfaces that deliberately stay
         // interactive above it (the notification toaster re-enables its own pointer events) must
-        // not count as "outside" clicks that close the dialog — that was the pre-dialog behaviour.
+        // not count as "outside" clicks that close the dialog.
         onPointerDownOutside={(e) => {
           const target = e.target as Element | null;
           if (!target?.closest?.('[data-slot="dialog-overlay"]')) e.preventDefault();

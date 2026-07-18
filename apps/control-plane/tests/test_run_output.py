@@ -1,10 +1,10 @@
 """Fast suite for run output persistence + honest empty output.
 
-Before this fix, a session-less run's output lived ONLY in the live SSE stream: close the
-tab and the answer was gone — ``GET /runs/{id}`` returned metadata, no output. The fix persists the
-final output on the run row with or without a session, additively (the POST wire contract is
-unchanged). The honest-empty-output fix makes "nothing reached the output because an upstream node
-errored" an honest signal instead of a green ``completed`` with ``output: ""`` and ``error: null``.
+Without persistence, a session-less run's output lives ONLY in the live SSE stream: close the
+tab and the answer is gone — ``GET /runs/{id}`` would return metadata, no output. The final
+output persists on the run row with or without a session (the POST wire contract is unchanged).
+"Nothing reached the output because an upstream node errored" must be an honest signal, never a
+green ``completed`` with ``output: ""`` and ``error: null``.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from theygent_control_plane.app import create_app
 def test_sessionless_run_output_persists_and_survives_restart(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
-    # A one-shot /runs (no session_id) — previously it persisted NO output.
+    # A one-shot /runs (no session_id) must still persist its output.
     app1 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
     with TestClient(app1) as c1:
         created = c1.post(
             "/runs", json={"input": "hi", "model": "triage-fast", "stream": False}
         ).json()
         run_id = created["runId"]
-        # GET now returns the output, not just metadata.
+        # GET returns the output, not just metadata.
         assert c1.get(f"/runs/{run_id}").json()["output"] == FULL_MESSAGE
 
     # Simulate a restart: new app + engine, SAME database. The output is still there.
@@ -59,8 +59,7 @@ def test_streamed_run_output_persists(client: TestClient) -> None:
 
 
 def test_sessionless_graph_run_output_persists(client: TestClient) -> None:
-    # The cockpit's "Output is not persisted for one-shot runs" gap: a session-less /graphs/runs
-    # now returns its output from GET /runs/{id}.
+    # A session-less /graphs/runs also returns its output from GET /runs/{id}.
     created = client.post(
         "/graphs/runs", json={"ir": trivial_ir(), "input": "x", "stream": False}
     ).json()
@@ -80,6 +79,6 @@ def test_empty_output_from_upstream_error_is_legible(client: TestClient, pg_url:
     assert row is not None
     assert "output empty" in str(row["error"])
     assert "n_tool" in str(row["error"])  # the failing node is named
-    # The error field is non-null — no longer masquerading as a clean success.
+    # The error field is non-null — never masquerading as a clean success.
     got = client.get(f"/runs/{run_id}").json()
     assert got["error"] is not None and "output empty" in got["error"]

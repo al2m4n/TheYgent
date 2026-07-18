@@ -4,9 +4,8 @@ Revision ID: 0007_human_waiting
 Revises: 0006_trigger
 Create Date: 2026-06-23
 
-The additive-lowering node types (``human``/``subgraph``/``loop``/``map``) were introduced as
-durable-runtime lowerings. Only the ``human`` node touches the persistence layer, and even that
-touch is minimal:
+The ``human``/``subgraph``/``loop``/``map`` node types are durable-runtime lowerings. Only the
+``human`` node touches the persistence layer, and even that touch is minimal:
 
 * The ``waiting`` run status is **additive at the value level only** — ``run.status`` is a plain
   ``String`` column (no CHECK constraint / enum), so a new status value needs NO schema change. What
@@ -16,11 +15,9 @@ touch is minimal:
   ``DBOS.recv``, this records WHICH node it is paused at (the "run bookkeeping" the waiting status
   needs). ``POST /runs/{id}/resume`` reads it to validate the awaited input against that node's
   declared schema and to deliver it. NULL except while ``status == 'waiting'``. Additive and
-  nullable, exactly like the earlier ``graph_id`` and ``trigger_id`` columns — a plain breadcrumb,
-  not an FK.
+  nullable, like the ``graph_id`` and ``trigger_id`` columns — a plain breadcrumb, not an FK.
 
-Hand-written and fully reversible (the round-trip test exercises upgrade head → downgrade base,
-now including this column).
+Hand-written and fully reversible (the round-trip test exercises upgrade head → downgrade base).
 """
 
 from __future__ import annotations

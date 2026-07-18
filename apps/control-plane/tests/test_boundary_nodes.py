@@ -1,15 +1,15 @@
 """Fast suite for the input/output boundary contract's loud-failure edges.
 
-Three silent behaviors made honest:
+Three silent behaviors kept honest:
 
-* Two output nodes that BOTH execute used to silently last-win (the run output was whichever
-  output node topo order visited last) — now a loud 422, same no-silent-ambiguity rule as a
-  single-value consumer with two in-ports.
-* A graph with no output node (or whose taken branch reaches none) used to complete green with
-  ``output: ""``/``error: null`` — and, in a session, append a BLANK assistant turn. Now it
-  carries an honest empty-output reason and appends no turn.
-* A node type the IR schema declares but no runtime executes (code/rag/…) used to create a Run
-  and then die as a misleading 502 ``inference_error`` — now a clean 400 before any Run.
+* Two output nodes that BOTH execute are a loud 422 — never a silent last-win where the run
+  output would be whichever output node topo order visited last; same no-silent-ambiguity rule
+  as a single-value consumer with two in-ports.
+* A graph with no output node (or whose taken branch reaches none) carries an honest
+  empty-output reason and, in a session, appends no blank assistant turn — instead of
+  completing green with ``output: ""``/``error: null``.
+* A node type the IR schema declares but no runtime executes (code/rag/…) is a clean 400 before
+  any Run — not a created Run that dies as a misleading 502 ``inference_error``.
 """
 
 from __future__ import annotations

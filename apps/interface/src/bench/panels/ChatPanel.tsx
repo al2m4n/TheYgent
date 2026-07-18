@@ -1,4 +1,4 @@
-// Chat / Vision panel — the headline tester, now a real conversation through the unified chat
+// Chat / Vision panel — the headline tester: a real conversation through the unified chat
 // shell. Streams via the data plane (DIRECT to the inference base URL) with multi-turn replay,
 // separates a reasoning model's thinking into the collapsible block, and turns on image attach
 // (upload / camera / URL-less) when the model advertises `vision` — image content blocks into the

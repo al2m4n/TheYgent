@@ -1,19 +1,19 @@
 """``ToolRegistry`` + the two built-in tools.
 
-The registry is the tool fork made concrete: a name → async-callable map, populated **in
+The registry is a name → async-callable map, populated **in
 code**. The walker resolves a ``tool`` node's ``config.tool`` to a callable here and invokes it
 with templated ``args``. The control-plane checks membership *up front* (before a ``Run`` is
 created → 400 ``tool_not_found``), mirroring how the engine-name binding is rejected before a Run
 — so an unknown tool never reaches the walker.
 
-Two built-in tools ship, just enough to prove the surface and write a real demo:
+Two built-in tools ship:
   * ``echo``       — return the input unchanged. Network-free; proves dispatch + arg templating.
   * ``http_fetch`` — an outbound HTTP GET. Real I/O and real failure modes. A non-200 is a normal
                      return value (bound to ``ok``); only a transport failure (timeout, bad host)
                      raises → the walker binds it to the node's ``err`` handle.
 
-`file_read`/`code_exec`/etc. are deferred — each is its own design surface (sandboxing, path/exec
-safety). They are additive against this registry whenever genuinely needed.
+`file_read`/`code_exec`/etc. are not provided — each is its own design surface (sandboxing,
+path/exec safety) and would be additive against this registry.
 """
 
 from __future__ import annotations

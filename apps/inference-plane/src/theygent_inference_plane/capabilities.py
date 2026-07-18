@@ -7,7 +7,7 @@ weights (the chat template, ``architectures``, the GGUF header). So the browser 
 ``reasoning`` / ``tool_calling`` / ``vision`` before the user installs anything.
 
 Everything here is pure string/dict inspection — **no network, no subprocess, no engine**. It is
-deliberately best-effort: a chat-template marker is a strong hint, not a guarantee, and template
+best-effort: a chat-template marker is a strong hint, not a guarantee, and template
 conventions vary by model family. The authoritative source stays the live capability **probe**
 (``/admin/models/{id}/capabilities``), which interrogates the spawned engine and reports
 ``approximate=False`` where it truly probes. Discovery hints and the probe are complementary, not

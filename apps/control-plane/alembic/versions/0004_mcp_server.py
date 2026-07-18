@@ -4,13 +4,12 @@ Revision ID: 0004_mcp_server
 Revises: 0003_run_output
 Create Date: 2026-06-22
 
-Persist the control-plane's MCP server registrations so they survive a restart — previously they
-lived only in the in-memory ``McpManager`` and were lost on every restart, an asymmetry with
-runs/threads that already persist. A real table, an Alembic migration, domain/ORM split (the
-manager's ``McpServerConfig`` stays the domain shape).
+Persist the control-plane's MCP server registrations so they survive a restart — the in-memory
+``McpManager`` rehydrates from this table at startup. Domain/ORM split: the manager's
+``McpServerConfig`` stays the domain shape.
 
 This is the CONTROL-PLANE registry (its own trust domain → its own Postgres). The INFERENCE-plane
-model registry is deliberately NOT here — it persists locally to the inference plane (the plane
+model registry is NOT here — it persists locally to the inference plane (the plane
 boundary). Do not add a model table to the control-plane DB.
 
 ``env`` carries the user's secrets/paths that the registration must round-trip to respawn the

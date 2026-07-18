@@ -210,7 +210,7 @@ async def test_durable_wired_capability_tool_then_answers(pg_url: str) -> None:
     # wired-tool path (test_tool_wiring.py), here through theygent_run.
     await reset_dbos_schema(pg_url)
     ir = trivial_ir()
-    ir["id"] = "agt_m22_capability"
+    ir["id"] = "agt_wired_capability"
     llm = ir["nodes"][1]
     llm["ports"]["in"].append({"id": "tools", "type": "any", "required": False, "role": "tool"})
     llm["config"]["maxToolIterations"] = 4
@@ -497,7 +497,7 @@ async def test_failed_durable_run_stamps_completed_at(pg_url: str) -> None:
             await engine.dispose()
 
 
-# ── multi-instance schedule dedup (the air-gapped tier's selling point) ──────────
+# ── multi-instance schedule dedup (two instances must never double-fire) ──────────
 
 
 async def test_schedule_fires_once_across_instances(pg_url: str) -> None:
@@ -656,7 +656,7 @@ async def test_schedule_persists_and_reconciles_across_restart(pg_url: str) -> N
         rt2.launch()
         try:
             # Boot reconciliation re-establishes the schedule from the persisted enabled trigger —
-            # the F6.1 lesson, now multi-instance-safe via DBOS (no in-memory dispatcher state).
+            # schedules are re-read from Postgres, never from in-memory dispatcher state.
             async with sm() as s:
                 enabled = await triggers.list_enabled_schedules(s)
             await rt2.reconcile_schedules(enabled)

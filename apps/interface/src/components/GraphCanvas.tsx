@@ -419,7 +419,7 @@ function GraphCanvasInner({
             pannable
             zoomable
             // A border + an elevated background (lighter than the canvas in dark, white in light) so
-            // the minimap reads against the pane instead of blending in (the "barely visible" fix).
+            // the minimap reads against the pane instead of blending in.
             className="!rounded-md !border !border-slate-700 !bg-[var(--c-elev)]"
             maskColor={dark ? "rgba(11,14,20,0.55)" : "rgba(226,232,240,0.7)"}
             nodeColor={dark ? "#64748b" : "#94a3b8"}

@@ -4,7 +4,7 @@ plane + a tool-calling-capable engine.
 The fast suite (``test_tool_calling.py``) proves the loop end-to-end with a scripted fake. This
 env-gated test is the actual "supported" gate: a real model, offered a tool, DECIDES to call it, the
 walker runs it, feeds the result back, and the model answers — proven on the real surface, not a
-fake (per [[prove-real-path-before-abstracting]]).
+fake.
 
 Engine support is the precondition, and it is engine-specific: **llama.cpp is PROVEN**;
 mlx_lm.server is unproven/approximate (point THEYGENT_INFERENCE_PLANE_BASE_URL at a llama.cpp plane

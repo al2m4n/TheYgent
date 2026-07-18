@@ -92,8 +92,8 @@ class EmbeddingsRequest(BaseModel):
 
 class SpeechRequest(BaseModel):
     # The OpenAI text-to-speech shape. `model` is a LOGICAL id. `voice`/`response_format`/
-    # `speed` ride through as params; the response is audio bytes. `voice` is deliberately
-    # OPTIONAL with no invented default: voice vocabularies are per-engine (an OpenAI voice name
+    # `speed` ride through as params; the response is audio bytes. `voice` is OPTIONAL
+    # with no invented default: voice vocabularies are per-engine (an OpenAI voice name
     # forced onto a local speech server names a voice it doesn't have), so an omitted voice falls
     # through to the binding's registered `params` default, then the engine's own default.
     model_config = ConfigDict(extra="allow")
@@ -359,7 +359,7 @@ def create_app(
     async def list_engines() -> dict[str, Any]:
         # Running managed engines + resident state. Count-based arbitration,
         # so no RAM/VRAM bytes yet — maxResident is the ceiling the policy enforces.
-        # `maxResident` here is a deliberate read-only SNAPSHOT duplicate: this route is the
+        # `maxResident` here is a read-only SNAPSHOT duplicate: this route is the
         # runtime view (what ceiling is the manager enforcing right now, next to the engines
         # it applies to), while /admin/settings is the writable home carrying value+source.
         # Existing consumers of this shape keep working; writes go through /admin/settings.
@@ -612,7 +612,7 @@ def create_app(
         # literals; `modality` narrows the listing to one task (chat/vision/embeddings/audio.*).
         ready = _ready_engines()
         # An optional `engines` override narrows to a subset — but only ever within what's ready, so
-        # The invariant (never surface an unrunnable model) holds even if the client asks wider.
+        # the invariant (never surface an unrunnable model) holds even if the client asks wider.
         if engines is not None:
             requested = {e.strip() for e in engines.split(",") if e.strip()}
             selected = [e for e in ready if e in requested]

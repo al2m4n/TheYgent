@@ -24,8 +24,8 @@ SourceName = Literal["hf", "local-path", "url"]
 #: ``vision`` is a sub-capability of ``chat``: a vision model reports ``["chat", "vision"]`` and
 #: runs on ``/v1/chat/completions``. ``images.generation`` is the inverse — text in, an image out —
 #: and unlike ``vision`` it is its own task on its own endpoint (``/v1/images/generations``), so it
-#: is declared explicitly and never derived from a chat flag. ``rerank`` stays RESERVED/DEFERRED
-#: (named, not implemented).
+#: is declared explicitly and never derived from a chat flag. ``rerank`` is reserved,
+#: not implemented.
 Modality = Literal[
     "chat", "vision", "embeddings", "audio.transcription", "audio.speech", "images.generation"
 ]
@@ -65,8 +65,8 @@ class ManagedBinding(_Wire):
     it — ``mlx`` chat spawns ``mlx_lm.server`` while ``mlx`` vision spawns ``mlx_vlm.server``;
     ``llamacpp`` embeddings adds ``--embeddings`` to the same ``llama-server``. It is NOT a new
     ``binding`` value (the binding enum stays frozen — ``mlx-vlm`` is still the ``mlx`` engine, only
-    the task differs) and it defaults to ``"chat"`` so every prior registration is unchanged. A
-    deliberate, named additive extension.
+    the task differs) and it defaults to ``"chat"`` so a registration that omits it is a chat
+    registration.
 
     ``ReachableBinding`` carries the same axis (see its docstring — the platform can't probe a
     reachable upstream, and the chat/bench surfaces route their UI on the declared task). NOTE the
@@ -92,11 +92,9 @@ class ReachableBinding(_Wire):
 
     ``modality`` names the task the upstream serves, same axis as on ``ManagedBinding``. A
     reachable upstream is never probed (by design), so this declaration is the ONLY signal the
-    platform has for routing UI — a transcription server gets the voice composer, a speech server
-    gets text-in/audio-out — and for the capabilities a UI reads. Defaults to ``"chat"`` so every
-    prior registration is unchanged; a deliberate, named additive extension (it supersedes the
-    earlier "reachable upstreams self-describe over their URL" stance, which predates any surface
-    needing to route on the task).
+    platform has for routing UI — a transcription server gets the voice composer, a speech
+    server gets text-in/audio-out — and for the capabilities a UI reads. Defaults to
+    ``"chat"`` so a registration that omits it is a chat registration.
     """
 
     binding: ReachableBindingName

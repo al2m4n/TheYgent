@@ -1,11 +1,10 @@
-"""Fast suite for multimodal ``llm`` content — the cross-plane vision follow-up.
+"""Fast suite for multimodal ``llm`` content.
 
-The inference plane serves vision locally (mlx_vlm on ``/v1/chat/completions``), but a
-vision agent could not yet be DRIVEN from a graph: an ``llm`` node's message ``content`` was a plain
-string, so it could not carry an OpenAI ``image_url`` content block. The IR now lets a ``content``
-be a list of content parts (text + image_url); these tests prove the part survives IR serialize +
-the *real* gateway hop (the fake inference is a genuine HTTP server, so ``captured["messages"]`` is
-what crossed the wire — exactly the OpenAI shape LiteLLM forwards to the engine).
+An ``llm`` node's message ``content`` may be a list of content parts (text + image_url) in addition
+to a plain string, so a graph can carry an OpenAI ``image_url`` content block and drive a vision
+model. These tests prove the part survives IR serialize + the *real* gateway hop (the fake inference
+is a genuine HTTP server, so ``captured["messages"]`` is what crossed the wire — exactly the OpenAI
+shape LiteLLM forwards to the engine).
 
 What they pin:
   * a graph bound to a vision logical model with an image content block runs end-to-end, and the

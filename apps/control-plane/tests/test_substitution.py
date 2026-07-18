@@ -1,18 +1,17 @@
 """Fast suite for the substitution token language.
 
-Previously the ``llm`` node spoke ``$input`` (whole-value-only) while ``tool``/``router`` spoke
-``$in``/``$in.field`` — two look-alike languages that don't compose, and a wrong token passed
-through as LITERAL TEXT so a run completed green with nonsense. The substitution layer unified them
-onto ``$in``/``$in.field`` and made an unknown token a LOUD failure. The multi-input extension made
-in-ports the addressable unit: the segment after ``$in.`` is a **port name**, so single-value
-drilling now lives at ``$in.in.<field>`` (the file+question composition lives in
+``$in``/``$in.field`` is the ONE template token language across every substituting node
+(``llm``/``tool``/``mcp_tool``/``router``), and an unknown token is a LOUD failure — a wrong token
+must never pass through as LITERAL TEXT and complete green with nonsense. In-ports are the
+addressable unit: the segment after ``$in.`` is a **port name**, resolved port-first, so
+single-value drilling lives at ``$in.in.<field>`` (the file+question composition lives in
 ``test_multi_input.py``).
 
-These prove the per-llm-node behaviours, now port-addressed:
-  * ``$in`` in an llm node == the default in-port's whole value (parity with the old ``$input``);
+These prove the per-llm-node behaviours:
+  * ``$in`` in an llm node == the default in-port's whole value;
   * ``$in.in.<field>`` drills into an object in-port value in an llm node;
-  * the OLD ``$in.<field>`` form is a loud migration error (port-first, names a did-you-mean hint);
-  * an unknown token (``$nope`` or the now-removed ``$input``) → precise error, no green run;
+  * the legacy single-port ``$in.<field>`` form is a loud error with a did-you-mean hint;
+  * an unknown token (``$nope`` or the legacy ``$input``) → precise error, no green run;
   * ``$$`` escapes a literal ``$``.
 """
 
@@ -30,7 +29,7 @@ def _run(client: TestClient, ir: dict, *, input_: str = "the run input") -> dict
 def test_dollar_in_is_whole_in_port_value(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # Parity with the old $input: $in resolves to the node's whole in-port value (the run input).
+    # $in resolves to the node's whole in-port value (the run input).
     body = _run(client, llm_ir("Summarize: $in"), input_="name three EU capitals")
     assert body["status"] == "completed"
     assert fake_inference.captured["messages"] == [
@@ -42,7 +41,7 @@ def test_dollar_in_port_field_drills_into_object(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
     # Port-addressed drilling: the default in-port `in` carries an object, and
-    # $in.in.<field> selects a field of it (the old $in.field drilling now lives at $in.in.field).
+    # $in.in.<field> selects a field of it (single-port field drilling lives at $in.in.field).
     ir = llm_over_object_ir("Summarize:\n\n$in.in.body", {"body": "war and peace", "meta": 1})
     body = _run(client, ir)
     assert body["status"] == "completed"
@@ -54,9 +53,9 @@ def test_dollar_in_port_field_drills_into_object(
 def test_old_dollar_in_field_form_is_a_loud_migration_error(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # Migration loudness: the OLD single-port spelling `$in.body` now reads as "in-port
+    # Migration loudness: the legacy single-port spelling `$in.body` reads as "in-port
     # named body", which doesn't exist on a single-`in`-port node → loud error naming the ports,
-    # not a silent green run with garbage. The fix is the named hint: $in.in.body.
+    # not a silent green run with garbage. The message carries the named hint: $in.in.body.
     ir = llm_over_object_ir("Summarize: $in.body", {"body": "war and peace"})
     body = _run(client, ir)
     assert body["error"]["code"] == "template_error"
@@ -69,7 +68,7 @@ def test_old_dollar_in_field_form_is_a_loud_migration_error(
 def test_unknown_token_is_a_loud_error_not_a_green_run(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # The F1.1 class fix: a wrong token does NOT pass through as literal text and complete green.
+    # A wrong token does NOT pass through as literal text and complete green.
     # It fails with a precise message naming the node and (here, a string in-port) the situation.
     body = _run(client, llm_ir("Summarize: $nope"))
     assert "status" not in body or body.get("status") != "completed"
@@ -83,7 +82,7 @@ def test_unknown_token_is_a_loud_error_not_a_green_run(
 def test_removed_dollar_input_token_now_errors(
     client: TestClient, fake_inference: FakeInference
 ) -> None:
-    # $input is no longer a token — it's an unknown root, named explicitly so a stale IR is legible.
+    # $input is not a token — it's an unknown root, named explicitly so a stale IR is legible.
     body = _run(client, llm_ir("Summarize: $input"))
     assert body["error"]["code"] == "template_error"
     assert "$input" in body["error"]["message"]

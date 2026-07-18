@@ -1,6 +1,6 @@
 """The in-process ingest service — crawl/parse → chunk → embed → upsert, with honest progress.
 
-Deliberately the same shape as the inference plane's model downloader: plain asyncio background
+The same shape as the inference plane's model downloader: plain asyncio background
 tasks, progress the UI polls, cancel, and a startup sweep (in ``RagStore``) that marks work a
 restart interrupted as ``failed`` — cheap honesty, not resume. Durable/resumable ingestion is
 an additive upgrade behind this same service seam.
@@ -50,7 +50,7 @@ class _SourceJob:
     jobs): live counters flushed to the row's ``progress``, the task set, a crawl-exclusivity
     flag, and the last fatal error for the settle decision.
 
-    ``settle`` is tracked SEPARATELY from ``tasks``, deliberately: the settle task writes the
+    ``settle`` is tracked SEPARATELY from ``tasks``: the settle task writes the
     terminal status, so it must never be counted as "active work" (or a cancel in the drain
     window would kill the very write that records the cancel) and must never be cancelled —
     only awaited (shutdown) or chained onto (a new drain while the previous settle runs)."""

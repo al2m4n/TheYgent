@@ -1,6 +1,6 @@
 """The control-plane API — theygent-native, owns one run end to end.
 
-Surfaces (theygent-native, deliberately NOT OpenAI-shaped — the OpenAI-compat
+Surfaces (theygent-native, NOT OpenAI-shaped — the OpenAI-compat
 surface lives on the inference plane):
 
   * POST /runs            create + execute a run; SSE stream when stream:true.
@@ -150,7 +150,7 @@ logger = logging.getLogger("theygent.control_plane")
 
 # The control-plane forwards a LOGICAL model id, never an engine name. These are
 # the managed-engine names. They must never appear as a `/runs` `model`. Kept as
-# a local constant on purpose — the IR package is not imported on the plain /runs path.
+# a local constant — the IR package is not imported on the plain /runs path.
 _ENGINE_NAMES = frozenset({"mlx", "vllm", "llamacpp"})
 
 # Node types that lower ONLY onto the durable runtime (DBOS recv/child-workflows/queue). The
@@ -214,12 +214,12 @@ class GraphRunRequest(BaseModel):
     # graph's input boundary node; ``session_id`` reuses session memory through the graph path
     # unchanged. Snake_case request fields, matching /runs.
     #
-    # ``input`` is ``Any``, not ``str`` (deliberate contract extension — graph path only).
+    # ``input`` is ``Any``, not ``str`` (graph path only).
     # A multi-input agent's run input is naturally an OBJECT (e.g. ``{"path": ..., "question":
     # ...}``) that downstream nodes select from with ``$in.in.<field>`` — typing it ``str`` would
     # 422 exactly the agents that use named in-ports. The walker already binds any value
     # to the input boundary node; only this request type blocked it. ``/runs`` (a single prompt =
-    # a chat message = a string) is intentionally NOT widened.
+    # a chat message = a string) is NOT widened.
     ir: dict[str, Any]
     input: Any = None
     stream: bool = True
@@ -245,7 +245,7 @@ class AddVersionRequest(BaseModel):
 class CreateDraftRequest(BaseModel):
     # Autosave a work-in-progress graph from the editor. ``ir`` is typed ``Any`` (not
     # ``dict``) so the app owns the 400 (``invalid_draft``) for a non-object document instead
-    # of FastAPI's generic 422 — and it is deliberately NOT validated/hashed: a draft may be a
+    # of FastAPI's generic 422 — and it is NOT validated/hashed: a draft may be a
     # half-wired, invalid graph (that is the point; validation happens at publish, on /agents).
     # The server pops ``view`` out of the document into its own column (the registry's ir/view
     # split — layout is never part of the document). ``agent_id`` is the registry agent this
@@ -1012,7 +1012,7 @@ def create_app(
             )
 
         # Naive full replay: prior turns verbatim + the new input. No summarization,
-        # no truncation — those are deliberate later additions.
+        # no truncation — those are later additions.
         messages: list[dict[str, Any]] = []
         if req.session_id:
             async with tx() as session:
@@ -1581,7 +1581,7 @@ def create_app(
             return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
         return detail.model_dump(mode="json")
 
-    # Sessions are writable by the client too (a deliberate contract extension): a
+    # Sessions are writable by the client too: a
     # direct-to-inference chat — which never passes through a run — can persist its history
     # here. The run paths keep writing their own turns exactly as before; these endpoints are
     # a second writer, serialized by the same FOR UPDATE lock in ``append_turn``.
@@ -2560,7 +2560,7 @@ def create_app(
         return JSONResponse({"run_id": run_id}, status_code=202)
 
     # ── theygent-native API: /drafts (the editor's autosave surface) ──
-    # A draft is a mutable, autosaved, possibly-INVALID agent graph — the deliberate opposite of
+    # A draft is a mutable, autosaved, possibly-INVALID agent graph — the opposite of
     # an agent version (immutable, content-addressed, validated). The editor autosaves here so a
     # half-wired graph survives a tab close; publishing stays on the untouched /agents registry.
     # No parse/validate/hash ever runs on a draft — the only shape rule is "the ir is a JSON
