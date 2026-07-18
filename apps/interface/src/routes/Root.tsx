@@ -249,7 +249,7 @@ function Brand() {
   const { state, toggleSidebar } = useSidebar();
   const { resolved } = useTheme();
   const dark = resolved === "dark";
-  const mark = dark ? "/logo/TheYgent-logo-dark.svg" : "/logo/TheYgent-logo.svg";
+  const mark = dark ? "/logo/theygent-logo-dark.svg" : "/logo/theygent-logo.svg";
 
   if (state === "collapsed") {
     // The whole head is the expand control: the mark shows at rest and fades out on hover/focus while
