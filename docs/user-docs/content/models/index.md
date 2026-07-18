@@ -107,10 +107,22 @@ When you install, the download runs **inside your inference plane** — TheYgent
 
 The full install walkthrough — including the install dialog and choosing a logical id — is on the next page.
 
+## Moving models to another machine
+
+The **Model registry** section of **Settings → [Import / Export](../import-export/index.md)** carries your registrations between installs. A registry export contains the logical-id → binding map plus, for catalog installs, the Hugging Face repo and variant each one came from — **never the weights themselves, and never credential values** (credential names travel so the target knows what to ask you for).
+
+On import:
+
+- **Catalog-installed models re-download automatically.** The target's inference plane pulls the same repo and variant from Hugging Face — with the exported registration preserved (modality, parameters, lifecycle), only the weights path pointing at the new machine. Machine-specific auxiliary paths in the parameters (such as a vision projector file) are dropped with a `params_path_dropped` warning and re-located next to the new weights automatically. Progress shows in the notification center like any install.
+- **Hosted and remote registrations just work** — an `openai-compatible` binding is a URL plus a credential name; re-enter the credential on the target and it's live.
+- **Hand-registered local paths can't follow you.** A model registered against a file path on the old machine (with no catalog provenance) is registered anyway but flagged `weights_unavailable` — it fails at first use until you put weights at that path or reinstall it.
+- **Already-registered logical ids are skipped**, never overwritten.
+
 ## Related pages
 
 - [Installing local models](installing.md) — the step-by-step install, on-disk registration, and deleting models
 - [Remote models](remote.md) — registering a hosted or remote OpenAI-compatible endpoint
 - [The engines](engines.md) — llama.cpp, MLX, and vLLM, and which one runs on your machine
 - [Models and engines](../concepts/models-and-engines.md) — logical ids, bindings, sources, and modalities
+- [Import & export](../import-export/index.md) — moving the registry (and everything else) between machines
 - [The Bench](../running/bench.md) — testing and comparing models

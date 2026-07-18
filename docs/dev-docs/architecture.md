@@ -101,6 +101,13 @@ Notes on the topology:
 - **The SPA talks to both planes directly.** Raw inference payloads (prompts, images,
   audio) go straight from the browser to the inference plane; the control plane receives
   run orchestration, session turns, and telemetry — never proxied model traffic.
+- **Export bundles are assembled in the browser.** The import/export zip has two halves —
+  control-plane state (`POST /export`) and the model registry (`GET /admin/export`) — and
+  registry state is inference-plane-local, so the browser is the only place they may meet;
+  neither half ever transits the other plane. Bundles carry definitions only: model
+  weights and secret values (connection secrets, webhook signing secrets, MCP env values,
+  credential values) never appear in one — weights re-download in-plane on import, and
+  credentials are re-entered on the target.
 - **The control plane is a modular monolith.** One FastAPI app, internally modularized.
   FastAPI is only the API surface: no durable orchestration lives in request handlers.
 - **Inference is the one component that earns its own service** — it pins a GPU, holds

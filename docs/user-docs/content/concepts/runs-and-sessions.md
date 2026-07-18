@@ -8,9 +8,9 @@ Whenever an agent produces an answer, that is a run. Runs start from a few place
 
 - **A plain prompt** — you send a string and a logical model id, and the model completes it. This is the simplest run.
 - **An agent graph** — the control plane walks the graph node by node, calling models, tools, and MCP servers as the edges dictate, and returns the graph's output.
-- **A saved agent** — the same as above, but the graph comes from an immutable [saved version](versioning.md) rather than being pasted in.
+- **A published agent** — the same as above, but the graph comes from an immutable [published version](versioning.md) rather than being pasted in.
 
-However it starts, a run gets a row in the database the moment it is accepted. That row holds the status, the resolved model, the final output, any error, timing, and — for a saved agent — which version ran. You can read a run at any time, including while it is still producing output. The chat surface, the [Runs list](../running/index.md), and the [run waterfall](../running/observability.md) are all views onto these rows.
+However it starts, a run gets a row in the database the moment it is accepted. That row holds the status, the resolved model, the final output, any error, timing, and — for a published agent — which version ran. You can read a run at any time, including while it is still producing output. The chat surface, the [Runs list](../running/index.md), and the [run waterfall](../running/observability.md) are all views onto these rows.
 
 ## The run lifecycle
 

@@ -15,11 +15,11 @@ There is no vendor in the middle: TheYgent never proxies your prompts, payloads,
 ## What you can do
 
 - **Build agents visually** — drag nodes onto a canvas, connect them with edges, configure them in an inspector, and run them without writing code. See the [editor tour](building/editor.md) and the [node reference](building/nodes/index.md).
-- **Chat** — a unified chat surface for talking to any registered model or saved agent, with streaming answers, a collapsible "thinking" view for reasoning models, voice and image input, and automatic session history. See [chat](chat/index.md).
+- **Chat** — a unified chat surface for talking to any registered model or published agent, with streaming answers, a collapsible "thinking" view for reasoning models, voice and image input, and automatic session history. See [chat](chat/index.md).
 - **Run models locally or remotely** — browse and install models from Hugging Face with fit-to-your-RAM badges, or register a hosted API; engines start lazily and are managed for you. See [models](models/index.md) and [models and engines](concepts/models-and-engines.md).
 - **Extend agents with tools** — built-in tools, HTTP calls, and any MCP (Model Context Protocol) server, running in your own trust domain: install one from a public hub, run a local process, connect a remote endpoint (with OAuth sign-in when it needs one), or generate tools straight from an OpenAPI spec or GraphQL endpoint. See [MCP servers](mcp/index.md).
 - **Give agents your documents** — upload files or crawl a docs site into a retrieval source; agents search it with hybrid (semantic + keyword) retrieval, embedded by a model on your own inference plane and stored in your own Postgres. See [RAG sources](rag/index.md).
-- **Automate** — deploy saved agents behind token-authenticated invoke endpoints, HMAC-signed webhooks, and cron schedules. See [triggers](running/triggers.md).
+- **Automate** — deploy published agents behind token-authenticated invoke endpoints, HMAC-signed webhooks, and cron schedules. See [triggers](running/triggers.md).
 - **Run durably** — opt a run onto the durable runtime so it checkpoints each step, survives a crash, and can pause for human approval. See [durable runs](running/durable.md) and [human in the loop](running/human-in-the-loop.md).
 - **Observe everything** — every run gets a zoomable span waterfall with per-node inputs, outputs, and timing, plus optional OTLP export. See [observability](running/observability.md).
 - **Benchmark** — test any model or agent from the Bench: per-turn latency and token metrics, saved results, side-by-side comparisons. See [the Bench](running/bench.md).
@@ -50,6 +50,6 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 |---|---|
 | Install TheYgent and get it running | [Getting started](getting-started/index.md) |
 | Install a model and have your first conversation | [First chat](getting-started/first-chat.md) |
-| Build, run, and save your first agent | [First agent](getting-started/first-agent.md) |
+| Build, test, and publish your first agent | [First agent](getting-started/first-agent.md) |
 | Understand agents, graphs, runs, and versioning | [Concepts](concepts/index.md) |
 | Look up what every node does | [Node reference](building/nodes/index.md) |

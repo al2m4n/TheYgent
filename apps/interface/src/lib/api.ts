@@ -740,6 +740,155 @@ export interface OtlpTestResult {
   latency_ms: number;
 }
 
+// ── transfer bundles (whole-install export/import — snake_case control envelope) ──
+// The control bundle is the POST /export response and the POST /import body: a snake_case
+// envelope carrying the stored camelCase IR docs verbatim. Secrets NEVER appear in a bundle —
+// no values, no refs, no ciphertext; only presence flags (`has_secret`) and key NAMES
+// (`env_keys`/`header_keys`), so an import re-prompts instead of replaying credentials.
+
+export interface BundleAgentVersion {
+  version: string;
+  content_hash: string;
+  created_at: string;
+  // The stored canonical doc + its separate layout block, exactly as agent_version stores them.
+  ir: IRDocument;
+  view: Record<string, unknown> | null;
+}
+
+export interface BundleTrigger {
+  id: string;
+  kind: TriggerKind;
+  version: string | null;
+  content_hash: string | null;
+  config: Record<string, unknown>; // exported minus its `secret` key
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface BundleAgent {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  versions: BundleAgentVersion[]; // seq order (oldest first)
+  io_policy: {
+    io_capture: string;
+    io_retention_seconds: number | null;
+    redact_rules: unknown;
+  } | null;
+  triggers: BundleTrigger[];
+}
+
+export interface BundleDraft {
+  id: string;
+  agent_id: string | null;
+  name: string;
+  ir: IRDocument;
+  view: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BundleSession {
+  id: string;
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown> | null;
+  messages: Record<string, unknown>[];
+}
+
+export interface BundleConnection {
+  id: string;
+  name: string;
+  kind: ConnectionKind;
+  config: Record<string, unknown>; // the FULL stored config — never the secret
+  enabled: boolean;
+  has_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BundleMcpServer {
+  name: string;
+  transport: string;
+  command: string | null;
+  args: string[];
+  env_keys: string[]; // key NAMES only — values never round-trip
+  cwd: string | null;
+  url: string | null;
+  header_keys: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BundleRagSource {
+  id: string;
+  name: string;
+  kind: RagSourceKind;
+  embedding_model: string;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArtifactRef {
+  ref: string;
+  content_type: string;
+}
+
+export interface ControlBundle {
+  format_version: number;
+  exported_at: string;
+  agents?: BundleAgent[];
+  drafts?: BundleDraft[];
+  // Full DB rows, verbatim — the interface only counts and forwards them, never inspects.
+  runs?: Record<string, unknown>[];
+  spans?: Record<string, unknown>[];
+  node_io?: Record<string, unknown>[];
+  artifact_refs?: ArtifactRef[];
+  sessions?: BundleSession[];
+  connections?: BundleConnection[];
+  mcp_servers?: BundleMcpServer[];
+  rag_sources?: BundleRagSource[];
+}
+
+export interface TransferWarning {
+  code: string;
+  message: string;
+  [k: string]: unknown;
+}
+
+/** The POST /import report: per-section counters (server-named) + a flat warnings list. */
+export interface ControlImportReport {
+  warnings: TransferWarning[];
+  [section: string]: unknown;
+}
+
+// ── inference-plane transfer (camelCase — the /admin/* convention) ───────────
+// The registry half of a whole-install export. Bindings travel verbatim (runtime state
+// stripped); weights never do — `install` carries the catalog coordinates so the target plane
+// can re-download from Hugging Face. Credentials export as NAMES only.
+
+export interface InferenceExportModel {
+  logicalId: string;
+  binding: Record<string, unknown>;
+  install: { repo: string; variantId: string } | null;
+}
+
+export interface InferenceBundle {
+  formatVersion: number;
+  models: InferenceExportModel[];
+  credentialNames: string[];
+}
+
+export interface InferenceImportResult {
+  registered: string[];
+  skipped: string[];
+  downloads: { jobId: string; logicalId: string; repo: string }[];
+  warnings: { logicalId: string; code: string; message: string }[];
+  credentialNames: string[];
+}
+
 // ── inference-plane settings + diagnostics (camelCase — the /admin/* convention) ──
 // A separate trust domain with its own store: /admin/settings carries ONLY settable knobs;
 // read-only environment facts live on /admin/diagnostics.
@@ -813,6 +962,26 @@ export const api = {
     });
     if (!res.ok) throw await toError(res);
     return res.blob();
+  },
+
+  // Preserve-ref artifact restore (an import writes bytes back under their ORIGINAL ref so the
+  // imported runs' node_io keeps resolving). Raw body like uploadArtifact; overwrite is allowed —
+  // re-running an import is idempotent. Reply is the same camelCase envelope POST /artifacts uses.
+  putArtifact: async (
+    ref: string,
+    blob: Blob,
+    contentType?: string,
+  ): Promise<{ ref: string; contentType: string; bytes: number }> => {
+    const res = await fetch(`${controlPlaneUrl()}/artifacts/${encodeURIComponent(ref)}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType || blob.type || "application/octet-stream",
+        ...authHeaders(),
+      },
+      body: blob,
+    });
+    if (!res.ok) throw await toError(res);
+    return res.json();
   },
 
   listSessions: (params: { limit?: number; before?: string } = {}) => {
@@ -920,6 +1089,11 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // Delete an agent with ALL its versions, triggers, and io-policy (204). Past runs, chats, and
+  // drafts survive with their graph_id/agent_id breadcrumbs — deletion never rewrites history.
+  deleteAgent: (id: string) =>
+    request<void>(controlPlaneUrl(), `/agents/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   // Agent bench: invoke a saved, PINNED agent via the interactive, non-durable run path.
   // Non-stream by default → returns the terminal result; correlate via GET /runs/{id}.
   runAgent: (
@@ -932,7 +1106,7 @@ export const api = {
       { method: "POST", body: JSON.stringify({ stream: false, ...body }) },
     ),
 
-  // Run a saved agent on the DURABLE runtime — the path for durable-only agents (loop/map/subgraph/
+  // Run a published agent on the DURABLE runtime — the path for durable-only agents (loop/map/subgraph/
   // human) the interactive run rejects. Returns a run id to poll via GET /runs/{id}; a non-durable
   // server answers 400 `durable_required`. Snake_case `run_id` matches the /runs surface it polls.
   runAgentDurable: (
@@ -1422,6 +1596,37 @@ export const api = {
   deletePreset: (id: string) =>
     request<void>(controlPlaneUrl(), `/bench/presets/${encodeURIComponent(id)}`, {
       method: "DELETE",
+    }),
+
+  // ── transfer: whole-install export/import (the Settings Import/Export tab) ──
+  // The one-zip transfer artifact is assembled in the BROWSER (lib/transfer.ts): registry state
+  // must never transit the control plane, so each plane exports/imports its own half and the
+  // browser is the only place both halves meet.
+  exportControlBundle: (include: string[]) =>
+    request<ControlBundle>(controlPlaneUrl(), "/export", {
+      method: "POST",
+      body: JSON.stringify({ include }),
+    }),
+
+  importControlBundle: (bundle: ControlBundle) =>
+    request<{ report: ControlImportReport }>(controlPlaneUrl(), "/import", {
+      method: "POST",
+      body: JSON.stringify(bundle),
+    }).then((r) => r.report),
+
+  exportInferenceBundle: () => request<InferenceBundle>(inferenceUrl(), "/admin/export"),
+
+  // The inference half travels through verbatim: formatVersion keeps the server's version fence
+  // engaged (a future bundle fails loudly instead of importing under format-1 semantics), and
+  // credentialNames echo back in the result so the report can say what must be re-entered.
+  importInferenceBundle: (payload: {
+    formatVersion?: number;
+    models: InferenceExportModel[];
+    credentialNames?: string[];
+  }) =>
+    request<InferenceImportResult>(inferenceUrl(), "/admin/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
 
   // ── control plane: platform settings (the Settings page) ────────────────────

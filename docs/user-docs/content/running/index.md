@@ -9,8 +9,8 @@ For the conceptual model of runs and how they relate to sessions and memory, see
 Runs are never created by hand — they are the by-product of doing something:
 
 - **Chats** — every turn in [New Chat](../chat/index.md) or an agent's Chat panel is a run.
-- **Agent invocations** — running a saved agent from the [Bench](bench.md), or over the API.
-- **Triggers** — a [webhook, cron schedule, or token invoke](triggers.md) firing a saved agent unattended.
+- **Agent invocations** — running a published agent from the [Bench](bench.md), or over the API.
+- **Triggers** — a [webhook, cron schedule, or token invoke](triggers.md) firing a published agent unattended.
 
 ## The Runs page
 

@@ -1,5 +1,5 @@
 // The control-plane chat transport: each turn is a streamed run (POST /runs for a model, POST
-// /agents/{id}/runs for a saved agent) carrying the session id, so the SERVER replays prior
+// /agents/{id}/runs for a published agent) carrying the session id, so the SERVER replays prior
 // turns and appends the new pair — the client never writes session messages on this path.
 // Consumes the run-stream SSE frames: `delta` (answer), `reasoning` (thinking, kept apart),
 // `run` (status transitions).

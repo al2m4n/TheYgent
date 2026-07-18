@@ -86,7 +86,7 @@ For agents that aren't durable-only, a **Chat** section lets you hold a real con
 
 ### Applying a preset to an agent
 
-If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and saves a **new agent version** through the registry. The preset is modality-matched, so a chat preset can't land on a text-to-speech binding, and the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
+If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. The preset is modality-matched, so a chat preset can't land on a text-to-speech binding, and the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
 
 ## Testing an MCP tool
 

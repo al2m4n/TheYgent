@@ -26,7 +26,7 @@ Invariants a change must not break:
 | Route | Page |
 |-------|------|
 | `/` | Dashboard: plane liveness (each plane's `/readyz`; 503 is a state, unreachable is "offline", never a page error), resident engines, KPI tiles, latest runs/chats/agents/models. |
-| `/agents` | Published-agent card grid with live graph thumbnails, a Drafts strip above, search/sort/view toggle, per-agent bench modal, infinite scroll. |
+| `/agents` | Published-agent card grid with live graph thumbnails, a Drafts strip above, search/sort/view toggle, per-agent bench modal, per-agent Export (single-JSON download) and Delete (ConfirmDialog → `DELETE /agents/{id}`), a select mode for bulk export/delete, infinite scroll. |
 | `/chat` | New Chat: pick any model or agent and talk to it — text, thinking, vision, voice. |
 | `/runs`, `/runs/$runId` | Run history (keyset-paginated) and run detail with the embedded waterfall. |
 | `/sessions`, `/sessions/$sessionId` | Chat sessions list and transcript replay. |
@@ -34,7 +34,7 @@ Invariants a change must not break:
 | `/registries` | Installed models (register/warm/evict/delete, capability badges) plus catalog browse with fit badges sized against available RAM and tracked downloads. |
 | `/mcp` | Unified MCP page: stdio registrations, connections (encrypted auth, OAuth), hub installs, OpenAPI/GraphQL-generated servers, per-tool runner. |
 | `/rag` | Retrieval sources: upload/crawl, background ingest, per-source documents, inline query tester. |
-| `/settings` | Tabbed platform settings; the Inference tab talks to the inference plane directly. |
+| `/settings` | Tabbed platform settings; the Inference tab talks to the inference plane directly; the Import / Export tab builds and applies whole-install transfer bundles. |
 
 ## Layout
 
@@ -53,6 +53,7 @@ Invariants a change must not break:
 | `src/hooks/useDraftAutosave.ts` | The drafts autosave state machine (see [Drafts vs published versions](#drafts-vs-published-versions)). |
 | `src/lib/api.ts` | The one HTTP module: per-call base-URL resolution, auth headers, error shaping, the typed `api` object, SSE-over-fetch helpers. |
 | `src/lib/sse.ts` | One transport-agnostic SSE frame parser (`parseSSEBuffer` + `readSSE`); `[DONE]` is yielded as a normal event — the caller decides what done means. |
+| `src/lib/transfer.ts` | The import/export seam: assembles and unpacks the one-zip transfer artifact in the browser (fflate), builds the preview model, and sequences apply (control bundle → artifact bytes → inference bundle) with query invalidation. Rendered by `src/components/settings/ImportExportTab.tsx`. |
 | `src/lib/live.ts` | In-memory registry of live runs (module singleton + `useSyncExternalStore`) so a stream survives navigating from composer to run detail — deliberately not TanStack Query. |
 | `src/lib/save.ts`, `agent.ts`, `canonical.ts` | Publish flow, blank-graph starter and view re-attachment, structural-equality helper. |
 | `src/lib/validate.ts`, `ir-validate.ts`, `kind.ts`, `durable.ts` | The client-side mirrors of backend validation, kind derivation, and the durable-only node set. |
@@ -119,6 +120,8 @@ flowchart LR
 ```
 
 Two consequences worth internalizing: bench and direct model chat send raw payloads straight to `/v1/*` on the inference plane, and the Settings Inference tab PUTs credentials (e.g. the HF token) straight to `/admin/credentials` — neither ever transits the control plane. Session history has two write paths by design: control-plane transports pass `session_id` and the *server* appends turns; direct data-plane transports client-append the finished pair via `POST /sessions/{id}/turns`.
+
+A third consequence is the **transfer seam**: the export zip (Settings → Import / Export) is assembled *in the browser* by `src/lib/transfer.ts` (fflate — the one zip dependency), because its two halves must never meet server-side. The control bundle comes from `POST /export` on `:8080`, the registry bundle from `GET /admin/export` on `:8081`, artifact bytes ride as raw zip entries, and a `manifest.json` indexes it all. Import runs the same route in reverse — parse → preview (counts + secrets/weights warnings) → ConfirmDialog-gated apply — posting each half back to its own plane and restoring artifacts via `PUT /artifacts/{ref}`. Secrets and model weights never appear in a bundle in either direction.
 
 ## Drafts vs published versions
 

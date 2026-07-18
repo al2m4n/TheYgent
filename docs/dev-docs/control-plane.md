@@ -48,9 +48,10 @@ A change to this service must not break these:
   `THEYGENT_INVOKE_TOKEN` is unset; token comparison is constant-time over bytes; webhooks
   are authed per-trigger by HMAC over the raw body. Everything else sits behind a no-op
   auth placeholder for the single-user localhost topology.
-- **Every sensitive read passes one chokepoint.** Trace, node I/O, and settings reads route
-  through `governance.authorize()` (allow-all today). Do not add role logic elsewhere —
-  the seam is the deliverable, so real RBAC lands with zero endpoint retrofit.
+- **Every sensitive read passes one chokepoint.** Trace, node I/O, settings, and the
+  whole-install export/import surface (`transfer:export` / `transfer:import`) route through
+  `governance.authorize()` (allow-all today). Do not add role logic elsewhere — the seam is
+  the deliverable, so real RBAC lands with zero endpoint retrofit.
 - **Errors use the house envelope**: every 4xx/5xx is `{"error": {"message", "code"}}` with
   stable snake_case codes, never FastAPI's `{detail}`. Pre-stream failures surface as
   clean HTTP statuses, never a 200 followed by a broken SSE stream.
@@ -80,6 +81,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `artifacts.py` | Local blob store for audio/image artifacts (`art_` refs); bytes are never journaled, refs are |
 | `dispatcher.py` | In-process cron dispatcher over the persisted trigger registry (single-instance; durable mode replaces it) |
 | `governance.py` | The `authorize(principal, permission, resource)` chokepoint |
+| `transfer.py` | The export/import bundle: DB-level bundle build (full rows, secret material stripped) and the id-preserving, idempotent, skip-on-exists apply behind `POST /export` / `POST /import` |
 | `walker.py`, `durable/` | Graph execution — summarized below, detailed in [graph-execution.md](./graph-execution.md) and [durable-execution.md](./durable-execution.md) |
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
@@ -99,7 +101,7 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Runs | `POST /runs` (prompt run, SSE or JSON) · `GET /runs` · `GET /runs/{id}` · `POST /runs/{id}/resume` (durable human gate) |
 | Graph/agent execution | `POST /graphs/runs` (inline IR) · `POST /agents/{id}/runs` · `POST /agents/{id}/invoke` (bearer token) · `POST /agents/{id}/durable-runs` · `POST /hooks/{trigger_id}` (HMAC webhook) |
 | Sessions | `GET/POST /sessions` · `GET/DELETE /sessions/{id}` · `POST /sessions/{id}/turns` |
-| Agent registry | `POST/GET /agents` · `GET /agents/{id}` · `POST /agents/{id}/versions` · `GET /agents/{id}/versions/{version}` · `GET/PUT /agents/{id}/io-policy` · `GET /stats` |
+| Agent registry | `POST/GET /agents` · `GET /agents/{id}` · `DELETE /agents/{id}` (one-transaction cascade: triggers incl. DBOS schedule drop, io-policy, versions; drafts/runs keep breadcrumbs) · `POST /agents/{id}/versions` · `GET /agents/{id}/versions/{version}` · `GET/PUT /agents/{id}/io-policy` · `GET /stats` |
 | Drafts | `POST /drafts` · `PUT/GET/DELETE /drafts/{id}` · `GET /drafts` — deliberately unvalidated, unhashed working copies; only publish validates |
 | Triggers | `POST/GET /triggers` · `GET/PATCH/DELETE /triggers/{id}` — kinds `http \| schedule \| webhook`, each pinning exactly one of version/content-hash |
 | Connections | `POST/GET /connections` · `GET/PATCH/DELETE /connections/{id}` · connection-backed MCP ops (`/connections/{id}/mcp/tools`, `:warm`, `:close`, `mcp-oauth:start`, `mcp-oauth`) |
@@ -107,7 +109,8 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | RAG | `POST/GET /rag/sources` · `GET/PATCH/DELETE /rag/sources/{id}` · `:ingest`/`:cancel` · document upload · `POST /rag/sources/{id}/query` |
 | Observability | `GET /runs/{id}/trace` · `GET /runs/{id}/trace/stream` (SSE) · `GET /runs/{id}/nodes/{node_id}/io` |
 | Bench | `POST/GET /bench/suites` · `POST/GET /bench/runs` · `GET /bench/compare` · `POST/GET/DELETE /bench/presets` |
-| Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
+| Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `PUT /artifacts/{ref}` (preserve-ref restore for imports) · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
+| Transfer | `POST /export` · `POST /import` — the control-plane half of the whole-install bundle, behind `transfer:export` / `transfer:import` (see [Import/export](#importexport-the-transfer-bundle)) |
 
 ## Postgres: schema, domain, stores
 
@@ -247,6 +250,27 @@ truncation-flagged, lazy-loaded on click. Effective capture is
 `min(deployment ceiling, agent policy or topology default)` — hosted topology defaults to
 metadata so raw payloads never default into a shared database, and capture `off` is a
 hard stop: not even byte sizes are recorded.
+
+### Import/export (the transfer bundle)
+
+`transfer.py` builds and applies the control-plane half of the transfer bundle (the
+browser assembles the actual zip — registry state is inference-plane-local and never
+transits this service; see [architecture.md](./architecture.md)). Export reads the
+database directly, on purpose: the public wire is lossy exactly where a faithful transfer
+needs fidelity (`run.params` appears on no API response; `GET /connections` elides the
+openapi `spec`). Secret hygiene is the hard invariant, with tests: no secret value,
+ciphertext, `secret_ref`, webhook signing secret, or MCP env/header *value* ever enters a
+bundle — keys and names only.
+
+Import is id- and timestamp-preserving (span PKs embed `run_id`; correlation must
+survive the move), idempotent, and skip-on-exists, with one `tx()` per entity so one bad
+entry never aborts the rest — failures land in a flat `warnings` list. Agent versions
+re-enter through the same gate as publish (`parse_document` + `validate_graph`, hash
+recomputed server-side, `version_conflict` on divergent content); webhook triggers land
+disabled and secretless; schedule triggers go through the same `_sync_schedule` helper as
+`POST /triggers` so the DBOS mirror happens; connections land `secret_ref=NULL`; imported
+artifacts restore under their original refs via `PUT /artifacts/{ref}`. Both routes pass
+`governance.authorize()` with the `transfer:export` / `transfer:import` permissions.
 
 ## Configuration
 

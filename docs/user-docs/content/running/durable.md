@@ -21,7 +21,7 @@ Four node types **only** run on the durable runtime. On the interactive path the
 | Node | Why it needs durability |
 |---|---|
 | [`human`](human-in-the-loop.md) | Pauses the run indefinitely awaiting input — an in-process wait can't survive a restart. |
-| [`subgraph`](../building/nodes/orchestration.md) | Runs another saved agent as a resumable child workflow. |
+| [`subgraph`](../building/nodes/orchestration.md) | Runs another published agent as a resumable child workflow. |
 | [`loop`](../building/nodes/orchestration.md) | Repeats a body agent; completed iterations must not re-run after a crash. |
 | [`map`](../building/nodes/orchestration.md) | Fans out one child run per element; a crash resumes only the incomplete branches. |
 
@@ -80,7 +80,7 @@ A durable run is enqueued and then polled — it does not stream tokens; you wat
 
 ### Over the API
 
-`POST /agents/{id}/durable-runs` runs a saved agent durably. It is fire-and-poll: it returns **`202`** with the run id, and you poll [`GET /runs/{id}`](index.md) for progress and output.
+`POST /agents/{id}/durable-runs` runs a published agent durably. It is fire-and-poll: it returns **`202`** with the run id, and you poll [`GET /runs/{id}`](index.md) for progress and output.
 
 ```bash
 curl -X POST http://localhost:8080/agents/agent.my-agent/durable-runs \

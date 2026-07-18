@@ -1,5 +1,5 @@
 // The unified chat surface's data shapes. One message model serves every chat in the app —
-// benching a model from a registry row, talking to a saved agent, or continuing a session —
+// benching a model from a registry row, talking to a published agent, or continuing a session —
 // so the rendering (bubbles, thinking blocks, attachments, per-turn metrics) is written once.
 // Transports differ (direct data-plane vs. control-plane runs); they all produce this shape.
 

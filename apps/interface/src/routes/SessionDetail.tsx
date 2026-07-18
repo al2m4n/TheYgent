@@ -1,5 +1,5 @@
 // One session, reopened as a live conversation. The stored transcript seeds the unified chat;
-// the session's metadata names its target (a model or a saved agent), so the composer keeps
+// the session's metadata names its target (a model or a published agent), so the composer keeps
 // talking to the same thing. Text targets continue through the control-plane run path — each new
 // turn is a streamed run carrying this session id, and the server appends the pair. A VOICE
 // session (a transcription/speech model) continues through the direct data-plane transport,

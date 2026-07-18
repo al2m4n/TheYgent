@@ -42,7 +42,7 @@ Publish the agent (see [Drafts & publishing](../building/saving-agents.md)) so i
 
 ### 2. Run it durably
 
-Run the saved agent on the durable runtime — from the Bench's **Run durably** button, via `POST /agents/{id}/durable-runs`, or from a [trigger](triggers.md) in durable mode. See [Durable runs](durable.md) for each path.
+Run the published agent on the durable runtime — from the Bench's **Run durably** button, via `POST /agents/{id}/durable-runs`, or from a [trigger](triggers.md) in durable mode. See [Durable runs](durable.md) for each path.
 
 When execution reaches the human node, the run **pauses**: its status becomes `waiting` and it records which node it is waiting at (`awaiting_node`). It is now excluded from the restart sweep — it will sit patiently until you answer.
 

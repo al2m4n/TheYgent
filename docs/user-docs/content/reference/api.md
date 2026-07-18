@@ -36,8 +36,9 @@ Published agents are immutable, content-addressed versions. See [Drafts & publis
 | POST | `/agents/{id}/versions` | Publish a new version. Identical content under an existing version is an idempotent `200`; different content under the same version → `409 version_conflict`. |
 | GET | `/agents/{id}/versions/{version}` | The full stored IR + canvas layout for one version. |
 | GET / PUT | `/agents/{id}/io-policy` | Read/set the per-agent I/O capture policy. PUT body `{io_capture, io_retention_seconds?, redact_rules?}`. Setting it never changes the content hash. |
+| DELETE | `/agents/{id}` | Delete the whole agent: **all** its versions, its triggers (schedules stop firing), and its I/O policy, in one step. `204`; unknown id → `404 agent_not_found`. Past runs, chats, and drafts survive — they keep the agent id and content hash as breadcrumbs. |
 
-There is no endpoint to delete an agent or a version — published versions are permanent.
+Individual versions are immutable — there is no endpoint to edit or delete a *single* version. Deleting the agent removes every version at once; there is no delete for runs.
 
 ### Drafts
 
@@ -78,7 +79,7 @@ curl -N -X POST http://localhost:8080/runs \
 
 The stream is Server-Sent Events: `run` (status frames), `delta` (answer tokens), `reasoning` (model thinking, kept out of the output), terminated by `data: [DONE]`. Set `"stream": false` for a single JSON response `{runId, status, output}`.
 
-**Run a saved agent (non-streaming) with a session:**
+**Run a published agent (non-streaming) with a session:**
 
 ```bash
 curl -X POST http://localhost:8080/agents/agent.support/runs \
@@ -115,7 +116,7 @@ Per-run trace data. See [Observability](../running/observability.md).
 
 ### Triggers & webhooks
 
-A trigger deploys a saved, pinned agent behind an unattended entry point. See [Triggers & webhooks](../running/triggers.md).
+A trigger deploys a published, pinned agent behind an unattended entry point. See [Triggers & webhooks](../running/triggers.md).
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -190,6 +191,7 @@ Audio/image blobs by reference. See [Voice](../chat/voice.md).
 |---|---|---|
 | POST | `/artifacts` | Upload raw bytes (the `Content-Type` header is the stored mime). Returns `201 {ref, contentType, bytes}`. |
 | GET | `/artifacts/{ref}` | Fetch a stored `art_…` blob (only `art_*` ids are served). |
+| PUT | `/artifacts/{ref}` | Store raw bytes under a ref you supply — the restore path an [import](../import-export/index.md) uses so refs embedded in imported runs keep resolving. The ref must be a full `art_` + 26-character id exactly as `POST /artifacts` mints them (`400 invalid_artifact_ref` otherwise). An existing ref is never overwritten: a fresh write returns `201 {ref, contentType, bytes, created: true}`, a ref that already exists returns `200` with the *stored* artifact's metadata and `created: false`. |
 
 ```bash
 curl -X POST http://localhost:8080/artifacts \
@@ -242,6 +244,25 @@ The Bench records results and presets here; testing itself runs against the infe
 | POST / GET / DELETE | `/bench/presets` | Save / list / delete named param presets. |
 | POST / GET | `/bench/suites` | Store / list golden-case suites (API-only; no UI yet). |
 
+### Import & export
+
+The control-plane half of the transfer bundle — the Settings **Import / Export** tab drives these plus the inference plane's pair below. See [Import & export](../import-export/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/export` | Build a bundle. Body `{"include": [...]}` — any non-empty subset of `agents`, `runs`, `traces`, `sessions`, `mcp`, `rag` (`traces` implies `runs`); anything else → `400 invalid_include`. Returns the bundle JSON. **Never contains secret values, secret refs, webhook signing secrets, or MCP env/header values** (key names only). |
+| POST | `/import` | Apply a bundle (the same shape; sections optional). Id-preserving, idempotent, skip-on-exists; one bad entry never aborts the rest. Returns `{report}` with per-section counts and a flat `warnings` list. Not a bundle → `400 invalid_bundle`; a future `format_version` → `400 unsupported_bundle_version`. |
+
+```bash
+curl -X POST http://localhost:8080/export \
+  -H 'Content-Type: application/json' \
+  -d '{"include": ["agents", "sessions"]}' -o control-plane.json
+
+curl -X POST http://localhost:8080/import \
+  -H 'Content-Type: application/json' \
+  --data-binary @control-plane.json
+```
+
 ---
 
 ## Inference plane
@@ -282,6 +303,8 @@ curl http://localhost:8081/v1/chat/completions \
 | POST | `/admin/catalog/install` | Start a download+install job. Body `{repo, engine, variantId, logicalId}`. |
 | GET | `/admin/catalog/downloads` / `/{job_id}` | Track download progress. |
 | POST | `/admin/catalog/downloads/{job_id}:cancel` | Cancel an in-flight install. |
+| GET | `/admin/export` | The registry as a bundle: every registration verbatim (runtime state stripped), catalog-install provenance, and credential **names** only — never values or weights. See [Import & export](../import-export/index.md). |
+| POST | `/admin/import` | Apply a registry bundle: already-registered ids are skipped; catalog-installed models re-download their weights in-plane (returned in `downloads`); a local-path model without install provenance registers with a `weights_unavailable` warning. Malformed body → `400 invalid_bundle`. |
 
 **Register a hosted, OpenAI-compatible model:**
 

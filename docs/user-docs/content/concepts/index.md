@@ -33,7 +33,7 @@ The interface is a single-page web app served at `http://localhost:5174`. Its si
 
 The control plane is the orchestration layer. It:
 
-- stores saved agents as immutable, content-addressed versions (see [Versioning](versioning.md)),
+- stores published agents as immutable, content-addressed versions (see [Versioning](versioning.md)),
 - executes agent graphs and persists every run (see [Runs and sessions](runs-and-sessions.md)),
 - keeps chat sessions, [triggers](../running/triggers.md) (schedules, webhooks, token invocation), tool/MCP connections with encrypted secrets, and per-run [observability](../running/observability.md) data.
 

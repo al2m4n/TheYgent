@@ -8,6 +8,7 @@
 // a separate trust domain the browser reaches directly.
 
 import { LocalCredentials } from "../components/LocalCredentials";
+import { ImportExportTab } from "../components/settings/ImportExportTab";
 import { InferenceTab } from "../components/settings/InferenceTab";
 import { McpTab } from "../components/settings/McpTab";
 import { OverviewTab } from "../components/settings/OverviewTab";
@@ -25,6 +26,7 @@ const TABS = [
   { value: "rag", label: "RAG" },
   { value: "mcp", label: "MCP" },
   { value: "credentials", label: "Credentials" },
+  { value: "transfer", label: "Import / Export" },
 ] as const;
 
 export function Settings() {
@@ -78,6 +80,9 @@ export function Settings() {
               <LocalCredentials />
             </CardContent>
           </Card>
+        </TabsContent>
+        <TabsContent value="transfer">
+          <ImportExportTab />
         </TabsContent>
       </Tabs>
     </Page>

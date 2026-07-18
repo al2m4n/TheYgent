@@ -29,8 +29,18 @@ logger = logging.getLogger("theygent.control_plane.governance")
 #: (timing vs. payloads — distinct so "not captured" and "captured but not visible to
 #: you" can be different answers); ``agent:configure`` gates editing an agent's capture policy;
 #: ``settings:read``/``settings:write`` gate the platform-settings surface (read and write are
-#: separate axes for the same reason trace/io are).
-Permission = Literal["trace:read", "io:read", "agent:configure", "settings:read", "settings:write"]
+#: separate axes for the same reason trace/io are); ``transfer:export``/``transfer:import`` gate
+#: the whole-install bundle surface (an export aggregates every sensitive read at once, an import
+#: writes across every table — both must tighten with the rest when RBAC lands).
+Permission = Literal[
+    "trace:read",
+    "io:read",
+    "agent:configure",
+    "settings:read",
+    "settings:write",
+    "transfer:export",
+    "transfer:import",
+]
 
 
 @dataclass(frozen=True)

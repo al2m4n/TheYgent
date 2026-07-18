@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, and_, delete, func, insert, or_, select, tuple_, update
@@ -26,6 +27,7 @@ from sqlalchemy.orm import aliased
 from theygent_control_plane.mcp import McpServerConfig
 from theygent_control_plane.models import (
     AgentDraftRow,
+    AgentIoPolicyRow,
     AgentRow,
     AgentVersionRow,
     BenchCaseRow,
@@ -716,6 +718,7 @@ class AgentStore:
         content_hash: str,
         ir: dict[str, Any],
         view: dict[str, Any] | None,
+        created_at: datetime | None = None,
     ) -> tuple[AgentVersion, bool]:
         """Append an immutable version, returning ``(version_meta, created)``. ``created`` is False
         when the identical content already exists under this ``(agent_id, version)`` — a re-publish
@@ -725,7 +728,11 @@ class AgentStore:
         The agent row is locked FOR UPDATE first (like ``append_turn`` locks the session row) so
         concurrent publishes can't pick the same ``seq`` or both insert the same version — the
         control-plane scales horizontally. ``seq`` is ``max(seq) + 1`` per agent, the
-        monotonic ordering key, starting at 1."""
+        monotonic ordering key, starting at 1.
+
+        ``created_at`` is for the bundle-import path only: an imported version keeps its source
+        install's instant instead of the restore instant (``seq``, not time, orders versions, so
+        a preserved timestamp changes nothing else). Publishes leave it None (= now)."""
         # Serialize against concurrent publishes to this agent (seq allocation + the existence
         # check must be atomic — the UNIQUE index is the loud last-resort guard).
         await session.execute(select(AgentRow.id).where(AgentRow.id == agent_id).with_for_update())
@@ -758,7 +765,7 @@ class AgentStore:
                 )
             )
         ).scalar_one()
-        ts = now()
+        ts = created_at or now()
         row = AgentVersionRow(
             id=new_ulid(),
             agent_id=agent_id,
@@ -915,6 +922,31 @@ class AgentStore:
             )
         ).scalar_one_or_none()
         return _stored_version(row) if row is not None else None
+
+    async def delete_agent(self, session: AsyncSession, agent_id: str) -> list[str] | None:
+        """Delete an agent and everything hard-FK'd to it — triggers, its io-policy row, every
+        version — then the identity row, all in the caller's ONE transaction (children first;
+        none of the FKs carry ON DELETE). Returns the deleted triggers' ids so the route can drop
+        their mirrored DBOS schedules (the DELETE /triggers discipline), or ``None`` when the
+        agent does not exist.
+
+        Deliberately NOT touched: drafts (``agent_id`` is a breadcrumb with no FK — the 0016
+        contract) and runs (``graph_id``/``content_hash`` are lineage by value) — history and
+        work-in-progress outlive the registry entry."""
+        agent = await session.get(AgentRow, agent_id)
+        if agent is None:
+            return None
+        trigger_ids = list(
+            (
+                await session.execute(select(TriggerRow.id).where(TriggerRow.agent_id == agent_id))
+            ).scalars()
+        )
+        await session.execute(delete(TriggerRow).where(TriggerRow.agent_id == agent_id))
+        await session.execute(delete(AgentIoPolicyRow).where(AgentIoPolicyRow.agent_id == agent_id))
+        await session.execute(delete(AgentVersionRow).where(AgentVersionRow.agent_id == agent_id))
+        await session.delete(agent)
+        await session.flush()
+        return trigger_ids
 
 
 def _to_draft(row: AgentDraftRow) -> AgentDraft:
@@ -1073,7 +1105,18 @@ class TriggerStore:
         content_hash: str | None,
         config: dict[str, Any],
         enabled: bool,
+        trigger_id: str | None = None,
+        created_at: datetime | None = None,
     ) -> Trigger:
+        # ``trigger_id``/``created_at`` are for the bundle-import path only: a restored trigger
+        # keeps its source install's identity (so a re-import skips it) and instant. The API
+        # create path leaves them None (fresh ULID, now).
+        overrides: dict[str, Any] = {}
+        if trigger_id is not None:
+            overrides["id"] = trigger_id
+        if created_at is not None:
+            overrides["created_at"] = created_at
+            overrides["updated_at"] = created_at
         trigger = Trigger(
             agent_id=agent_id,
             kind=kind,
@@ -1081,6 +1124,7 @@ class TriggerStore:
             content_hash=content_hash,
             config=config,
             enabled=enabled,
+            **overrides,
         )
         session.add(
             TriggerRow(

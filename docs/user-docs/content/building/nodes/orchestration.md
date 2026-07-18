@@ -1,17 +1,17 @@
 # Orchestration nodes: subgraph, loop, map
 
-These three nodes compose *other saved agents* into a larger one: `subgraph` runs another agent once, `loop` runs one repeatedly, and `map` runs one across every item in a list. They are how you build agents out of smaller, reusable agents instead of one giant graph.
+These three nodes compose *other published agents* into a larger one: `subgraph` runs another agent once, `loop` runs one repeatedly, and `map` runs one across every item in a list. They are how you build agents out of smaller, reusable agents instead of one giant graph.
 
-All three are **durable-only** — they run only on the durable runtime. The reason is practical: each of them drives one or more child runs, which can take real time, and the durable runtime journals every completed step so a crash resumes from where it left off instead of restarting the whole thing. A bounded loop halfway through its iterations, or a fan-out with some branches still running, must survive a restart without redoing finished work. See [Durable runs](../../running/durable.md) for the full picture, and [Agents and graphs](../../concepts/agents-and-graphs.md) for what "a saved agent" means.
+All three are **durable-only** — they run only on the durable runtime. The reason is practical: each of them drives one or more child runs, which can take real time, and the durable runtime journals every completed step so a crash resumes from where it left off instead of restarting the whole thing. A bounded loop halfway through its iterations, or a fan-out with some branches still running, must survive a restart without redoing finished work. See [Durable runs](../../running/durable.md) for the full picture, and [Agents and graphs](../../concepts/agents-and-graphs.md) for what "a published agent" means.
 
 !!! note "How you pin the child agent"
-    Every one of these nodes runs a **saved agent version**, pinned so composition is immutable. In the inspector you pick the child **agent** and then a **body version** (newest first). Pinning by content hash instead of version is available through the node's **Code** view. You must pin exactly one of `version` or `contentHash` — the editor flags it as an error otherwise. Publishing a new version of the child later does *not* change what a pinned node runs.
+    Every one of these nodes runs a **published agent version**, pinned so composition is immutable. In the inspector you pick the child **agent** and then a **body version** (newest first). Pinning by content hash instead of version is available through the node's **Code** view. You must pin exactly one of `version` or `contentHash` — the editor flags it as an error otherwise. Publishing a new version of the child later does *not* change what a pinned node runs.
 
 ---
 
 ## subgraph — run another agent once
 
-Runs a saved agent as a single step and returns its output. A **boundary** node.
+Runs a published agent as a single step and returns its output. A **boundary** node.
 
 ### Ports
 
@@ -25,7 +25,7 @@ Runs a saved agent as a single step and returns its output. A **boundary** node.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `agent` | string | — (required) | The saved agent id to run. |
+| `agent` | string | — (required) | The published agent id to run. |
 | `version` | string | `null` | The child version to pin. Pin exactly one of `version` / `contentHash`. |
 | `contentHash` | string | `null` | Pin the child by content hash instead (set via the Code view). |
 | `maxDepth` | integer | `8` | Maximum nesting depth. A subgraph that nests deeper than this fails honestly rather than recursing without bound. |
@@ -40,7 +40,7 @@ Runs a saved agent as a single step and returns its output. A **boundary** node.
 
 ## loop — run an agent repeatedly
 
-Runs a saved agent in sequence, feeding each iteration's output into the next, up to a bounded number of iterations. An **orchestration** node.
+Runs a published agent in sequence, feeding each iteration's output into the next, up to a bounded number of iterations. An **orchestration** node.
 
 ### Ports
 
@@ -53,7 +53,7 @@ Runs a saved agent in sequence, feeding each iteration's output into the next, u
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `agent` | string | — (required) | The saved agent to run each iteration. |
+| `agent` | string | — (required) | The published agent to run each iteration. |
 | `maxIterations` | integer | — (required, ≥ 1) | The hard cap on iterations. There are no unbounded loops; the default of `0` is invalid and must be raised to at least 1. |
 | `condition` | string | `null` | An optional `$in` reference over the iteration's output; the loop stops early when it resolves truthy. |
 | `version` / `contentHash` | string | `null` | Pin exactly one. |
@@ -71,7 +71,7 @@ Runs a saved agent in sequence, feeding each iteration's output into the next, u
 
 ## map — fan out across a list
 
-Runs a saved agent once per element of a list — the fan-out primitive. An **orchestration** node.
+Runs a published agent once per element of a list — the fan-out primitive. An **orchestration** node.
 
 ### Ports
 
@@ -84,7 +84,7 @@ Runs a saved agent once per element of a list — the fan-out primitive. An **or
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `agent` | string | — (required) | The saved agent to run for each element. |
+| `agent` | string | — (required) | The published agent to run for each element. |
 | `concurrency` | integer | `null` | Maximum child runs in flight at once. `null` means unbounded. |
 | `onError` | enum `fail_fast` \| `collect` | `fail_fast` | `fail_fast` stops on the first failing element; `collect` gathers successes alongside per-element errors. |
 | `version` / `contentHash` | string | `null` | Pin exactly one. |

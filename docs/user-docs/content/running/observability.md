@@ -93,7 +93,7 @@ So out of the box, on a local install, full input/output capture is on and the i
 
 ### Changing capture for one agent
 
-You can set a capture policy per saved agent. There is no screen for this today — it is an API call to the control plane. Read the current policy:
+You can set a capture policy per published agent. There is no screen for this today — it is an API call to the control plane. Read the current policy:
 
 ```bash
 curl http://localhost:8080/agents/agent.triage/io-policy \
@@ -126,7 +126,7 @@ The response reports both what you asked for and what actually happens, so you c
 `effective` is the level that will apply; `capped` is `true` when the deployment ceiling or topology has pinned you below what you requested.
 
 !!! note "Changing capture does not change the agent"
-    Setting a capture policy does **not** mint a new agent version — the policy lives beside the agent, not inside its hashed graph, so the [content hash](../concepts/versioning.md) is unchanged. The level is resolved once per run, not per node. An inline graph run with no saved agent uses the topology default.
+    Setting a capture policy does **not** mint a new agent version — the policy lives beside the agent, not inside its hashed graph, so the [content hash](../concepts/versioning.md) is unchanged. The level is resolved once per run, not per node. An inline graph run with no published agent uses the topology default.
 
 ### The size cap
 

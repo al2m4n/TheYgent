@@ -63,6 +63,8 @@ The repository's `org/name` is sanitized to `org_name` (the slash becomes an und
 
 Models registered with **source `local-path`** are *not* copied here — they stay wherever you pointed the registration.
 
+Catalog installs also record *where they came from* (the repository and variant), so a registry export can re-download the same weights on another machine — the weights themselves are never part of an export. See [Moving models to another machine](index.md#moving-models-to-another-machine).
+
 ## Editing a registered model
 
 Click a row in the **Installed** table (not one of its buttons) to open its settings. For a catalog install this reopens the catalog detail; for anything else it opens an editable modal. What you can change depends on the binding:

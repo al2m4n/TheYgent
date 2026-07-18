@@ -83,6 +83,29 @@ class LocalArtifactStore:
         )
         return {"ref": ref_id, "contentType": content_type, "bytes": len(data)}
 
+    async def put_with_ref(self, ref: str, data: bytes, content_type: str) -> dict[str, object]:
+        """Store ``data`` under a CALLER-SUPPLIED ``art_`` id — the preserve-ref restore path a
+        bundle import uses, so refs embedded in imported run outputs / node payloads keep
+        resolving. An EXISTING ref is never overwritten (artifacts are immutable history — a
+        bundle must not rewrite bytes another run produced; a same-bundle re-import carries
+        identical bytes anyway): the stored artifact's metadata returns with ``created`` False.
+        The caller validates the ref shape (the route owns the 400)."""
+
+        def _put_blocking() -> dict[str, object]:
+            path = os.path.join(self._dir, ref)
+            if os.path.exists(path):
+                size = os.path.getsize(path)
+                sidecar = f"{path}.type"
+                stored_type = "application/octet-stream"
+                if os.path.exists(sidecar):
+                    with open(sidecar) as f:
+                        stored_type = f.read().strip() or stored_type
+                return {"ref": ref, "contentType": stored_type, "bytes": size, "created": False}
+            _write_blocking(path, data, content_type)
+            return {"ref": ref, "contentType": content_type, "bytes": len(data), "created": True}
+
+        return await asyncio.to_thread(_put_blocking)
+
     async def fetch(self, ref: object) -> tuple[bytes, str]:
         """Resolve an audio reference to ``(bytes, content_type)``. ``ref`` is a ``{ref,
         contentType}`` dict (or a bare string). A stored artifact id reads from the local dir; an

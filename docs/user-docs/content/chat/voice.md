@@ -29,7 +29,7 @@ This is the same transport [the Bench](../running/bench.md) uses to test these m
 
 ## Voice agents
 
-A **voice agent** is a saved agent whose graph starts with an audio input and ends with audio output. A typical pipeline transcribes the speech, sends the text to a language model, and speaks the answer:
+A **voice agent** is a published agent whose graph starts with an audio input and ends with audio output. A typical pipeline transcribes the speech, sends the text to a language model, and speaks the answer:
 
 ```mermaid
 graph LR

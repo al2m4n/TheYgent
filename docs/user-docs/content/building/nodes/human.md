@@ -62,7 +62,7 @@ The common error responses:
 
 Because the node is durable-only, the plain interactive **Run** path refuses it up front with `durable_required`. Run it durably instead:
 
-- **From the interface:** save the agent, then on the Agents page use **Run durably**. An agent that contains any durable-only node shows a single **Run durably** button. This needs the control plane started with `THEYGENT_DURABLE=1`; otherwise you get a note explaining how to enable durable mode.
+- **From the interface:** publish the agent, then on the Agents page use **Run durably**. An agent that contains any durable-only node shows a single **Run durably** button. This needs the control plane started with `THEYGENT_DURABLE=1`; otherwise you get a note explaining how to enable durable mode.
 - **Over the API:** `POST /agents/{id}/durable-runs`, then poll `GET /runs/{id}` and resume when it reports `waiting`.
 
 ## Example: approve a draft before it ships

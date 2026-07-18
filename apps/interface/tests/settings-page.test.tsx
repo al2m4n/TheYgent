@@ -321,9 +321,17 @@ afterEach(() => {
 });
 
 describe("Settings page", () => {
-  it("renders the six tabs with Overview active", async () => {
+  it("renders the seven tabs with Overview active", async () => {
     renderPage();
-    for (const name of ["Overview", "Inference", "Telemetry", "RAG", "MCP", "Credentials"]) {
+    for (const name of [
+      "Overview",
+      "Inference",
+      "Telemetry",
+      "RAG",
+      "MCP",
+      "Credentials",
+      "Import / Export",
+    ]) {
       expect(screen.getByRole("tab", { name })).toBeInTheDocument();
     }
     // Overview content: the two plane cards + the boot block.

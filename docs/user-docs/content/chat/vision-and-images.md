@@ -1,6 +1,6 @@
 # Vision and images
 
-[Chat](index.md) handles two visual jobs: **showing an image** to a model or agent and asking about it (vision), and **generating an image** from a text prompt. Both run directly against your inference plane — images never transit the control plane as raw payloads — and both work with a plain model or with a saved agent.
+[Chat](index.md) handles two visual jobs: **showing an image** to a model or agent and asking about it (vision), and **generating an image** from a text prompt. Both run directly against your inference plane — images never transit the control plane as raw payloads — and both work with a plain model or with a published agent.
 
 ## Chatting about an image (vision)
 
@@ -31,7 +31,7 @@ Installing a vision model is automatic: when you [install](../models/installing.
 
 ### Vision agents
 
-A **vision agent** is a saved agent whose input node declares `modality: image`. Select it in New Chat and it gets a **vision** badge and a composer that takes an image *and* a question ("Attach an image and ask about it…"). The run travels through the control plane, and its [llm node](../building/nodes/llm.md) folds the image and text into one multimodal message:
+A **vision agent** is a published agent whose input node declares `modality: image`. Select it in New Chat and it gets a **vision** badge and a composer that takes an image *and* a question ("Attach an image and ask about it…"). The run travels through the control plane, and its [llm node](../building/nodes/llm.md) folds the image and text into one multimodal message:
 
 ```mermaid
 graph LR

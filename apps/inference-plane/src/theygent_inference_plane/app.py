@@ -41,6 +41,7 @@ from theygent_inference_plane.credentials import (
 from theygent_inference_plane.downloader import Downloader, _sanitize
 from theygent_inference_plane.eviction import EvictionPolicy, ResourceProbe
 from theygent_inference_plane.gateway import Gateway, merge_params
+from theygent_inference_plane.installs import InstallStore
 from theygent_inference_plane.launcher import (
     EngineLauncher,
     EngineUnavailableError,
@@ -68,6 +69,7 @@ from theygent_inference_plane.settings import (
     SettingsStore,
     resolve_max_resident,
 )
+from theygent_inference_plane.transfer import ImportBundle, apply_import, build_export
 from theygent_inference_plane.vllm_engine import VllmLauncher
 
 _REAP_INTERVAL_SEC = 30.0
@@ -228,6 +230,12 @@ def create_app(
     settings_store = SettingsStore(
         state_path.with_name("settings.json") if state_path is not None else None
     )
+    # Install provenance — installs.json, another peer of registry.json: which HF repo + variant
+    # a catalog-installed logical id came from, so /admin/export can carry faithful re-download
+    # metadata. In-memory when `state_path` is None.
+    install_store = InstallStore(
+        state_path.with_name("installs.json") if state_path is not None else None
+    )
     # The resident-engine ceiling: explicit argument (the env-injection seam — the entrypoint
     # passes THEYGENT_MAX_RESIDENT through only when set AND non-empty, so a value here is
     # env-PINNED and /admin/settings refuses writes) > the stored settings.json value > the
@@ -280,8 +288,11 @@ def create_app(
     catalog: CatalogProvider = catalog_provider or HuggingFaceProvider()
     _model_dir = model_dir or (Path.home() / ".theygent" / "inference" / "models")
     # The credential store rides into the downloader so the reserved HF_TOKEN credential can
-    # authenticate gated-repo downloads — resolved locally, per download, never logged.
-    downloads = downloader or Downloader(registry, _model_dir, credentials=credential_store)
+    # authenticate gated-repo downloads — resolved locally, per download, never logged. The
+    # install store rides in too: a completed install records its repo + variant provenance.
+    downloads = downloader or Downloader(
+        registry, _model_dir, credentials=credential_store, installs=install_store
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -321,6 +332,7 @@ def create_app(
     app.state.downloader = downloads
     app.state.credential_store = credential_store
     app.state.settings_store = settings_store
+    app.state.install_store = install_store
     # Environment facts for /admin/diagnostics (and anything else that needs to know where
     # this plane keeps its state): the registry file path (None = in-memory) + the model dir.
     app.state.state_path = state_path
@@ -349,6 +361,11 @@ def create_app(
                 code="invalid_binding",
             )
         registry.put(logical_id, binding)
+        # A manual registration severs catalog provenance: the binding no longer points at
+        # the sidecar's recorded install, and a stale record would make /admin/export pair
+        # the NEW binding with the OLD repo/variant — an import would then silently fetch
+        # different weights than this machine runs.
+        install_store.delete(logical_id)
         return JSONResponse(_model_view(logical_id))
 
     @app.get("/admin/models")
@@ -387,6 +404,9 @@ def create_app(
             )
         await manager.evict(logical_id)
         registry.delete(logical_id)
+        # The install provenance belongs to the registration — a deleted logical id must not
+        # keep exporting re-download metadata for a model that no longer exists here.
+        install_store.delete(logical_id)
         return Response(status_code=204)
 
     @app.get("/admin/models/{logical_id}/capabilities")
@@ -703,6 +723,40 @@ def create_app(
                 code="download_not_found",
             )
         return JSONResponse(job.view())
+
+    # ── management plane: /admin/export + /admin/import (registry transfer) ──────
+    # The browser assembles the cross-plane export bundle and reads this plane DIRECTLY —
+    # registry state never transits the control plane. A named additive extension of the
+    # management plane: camelCase, strict shapes, metadata only. Weights re-download here on
+    # import (the installs.json provenance); credentials travel as names, never values.
+
+    @app.get("/admin/export")
+    async def export_registry() -> dict[str, Any]:
+        return build_export(registry, install_store, credential_store)
+
+    @app.post("/admin/import")
+    async def import_registry(request: Request) -> Response:
+        try:
+            raw = await request.json()
+        except Exception:
+            raw = None
+        try:
+            bundle = ImportBundle.model_validate(raw)
+        except ValidationError as exc:
+            return _openai_error(
+                f"invalid import bundle: {exc.errors()}",
+                status=400,
+                type_="invalid_request_error",
+                code="invalid_bundle",
+            )
+        report = await apply_import(
+            bundle,
+            registry=registry,
+            catalog=catalog,
+            downloads=downloads,
+            installs=install_store,
+        )
+        return JSONResponse(report)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

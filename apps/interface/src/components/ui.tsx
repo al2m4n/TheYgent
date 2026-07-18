@@ -6,12 +6,13 @@
 
 import {
   type ButtonHTMLAttributes,
-  type InputHTMLAttributes,
+  type ComponentProps,
   type ReactNode,
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
   useEffect,
   useRef,
+  useState,
 } from "react";
 import { toneOf } from "../lib/categories";
 import { statusClass } from "../lib/format";
@@ -69,7 +70,7 @@ export function Button({
   return <BaseButton type={type} variant={VARIANT[variant]} className={className} {...props} />;
 }
 
-export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className = "", ...props }: ComponentProps<"input">) {
   return <BaseInput className={className} {...props} />;
 }
 
@@ -293,17 +294,21 @@ export function Modal({
 }
 
 // The shared confirmation step for irreversible actions (deleting a server, a model, a credential).
-// Renders as an alert dialog so every destructive flow asks the same way.
+// Renders as an alert dialog so every destructive flow asks the same way. A `challenge` raises the
+// bar for the most destructive flows: the confirm button stays disabled until the user types the
+// expected string (an agent's name, a selection count) — a click can't do it by accident.
 export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Delete",
+  challenge,
   onConfirm,
   onCancel,
 }: {
   title: string;
   message: ReactNode;
   confirmLabel?: string;
+  challenge?: { instruction: ReactNode; expected: string };
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -313,6 +318,9 @@ export function ConfirmDialog({
   useEffect(() => {
     previouslyFocused.current = document.activeElement as HTMLElement | null;
   }, []);
+  const challengeInput = useRef<HTMLInputElement | null>(null);
+  const [typed, setTyped] = useState("");
+  const armed = challenge == null || typed.trim() === challenge.expected;
   return (
     <AlertDialog
       open
@@ -321,6 +329,14 @@ export function ConfirmDialog({
       }}
     >
       <AlertDialogContent
+        onOpenAutoFocus={(e) => {
+          // With a challenge the input IS the next step — focus it instead of Radix's default
+          // (the cancel button), so the user can start typing immediately.
+          if (challenge) {
+            e.preventDefault();
+            challengeInput.current?.focus();
+          }
+        }}
         onCloseAutoFocus={(e) => {
           e.preventDefault();
           previouslyFocused.current?.focus();
@@ -330,9 +346,30 @@ export function ConfirmDialog({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{message}</AlertDialogDescription>
         </AlertDialogHeader>
+        {challenge && (
+          <div className="grid gap-1.5">
+            <label className="text-sm text-muted-foreground" htmlFor="confirm-challenge">
+              {challenge.instruction}
+            </label>
+            <Input
+              id="confirm-challenge"
+              ref={challengeInput}
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && armed) {
+                  e.preventDefault();
+                  onConfirm();
+                }
+              }}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" onClick={onConfirm}>
+          <AlertDialogAction variant="destructive" disabled={!armed} onClick={onConfirm}>
             {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>

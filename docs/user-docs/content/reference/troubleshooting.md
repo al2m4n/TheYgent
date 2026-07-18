@@ -202,6 +202,56 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix.** Re-enable or re-create the connection, or set the correct `THEYGENT_SECRET_KEY`.
 
+## Import and export
+
+### `invalid_include` (400) on export
+
+**Cause.** `POST /export` was called with an empty `include` list or a value it doesn't know. The valid sections are `agents`, `runs`, `traces`, `sessions`, `mcp`, and `rag`.
+
+**Fix.** Send a non-empty subset of those values. Note `traces` implies `runs` — the server adds them. See [Import & export](../import-export/index.md).
+
+### `invalid_bundle` (400) on import
+
+**Cause.** The body isn't a bundle that plane understands. On the control plane (`POST /import`) it means the body isn't a JSON object carrying `format_version`; on the inference plane (`POST /admin/import`) it means the body is malformed or carries fields the plane doesn't recognize — unknown keys are rejected loudly rather than silently dropped.
+
+**Fix.** Import the unmodified file an export produced — `control-plane.json` to `:8080/import`, `inference/models.json` to `:8081/admin/import` — or let the Settings **Import / Export** tab unpack the zip and route the halves for you.
+
+### `unsupported_bundle_version` (400)
+
+**Cause.** The bundle's `format_version` is newer than this install understands — it was exported by a newer TheYgent.
+
+**Fix.** Upgrade the importing install, then re-run the import.
+
+### The import report lists `version_conflict` warnings
+
+**Cause.** The target already has that agent version with **different** content. Published versions are immutable, so the import refuses to overwrite it — that version is skipped while the rest of the bundle lands.
+
+**Fix.** Usually nothing — the target's version wins by design. If you want the bundled graph too, publish it under a new version on the target.
+
+### An imported model warns `weights_unavailable`
+
+**Cause.** The registration points at a file path from the *exporting* machine and carries no catalog-install provenance, so there is nothing to re-download. It is registered but will fail at first use.
+
+**Fix.** Put the weights at that path on this machine, or delete the registration and [reinstall the model](../models/installing.md) under the same logical id. Catalog-installed models don't hit this — they re-download automatically.
+
+### The import report lists `download_in_progress` or `params_path_dropped`
+
+**Cause.** `download_in_progress`: the model's weights are already downloading (usually from a previous run of the same import), so this run skipped it rather than start a duplicate download. `params_path_dropped`: the exported registration carried a machine-absolute auxiliary path (such as a vision projector file) from the old machine; the import dropped it so the model can start here — the engine finds the file next to the re-downloaded weights instead.
+
+**Fix.** Nothing for either — wait for the in-flight download to finish (notification center), and the dropped path re-resolves automatically. If a vision model can't find its projector after import, re-set it in the registration's parameters.
+
+### The import report lists `invalid_section`
+
+**Cause.** A top-level section of the bundle (`runs`, `sessions`, …) isn't the JSON list the format defines — the file was hand-edited or truncated. The section was skipped; everything else imported.
+
+**Fix.** Re-export and import the unmodified file.
+
+### An imported webhook trigger doesn't fire
+
+**Cause.** Webhook signing secrets never travel in a bundle, so webhook triggers import **disabled** and secretless — an armed webhook with no secret would reject every caller.
+
+**Fix.** Set a fresh secret with `PATCH /triggers/{id}` (body `{"config": {"secret": "..."}}`), then enable the trigger. The same rule explains imported connections and MCP servers failing with auth errors: re-enter their secrets and env values — only key *names* were exported.
+
 ## Browser and interface
 
 ### The interface can't reach a plane / CORS errors in the console
