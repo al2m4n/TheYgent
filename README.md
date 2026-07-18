@@ -1,6 +1,17 @@
-# TheYgent
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/web/assets/logo/theygent-lockup-dark.svg">
+    <img src="apps/web/assets/logo/theygent-lockup.svg" alt="TheYgent" width="460">
+  </picture>
+</div>
 
-**Build agents on a canvas. Run them where you point.**
+<p align="center"><strong>Build agents on a canvas. Run them where you point.</strong></p>
+
+<p align="center">
+  <a href="https://theygent.ai">Website</a> ·
+  <a href="https://docs.theygent.ai">User docs</a> ·
+  <a href="docs/dev-docs/README.md">Developer docs</a>
+</p>
 
 TheYgent is a no-code, local-first platform for building and running AI agents. You compose
 an agent visually — LLM steps, tools, MCP servers, retrieval, routers, guardrails, human
@@ -12,10 +23,6 @@ The promise is sovereignty and anti-lock-in, stated honestly: TheYgent is never 
 involuntary middleman between you and your models. Prompts, payloads, and weights are never
 routed through anyone's servers — when something crosses a wire, it does so because you
 sent it there.
-
-- **Website:** https://theygent.ai
-- **User docs:** https://docs.theygent.ai
-- **Developer docs:** [docs/dev-docs](docs/dev-docs/README.md)
 
 ## What's in the box
 

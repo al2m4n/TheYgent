@@ -9,12 +9,16 @@ app interface (`apps/interface`). It shares only the logo and brand palette.
 
 ## Preview locally
 
-Any static file server works. From the repository root:
+From the repository root:
 
 ```bash
-python3 -m http.server 4321 --directory apps/web
-# then open http://localhost:4321
+make web-up      # serves http://localhost:4321 in the background (log: .run/web.log)
+make web-down    # stops it
 ```
+
+Any static file server works too — `make web-up` is just
+`python3 -m http.server 4321 --directory apps/web`. It must be a server (not `file://`)
+because the page uses root-relative `/styles.css` and `/assets/...` paths.
 
 ## Deploy
 

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TheYgent — Build agents on a canvas. Run them where you point.</title>
+    <title>TheYgent — Build Agents on a Canvas. Run Them Where You Point.</title>
     <meta
       name="description"
       content="TheYgent is a no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop."
@@ -16,7 +16,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://theygent.ai/" />
     <meta property="og:site_name" content="TheYgent" />
-    <meta property="og:title" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:title" content="TheYgent — Build Agents on a Canvas, Run Them Where You Point" />
     <meta
       property="og:description"
       content="A no-code, local-first studio for building and running AI agents. Local engines or any OpenAI-compatible API, chosen per agent and per call. You own every hop."
@@ -25,7 +25,7 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta name="twitter:title" content="TheYgent — Build Agents on a Canvas, Run Them Where You Point" />
     <meta
       name="twitter:description"
       content="A no-code, local-first studio for building and running AI agents. You own every hop."
@@ -37,12 +37,15 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <!-- Set the theme before first paint so a stored light preference doesn't flash dark. -->
+    <!-- Set the theme before first paint so a stored light preference doesn't flash dark.
+         The html.js class gates CSS that hides content until main.js reveals it, so a
+         JS-off visitor gets the fully visible page. -->
     <script>
       (function () {
+        document.documentElement.classList.add("js");
         try {
           var t = localStorage.getItem("ty-theme");
-          if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
           document.documentElement.setAttribute("data-theme", t);
         } catch (e) {}
       })();
@@ -76,8 +79,8 @@
     <header class="nav" id="top">
       <div class="nav-inner">
         <a class="brand" href="#top" aria-label="TheYgent home">
-          <svg class="brand-mark" viewBox="28 36 326 356" role="img" aria-hidden="true"><use href="#ty-mark" /></svg>
-          <span class="brand-word">The<span class="ramp-text">Y</span>gent</span>
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
         </a>
 
         <nav class="nav-links" aria-label="Primary">
@@ -128,15 +131,15 @@
         <svg class="ghost-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <p class="eyebrow mono"><i class="dia"></i>local-first · fair-code · you own every hop</p>
+            <p class="eyebrow mono"><i class="dia"></i>Local-First · Fair-Code · You Own Every Hop</p>
             <h1 id="hero-h">
-              Build agents on a canvas.<br />
-              <span class="ramp-text">Run them where you point.</span>
+              Build Agents on a Canvas.<br />
+              <span class="ramp-text">Run Them Where You Point.</span>
             </h1>
             <p class="lede">
               A no-code, local-first studio for building and running AI agents. Inference runs on your machine —
               <span class="tok">llama.cpp</span>, <span class="tok">MLX</span>, or <span class="tok">vLLM</span> — or any
-              OpenAI-compatible API you register, chosen per agent and per call by a logical id like
+              OpenAI-compatible API you register, chosen per agent and per call by a logical ID like
               <span class="pill mono">triage-fast</span>. TheYgent never proxies your prompts, payloads, or weights.
             </p>
             <div class="cta-row">
@@ -149,7 +152,7 @@
                 </svg>
                 Star on GitHub
               </a>
-              <a class="btn btn-ghost" href="https://docs.theygent.ai/" rel="noopener">Read the docs&nbsp;→</a>
+              <a class="btn btn-ghost" href="https://docs.theygent.ai/" rel="noopener">Read the Docs&nbsp;→</a>
             </div>
             <ul class="runs-on mono" aria-label="Supported engines">
               <li><i class="dia"></i>llama.cpp</li>
@@ -165,7 +168,7 @@
               <div class="panel-bar">
                 <span class="dots"><i></i><i></i><i></i></span>
                 <span class="panel-file mono">triage-router.graph · v3 · content-addressed</span>
-                <span class="run-pill mono"><span class="run-dot"></span>running</span>
+                <span class="run-pill mono"><span class="run-dot"></span>Running</span>
               </div>
               <div class="panel-body graph-body">
                 <svg class="graph" viewBox="0 0 560 340" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
@@ -206,7 +209,7 @@
                   <g class="node" transform="translate(176,237)">
                     <rect class="node-box" width="112" height="50" rx="9" />
                     <rect class="ic ic-violet" x="12" y="18" width="14" height="14" rx="2" transform="rotate(45 19 25)" />
-                    <text class="node-title" x="36" y="22">MCP tool</text>
+                    <text class="node-title" x="36" y="22">MCP Tool</text>
                     <text class="node-type mono" x="36" y="36">mcp_tool</text>
                     <circle class="port port-slate" cx="0" cy="25" r="4" />
                     <circle class="port port-violet" cx="112" cy="25" r="4" />
@@ -234,7 +237,7 @@
               <div class="panel-foot mono">
                 <span>5 nodes · 5 edges</span>
                 <span class="hash">contentHash 0x9f81c7…</span>
-                <span class="dur"><i class="dia dia-green"></i>durable</span>
+                <span class="dur"><i class="dia dia-green"></i>Durable</span>
               </div>
             </div>
 
@@ -255,6 +258,64 @@
         </div>
       </section>
 
+      <!-- node-palette ticker: every node type, scrolling by. The checkbox is a CSS-only
+           pause control (WCAG 2.2.2) — it must live outside the role="img" subtree, whose
+           children are presentational. -->
+      <div class="ticker">
+        <input type="checkbox" id="tickerPause" class="ticker-pause" aria-label="Pause the scrolling list of node types" />
+        <label class="ticker-pause-ui mono" for="tickerPause" aria-hidden="true"
+          ><span class="tp-pause">❚❚</span><span class="tp-play">▶</span></label
+        >
+        <div
+          class="ticker-viewport"
+          role="img"
+          aria-label="Node types in the palette: input, llm, tool, mcp, router, transform, guardrail, rag, human, subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine, output"
+        >
+          <div class="ticker-track mono" aria-hidden="true">
+          <div class="ticker-group">
+            <span>input</span><i class="dia dia-slate"></i>
+            <span>llm</span><i class="dia dia-accent"></i>
+            <span>tool</span><i class="dia dia-violet"></i>
+            <span>mcp</span><i class="dia dia-violet"></i>
+            <span>router</span><i class="dia dia-amber"></i>
+            <span>transform</span><i class="dia dia-amber"></i>
+            <span>guardrail</span><i class="dia dia-amber"></i>
+            <span>rag</span><i class="dia dia-green"></i>
+            <span>human</span><i class="dia dia-green"></i>
+            <span>subgraph</span><i class="dia dia-green"></i>
+            <span>loop</span><i class="dia dia-green"></i>
+            <span>map</span><i class="dia dia-green"></i>
+            <span>ratelimit</span><i class="dia dia-amber"></i>
+            <span>quota</span><i class="dia dia-amber"></i>
+            <span>transcribe</span><i class="dia dia-slate"></i>
+            <span>speak</span><i class="dia dia-slate"></i>
+            <span>imagine</span><i class="dia dia-accent"></i>
+            <span>output</span><i class="dia dia-slate"></i>
+          </div>
+          <div class="ticker-group">
+            <span>input</span><i class="dia dia-slate"></i>
+            <span>llm</span><i class="dia dia-accent"></i>
+            <span>tool</span><i class="dia dia-violet"></i>
+            <span>mcp</span><i class="dia dia-violet"></i>
+            <span>router</span><i class="dia dia-amber"></i>
+            <span>transform</span><i class="dia dia-amber"></i>
+            <span>guardrail</span><i class="dia dia-amber"></i>
+            <span>rag</span><i class="dia dia-green"></i>
+            <span>human</span><i class="dia dia-green"></i>
+            <span>subgraph</span><i class="dia dia-green"></i>
+            <span>loop</span><i class="dia dia-green"></i>
+            <span>map</span><i class="dia dia-green"></i>
+            <span>ratelimit</span><i class="dia dia-amber"></i>
+            <span>quota</span><i class="dia dia-amber"></i>
+            <span>transcribe</span><i class="dia dia-slate"></i>
+            <span>speak</span><i class="dia dia-slate"></i>
+            <span>imagine</span><i class="dia dia-accent"></i>
+            <span>output</span><i class="dia dia-slate"></i>
+          </div>
+          </div>
+        </div>
+      </div>
+
       <!-- seam -->
       <div class="seam" aria-hidden="true">
         <svg viewBox="0 0 1440 40" preserveAspectRatio="none"><path d="M0,40 L360,8 L720,32 L1080,4 L1440,28 L1440,40 Z" /></svg>
@@ -263,8 +324,8 @@
       <!-- ───────────────────── SOVEREIGNTY ───────────────────── -->
       <section class="band section sovereignty" id="sovereignty" aria-labelledby="sov-h">
         <div class="wrap">
-          <p class="eyebrow mono"><i class="dia"></i>02 — sovereignty, not surveillance</p>
-          <h2 id="sov-h" class="statement">You own <span class="ramp-text">every hop.</span></h2>
+          <p class="eyebrow mono"><i class="dia"></i>Sovereignty, Not Surveillance</p>
+          <h2 id="sov-h" class="statement">You Own <span class="ramp-text">Every Hop.</span></h2>
           <p class="section-lede">
             TheYgent is never the man-in-the-middle. No proxied prompts, no captured weights — every hop runs where you
             point it.
@@ -272,23 +333,23 @@
 
           <ul class="pointset">
             <li>
-              <span class="pt-k mono"><i class="dia"></i>never a middleman</span>
+              <span class="pt-k mono"><i class="dia"></i>Never a Middleman</span>
               <span class="pt-v">The vendor is never an involuntary hop between you and your model.</span>
             </li>
             <li>
-              <span class="pt-k mono"><i class="dia"></i>nothing proxied</span>
+              <span class="pt-k mono"><i class="dia"></i>Nothing Proxied</span>
               <span class="pt-v">Prompts, payloads, and weights are never routed through anyone's servers.</span>
             </li>
             <li>
-              <span class="pt-k mono"><i class="dia"></i>per-agent, per-call</span>
+              <span class="pt-k mono"><i class="dia"></i>Per-Agent, Per-Call</span>
               <span class="pt-v">Your choice of engine for every node, every run — swap it without touching an edge.</span>
             </li>
           </ul>
 
           <div class="swap-tip cut-chip">
-            <span class="swap-tip-k mono"><i class="dia"></i>the whole idea</span>
+            <span class="swap-tip-k mono"><i class="dia"></i>The Whole Idea</span>
             <span class="swap-tip-v mono">
-              swap the engine, keep the id — <span class="pill mono">triage-fast</span> → MLX, vLLM, or a hosted API
+              Swap the engine, keep the ID — <span class="pill mono">triage-fast</span> → MLX, vLLM, or a hosted API
             </span>
           </div>
 
@@ -304,8 +365,8 @@
       <section class="section build" id="build-visually" aria-labelledby="build-h">
         <div class="wrap build-grid">
           <div class="build-copy reveal">
-            <p class="eyebrow mono"><i class="dia"></i>03 — the builder</p>
-            <h2 id="build-h">Compose agents <span class="ramp-text">visually.</span></h2>
+            <p class="eyebrow mono"><i class="dia"></i>The Builder</p>
+            <h2 id="build-h">Compose Agents <span class="ramp-text">Visually.</span></h2>
             <p class="section-lede">
               Drag nodes onto a canvas, wire them with edges, configure them in the inspector, and run — without writing
               code. The graph <em>is</em> the agent; saving it mints a content-addressed version you can roll back to.
@@ -324,7 +385,7 @@
             <div class="panel editor cut-card">
               <div class="panel-bar">
                 <span class="dots"><i></i><i></i><i></i></span>
-                <span class="panel-file mono">editor · palette + inspector</span>
+                <span class="panel-file mono">Editor · Palette + Inspector</span>
               </div>
               <div class="panel-body editor-body">
                 <aside class="palette" aria-hidden="true">
@@ -396,17 +457,17 @@
       <!-- ───────────────────── MULTI-ENGINE (datasheet) ───────────────────── -->
       <section class="band section engines" id="multi-engine" aria-labelledby="eng-h">
         <div class="wrap">
-          <p class="eyebrow mono"><i class="dia"></i>04 — logical-id indirection</p>
-          <h2 id="eng-h">One id per call. <span class="ramp-text">Any engine underneath.</span></h2>
+          <p class="eyebrow mono"><i class="dia"></i>Logical-ID Indirection</p>
+          <h2 id="eng-h">One ID per Call. <span class="ramp-text">Any Engine Underneath.</span></h2>
           <p class="section-lede">
-            Give a model a logical id once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
+            Give a model a logical ID once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
             API you register — and every edge on the canvas stays untouched. Engine choice is per node, not per app: one
             graph can run local and hosted models side by side.
           </p>
 
           <div class="datasheet cut-card">
             <div class="ds-swap">
-              <span class="ds-swap-label mono">bind <span class="pill mono">triage-fast</span> to</span>
+              <span class="ds-swap-label mono">Bind <span class="pill mono">triage-fast</span> to</span>
               <div class="chips" role="radiogroup" aria-label="Engine binding for triage-fast">
                 <button class="chip mono is-on" type="button" role="radio" aria-checked="true" data-binding="mlx">mlx</button>
                 <button class="chip mono" type="button" role="radio" aria-checked="false" data-binding="vllm">vllm</button>
@@ -433,17 +494,17 @@
                 <tr>
                   <td class="mono">draft-large</td>
                   <td class="mono">vllm</td>
-                  <td class="mono">an NVIDIA GPU</td>
+                  <td class="mono">An NVIDIA GPU</td>
                 </tr>
                 <tr>
                   <td class="mono">extract-ocr</td>
                   <td class="mono">llamacpp</td>
-                  <td class="mono">any machine</td>
+                  <td class="mono">Any machine</td>
                 </tr>
                 <tr>
                   <td class="mono">reason-remote</td>
                   <td class="mono">openai-compatible</td>
-                  <td class="mono">an API you register</td>
+                  <td class="mono">An API you register</td>
                 </tr>
               </tbody>
               </table>
@@ -454,9 +515,9 @@
           </div>
 
           <div class="swap-tip cut-chip">
-            <span class="swap-tip-k mono"><i class="dia"></i>mix freely</span>
+            <span class="swap-tip-k mono"><i class="dia"></i>Mix Freely</span>
             <span class="swap-tip-v mono">
-              local + remote in one graph — <span class="pill mono">triage-fast</span> answers on-device,
+              Local + remote in one graph — <span class="pill mono">triage-fast</span> answers on-device,
               <span class="pill mono">reason-remote</span> escalates to an API you registered
             </span>
           </div>
@@ -466,8 +527,8 @@
       <!-- ───────────────────── CAPABILITIES ───────────────────── -->
       <section class="section caps" id="capabilities" aria-labelledby="caps-h">
         <div class="wrap">
-          <p class="eyebrow mono"><i class="dia"></i>05 — the runtime</p>
-          <h2 id="caps-h">Everything a real agent <span class="ramp-text">needs.</span></h2>
+          <p class="eyebrow mono"><i class="dia"></i>The Runtime</p>
+          <h2 id="caps-h">Everything a Real Agent <span class="ramp-text">Needs.</span></h2>
           <p class="section-lede">
             Chat, tools, retrieval, models, and automation — one local runtime, no glue code.
           </p>
@@ -475,7 +536,7 @@
           <div class="card-grid">
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>chat</span>
-              <h3>Unified chat</h3>
+              <h3>Unified Chat</h3>
               <p>Streaming answers, a collapsible thinking view for reasoning models, and voice and image input — talk to any model or saved agent.</p>
             </article>
             <article class="cap cut-card reveal">
@@ -490,12 +551,12 @@
             </article>
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-green"></i>memory</span>
-              <h3>Retrieval sources</h3>
+              <h3>Retrieval Sources</h3>
               <p>Crawl a site or upload documents, embed them locally into pgvector, and wire retrieval into any graph.</p>
             </article>
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>models</span>
-              <h3>Model registry</h3>
+              <h3>Model Registry</h3>
               <p>Browse the catalog, see what fits your RAM before downloading, and serve chat, vision, audio, and embeddings locally.</p>
             </article>
             <article class="cap cut-card reveal">
@@ -511,27 +572,27 @@
       <section class="band section production" id="production" aria-labelledby="prod-h">
         <div class="wrap prod-grid">
           <div class="prod-copy">
-            <p class="eyebrow mono"><i class="dia"></i>06 — production discipline</p>
-            <h2 id="prod-h">Production-grade <span class="ramp-text">by default.</span></h2>
+            <p class="eyebrow mono"><i class="dia"></i>Production Discipline</p>
+            <h2 id="prod-h">Production-Grade <span class="ramp-text">by Default.</span></h2>
             <p class="section-lede">
               An agent you can&rsquo;t replay, trace, or audit is a demo. Every TheYgent run is checkpointed, traced,
               and kept — and the whole stack deploys the same way everywhere.
             </p>
             <ul class="pointset prod-points">
               <li>
-                <span class="pt-k mono"><i class="dia dia-green"></i>durable</span>
+                <span class="pt-k mono"><i class="dia dia-green"></i>Durable</span>
                 <span class="pt-v">Runs checkpoint every step. Kill the process mid-run and it resumes from the last completed node — loops, subgraphs, and human approvals included.</span>
               </li>
               <li>
-                <span class="pt-k mono"><i class="dia dia-accent"></i>observable</span>
+                <span class="pt-k mono"><i class="dia dia-accent"></i>Observable</span>
                 <span class="pt-v">Every run yields a zoomable span waterfall — per-node inputs, outputs, timing, and token usage — with opt-in OTLP export to your own OpenTelemetry collector.</span>
               </li>
               <li>
-                <span class="pt-k mono"><i class="dia dia-amber"></i>auditable</span>
+                <span class="pt-k mono"><i class="dia dia-amber"></i>Auditable</span>
                 <span class="pt-v">Runs, sessions, and traces persist in your Postgres. Agents are immutable, content-addressed versions — you can always answer which graph ran, when, and with what.</span>
               </li>
               <li>
-                <span class="pt-k mono"><i class="dia dia-violet"></i>deployable</span>
+                <span class="pt-k mono"><i class="dia dia-violet"></i>Deployable</span>
                 <span class="pt-v">The same three services in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
               </li>
             </ul>
@@ -541,8 +602,8 @@
             <div class="panel trace cut-card" role="img" aria-label="A run trace waterfall: a local MLX model and a remote API model in the same graph run, with per-span timings and OTLP export.">
               <div class="panel-bar">
                 <span class="dots"><i></i><i></i><i></i></span>
-                <span class="panel-file mono">run 0x9f81c7 · waterfall</span>
-                <span class="run-pill mono"><span class="run-dot"></span>completed</span>
+                <span class="panel-file mono">Run 0x9f81c7 · Waterfall</span>
+                <span class="run-pill mono"><span class="run-dot"></span>Completed</span>
               </div>
               <div class="trace-body mono" aria-hidden="true">
                 <div class="tr-row">
@@ -578,8 +639,8 @@
               </div>
               <div class="panel-foot mono">
                 <span>6 spans · tokens captured</span>
-                <span class="hash">otlp → your collector</span>
-                <span class="dur"><i class="dia dia-green"></i>replayable</span>
+                <span class="hash">OTLP → your collector</span>
+                <span class="dur"><i class="dia dia-green"></i>Replayable</span>
               </div>
             </div>
           </div>
@@ -590,24 +651,24 @@
       <section class="band section quickstart" id="quickstart" aria-labelledby="qs-h">
         <div class="wrap qs-grid">
           <div class="qs-copy">
-            <p class="eyebrow mono"><i class="dia"></i>07 — run it locally</p>
-            <h2 id="qs-h">Up in <span class="ramp-text">two commands.</span></h2>
+            <p class="eyebrow mono"><i class="dia"></i>Run It Locally</p>
+            <h2 id="qs-h">Up in <span class="ramp-text">Two Commands.</span></h2>
             <p class="section-lede">
               Clone the repo and run <span class="pill mono">make up</span>. The interface, control plane, inference
               plane, and Postgres come online locally; engines start lazily when a model is first called.
             </p>
             <ul class="qs-facts mono">
-              <li><i class="dia"></i>three local services + your Postgres</li>
-              <li><i class="dia"></i>bring your own models, or register an API</li>
-              <li><i class="dia"></i>no account, no sign-up, localhost by default</li>
+              <li><i class="dia"></i>Three local services + your Postgres</li>
+              <li><i class="dia"></i>Bring your own models, or register an API</li>
+              <li><i class="dia"></i>No account, no sign-up, localhost by default</li>
             </ul>
           </div>
 
           <div class="qs-term panel cut-card">
             <div class="panel-bar">
               <span class="dots"><i></i><i></i><i></i></span>
-              <span class="panel-file mono">quickstart</span>
-              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/theygent.git&#10;cd theygent&#10;make up">copy</button>
+              <span class="panel-file mono">Quickstart</span>
+              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/theygent.git&#10;cd theygent&#10;make up">Copy</button>
             </div>
             <pre class="term-body mono"><code><span class="c-prompt">$</span> git clone https://github.com/al2m4n/theygent.git
 <span class="c-prompt">$</span> cd theygent
@@ -629,11 +690,27 @@
       <section class="band section license" id="license" aria-labelledby="lic-h">
         <svg class="ghost-mark ghost-right" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
         <div class="wrap">
-          <p class="eyebrow mono"><i class="dia"></i>08 — the license</p>
-          <h2 id="lic-h">Open source, <span class="ramp-text">fair-code.</span></h2>
+          <p class="eyebrow mono"><i class="dia"></i>The License</p>
+          <h2 id="lic-h">Source-Available, <span class="ramp-text">Fair-Code.</span></h2>
           <p class="section-lede lic-lede">
             Free to use, modify, and self-host under the Sustainable Use License. The one limit: you can&rsquo;t
             repackage it as a competing hosted service. No CLA wall, no bait-and-switch — the core is the core.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-ghost" href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">Read the License&nbsp;→</a>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── FINAL CTA ───────────────────── -->
+      <section class="section cta-final" id="get-started" aria-labelledby="cta-h">
+        <div class="wrap">
+          <img class="cta-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="" width="940" height="200" />
+          <img class="cta-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="" width="940" height="200" />
+          <h2 id="cta-h">Your Canvas. Your Engines. <span class="ramp-text">Your Agents.</span></h2>
+          <p class="section-lede cta-lede">
+            No account, no cloud dependency, no lock-in. Clone the repo, run
+            <span class="pill mono">make up</span>, and your first agent is on the canvas in minutes.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="https://github.com/al2m4n/theygent" rel="noopener">
@@ -645,7 +722,7 @@
               </svg>
               Star on GitHub
             </a>
-            <a class="btn btn-ghost" href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">Read the license&nbsp;→</a>
+            <a class="btn btn-ghost" href="https://docs.theygent.ai/" rel="noopener">Read the Docs&nbsp;→</a>
           </div>
         </div>
       </section>
@@ -656,8 +733,8 @@
       <div class="wrap footer-inner">
         <div class="footer-brand">
           <a class="brand" href="#top" aria-label="TheYgent home">
-            <svg class="brand-mark" viewBox="28 36 326 356" role="img" aria-hidden="true"><use href="#ty-mark" /></svg>
-            <span class="brand-word">The<span class="ramp-text">Y</span>gent</span>
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
           </a>
           <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
         </div>
@@ -680,7 +757,7 @@
       </div>
       <div class="wrap footer-base mono">
         <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
-        <span class="footer-hash">0x9f81c7 · local-first · fair-code</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
       </div>
     </footer>
 
