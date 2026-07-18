@@ -45,8 +45,7 @@ def k8s_docs() -> list[dict]:
 def known_env_names() -> set[str]:
     """Every THEYGENT_*/VITE_*/DATABASE_URL env name first-party source actually reads.
 
-    Deploy files may only set names from this set — so a rename in code (the historical
-    THEYGENT_INFERENCE_* → THEYGENT_INFERENCE_PLANE_* kind) fails here instead of silently
-    configuring nothing.
+    Deploy files may only set names from this set — so an env-var rename in code fails
+    here instead of silently configuring nothing.
     """
     return scan_known_env_names()

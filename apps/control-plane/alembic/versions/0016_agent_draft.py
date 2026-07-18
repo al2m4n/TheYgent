@@ -1,6 +1,6 @@
 """agent_draft — server-side autosaved editor drafts
 
-A draft is a mutable, autosaved, possibly-INVALID agent graph — the deliberate opposite of
+A draft is a mutable, autosaved, possibly-INVALID agent graph — the opposite of
 ``agent_version`` (immutable, content-addressed, validated). The visual editor autosaves
 work-in-progress here so a half-wired graph survives a tab close; publishing stays on the
 ``/agents`` registry, which is why this table lives OUTSIDE ``agent_version``'s immutability
@@ -15,7 +15,7 @@ the registry's shape.
   slot-in pattern as ``agent_io_policy.updated_by``.
 * ``name``/``node_count`` — derived list-view labels, re-derived from the ir on every write.
 
-``ix_agent_draft_agent`` is non-unique on purpose: the client avoids duplicate per-agent drafts;
+``ix_agent_draft_agent`` is non-unique: the client avoids duplicate per-agent drafts;
 the DB doesn't enforce it, so a multi-tab race tolerably yields two drafts instead of an error.
 
 Hand-written and fully reversible.

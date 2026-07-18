@@ -1,8 +1,8 @@
 // A tiny in-memory registry of *live* runs. The run composer creates and
 // streams from one POST, then navigates to the run detail — which would lose the in-memory
 // stream. So the composer parks the stream here, keyed by runId, and the run detail attaches
-// to it. This is local UI state (a module singleton + pub-sub), deliberately NOT TanStack
-// Query: Query owns *server* state (the persisted run), this owns the *transient* token feed.
+// to it. This is local UI state (a module singleton + pub-sub), NOT TanStack Query:
+// Query owns *server* state (the persisted run), this owns the *transient* token feed.
 
 import { useSyncExternalStore } from "react";
 import { ApiError, streamRun } from "./api";

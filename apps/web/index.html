@@ -84,6 +84,7 @@
           <a href="#build-visually">Build</a>
           <a href="#multi-engine">Engines</a>
           <a href="#capabilities">Capabilities</a>
+          <a href="#production">Production</a>
           <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
         </nav>
 
@@ -115,6 +116,7 @@
         <a href="#build-visually">Build</a>
         <a href="#multi-engine">Engines</a>
         <a href="#capabilities">Capabilities</a>
+        <a href="#production">Production</a>
         <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
         <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
       </div>
@@ -398,7 +400,8 @@
           <h2 id="eng-h">One id per call. <span class="ramp-text">Any engine underneath.</span></h2>
           <p class="section-lede">
             Give a model a logical id once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
-            API you register — and every edge on the canvas stays untouched.
+            API you register — and every edge on the canvas stays untouched. Engine choice is per node, not per app: one
+            graph can run local and hosted models side by side.
           </p>
 
           <div class="datasheet cut-card">
@@ -449,6 +452,14 @@
             <p class="ds-note" id="dsNote">MLX serves it on Apple Silicon — the Neural Engine and GPU.</p>
             <p class="ds-enum mono">binding ∈ { mlx | vllm | llamacpp | openai-compatible } · source ∈ { hf | local-path | url }</p>
           </div>
+
+          <div class="swap-tip cut-chip">
+            <span class="swap-tip-k mono"><i class="dia"></i>mix freely</span>
+            <span class="swap-tip-v mono">
+              local + remote in one graph — <span class="pill mono">triage-fast</span> answers on-device,
+              <span class="pill mono">reason-remote</span> escalates to an API you registered
+            </span>
+          </div>
         </div>
       </section>
 
@@ -458,7 +469,7 @@
           <p class="eyebrow mono"><i class="dia"></i>05 — the runtime</p>
           <h2 id="caps-h">Everything a real agent <span class="ramp-text">needs.</span></h2>
           <p class="section-lede">
-            Chat, tools, automation, durability, and observability — one local runtime, no glue code.
+            Chat, tools, retrieval, models, and automation — one local runtime, no glue code.
           </p>
 
           <div class="card-grid">
@@ -478,14 +489,14 @@
               <p>Deploy a saved agent behind a token-authed endpoint, an HMAC-signed webhook, or a cron schedule.</p>
             </article>
             <article class="cap cut-card reveal">
-              <span class="cap-kicker mono"><i class="dia dia-green"></i>durable</span>
-              <h3>Durable runs</h3>
-              <p>Checkpoint every step, survive a crash and resume from the last one, and pause for human approval.</p>
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>memory</span>
+              <h3>Retrieval sources</h3>
+              <p>Crawl a site or upload documents, embed them locally into pgvector, and wire retrieval into any graph.</p>
             </article>
             <article class="cap cut-card reveal">
-              <span class="cap-kicker mono"><i class="dia dia-accent"></i>observability</span>
-              <h3>Observability</h3>
-              <p>A zoomable span waterfall with per-node inputs, outputs, and timing — plus optional OTLP export.</p>
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>models</span>
+              <h3>Model registry</h3>
+              <p>Browse the catalog, see what fits your RAM before downloading, and serve chat, vision, audio, and embeddings locally.</p>
             </article>
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-violet"></i>the bench</span>
@@ -496,11 +507,90 @@
         </div>
       </section>
 
+      <!-- ───────────────────── PRODUCTION ───────────────────── -->
+      <section class="band section production" id="production" aria-labelledby="prod-h">
+        <div class="wrap prod-grid">
+          <div class="prod-copy">
+            <p class="eyebrow mono"><i class="dia"></i>06 — production discipline</p>
+            <h2 id="prod-h">Production-grade <span class="ramp-text">by default.</span></h2>
+            <p class="section-lede">
+              An agent you can&rsquo;t replay, trace, or audit is a demo. Every TheYgent run is checkpointed, traced,
+              and kept — and the whole stack deploys the same way everywhere.
+            </p>
+            <ul class="pointset prod-points">
+              <li>
+                <span class="pt-k mono"><i class="dia dia-green"></i>durable</span>
+                <span class="pt-v">Runs checkpoint every step. Kill the process mid-run and it resumes from the last completed node — loops, subgraphs, and human approvals included.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-accent"></i>observable</span>
+                <span class="pt-v">Every run yields a zoomable span waterfall — per-node inputs, outputs, timing, and token usage — with opt-in OTLP export to your own OpenTelemetry collector.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-amber"></i>auditable</span>
+                <span class="pt-v">Runs, sessions, and traces persist in your Postgres. Agents are immutable, content-addressed versions — you can always answer which graph ran, when, and with what.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-violet"></i>deployable</span>
+                <span class="pt-v">The same three services in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="prod-visual">
+            <div class="panel trace cut-card" role="img" aria-label="A run trace waterfall: a local MLX model and a remote API model in the same graph run, with per-span timings and OTLP export.">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">run 0x9f81c7 · waterfall</span>
+                <span class="run-pill mono"><span class="run-dot"></span>completed</span>
+              </div>
+              <div class="trace-body mono" aria-hidden="true">
+                <div class="tr-row">
+                  <span class="tr-name">graph.run</span>
+                  <span class="tr-track"><span class="tr-bar tr-slate" style="left: 0%; width: 100%"></span></span>
+                  <span class="tr-ms">1.9s</span>
+                </div>
+                <div class="tr-row">
+                  <span class="tr-name">input</span>
+                  <span class="tr-track"><span class="tr-bar tr-slate" style="left: 0%; width: 2%"></span></span>
+                  <span class="tr-ms">3ms</span>
+                </div>
+                <div class="tr-row">
+                  <span class="tr-name">llm · triage-fast <em class="tr-tag">local</em></span>
+                  <span class="tr-track"><span class="tr-bar tr-accent" style="left: 3%; width: 37%"></span></span>
+                  <span class="tr-ms">712ms</span>
+                </div>
+                <div class="tr-row">
+                  <span class="tr-name">tool · http_get</span>
+                  <span class="tr-track"><span class="tr-bar tr-violet" style="left: 41%; width: 16%"></span></span>
+                  <span class="tr-ms">304ms</span>
+                </div>
+                <div class="tr-row">
+                  <span class="tr-name">llm · reason-remote <em class="tr-tag">api</em></span>
+                  <span class="tr-track"><span class="tr-bar tr-accent" style="left: 58%; width: 37%"></span></span>
+                  <span class="tr-ms">701ms</span>
+                </div>
+                <div class="tr-row">
+                  <span class="tr-name">output</span>
+                  <span class="tr-track"><span class="tr-bar tr-green" style="left: 96%; width: 2%"></span></span>
+                  <span class="tr-ms">2ms</span>
+                </div>
+              </div>
+              <div class="panel-foot mono">
+                <span>6 spans · tokens captured</span>
+                <span class="hash">otlp → your collector</span>
+                <span class="dur"><i class="dia dia-green"></i>replayable</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ───────────────────── QUICKSTART ───────────────────── -->
       <section class="band section quickstart" id="quickstart" aria-labelledby="qs-h">
         <div class="wrap qs-grid">
           <div class="qs-copy">
-            <p class="eyebrow mono"><i class="dia"></i>06 — run it locally</p>
+            <p class="eyebrow mono"><i class="dia"></i>07 — run it locally</p>
             <h2 id="qs-h">Up in <span class="ramp-text">two commands.</span></h2>
             <p class="section-lede">
               Clone the repo and run <span class="pill mono">make up</span>. The interface, control plane, inference
@@ -526,51 +616,6 @@
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>   <span class="c-dim">postgres :5432</span>
 <span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>
 <span class="c-dim"># open</span> <span class="c-accent">http://localhost:5174</span></code></pre>
-          </div>
-        </div>
-      </section>
-
-      <!-- ───────────────────── TUTORIALS ───────────────────── -->
-      <section class="section tutorials" id="tutorials" aria-labelledby="tut-h">
-        <div class="wrap">
-          <p class="eyebrow mono"><i class="dia"></i>07 — walkthroughs</p>
-          <h2 id="tut-h">Watch it get <span class="ramp-text">built.</span></h2>
-          <p class="section-lede">Short walkthroughs, coming soon. Placeholders now — video links land here.</p>
-
-          <div class="card-grid tut-grid">
-            <article class="tut cut-card" aria-label="Tutorial coming soon: Your first agent in five minutes">
-              <div class="tut-thumb">
-                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
-                <span class="tut-badge mono">coming soon</span>
-                <span class="tut-num mono">01</span>
-              </div>
-              <div class="tut-meta">
-                <h3>Your first agent in five minutes</h3>
-                <p class="mono">input → llm → output, run &amp; save</p>
-              </div>
-            </article>
-            <article class="tut cut-card" aria-label="Tutorial coming soon: Swap a Mac for a GPU with one registration">
-              <div class="tut-thumb">
-                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
-                <span class="tut-badge mono">coming soon</span>
-                <span class="tut-num mono">02</span>
-              </div>
-              <div class="tut-meta">
-                <h3>Swap a Mac for a GPU, one registration</h3>
-                <p class="mono">one logical id, every edge untouched</p>
-              </div>
-            </article>
-            <article class="tut cut-card" aria-label="Tutorial coming soon: Wire an MCP tool with human approval">
-              <div class="tut-thumb">
-                <span class="tut-play" aria-hidden="true"><i class="tri"></i></span>
-                <span class="tut-badge mono">coming soon</span>
-                <span class="tut-num mono">03</span>
-              </div>
-              <div class="tut-meta">
-                <h3>Wire an MCP tool + human approval</h3>
-                <p class="mono">tools, guardrails, durable pause</p>
-              </div>
-            </article>
           </div>
         </div>
       </section>
@@ -622,6 +667,7 @@
             <a href="#build-visually">Build</a>
             <a href="#multi-engine">Engines</a>
             <a href="#capabilities">Capabilities</a>
+            <a href="#production">Production</a>
             <a href="#quickstart">Quickstart</a>
           </div>
           <div class="footer-col">
@@ -629,7 +675,6 @@
             <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
             <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
             <a href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">License</a>
-            <a href="#tutorials">Tutorials</a>
           </div>
         </nav>
       </div>

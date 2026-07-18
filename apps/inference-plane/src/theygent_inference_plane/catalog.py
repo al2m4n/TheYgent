@@ -157,7 +157,7 @@ class CatalogEntry(_Wire):
     # template (→ reasoning / tool_calling), architectures + config keys (→ vision), and the GGUF
     # header / model config (→ max_context). These are best-effort STATIC hints; the authoritative
     # source stays the post-install capability PROBE (``/admin/models/{id}/capabilities``), which
-    # interrogates the running engine. A deliberate, named additive extension of the normalized
+    # interrogates the running engine. A named additive extension of the normalized
     # CatalogEntry seam — a non-HF provider simply leaves them at their defaults. Field names mirror
     # ``theygent_ir.Capabilities`` so the UI badges catalog hints and probe results the same way.
     reasoning: bool = False

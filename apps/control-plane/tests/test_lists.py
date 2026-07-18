@@ -1,6 +1,6 @@
 """Read-only list endpoints for the cockpit.
 
-The one sanctioned cockpit-driven backend addition: thin, paginated, newest-first lists over
+Thin, paginated, newest-first lists over
 already-persisted runs and sessions, plus a session-detail read. The session list/detail
 adds NO aggregation/summary endpoint — it only surfaces state the write paths persist.
 Proven against the same real Postgres + real Alembic schema as the rest of the fast suite.

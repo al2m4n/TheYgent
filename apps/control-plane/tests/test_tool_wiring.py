@@ -145,7 +145,7 @@ def test_plain_llm_no_wires_is_single_shot(pg_url: str) -> None:
     assert body["output"] == "just an answer"
 
 
-# ── unit: capability binding + schema building from a node's inline config (review gaps) ─────────
+# ── unit: capability binding + schema building from a node's inline config ───────────────────────
 
 
 def _http_tool_node(node_id: str = "n_http") -> dict:
@@ -187,14 +187,13 @@ def _mcp_tool_node(node_id: str = "n_mcp") -> dict:
 
 
 def test_http_tool_binding_has_timeout_seconds() -> None:
-    # Regression (review #9): HttpTool gained `timeout_seconds`, so the autonomous loop's
-    # `binding.timeout_seconds` no longer AttributeErrors — and a capability http tool can carry
-    # its configured timeout.
+    # HttpTool must declare `timeout_seconds` so the autonomous loop's `binding.timeout_seconds`
+    # access cannot AttributeError — and a capability http tool can carry its configured timeout.
     assert "timeout_seconds" in HttpTool.model_fields
 
 
 def test_capability_binding_http_carries_inline_config() -> None:
-    # review #2/#8: a capability http tool node's binding is built from its INLINE config — and the
+    # A capability http tool node's binding is built from its INLINE config — and the
     # configured timeoutSeconds is NOT dropped (it flows through HttpTool.timeout_seconds).
     ir = parse_document(_capability_graph(_http_tool_node()))
     binding = _capability_binding(ir, "n_http")
@@ -206,7 +205,7 @@ def test_capability_binding_http_carries_inline_config() -> None:
 
 
 def test_capability_binding_mcp() -> None:
-    # review #12: a capability mcp_tool node resolves to an McpTool from its inline server/tool.
+    # A capability mcp_tool node resolves to an McpTool from its inline server/tool.
     ir = parse_document(_capability_graph(_mcp_tool_node()))
     binding = _capability_binding(ir, "n_mcp")
     assert isinstance(binding, McpTool)
@@ -215,7 +214,7 @@ def test_capability_binding_mcp() -> None:
 
 
 async def test_union_offers_legacy_key_and_capability_node_id() -> None:
-    # review #11: one llm with a legacy ir.tools key (config.tools=["echo"]) AND a wired capability
+    # One llm with a legacy ir.tools key (config.tools=["echo"]) AND a wired capability
     # node → the model is offered BOTH function names, keyed differently (the ir.tools key vs the
     # node id). This union is what the loop concatenates.
     doc = _capability_graph(_http_tool_node())

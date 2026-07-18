@@ -1,7 +1,7 @@
 """Fast suite — the modality descriptor + the embeddings/audio data-plane endpoints.
 
 Everything real except the model weights: the FakeUpstreamLauncher boots a real in-process
-OpenAI-compatible server that now also serves ``/v1/embeddings`` + ``/v1/audio/*``, so LiteLLM
+OpenAI-compatible server that also serves ``/v1/embeddings`` + ``/v1/audio/*``, so LiteLLM
 really proxies these and the endpoints prove end-to-end. The load-bearing guards:
 
 * ``capabilities`` reports the frozen ``modalities`` vocabulary; an unknown key/value rejected.
@@ -86,7 +86,7 @@ def test_capabilities_endpoint_reports_reachable_declared_modality() -> None:
 
 
 def test_capabilities_endpoint_reachable_defaults_to_chat() -> None:
-    # No declaration → the pre-existing default: a plain chat passthrough.
+    # No declaration → the default: a plain chat passthrough.
     with TestClient(create_app(launcher=FakeUpstreamLauncher(), enable_reaper=False)) as c:
         c.put(
             "/admin/models/hosted-chat",
@@ -209,7 +209,7 @@ def test_unknown_logical_id_on_embeddings(client: TestClient) -> None:
 
 
 def test_embeddings_upstream_404_maps_to_clean_error(client: TestClient) -> None:
-    # F6 regression: a registered model whose engine returns 404 for /v1/embeddings (a chat-only
+    # A registered model whose engine returns 404 for /v1/embeddings (a chat-only
     # text engine) must surface a CLEAN OpenAI-style error, NOT an opaque 500 — the gateway's
     # litellm NotFoundError is mapped, not re-raised (honest-failure invariant on the data plane).
     client.put("/admin/models/embed-fast", json=managed_payload(binding="llamacpp"))

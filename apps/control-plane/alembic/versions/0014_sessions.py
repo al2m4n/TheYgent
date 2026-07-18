@@ -4,7 +4,7 @@ Revision ID: 0014_sessions
 Revises: 0013_mcp_http
 Create Date: 2026-07-07
 
-The conversational product concept is now a *session*, and sessions become client-writable
+A conversation is a *session*, and sessions are client-writable
 (a direct-to-inference chat persists its history without a run). Renames only — table
 ``thread`` → ``chat_session``, columns ``run.thread_id``/``message.thread_id`` →
 ``session_id``, index ``ix_message_thread_position`` → ``ix_message_session_position``

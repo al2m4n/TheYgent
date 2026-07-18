@@ -1,5 +1,5 @@
 // Realistic IR fixtures for the adapter tests. Shaped like a STORED agent version: every
-// optional field default-filled (the server hashes `ir.model_dump(exclude_none=False)`, D2), so a
+// optional field default-filled (the server hashes `ir.model_dump(exclude_none=False)`), so a
 // load→render→reconstruct round-trip is field-for-field identical. `view` is re-attached as the
 // loader does (lib/agent.fromStoredVersion).
 
@@ -86,8 +86,8 @@ export function sampleGraphNoView(): IRDocument {
 }
 
 /**
- * The NASTY fixture — the one that makes "lossless" earn the word. It deliberately
- * exercises every adapter surface that could silently drop data on the IR→RF→IR round-trip:
+ * The NASTY fixture — the one that makes "lossless" earn the word. It exercises
+ * every adapter surface that could silently drop data on the IR→RF→IR round-trip:
  *
  *  • a `channel: "control"` edge (sequencing, no value) alongside data edges;
  *  • a `router` node whose out-edges carry `condition` strings;

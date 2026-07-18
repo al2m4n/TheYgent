@@ -1,9 +1,8 @@
-"""Run persistence — the registry is now a Postgres table.
+"""Run persistence — the run registry is a Postgres table.
 
-The proof that matters: a run survives a control-plane restart. The earlier in-memory registry
-could not do this; with Postgres the run is shared state, not process-local — which is
-also what makes the control-plane horizontally scalable. The wire contract is
-unchanged; only storage moved.
+The proof that matters: a run survives a control-plane restart. An in-memory registry could
+not do this; with Postgres the run is shared state, not process-local — which is also what
+makes the control-plane horizontally scalable.
 """
 
 from __future__ import annotations
@@ -26,8 +25,8 @@ def test_run_survives_restart(fake_inference: FakeInference, pg_url: str) -> Non
         run_id = created["runId"]
         assert created["status"] == "completed"
 
-    # Simulate a restart: a brand-new app + engine against the SAME database. The previous
-    # in-memory dict would have lost the run here.
+    # Simulate a restart: a brand-new app + engine against the SAME database. An
+    # in-memory registry would have lost the run here.
     app2 = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
     with TestClient(app2) as c2:
         got = c2.get(f"/runs/{run_id}").json()

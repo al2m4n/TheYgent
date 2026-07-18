@@ -179,7 +179,7 @@ def test_interface_dockerfile_copies_pnpm_workspace() -> None:
 def test_mcp_stdio_launchers_ship_in_the_images(name: str) -> None:
     """Hub-installed stdio MCP servers launch via npx (npm) / uvx (pypi); both processes
     spawn them locally, so both images must carry the launchers (ARG-gated) and point
-    their caches at the writable /data volume — HOME is deliberately read-only."""
+    their caches at the writable /data volume — HOME is read-only in the images."""
     text = "\n".join(_lines(name))
     assert "ARG WITH_MCP_LAUNCHERS=1" in text, f"{name}: launcher layer must be ARG-gated"
     assert re.search(r"FROM node:\S+ AS node-src", text), (

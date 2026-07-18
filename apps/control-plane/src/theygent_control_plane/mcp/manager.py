@@ -1,7 +1,7 @@
 """``McpManager`` — the named-MCP-server registry + connection lifecycle.
 
 Same *shape* as the ``EngineManager`` (named registry, lazy-connect on first use, reuse the
-connection, capability cache on connect), deliberately scaled down: MCP server processes are cheap
+connection, capability cache on connect), scaled down: MCP server processes are cheap
 (npm / small Python), engines are heavy (multi-GB / GPU). So **no idle-timeout teardown, no
 priority arbitration, no memory-pressure eviction** — the ``EvictionPolicy`` seam is NOT applied
 here (different domain, different cost model). Connections live for the control-plane process
@@ -97,7 +97,7 @@ class McpManager:
             self._configs[name] = config
 
     async def remove(self, name: str) -> None:
-        # The lock object itself is deliberately kept: popping it while a straggler coroutine
+        # The lock object itself is kept: popping it while a straggler coroutine
         # still holds a reference would leave two locks alive for one name. One idle Lock per
         # removed name is negligible, and a re-register reuses it.
         async with self._locks.setdefault(name, asyncio.Lock()):

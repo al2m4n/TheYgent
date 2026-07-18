@@ -1,12 +1,12 @@
 // The MCP page — one unified list of the MCP servers your agents can call, however they were
-// registered: name-keyed definitions (the legacy stdio registry) and `mcp_server` CONNECTIONS
-// (the converged shape: encrypted auth, hub installs, generated openapi/graphql servers). Two
+// registered: name-keyed definitions (the stdio registry) and `mcp_server` CONNECTIONS
+// (encrypted auth, hub installs, generated openapi/graphql servers). Two
 // entry points sit in the header: **Browse hubs** (install a server from a public MCP registry)
 // and **Add server** (define one by hand — stdio subprocess, remote http/sse, or a generated
 // server derived from an OpenAPI spec / GraphQL endpoint). Secrets are write-only: they go to
-// the encrypted store server-side and never round-trip back to the browser. Below the list sits
-// the tool tester: run a single tool through a throwaway one-node graph and see its detections
-// drawn through the shared overlay (the same one a grounding VLM uses).
+// the encrypted store server-side and never round-trip back to the browser. Each server's Tools
+// panel folds out a per-tool runner: run a single tool through a throwaway one-node graph and
+// see its raw output.
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Globe, Lock, Plus, Server, Star } from "lucide-react";

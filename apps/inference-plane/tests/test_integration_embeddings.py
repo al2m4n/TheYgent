@@ -1,5 +1,4 @@
-"""Integration test — REAL llama.cpp embeddings on /v1/embeddings (the first non-chat managed
-slice).
+"""Integration test — REAL llama.cpp embeddings on /v1/embeddings.
 
 llama.cpp is the "one binary, many modalities via flags" engine: the SAME ``llama-server`` serves
 ``/v1/embeddings`` once spawned with ``--embeddings``. Embeddings is "supported" only

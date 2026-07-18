@@ -1,5 +1,5 @@
 """Observability on the DURABLE path (DBOS) — worker attribution + queue.wait + the crash-resume
-worker-hop, the user's "see which worker handled what" ask made concrete.
+worker-hop, so a trace shows which worker handled what.
 
 Reuses the kill-and-resume harness (``_build_runtime`` auto-wires a Telemetry, so durable spans
 land through the SAME wrapper the interactive walker uses). DBOS is process-global, so each test

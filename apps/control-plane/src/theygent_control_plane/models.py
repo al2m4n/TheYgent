@@ -67,13 +67,13 @@ class RunRow(Base):
     status: Mapped[str] = mapped_column(String)  # created|streaming|completed|failed
     model: Mapped[str] = mapped_column(String)  # logical id (never an engine name)
     params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    # Deliberate contract extension: NULL for a non-graph /runs run, populated for /graphs/runs.
+    # NULL for a non-graph /runs run, populated for /graphs/runs.
     # graph_id+graph_version = the IR registry coordinate; content_hash = its content-addressed
     # identity (recorded, not yet gated on).
     graph_id: Mapped[str | None] = mapped_column(String, nullable=True)
     graph_version: Mapped[str | None] = mapped_column(String, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String, nullable=True)
-    # Deliberate contract extension: which trigger fired this run.
+    # Which trigger fired this run.
     # NULL = an interactive run (POST /runs, /graphs/runs, /agents/{id}/runs, /agents/{id}/invoke);
     # populated for a schedule-/webhook-fired run, giving an unattended run lineage for the run list
     # and debugging. A plain breadcrumb, NOT an enforced FK: a trigger can be DELETEd while its
@@ -129,9 +129,9 @@ class MessageRow(Base):
 class AgentRow(Base):
     """A saved agent's stable identity — the ``id`` that is constant across every version.
     The *content* lives in ``AgentVersionRow``; this row is just the named identity so a
-    new version of an agent never mints a new ``id``. ``owner_id``/``workspace_id`` are deliberately
-    omitted now: the Team-tier shared registry slots a scoping column in later WITHOUT a
-    reshape — exactly as the Run was built Postgres-ready before sessions existed. Single-user
+    new version of an agent never mints a new ``id``. ``owner_id``/``workspace_id`` are
+    omitted: a future shared multi-user registry slots a scoping column in WITHOUT a
+    reshape. Single-user
     localhost until then. ``id`` is the IR document's own ``id`` (the IR carries its identity;
     the registry persists it under that key, so a stored agent and the Run it produces agree)."""
 
@@ -180,7 +180,7 @@ class AgentVersionRow(Base):
 
 class AgentDraftRow(Base):
     """A mutable, autosaved, possibly-INVALID agent graph — the editor's work-in-progress,
-    the deliberate opposite of ``AgentVersionRow`` (immutable, content-addressed, validated).
+    the opposite of ``AgentVersionRow`` (immutable, content-addressed, validated).
     Rows are updated in place on every autosave; the ``ir`` is NEVER validated or hashed (a
     half-wired graph is the point of a draft), and ``view`` (layout) is split off exactly like
     ``agent_version.ir``/``view``. Publishing a draft goes through the ``/agents`` registry —
@@ -189,7 +189,7 @@ class AgentDraftRow(Base):
     ``agent_id`` is the registry agent this draft edits (NULL for a never-published graph) — a
     plain breadcrumb, NOT an enforced FK, so deleting the agent never takes the draft with it
     (the ``run.graph_id``/``run.trigger_id`` precedent: an origin pointer must not couple
-    lifecycles). ``owner_id`` is the deferred per-user scoping slot (NULL until identity lands
+    lifecycles). ``owner_id`` is a reserved per-user scoping slot (NULL until identity lands
     — the ``agent_io_policy.updated_by`` pattern). ``name``/``node_count`` are derived list-view
     labels, re-derived from the ir on every write."""
 
@@ -197,7 +197,7 @@ class AgentDraftRow(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)  # ``drf_<ulid>``
     agent_id: Mapped[str | None] = mapped_column(String, nullable=True)  # breadcrumb, no FK
-    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)  # deferred principal slot
+    owner_id: Mapped[str | None] = mapped_column(String, nullable=True)  # reserved principal slot
     name: Mapped[str] = mapped_column(String)  # derived from the ir (name > id > "Untitled")
     node_count: Mapped[int] = mapped_column(Integer)  # derived from the ir
     ir: Mapped[dict] = mapped_column(JSONB)  # unvalidated, unhashed, view-stripped document
@@ -279,7 +279,7 @@ class SpanRow(Base):
     both keyed by ``run_id`` but serving different masters). The domain shape is ``run.Span``; this
     row is the persistence shape, mapped in ``store.py``.
 
-    Deliberate deviations from the standard conventions, recorded in migration 0008:
+    Deviations from the standard conventions:
     * ``start_ns``/``end_ns`` are epoch nanoseconds (``BigInteger``), not TIMESTAMPTZ — OTel is
       ns-resolution and the waterfall needs clean integer arithmetic (``end-start`` = duration,
       ``next.start - prev.end`` = gap). ``created_at`` stays TIMESTAMPTZ.
@@ -350,9 +350,9 @@ class NodeIoRow(Base):
 class AgentIoPolicyRow(Base):
     """Per-agent I/O capture governance — keyed to the STABLE ``agent.id``, NOT ``agent_version``,
     so editing capture policy never changes the agent's ``contentHash`` (immutability invariant).
-    Absent row → effective policy = the topology default. ``updated_by`` is the deferred principal
-    slot (NULL in single-user; filled by the Governance/Identity layer). This is the ONLY new
-    governance table — no identity/role/grant tables (those are deferred)."""
+    Absent row → effective policy = the topology default. ``updated_by`` is a reserved principal
+    slot (NULL in single-user; filled by a future identity layer). This is the ONLY
+    governance table — no identity/role/grant tables (none exist yet)."""
 
     __tablename__ = "agent_io_policy"
 
@@ -483,7 +483,7 @@ class SecretRow(Base):
     ``ciphertext`` is the Fernet token (AES-128-CBC + HMAC, base64 text) from ``SecretStore`` — the
     plaintext is NEVER stored, logged, or returned over the wire. The raw value is decrypted only
     server-side inside the step that calls the tool/MCP (sovereignty posture: raw values never leave
-    the step). A real KMS/HSM/vault is the deferred upgrade; this table is the minimal honest
+    the step). A real KMS/HSM/vault is a future upgrade; this table is the minimal honest
     indirection so the IR carries no secret and rotation never bumps a hash."""
 
     __tablename__ = "secret"
@@ -630,11 +630,11 @@ class RagDocumentRow(Base):
 
 
 class RagChunkRow(Base):
-    """One embedded chunk — the retrieval unit. ``embedding`` is deliberately an UNTYPED pgvector
+    """One embedded chunk — the retrieval unit. ``embedding`` is an UNTYPED pgvector
     column (no fixed dimension): sources pin different embedding models, so one typed column can't
     hold them all. Every similarity query filters on ``dim`` and casts
     ``embedding::vector(<dim>)`` — the exact expression the per-dimension partial HNSW index (built
-    by the ingest service once a dimension first appears; runtime DDL, deliberately outside
+    by the ingest service once a dimension first appears; runtime DDL, kept outside
     Alembic) is defined over, so the query planner can use it. ``tsv`` is the generated full-text
     column for the keyword leg of hybrid search. ``source_id`` is denormalized off the document so
     the hot query path (filter by source, order by distance) needs no join."""

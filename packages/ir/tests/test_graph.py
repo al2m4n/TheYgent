@@ -683,14 +683,14 @@ def test_port_role_is_hashed_content() -> None:
 
 
 # ── multimodal message content (text + image_url) ─────────────────────────────
-# An ``llm`` node's message ``content`` may now be a list of OpenAI content parts so a graph
+# An ``llm`` node's message ``content`` may be a list of OpenAI content parts so a graph
 # can drive a vision model. The load-bearing invariant is backward compatibility: a plain-string
 # ``content`` must hash and serialize byte-for-byte as before, so an existing agent never
 # re-versions.
 
-# The hash a STRING-content graph produced before the union was added — recorded here so the
-# back-compat guarantee is pinned against a concrete value, not just self-consistency. If the union
-# ever silently re-canonicalizes a string content, these constants break.
+# The pinned hash of a STRING-content graph — recorded so the string/list back-compat guarantee
+# is checked against a concrete value, not just self-consistency. If the content union ever
+# silently re-canonicalizes a string content, these constants break.
 _STRING_CONTENT_HASH = "sha256:7e8f9d839ed6ab9990024867f703a6e2b49ca1ec4cf4e37111583cebe7030966"
 
 
@@ -702,8 +702,8 @@ def _with_content(content: object) -> dict:
 
 
 def test_string_content_hashes_identically() -> None:
-    # The whole back-compat claim in one assert: a string content yields the EXACT hash it did
-    # before ``content`` became a union (no silent re-canonicalization → no spurious re-version).
+    # The whole back-compat claim in one assert: a string content yields the pinned hash
+    # regardless of the content union (no silent re-canonicalization → no spurious re-version).
     assert content_hash(parse_document(_trivial())) == _STRING_CONTENT_HASH
 
 
@@ -960,18 +960,18 @@ def _http_tool_node(
 _Q_SCHEMA = {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}
 
 
-def test_m22_builtin_capability_wired_to_llm_validates() -> None:
+def test_tool_wiring_builtin_capability_wired_to_llm_validates() -> None:
     # A builtin tool node wired to the llm's tools-port is a valid capability — and its required
     # `in` port may be unfed (the model supplies args at call time).
     validate_graph(parse_document(_capability_graph(_builtin_tool_node())))
 
 
-def test_m22_http_capability_self_describing_validates() -> None:
+def test_tool_wiring_http_capability_self_describing_validates() -> None:
     node = _http_tool_node(parameter_schema=_Q_SCHEMA)
     validate_graph(parse_document(_capability_graph(node)))
 
 
-def test_m22_tool_edge_from_non_tool_node_rejected() -> None:
+def test_tool_wiring_tool_edge_from_non_tool_node_rejected() -> None:
     # Re-point the capability edge's source to the input node — only a tool/mcp_tool may source it.
     doc = _capability_graph(_builtin_tool_node())
     doc["edges"][-1]["source"] = "n_in"
@@ -980,7 +980,7 @@ def test_m22_tool_edge_from_non_tool_node_rejected() -> None:
         validate_graph(parse_document(doc))
 
 
-def test_m22_tool_edge_to_non_llm_rejected() -> None:
+def test_tool_wiring_tool_edge_to_non_llm_rejected() -> None:
     doc = _capability_graph(_builtin_tool_node())
     doc["nodes"][2]["ports"]["in"].append({"id": "tools", "type": "any", "role": "tool"})
     doc["edges"][-1]["target"] = "n_out"  # output, not an llm
@@ -989,14 +989,14 @@ def test_m22_tool_edge_to_non_llm_rejected() -> None:
         validate_graph(parse_document(doc))
 
 
-def test_m22_tool_edge_into_non_tool_role_port_rejected() -> None:
+def test_tool_wiring_tool_edge_into_non_tool_role_port_rejected() -> None:
     # Target the llm's data `in` port with a tool-channel edge — role mismatch.
     doc = _capability_graph(_builtin_tool_node(), to_handle="in")
     with pytest.raises(GraphValidationError, match="must target a `tool`-role port"):
         validate_graph(parse_document(doc))
 
 
-def test_m22_mixed_mode_tool_node_rejected() -> None:
+def test_tool_wiring_mixed_mode_tool_node_rejected() -> None:
     # A tool node that is BOTH a capability (tool edge to llm) and a step (data edge out) is
     # ambiguous — rejected.
     doc = _capability_graph(_builtin_tool_node())
@@ -1015,13 +1015,13 @@ def test_m22_mixed_mode_tool_node_rejected() -> None:
         validate_graph(parse_document(doc))
 
 
-def test_m22_http_capability_without_schema_rejected() -> None:
+def test_tool_wiring_http_capability_without_schema_rejected() -> None:
     node = _http_tool_node(description="x", parameter_schema=None)
     with pytest.raises(GraphValidationError, match="self-describes"):
         validate_graph(parse_document(_capability_graph(node)))
 
 
-def test_m22_http_capability_unfillable_slot_rejected() -> None:
+def test_tool_wiring_http_capability_unfillable_slot_rejected() -> None:
     # url references $in.q but the schema has no `q` property → unfillable.
     node = _http_tool_node(
         url="https://api.example.com/$in.q",
@@ -1031,7 +1031,7 @@ def test_m22_http_capability_unfillable_slot_rejected() -> None:
         validate_graph(parse_document(_capability_graph(node)))
 
 
-def test_m22_tool_channel_widening_is_hash_stable() -> None:
+def test_tool_wiring_tool_channel_widening_is_hash_stable() -> None:
     # The PortRole/EdgeChannel widening + the optional ToolConfig fields must NOT shift an existing
     # graph's contentHash (Node.config is hashed as authored; existing role/channel values intact).
     assert content_hash(parse_document(_trivial())) == content_hash(parse_document(_trivial()))
@@ -1040,14 +1040,14 @@ def test_m22_tool_channel_widening_is_hash_stable() -> None:
     assert cap != content_hash(parse_document(_trivial()))
 
 
-def test_m22_capability_tool_excluded_from_topo_order() -> None:
+def test_tool_wiring_capability_tool_excluded_from_topo_order() -> None:
     # A capability tool node is NOT sequenced (the `tool` edge imposes no order) — topo still
     # succeeds and the llm does not depend on the tool running first.
     order = topological_order(parse_document(_capability_graph(_builtin_tool_node())))
     assert [n.id for n in order if n.id in {"n_in", "n_llm", "n_out"}] == ["n_in", "n_llm", "n_out"]
 
 
-def test_m22_capability_node_id_may_equal_its_ir_tools_key() -> None:
+def test_tool_wiring_capability_node_id_may_equal_its_ir_tools_key() -> None:
     # The editor derives ir.tools keyed by node id (a mirror of the node binding), so a
     # capability node id EQUAL to its ir.tools key is the norm — it must validate, not be rejected.
     doc = _capability_graph(_builtin_tool_node(node_id="n_echo"))
@@ -1055,7 +1055,7 @@ def test_m22_capability_node_id_may_equal_its_ir_tools_key() -> None:
     validate_graph(parse_document(doc))
 
 
-def test_m22_data_edge_into_tools_port_rejected() -> None:
+def test_tool_wiring_data_edge_into_tools_port_rejected() -> None:
     # The inverse of the tool-edge rule: a `tool`-role in-port may ONLY be fed by a `tool` edge — a
     # data edge into the llm's tools port is a miswire whose value would never be consumed.
     doc = _capability_graph(_builtin_tool_node())

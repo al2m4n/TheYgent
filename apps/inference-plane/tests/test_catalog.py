@@ -616,7 +616,7 @@ def test_install_plan_derives_embeddings_modality() -> None:
 
 
 def test_install_plan_defaults_chat_for_text_models() -> None:
-    # A plain chat repo (no special pipeline_tag) → chat, identical to the pre-modality behaviour.
+    # A plain chat repo (no special pipeline_tag) → chat, the default modality.
     api = FakeHfApi(by_repo={"mlx-community/Qwen2.5-0.5B-Instruct-4bit": _qwen_mlx()})
     p = HuggingFaceProvider(hf_api=api)
     plan = p.install_plan("mlx-community/Qwen2.5-0.5B-Instruct-4bit", "mlx", "", "qwen")
@@ -791,7 +791,7 @@ def test_list_derives_capabilities_inline() -> None:
 
 
 def test_list_without_expanded_metadata_leaves_defaults() -> None:
-    # A repo HF returned without config/gguf (older provider path) → hints stay at their defaults,
+    # A repo HF returned without config/gguf → hints stay at their defaults,
     # never a crash. Uses the plain _qwen_gguf fixture (no config/gguf attrs).
     api = FakeHfApi(by_library={"gguf": [_qwen_gguf()]})
     p = HuggingFaceProvider(hf_api=api, ram_bytes=16 * GB)

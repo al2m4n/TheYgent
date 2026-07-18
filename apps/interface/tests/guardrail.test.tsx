@@ -168,7 +168,7 @@ describe("setGuardrailCheck", () => {
   });
 });
 
-// ── round-trip: a model guardrail survives IR → RF → IR as activity (the clobber regression) ─────
+// ── round-trip: a model guardrail survives IR → RF → IR as activity (kind must not be clobbered) ─
 
 describe("guardrail round-trip (the reactFlowToIr clobber regression)", () => {
   it("keeps a model guardrail's activity kind through IR → RF → IR", () => {
@@ -186,7 +186,7 @@ describe("guardrail round-trip (the reactFlowToIr clobber regression)", () => {
   });
 });
 
-// ── validateGraph: the false-reject is gone; incompleteness is caught ─────────────────────────────
+// ── validateGraph: no false reject on per-instance kind; incompleteness is caught ─────────────────
 
 const errorsOf = (ir: IRDocument) => validateGraph(ir).filter((i) => i.severity === "error");
 

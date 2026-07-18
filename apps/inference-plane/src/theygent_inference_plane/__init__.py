@@ -1,4 +1,4 @@
-"""theygent inference plane (llama.cpp only).
+"""theygent inference plane.
 
 Two HTTP surfaces, never conflated:
   * data plane  /v1/*    — OpenAI-compatible; the `model` field is a LOGICAL id

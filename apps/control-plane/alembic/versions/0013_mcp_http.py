@@ -1,11 +1,9 @@
 """mcp_server http transport — persist url/headers, relax command.
 
-The registration payload (``McpServerConfig``) grew an ``http`` transport (a remote
-streamable-HTTP server reached by ``url`` + ``headers``) whose fields the table never learned:
-``command`` is NOT NULL (an http registration has none, so the write itself failed) and
-``url``/``headers`` had no columns (so even a successful write would rehydrate as a broken stdio
-registration after a restart). Make ``command`` nullable and add the two http columns so any
-registration round-trips a restart intact.
+The registration payload (``McpServerConfig``) supports an ``http`` transport (a remote
+streamable-HTTP server reached by ``url`` + ``headers``). Make ``command`` nullable (an http
+registration has none) and add the ``url``/``headers`` columns so any registration round-trips
+a restart intact.
 
 Hand-written + reversible (downgrade restores NOT NULL by backfilling '' for http rows).
 """

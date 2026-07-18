@@ -1,8 +1,8 @@
 """The IR walker — the IR↔runtime seam: walk an :class:`~theygent_ir.IRDocument` node by node and
 execute it against the run/session spine.
 
-**This is an interpreter, not a compiler.** The walker lowers each node to in-process Python now;
-a durable compiler will later re-target the same IR to a durable runtime (Temporal/Restate/DBOS).
+**This is an interpreter, not a compiler.** The walker lowers each node to in-process Python;
+the durable compiler re-targets the same IR to the durable runtime.
 The seam — IR in, a stream of deltas out — is identical either way; that is the entire point of
 the determinism split. So the walker imports no durable-runtime SDK, wraps no node in
 retries/checkpoints, and persists no per-node intermediate state. "Durability" is exactly
@@ -17,20 +17,17 @@ Two seam rules it holds:
   control-plane loads session memory and persists the ``Run`` through the same ``/runs``
   seams, then hands the walker the prior messages, the gateway client, and the tool registry.
 
-Node types executed initially: ``input``/``output``/``llm``; later additions include ``tool`` (the
-first non-llm activity — a built-in registered callable) and ``router`` (the first orchestration
-node — handle-name branching). The ``router`` introduces **conditional execution**: it selects one
-outgoing handle and a ``tool`` takes its ``ok`` or ``err`` handle, so edges from the un-taken
-handle(s) are not traversed and downstream nodes with no live inbound ``data`` edge are *skipped*
-(logged, not executed). See ``apps/control-plane/CLAUDE.md`` for the two recorded design forks.
+The ``router`` (an orchestration node — handle-name branching) introduces **conditional
+execution**: it selects one outgoing handle and a ``tool`` takes its ``ok`` or ``err`` handle, so
+edges from the un-taken handle(s) are not traversed and downstream nodes with no live inbound
+``data`` edge are *skipped* (logged, not executed).
 
-A later addition closes the dominant expressiveness gap: a node may now declare **more than one**
-named in-port, each fed by a distinct upstream ``data`` edge, addressed in templates as
-``$in.<port>`` (``$in`` stays sugar for the default port ``in``). The only walker change is
-in-port *collection* (``_collect_in_ports`` gathers the named producers instead of assuming one)
-and *resolution* (``_resolve_in`` is port-first); dispatch-by-``kind`` and every handler are
-otherwise untouched, and the determinism boundary is unmoved — multi-input is binding + addressing,
-not a new ``kind``, node type, or I/O.
+A node may declare **more than one** named in-port, each fed by a distinct upstream ``data`` edge,
+addressed in templates as ``$in.<port>`` (``$in`` stays sugar for the default port ``in``).
+In-port *collection* (``_collect_in_ports`` gathers the named producers) and *resolution*
+(``_resolve_in`` is port-first) are the only multi-input machinery; dispatch-by-``kind`` and the
+determinism boundary are untouched by it — multi-input is binding + addressing, not a new
+``kind``, node type, or I/O.
 """
 
 from __future__ import annotations
@@ -101,7 +98,7 @@ class RouterError(RuntimeError):
 
 class TemplateError(ValueError):
     """A substitutable field referenced a ``$``-token that couldn't be resolved: an
-    unknown token (anything not rooted at ``$in``, e.g. the removed ``$input`` or a typo ``$nope``)
+    unknown token (anything not rooted at ``$in``, e.g. a typo like ``$input`` or ``$nope``)
     or a ``$in.field`` path that doesn't exist in the in-port value. This fails LOUDLY — naming the
     node, the token, and the available fields — instead of passing through as literal text and
     producing a green run with nonsense output. The control-plane maps it to a failed run with a
@@ -364,7 +361,7 @@ def _resolve_in(parts: list[str], ports: _PortInputs, node_id: str) -> Any:
     absent — it does *not* error on the missing path, because optional absence is author-sanctioned
     (an *undeclared* port still errors above). ``absent`` is rendered per consumption site: ``""``
     inline (``_stringify_token`` of ``None``), JSON ``null`` in structured args (``_resolve_ref``
-    returns ``None``). **Fed-with-null collapses to absent deliberately**: a port producing ``null``
+    returns ``None``). **Fed-with-null collapses to absent**: a port producing ``null``
     is indistinguishable from an unfed optional port. The resolver does not re-check requiredness —
     a *required* unfed port was rejected at validation (``graph.py``), so it trusts the load-time
     guarantee. A *present* (non-null) value drills by field-path semantics, unchanged: a missing
@@ -435,8 +432,8 @@ def _available_fields(input_value: Any) -> str:
 
 
 def _stringify_token(value: Any) -> str:
-    """Render a resolved token value into the surrounding text: ``None`` is empty (parity with the
-    old ``$input`` swap), a string is itself, anything else is JSON (so ``$in.obj`` is legible)."""
+    """Render a resolved token value into the surrounding text: ``None`` is empty, a string is
+    itself, anything else is JSON (so ``$in.obj`` is legible)."""
 
     if value is None:
         return ""
@@ -446,7 +443,7 @@ def _stringify_token(value: Any) -> str:
 def _render_template(content: str, ports: _PortInputs, node_id: str) -> str:
     """Substitute ``$in`` / ``$in.<port>`` / ``$in.<port>.<field>`` tokens in one content string
     against the node's in-port map. ``$$`` is a literal ``$``. An unknown root (anything but
-    ``$in``, e.g. the removed ``$input``), an undeclared in-port, or an unresolvable drill raises
+    ``$in``, e.g. ``$input``), an undeclared in-port, or an unresolvable drill raises
     :class:`TemplateError` naming the node, the token, and the available ports/fields — no silent
     literal, no green run with nonsense."""
 
@@ -1542,7 +1539,7 @@ async def build_capability_schemas(
             schemas.append(schema or _fn_schema(node.id, cfg.description, None))
         elif node.type == "rag":
             # A retrieval capability self-describes statically: one required ``query`` string.
-            # topK/minSimilarity are authored knobs on the node, deliberately NOT model-settable.
+            # topK/minSimilarity are authored knobs on the node, NOT model-settable.
             rcfg = RagConfig.model_validate(node.config)
             schemas.append(
                 _fn_schema(
@@ -1806,7 +1803,7 @@ def resolve_gate_key(key_expr: str, ports: _PortInputs, node_id: str) -> str:
     """Resolve a gate's ``key_expr`` to the caller key. A ``$in`` ref resolves over the input
     (per-input-field key, e.g. ``$in.in.userId``); anything else (a literal, or ``$caller.token``)
     is the key verbatim — a single per-key bucket. Per-USER attribution (refining ``$caller.*`` to
-    a real principal) is deferred to the identity milestone, not faked here."""
+    a real principal) is deferred until identity lands, not faked here."""
     if key_expr.startswith("$in"):
         try:
             return _stringify(_resolve_ref(key_expr, ports, node_id))
@@ -2607,8 +2604,8 @@ async def _invoke_mcp(mcp: McpManager, server: str, tool: str, args: dict[str, A
     """THE single chokepoint every ``mcp_tool`` invocation passes through. This is the future
     governance attach-point — policy-as-code and audit logging hook in HERE, observing the
     *invocation* (which server, which tool, the arg shape), never the contents the server returns
-    (the redaction posture). The L2 policy layer is a separate, evidence-driven addition. For now
-    it simply forwards to the MCP manager. Both the interactive walker (via ``invoke_mcp_tool``)
+    (the redaction posture). A policy layer is a separate, future addition; today this
+    simply forwards to the MCP manager. Both the interactive walker (via ``invoke_mcp_tool``)
     and the durable step (via ``execute_mcp_tool``) pass through this one function, so governance
     lands once for both runtimes."""
 

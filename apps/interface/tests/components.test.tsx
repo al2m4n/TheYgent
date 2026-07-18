@@ -25,7 +25,7 @@ describe("Palette (derived from the registry, never hardcoded)", () => {
   it("renders one draggable item per registry node type (minus the hidden ones)", () => {
     render(<Palette />);
     // `mcp_tool` is the MCP *kind* of the one "Tool" node, not its own palette entry — so the
-    // palette shows every registry type EXCEPT the deliberately-hidden ones.
+    // palette shows every registry type EXCEPT the hidden ones.
     const hidden = new Set(["mcp_tool"]);
     for (const spec of NODE_TYPE_LIST) {
       if (hidden.has(spec.type)) {
@@ -34,7 +34,7 @@ describe("Palette (derived from the registry, never hardcoded)", () => {
         expect(screen.getByText(spec.type)).toBeInTheDocument();
       }
     }
-    // the unified Tool entry is present (its MCP kind absorbs the old mcp_tool drag target).
+    // the unified Tool entry is present (its MCP kind covers mcp_tool).
     expect(screen.getByText("tool")).toBeInTheDocument();
   });
 
@@ -286,7 +286,7 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
     const { container } = renderWithClient(<Harness />);
     const nodeOf = () => irRef.current?.nodes?.find((n) => n.id === "n_llm");
 
-    // The per-node view switch defaults to Wizard; the per-field messages "JSON" toggle is gone.
+    // The per-node view switch defaults to Wizard; there is no per-field messages "JSON" toggle.
     expect(screen.getByRole("button", { name: "Wizard" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "JSON" })).not.toBeInTheDocument();
 

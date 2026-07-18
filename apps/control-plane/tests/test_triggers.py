@@ -427,8 +427,7 @@ async def test_schedule_persists_and_fires_across_restart(
     fake_inference: FakeInference, pg_url: str
 ) -> None:
     # Register the schedule through one app, then "restart" (a fresh app on the SAME Postgres) and
-    # tick — the dispatcher re-reads it from the DB (rehydration is free) and fires it. The same
-    # lesson learned for the MCP registry applies here: schedules persist and rehydrate for free.
+    # tick — the dispatcher re-reads it from the DB (rehydration is free) and fires it.
     app1 = _app(fake_inference.v1_url, pg_url)
     async with app1.router.lifespan_context(app1):
         async with httpx.AsyncClient(

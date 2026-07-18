@@ -1,5 +1,5 @@
-// AgentBench version pinning (the "model change didn't apply" bug): the bench must default to the
-// LATEST saved version, and follow it as fresh data arrives, while still honoring a deliberate pick.
+// AgentBench version pinning: the bench must default to the LATEST saved version, and follow it
+// as fresh data arrives, while still honoring an explicitly picked older version.
 // Plus the human-in-the-loop affordance: a durable run paused at a human node shows a resume panel
 // that delivers the awaited input.
 

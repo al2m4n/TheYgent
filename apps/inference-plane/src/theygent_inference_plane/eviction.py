@@ -40,7 +40,7 @@ class ResourceBudget:
     #: only handed the *evictable* subset (``resident``), so without this it cannot see slots held
     #: by a busy/stuck engine and would under-evict — letting a single permanently-draining engine
     #: wedge the whole plane (an idle evictable engine never gets freed). Defaults to 0 → the policy
-    #: falls back to ``len(resident)`` (the pre-fix behavior) when a caller does not supply it.
+    #: falls back to ``len(resident)`` when a caller does not supply it.
     resident_total: int = 0
     #: how many pending loads this budget must make room for. Admission passes the default (1):
     #: the classic "free a slot for the incoming engine". Ceiling *enforcement* (a ceiling lowered

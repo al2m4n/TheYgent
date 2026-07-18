@@ -152,7 +152,7 @@ export function reactFlowToIr(rf: RFGraph, base: IRDocument): IRDocument {
     // Preserve the original label exactly — adding an id-fallback label would change hashed
     // content. A label edit goes through `updateNodeLabel` (an IR mutation), so the base is always
     // current; a brand-new node takes the canvas label. `null` (not omitted) mirrors the server's
-    // default-filled dump (D2), so a stored→reconstructed round-trip is field-for-field identical.
+    // default-filled dump, so a stored→reconstructed round-trip is field-for-field identical.
     node.label = (b ? b.label : rn.data.label) ?? null;
     return node;
   });
@@ -255,8 +255,8 @@ function builderDefaultConfig(
       config.messages = [{ role: "user", content: "$in" }];
     }
     // Tool-calling fields default to "no tools" — keep a freshly dropped llm node clean (and
-    // hash-equivalent to a hand-authored {model, messages}); they're configured via the Tools panel
-    // once the tool-calling loop ships. The RawConfig/Code views still expose them.
+    // hash-equivalent to a hand-authored {model, messages}); they're configured via the Tools
+    // panel. The RawConfig/Code views still expose them.
     for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete config[k];
   }
   return config;

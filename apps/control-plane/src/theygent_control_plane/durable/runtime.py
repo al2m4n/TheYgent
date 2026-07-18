@@ -1,18 +1,17 @@
-"""The durable runtime — DBOS lifecycle, the durable queue, the re-pointed ``fire()`` seam, and the
-DBOS-native dynamic schedules that replace the earlier in-process dispatcher.
+"""The durable runtime — DBOS lifecycle, the durable queue, the ``fire()`` seam, and DBOS-native
+dynamic schedules.
 
 DBOS is a **process-global singleton** (one ``DBOS()`` + ``DBOS.launch()`` per process), so this
 object is the single owner of that lifecycle. It installs the process-local resources the steps in
 ``compiler.py`` read, runs the DBOS system-schema migration (``dbos`` schema, kept out of Alembic),
 launches DBOS, and exposes:
 
-* ``fire(trigger, input)`` — the re-pointed fire seam: enqueue ``theygent_run`` on the durable queue
+* ``fire(trigger, input)`` — the fire seam: enqueue ``theygent_run`` on the durable queue
   and await its terminal result (HTTP-invoke + webhook converge here unchanged).
 * schedule CRUD — ``upsert_schedule`` / ``pause_schedule`` / ``delete_schedule`` over DBOS dynamic
   schedules, keyed ``trigger-<id>``; theygent's ``trigger`` table stays the source of truth.
 * ``reconcile_schedules`` — boot reconciliation: create missing schedules for enabled
-  schedule-triggers, drop orphans. This replaces the earlier in-process rehydrate-on-boot
-  and lifts the single-dispatcher constraint (DBOS schedules dedupe across instances).
+  schedule-triggers, drop orphans. Multi-instance-safe: DBOS schedules dedupe across instances.
 
 Two topologies, one codebase: in the desktop sidecar DBOS launches **in-process** with the API; in
 the server / air-gapped topology a separate ``/apps/worker`` process launches the same runtime
@@ -50,7 +49,7 @@ from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 logger = logging.getLogger("theygent.control_plane.durable")
 
 # The one durable queue every fired run flows onto. Concurrency is bounded by Postgres and
-# ample at theygent scale; ``None`` = unlimited (a concurrency cap is the deferred tuning).
+# ample at theygent scale; ``None`` = unlimited (no concurrency cap is applied).
 # Created at import so it is registered before ``DBOS.launch()``.
 RUN_QUEUE = Queue("theygent")
 
@@ -69,7 +68,7 @@ def _schedule_name(trigger_id: str) -> str:
 
 
 def run_dbos_migrations(database_url: str) -> None:
-    """Create/upgrade the DBOS system schema (``dbos``) on the same Postgres (D5). The ``dbos
+    """Create/upgrade the DBOS system schema (``dbos``) on the same Postgres. The ``dbos
     migrate`` equivalent — ONE deploy-time step, not a running service. Idempotent; run before
     launch in the worker bootstrap and the testcontainers fixture (alongside ``alembic upgrade
     head``). Alembic's ``public`` and DBOS's ``dbos`` never touch each other."""
@@ -77,7 +76,7 @@ def run_dbos_migrations(database_url: str) -> None:
 
 
 class DurableRuntime:
-    """Owns the embedded DBOS instance for one process (D2). Build it with the app's resources, then
+    """Owns the embedded DBOS instance for one process. Build it with the app's resources, then
     ``launch()``; ``shutdown()`` tears DBOS down. ``fire`` and the schedule helpers are the surface
     the control-plane (or the worker) drives."""
 
@@ -118,7 +117,7 @@ class DurableRuntime:
 
             telemetry = Telemetry(sessionmaker=sessionmaker, otlp_sink=build_otlp_sink())
         self.telemetry = telemetry
-        # Install the process-local resources the steps read (compiler-global, D2/D6).
+        # Install the process-local resources the steps read (compiler-global).
         compiler.set_resources(
             DurableResources(
                 gateway=gateway,
@@ -171,7 +170,7 @@ class DurableRuntime:
         if self._owns_telemetry and getattr(self.telemetry, "otlp", None) is not None:
             self.telemetry.otlp.shutdown()
 
-    # ── the re-pointed fire() seam ──────────────────────────────────────────────
+    # ── the fire() seam ─────────────────────────────────────────────────────────
 
     async def enqueue_run(
         self,

@@ -2,7 +2,7 @@
 
 The IR seam is identical to a local ``tool`` (call something with args, get a value back); the
 lifecycle underneath is new — external server processes with connection state and reconnection.
-``McpClient`` is the transport seam (stdio initially); ``McpManager`` owns the named-server
+``McpClient`` is the transport seam; ``McpManager`` owns the named-server
 registry and connections.
 """
 

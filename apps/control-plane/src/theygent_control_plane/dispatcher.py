@@ -7,7 +7,7 @@ so the scheduler is a thin asyncio loop over the persisted trigger registry, fro
 ``fire(trigger, input)`` seam. The durable runtime re-points firing at the worker without reshaping
 the trigger definition, the API, or the persisted rows.
 
-Two deliberate properties:
+Two load-bearing properties:
 
 * **Rehydration is free.** The dispatcher holds no in-memory schedule state — every tick re-reads
   enabled schedules from Postgres. So a fresh control-plane instance after a restart picks up every

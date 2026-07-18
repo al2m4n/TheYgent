@@ -4,11 +4,11 @@ Revision ID: 0002_graph_run
 Revises: 0001_initial
 Create Date: 2026-06-18
 
-A deliberate, additive contract extension: three nullable columns on ``run`` so a
+An additive contract extension: three nullable columns on ``run`` so a
 ``/graphs/runs`` run records the IR's registry coordinate (``graph_id`` + ``graph_version``)
 and its content-addressed identity (``content_hash``). NULL for a non-graph ``/runs`` run,
-so the earlier plain-run path is untouched. Recorded now, not yet gated on — correct when the
-registry consumes it. Hand-written and fully reversible (the round-trip test still holds).
+so the plain-run path is untouched. Recorded but not yet gated on — the registry consumes it.
+Hand-written and fully reversible (the round-trip test covers it).
 """
 
 from __future__ import annotations

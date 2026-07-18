@@ -1,5 +1,5 @@
 // Markdown rendering for assistant messages — GFM (tables, task lists, strikethrough), styled
-// with the app's slate ramp so it reads correctly in both themes. Kept intentionally lean: no
+// with the app's slate ramp so it reads correctly in both themes. Kept lean: no
 // syntax highlighting, no raw HTML (react-markdown escapes it by default — chat output is
 // untrusted model text).
 

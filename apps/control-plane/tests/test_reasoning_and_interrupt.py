@@ -1,14 +1,15 @@
-"""Fixes for the reasoning-model rough edges found in dogfooding.
+"""Reasoning-model rough edges.
 
 A reasoning model (e.g. Qwen3.5-9B-OptiQ) emits a hidden ``reasoning_content`` block BEFORE its
-``content`` answer. That produced three real symptoms in multi-turn use:
-  * the stream looked frozen during the (long) thinking phase — the control-plane only relayed
-    ``content`` deltas;
-  * when the token budget was exhausted by thinking, ``content`` came back empty and the run
-    completed GREEN with no answer;
-  * an aborted stream left the run stuck at ``streaming`` until the next restart's reconcile sweep.
+``content`` answer, which creates three failure modes in multi-turn use:
+  * the stream looks frozen during the (long) thinking phase if only ``content`` deltas are
+    relayed;
+  * when the token budget is exhausted by thinking, ``content`` comes back empty and the run
+    would complete GREEN with no answer;
+  * an aborted stream would leave the run stuck at ``streaming`` until the next restart's
+    reconcile sweep.
 
-These tests cover the three fixes: reasoning is streamed as a distinct ``event: reasoning``; an
+These tests pin the three behaviors: reasoning is streamed as a distinct ``event: reasoning``; an
 empty completion (``finish_reason: length``) is surfaced honestly; an interrupted stream is
 terminalized in-process.
 """

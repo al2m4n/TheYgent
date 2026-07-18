@@ -533,8 +533,7 @@ h3 {
 /* dotted canvas on the "plain" sections */
 .hero::before,
 .build::before,
-.caps::before,
-.tutorials::before {
+.caps::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -547,8 +546,7 @@ h3 {
 }
 .hero > *,
 .build > *,
-.caps > *,
-.tutorials > * {
+.caps > * {
   position: relative;
   z-index: 1;
 }
@@ -1221,77 +1219,83 @@ h3 {
   border-color: color-mix(in oklab, var(--green) 40%, transparent);
 }
 
-/* ═══════════════════════════ TUTORIALS ═════════════════════════════════════ */
-.tut {
-  --cut: 16px;
+/* ═══════════════════════════ PRODUCTION ════════════════════════════════════ */
+.production.band {
+  background: var(--surface-2);
+}
+.prod-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: clamp(28px, 4vw, 56px);
+  align-items: center;
+}
+/* four pillars stack in the narrow column — the 3-across default doesn't fit */
+.prod-points {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 30px;
+}
+.prod-points li {
+  padding: 14px 16px 15px;
+}
+.prod-points .pt-v {
+  font-size: 0.9rem;
+}
+.prod-points .pt-k {
+  margin-bottom: 5px;
+}
+
+/* the trace waterfall panel */
+.trace-body {
+  padding: 18px 16px 14px;
+  display: grid;
+  gap: 10px;
+}
+.tr-row {
+  display: grid;
+  grid-template-columns: minmax(0, 176px) minmax(0, 1fr) 46px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.68rem;
+}
+.tr-name {
+  color: var(--text-2);
+  white-space: nowrap;
   overflow: hidden;
-  background: var(--elev);
+  text-overflow: ellipsis;
 }
-.tut-thumb {
+.tr-tag {
+  font-style: normal;
+  color: var(--text-3);
+}
+.tr-ms {
+  color: var(--text-3);
+  text-align: right;
+}
+.tr-track {
   position: relative;
-  aspect-ratio: 16 / 9;
-  display: grid;
-  place-items: center;
-  background:
-    radial-gradient(120% 120% at 30% 20%, color-mix(in oklab, var(--periwinkle) 14%, transparent), transparent 60%),
-    radial-gradient(var(--grid) 1px, transparent 1.4px) 0 0 / 18px 18px,
-    var(--surface);
-  border-bottom: 1px solid var(--border);
+  height: 10px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--border-2) 55%, transparent);
+  overflow: hidden;
 }
-.tut-play {
-  width: 54px;
-  height: 54px;
-  display: grid;
-  place-items: center;
-  background: color-mix(in oklab, var(--bg) 55%, transparent);
-  border: 1px solid var(--border-2);
-  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
-  transition: transform 0.2s ease, background 0.2s ease;
-}
-.tut:hover .tut-play {
-  transform: scale(1.08);
-  background: color-mix(in oklab, var(--periwinkle) 22%, var(--bg));
-}
-.tri {
-  width: 0;
-  height: 0;
-  border-left: 13px solid var(--text);
-  border-top: 8px solid transparent;
-  border-bottom: 8px solid transparent;
-  margin-left: 3px;
-}
-.tut-badge {
+.tr-bar {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  font-size: 0.64rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--amber);
-  background: color-mix(in oklab, var(--amber) 14%, var(--bg));
-  border: 1px solid color-mix(in oklab, var(--amber) 34%, transparent);
-  padding: 3px 8px;
-  border-radius: 999px;
+  top: 0;
+  bottom: 0;
+  border-radius: 3px;
 }
-.tut-num {
-  position: absolute;
-  right: 12px;
-  bottom: 10px;
-  font-size: 0.72rem;
-  color: var(--text-3);
+.tr-slate {
+  background: color-mix(in oklab, var(--text-3) 70%, transparent);
 }
-.tut-meta {
-  padding: 16px 18px 20px;
+.tr-accent {
+  background: var(--accent);
 }
-.tut-meta h3 {
-  font-size: 1.04rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+.tr-violet {
+  background: var(--violet);
 }
-.tut-meta p {
-  margin-top: 6px;
-  font-size: 0.76rem;
-  color: var(--text-3);
+.tr-green {
+  background: var(--green);
 }
 
 /* ═══════════════════════════ LICENSE ═══════════════════════════════════════ */
@@ -1388,7 +1392,8 @@ h3 {
   }
   .hero-grid,
   .build-grid,
-  .qs-grid {
+  .qs-grid,
+  .prod-grid {
     grid-template-columns: 1fr;
   }
   .build-visual {

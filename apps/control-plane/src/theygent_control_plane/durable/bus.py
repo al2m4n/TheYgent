@@ -1,4 +1,4 @@
-"""The in-process delta bus — streaming ↔ durability, resolved (D7).
+"""The in-process delta bus — how streaming coexists with durability.
 
 DBOS journals **step results**, not tokens. So live token streaming is a **non-durable
 side-channel** over the durable spine: the ``llm`` step streams tokens to THIS bus *as a side

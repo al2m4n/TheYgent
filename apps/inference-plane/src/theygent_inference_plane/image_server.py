@@ -7,7 +7,7 @@ sibling OpenAI server the ``(engine, images.generation)`` launcher spawns and th
 to: it shells out to the chosen CLI per request and returns the OpenAI images shape (base64).
 
 Weights load per request (the CLIs are one-shot), so generation carries the model-load cost each
-call — a persistent-load server is the future optimization. Stdlib only (no heavy deps): it reads
+call. Stdlib only (no heavy deps): it reads
 the produced PNG and base64-encodes it. The engine binary is resolved from the CLI (or its env
 override); if missing, ``/readyz``-style startup fails loudly.
 """

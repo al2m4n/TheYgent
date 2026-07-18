@@ -3,7 +3,7 @@
 The fast suite proves each lowering against real embedded DBOS with a fake model frozen mid-step.
 This env-gated test adds the headline demo on the real surface: an agent with a ``map`` fan-out
 **and** a ``human`` gate, on real MLX, killed mid-run, resumes — the wait survives the restart and
-the map branches ran for real ("durable, expressive, air-gapped").
+the map branches ran for real.
 
 Skipped by default (``-m 'not integration'``); skips clean without prerequisites. Run (Apple
 Silicon, an inference plane already serving a logical id ``triage-fast``)::
@@ -13,8 +13,8 @@ Silicon, an inference plane already serving a logical id ``triage-fast``)::
         uv run --package theygent-control-plane pytest -m integration \
         apps/control-plane/tests/test_integration_lowering_nodes.py
 
-The full hand-driven clip — an agent that calls a sub-agent, fans out over a list,
-then pauses for human approval, killed mid-run and resumed — is the 30-second architecture story.
+The full hand-driven demo — an agent that calls a sub-agent, fans out over a list,
+then pauses for human approval, killed mid-run and resumed — is the manual counterpart.
 """
 
 from __future__ import annotations
@@ -75,12 +75,12 @@ def _llm_agent(agent_id: str, prompt: str) -> dict:
 
 def _body_ir() -> dict:
     # The map body: a real one-word MLX classification per element.
-    return _llm_agent("agt_m14_body", "Reply with one word: $in")
+    return _llm_agent("agt_demo_body", "Reply with one word: $in")
 
 
 def _summarizer_ir() -> dict:
     # The sub-agent the demo CALLS (subgraph): a real MLX summary over the map's results.
-    return _llm_agent("agt_m14_sum", "In one word, summarize: $in")
+    return _llm_agent("agt_demo_sum", "In one word, summarize: $in")
 
 
 def _demo_ir(body_version: str, sum_version: str) -> dict:
@@ -94,7 +94,7 @@ def _demo_ir(body_version: str, sum_version: str) -> dict:
                 "n_map",
                 "map",
                 "orchestration",
-                config={"agent": "agt_m14_body", "version": body_version, "onError": "collect"},
+                config={"agent": "agt_demo_body", "version": body_version, "onError": "collect"},
                 ins=["in"],
                 outs=["ok", "err"],
             ),
@@ -102,7 +102,7 @@ def _demo_ir(body_version: str, sum_version: str) -> dict:
                 "n_sg",
                 "subgraph",
                 "boundary",
-                config={"agent": "agt_m14_sum", "version": sum_version},
+                config={"agent": "agt_demo_sum", "version": sum_version},
                 ins=["in"],
                 outs=["ok", "err"],
             ),
@@ -116,7 +116,7 @@ def _demo_ir(body_version: str, sum_version: str) -> dict:
             _edge("e4", "n_h", "ok", "n_out"),
         ],
     )
-    ir["id"] = "agt_m14_demo"
+    ir["id"] = "agt_demo_main"
     return ir
 
 
@@ -124,7 +124,7 @@ def _demo_ir(body_version: str, sum_version: str) -> dict:
 async def test_human_gate_and_map_fanout_resumes_on_mlx() -> None:
     assert _DATABASE_URL and _INFERENCE_BASE_URL
     # Run the sync Alembic upgrade off this event loop — its env.py uses asyncio.run() internally,
-    # which collides with pytest-asyncio's running loop (latent: this env-gated test never ran).
+    # which collides with pytest-asyncio's running loop.
     await asyncio.to_thread(_prepare_db, _DATABASE_URL)
 
     from _durable import save_agent
@@ -192,8 +192,8 @@ async def test_human_gate_and_map_fanout_resumes_on_mlx() -> None:
         # and the map FANNED OUT (one child run per element) — and the human wait survived the kill.
         async with sm() as s:
             runs = await RunStore().list_runs(s, limit=50)
-        assert len([r for r in runs if r.graph_id == "agt_m14_body"]) == 2  # map: 2 branches
-        assert len([r for r in runs if r.graph_id == "agt_m14_sum"]) == 1  # subgraph: 1 child
+        assert len([r for r in runs if r.graph_id == "agt_demo_body"]) == 2  # map: 2 branches
+        assert len([r for r in runs if r.graph_id == "agt_demo_sum"]) == 1  # subgraph: 1 child
     finally:
         rt2.shutdown()
         await gw.aclose()

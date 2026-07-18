@@ -1,7 +1,7 @@
 """Session-level conversational memory — mechanical replay, proven against
 real Postgres + real Alembic schema.
 
-Memory here is deliberately NOT smart: store the turns, replay them verbatim on the next
+Memory here is NOT smart: store the turns, replay them verbatim on the next
 run in the session. These tests pin exactly that — the prior turns reach the inference wire
 in order, the user+assistant pair lands atomically on success, a failed run contributes
 no turn, and position gives deterministic ordering across runs.

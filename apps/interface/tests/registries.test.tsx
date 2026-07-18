@@ -343,7 +343,7 @@ describe("Registries page — installed + add", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     renderRegistries();
-    // The installed model shows without any tab switch (Installed IS the page now).
+    // The installed model shows without any tab switch (Installed is the page's landing view).
     await screen.findByText("qwen-reasoner");
     // Capabilities are not auto-fetched (probing warms the engine) — there's a probe button.
     fireEvent.click(screen.getByRole("button", { name: "Probe capabilities" }));
@@ -393,7 +393,7 @@ describe("Registries page — installed + add", () => {
 
     // The credential picker lists the stored secret (openai-compatible is the default binding).
     await screen.findByRole("option", { name: "OPENAI_API_KEY" });
-    // The old hf/url Source options are gone — manual managed registration is local-path only.
+    // No hf/url Source options — manual managed registration is local-path only.
     expect(screen.queryByRole("option", { name: "url" })).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "hf" })).not.toBeInTheDocument();
   });

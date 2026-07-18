@@ -1,4 +1,4 @@
-"""Tier B — vLLM real path. UNVERIFIED until run on a CUDA host (GPU CI or cloud box).
+"""vLLM real path. UNVERIFIED until run on a CUDA host (GPU CI or cloud box).
 
 vLLM's slot is NVIDIA/CUDA high-throughput serving. This test is **gated on actual
 CUDA availability** and skips clean on the build machine (Apple Silicon / any non-CUDA

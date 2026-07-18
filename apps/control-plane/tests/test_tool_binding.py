@@ -1,6 +1,6 @@
 """A `tool` node resolves its binding by shape, and the up-front check catches the wrong shape.
 
-Three cases the runtime used to get subtly wrong for a `tool` node whose ``config.tool`` is a key
+Three cases that are easy to get subtly wrong for a `tool` node whose ``config.tool`` is a key
 in ``ir.tools`` (rather than a directly-registered builtin name):
 
 * a ``builtin`` binding names its callable via ``ref`` — the step must resolve the ref, not look

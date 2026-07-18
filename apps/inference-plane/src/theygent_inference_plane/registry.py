@@ -1,15 +1,13 @@
 """Logical-model registry — the management-plane store.
 
-Maps a logical id → its registered binding. The registry started purely in-memory; optional
-local persistence was added so registrations survive a restart — but, critically, **local to
+Maps a logical id → its registered binding. Persistence is optional and, critically, **local to
 the inference plane**, never the control-plane's Postgres.
 
 This is the plane boundary made concrete. The inference plane runs in the **user's trust domain**;
-coupling it to the control-plane DB is a plane-boundary regression. So the
+coupling it to the control-plane DB would break that boundary. So the
 store here is a small JSON state file in the inference plane's own state dir — no SQLAlchemy, no
-asyncpg, no shared database. The registry persists the *registration* (the binding), exactly as the
-control-plane's MCP registry persists its registration — symmetric concern, deliberately different
-store. When ``state_path`` is ``None`` the registry is pure in-memory (the fast suite
+asyncpg, no shared database. The registry persists the *registration* (the binding).
+When ``state_path`` is ``None`` the registry is pure in-memory (the fast suite
 uses this so tests never touch the filesystem).
 """
 

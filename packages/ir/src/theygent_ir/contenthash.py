@@ -1,7 +1,7 @@
 """``content_hash`` — content-addressed graph identity.
 
 The hash is computed over the **canonical, view-stripped, key-sorted JSON** of the document.
-Three deliberate exclusions, each load-bearing:
+Three exclusions, each load-bearing:
 
 * ``view`` — React-Flow layout (positions, zoom, collapsed state). Dragging a node must never
   produce a "new version" (layout must not affect graph identity), so layout is never hashed.

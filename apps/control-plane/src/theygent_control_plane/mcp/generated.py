@@ -6,7 +6,7 @@ server hosted IN THIS PROCESS: no subprocess, no socket — the client reaches i
 transport, and only the *upstream* API calls leave the process (through an httpx client that
 carries the server-side-resolved auth headers; the secret never appears in the IR).
 
-The two shapes are deliberately different:
+The two shapes differ:
 
 - **OpenAPI** → one tool per operation (named by ``operationId``), derived mechanically from the
   parsed ``spec``. ``options.include`` / ``options.exclude`` are glob patterns over route paths

@@ -456,8 +456,8 @@ function RunSubItem({ run }: { run: Run }) {
 }
 
 // Chats, collapsible: the label opens the Chats page; expanded, it previews recent conversations —
-// the "continue where I left off" list that used to sit under the nav as "Recents". Every chat
-// surface records into a session, so this covers the chat page, model benches, and agent chats.
+// the "continue where I left off" list. Every chat surface records into a session, so this covers
+// the chat page, model benches, and agent chats.
 function ChatsNav() {
   const { data, isSuccess } = useSessionsInfinite();
   const sessions = useMemo(() => flattenPages(data).slice(0, RAIL_PREVIEW), [data]);

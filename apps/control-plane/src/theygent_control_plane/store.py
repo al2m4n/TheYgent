@@ -1,6 +1,6 @@
 """``RunStore`` — Postgres-backed run persistence + session memory.
 
-Replaces the earlier in-memory ``RunRegistry``. Every method takes an ``AsyncSession`` handed in
+Every method takes an ``AsyncSession`` handed in
 by the caller, who owns the transaction boundary: the read path uses a request
 session; the run-execution path opens a transaction per logical operation (so the
 post-stream pair-write is atomic on its own). Nothing here commits — the caller does.
@@ -101,7 +101,7 @@ def _to_run(row: RunRow) -> Run:
 
 
 # Terminal statuses get a real-time completion timestamp stamped (evidence gate for duration/cost).
-# The startup reconcile sweep deliberately does NOT use this path — a zombie's true end time is
+# The startup reconcile sweep does NOT use this path — a zombie's true end time is
 # unknown.
 _TERMINAL_STATUSES = ("completed", "failed")
 
@@ -398,8 +398,7 @@ class RunStore:
             update(RunRow)
             .where(RunRow.id == run_id, RunRow.status.in_(("created", "streaming")))
             # A client-disconnect terminalization is a real-time terminal transition, so stamp
-            # This is a real-time terminal transition, so stamp completed_at — unlike the startup
-            # reconcile sweep, this IS the run's end.
+            # completed_at — unlike the startup reconcile sweep, this IS the run's end.
             .values(status="failed", error=reason, updated_at=ts, completed_at=ts)
         )
         return bool(cast("CursorResult[Any]", result).rowcount)
@@ -415,7 +414,7 @@ class RunStore:
         Run once at startup, before serving requests. Bulk UPDATE (no per-row domain mapping): the
         caller owns the transaction, exactly like every other store method.
 
-        Deliberately does NOT set ``completed_at``: a zombie's real end time is unknown
+        Does NOT set ``completed_at``: a zombie's real end time is unknown
         (it died with the prior process), so ``now()`` here would be reconcile-time garbage that
         skews the duration/cost evidence. A ``failed`` run with NULL ``completed_at`` reads honestly
         as "crashed, end time unknown", distinct from a run that failed in real time."""
@@ -944,7 +943,7 @@ def _derive_draft_meta(ir: dict[str, Any]) -> tuple[str, int]:
 
 class DraftStore:
     """Postgres persistence for editor drafts — mutable, autosaved, possibly-invalid agent
-    graphs, deliberately OUTSIDE the registry's immutability invariants (contrast
+    graphs, OUTSIDE the registry's immutability invariants (contrast
     ``AgentStore``: no hashing, no version rows, updates in place). Stateless ops over a
     caller-provided session (the caller owns the transaction boundary), domain ``AgentDraft``
     out, ``AgentDraftRow`` never leaks. The store takes the already view-stripped ``ir`` +

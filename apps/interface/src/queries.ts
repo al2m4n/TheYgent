@@ -1,4 +1,4 @@
-// TanStack Query hooks for the operator surface (Runs, Chats/Sessions) ported from the cockpit.
+// TanStack Query hooks for the operator surface (Runs, Chats/Sessions).
 // Server state lives here; mutations auto-invalidate the relevant list queries on success. Local UI
 // state stays component useState. The query keys match the ad-hoc keys the canvas routes already use
 // (["agents"], ["agent", id], ["models"]) so invalidation stays consistent across both surfaces.

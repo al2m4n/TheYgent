@@ -366,7 +366,7 @@ def test_latest_is_highest_seq_not_highest_semver(
 ) -> None:
     # "latest" = most recently PUBLISHED (highest seq), NOT highest semver (order by the
     # explicit seq column, never by a parsed version/timestamp). So a backport published after a
-    # higher semver becomes latest. Recorded + tested because the cockpit's default invoke uses
+    # higher semver becomes latest. This matters because the cockpit's default invoke uses
     # latest. Trigger-based deploys mandate pinning, so this only governs the convenience default.
     ir = _agent_ir(version="0.3.0", prompt="HIGH_SEMVER: $in")
     client.post("/agents", json={"ir": ir})

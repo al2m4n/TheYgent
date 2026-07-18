@@ -118,7 +118,7 @@ def test_services_select_existing_workloads(k8s_docs: list[dict]) -> None:
 def test_hpas_target_existing_deployments(k8s_docs: list[dict]) -> None:
     deployments = set(_by_kind(k8s_docs, "Deployment"))
     hpas = _by_kind(k8s_docs, "HorizontalPodAutoscaler")
-    # The scalable planes stay scalable — removing an HPA is a deliberate decision.
+    # The scalable planes stay scalable — removing an HPA must be an explicit change.
     assert {"control-plane", "worker"} <= set(hpas)
     for name, hpa in hpas.items():
         ref = hpa["spec"]["scaleTargetRef"]

@@ -3,8 +3,7 @@
 The fast suite proves kill-and-resume against **real embedded DBOS** (the same runtime), with a fake
 model frozen mid-activity. This env-gated test adds the one thing the fast suite can't: a real
 multi-step agent whose activities are real MLX inference calls, executed through the durable
-``theygent_run`` workflow end to end — the "reliable to run unattended" proof on the real surface
-(the milestone exists for this).
+``theygent_run`` workflow end to end — the "reliable to run unattended" proof on the real surface.
 
 Skipped by default (``-m 'not integration'``); skips clean without prerequisites. Run (Apple
 Silicon, an inference plane already serving a logical id ``triage-fast``)::
@@ -101,8 +100,7 @@ def _two_step_ir() -> dict:
 async def test_real_multistep_agent_runs_durably_on_mlx() -> None:
     assert _DATABASE_URL and _INFERENCE_BASE_URL
     # Alembic's async env.py calls asyncio.run() internally; run the sync upgrade OFF this running
-    # event loop (pytest-asyncio) so the two loops don't collide. (Latent bug: this env-gated test
-    # had never actually executed, so the collision was never hit.)
+    # event loop (pytest-asyncio) so the two loops don't collide.
     await asyncio.to_thread(_prepare_db, _DATABASE_URL)
 
     from theygent_control_plane import db

@@ -81,8 +81,8 @@ export function inferenceUrl(): string {
   return readOverride("inference") ?? INFERENCE_URL;
 }
 
-// The static dev token the control-plane's no-op `require_auth` accepts (same seam as the
-// cockpit). Centralised so swapping in a real token flow later touches only this function.
+// The static dev token the control-plane's no-op `require_auth` accepts. Centralised so
+// swapping in a real token flow later touches only this function.
 function authHeaders(): Record<string, string> {
   const token =
     (typeof localStorage !== "undefined" && localStorage.getItem("theygent.token")) || "dev-local";
@@ -173,7 +173,7 @@ export interface StoredVersion {
 // ── control-plane drafts (snake_case) ────────────────────────────────────────
 // A draft is the MUTABLE work-in-progress counterpart of an agent version: autosaved from the
 // editor, allowed to be structurally invalid, never hashed. Publishing goes through the registry
-// (/agents) as before — a draft only bridges editing sessions. `agent_id` points at the registry
+// (/agents) — a draft only bridges editing sessions. `agent_id` points at the registry
 // agent a draft edits (null for a never-published graph); `owner_id` is reserved for when user
 // accounts land (null today).
 
@@ -772,7 +772,7 @@ export interface InferenceDiagnostics {
 }
 
 export const api = {
-  // ── control-plane runs + sessions (the operator surface, ported from the cockpit) ──
+  // ── control-plane runs + sessions (the operator surface) ──────────────────
   listRuns: (params: { limit?: number; before?: string } = {}) => {
     const q = new URLSearchParams();
     if (params.limit) q.set("limit", String(params.limit));
@@ -1458,7 +1458,7 @@ export const api = {
     request<InferenceDiagnostics>(inferenceUrl(), "/admin/diagnostics"),
 };
 
-// ── streaming (the run composer + live trace; ported from the cockpit) ───────
+// ── streaming (the run composer + live trace) ────────────────────────────────
 // POST + read the SSE body on the SAME request: the composer creates and streams from one POST,
 // and we need custom headers + programmatic abort — none of which `EventSource` supports. One SSE
 // frame parser (lib/sse.ts) is reused across every streaming surface.

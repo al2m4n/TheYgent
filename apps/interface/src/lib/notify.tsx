@@ -1,5 +1,5 @@
-// The one central place for messages, progress and status (replaces the per-page / per-modal
-// download trays). A single <NotificationCenter/> mounts at the app root (outside the routed view),
+// The one central place for messages, progress and status.
+// A single <NotificationCenter/> mounts at the app root (outside the routed view),
 // so anything reported here is visible from every page, bottom-right, and survives navigation.
 //
 //  • notify.success/error/info/…  — one-off transient messages, from anywhere.
@@ -41,8 +41,8 @@ export function trackDownload(job: Pick<DownloadJob, "id"> & Partial<DownloadJob
   );
 }
 
-// One live download row — polls the plane until the job settles, then offers to dismiss. Lifted out
-// of the Registries page so it lives in the global toaster and survives navigation.
+// One live download row — polls the plane until the job settles, then offers to dismiss. Lives in
+// the global toaster (not any one page) so it survives navigation.
 function DownloadToast({
   jobId,
   initial,

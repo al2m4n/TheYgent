@@ -1,6 +1,6 @@
 """connection + secret — the tool/MCP auth seam
 
-The #1 hard-to-reverse decision here: tool/MCP auth never lives inline in the IR. A node references
+Tool/MCP auth never lives inline in the IR. A node references
 a
 logical tool key in ``ir.tools``; that binding references a ``connection`` by id; the connection
 carries NON-SECRET config in JSONB and a ``secret_ref`` pointing at the encrypted ``secret`` row.

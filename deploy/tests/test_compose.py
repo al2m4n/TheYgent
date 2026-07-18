@@ -77,7 +77,7 @@ def test_ports_mirror_the_make_stack(compose: dict) -> None:
     assert "8081:8081" in services["inference-plane"]["ports"]
     assert "5174:80" in services["interface"]["ports"]
     # The compose Postgres publishes a host port for debugging; an exact-match assertion so
-    # remapping it (e.g. onto :5432 to also back the bare-metal stack) is a deliberate,
+    # remapping it (e.g. onto :5432 to also back the bare-metal stack) is an explicit,
     # test-acknowledged change rather than silent drift.
     pg_ports = services["postgres"]["ports"]
     assert pg_ports in (["5433:5432"], ["127.0.0.1:5432:5432"]), pg_ports

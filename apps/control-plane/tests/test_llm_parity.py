@@ -1,11 +1,11 @@
 """Characterization/golden baseline for the interactive ``llm`` path.
 
-Before refactoring ``_walk_llm`` to delegate to the shared ``execute_llm`` body (so the tool
-loop is written once, not twice), this pins the OBSERVABLE behavior of a graph
+``_walk_llm`` delegates to the shared ``execute_llm`` body (so the tool loop is written once,
+not twice); this pins the OBSERVABLE behavior of a graph
 ``llm`` node's streaming: the ``event: reasoning`` / ``event: delta`` SSE sequence, content
 reassembly across chunks, the persisted output (answer only — thinking never folded in), and the
-honest truncated-empty (``finish_reason: length``) reason. The refactor must keep every assertion
-here green (plus the whole llm suite) — that is what makes it "byte-identical".
+honest truncated-empty (``finish_reason: length``) reason. Any change to that delegation must
+keep every assertion here green (plus the whole llm suite) — that is what "byte-identical" means.
 
 The streaming relay frames are: ``event: run`` (status: streaming) → ``event: reasoning`` /
 ``event: delta`` token frames → ``event: run`` (status: completed) → ``data: [DONE]``. The final

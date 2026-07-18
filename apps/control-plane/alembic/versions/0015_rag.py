@@ -13,12 +13,12 @@ The load-bearing shape decisions:
 * ``rag_chunk.embedding`` is an UNTYPED ``vector`` column: pgvector ANN indexes need a fixed
   dimension but sources pin different models. Queries therefore always filter ``dim = <n>`` and
   cast ``embedding::vector(<n>)`` — the exact expression the per-dimension partial HNSW index
-  (created by the ingest service when a dimension first appears; deliberate runtime DDL, kept out
+  (created by the ingest service when a dimension first appears; runtime DDL, kept out
   of this chain because the dimensions are data, not schema) is defined over.
 * ``rag_chunk.tsv`` is a GENERATED tsvector over the chunk text — the keyword leg of hybrid
   search, fused with vector similarity via reciprocal rank fusion at query time.
 
-Hand-written and reversible. ``downgrade`` drops the tables but deliberately NOT the ``vector``
+Hand-written and reversible. ``downgrade`` drops the tables but not the ``vector``
 extension — an extension is database-scoped, other consumers may exist, and leaving it installed
 is harmless.
 """

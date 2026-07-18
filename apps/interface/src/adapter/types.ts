@@ -7,7 +7,7 @@
 
 import type { XYPosition } from "@xyflow/react";
 
-/** What a canvas node renders. Deliberately minimal — see the file header. */
+/** What a canvas node renders. Minimal by design — see the file header. */
 export interface TheygentNodeData extends Record<string, unknown> {
   /** Human label shown on the node (falls back to the node id when the IR has none). */
   label: string;

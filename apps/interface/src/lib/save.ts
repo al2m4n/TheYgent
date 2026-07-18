@@ -1,5 +1,5 @@
-// Publish — reuse the registry's existing semantics; invent none. (Drafts are the mutable
-// autosave tier; THIS is the deliberate act that mints an immutable, visible version.)
+// Publish — reuses the registry's existing semantics; invents none. (Drafts are the mutable
+// autosave tier; THIS is the act that mints an immutable, visible version.)
 //
 // A new agent → POST /agents (create); an existing one → POST /agents/{id}/versions (add a new
 // immutable version). For a graph that began "new" but whose id already exists, the registry

@@ -2,11 +2,10 @@
 
 ``Run`` is a clean Pydantic entity that maps 1:1 to a table. ``Run`` stays the **domain**
 shape and is *not* the ORM row: it is mapped to/from ``RunRow`` in ``store.py``.
-``session_id`` is the one additive field (optional; ``None`` = a one-shot run).
+``session_id`` is optional (``None`` = a one-shot run).
 
-The earlier in-memory run registry is gone: persistence now lives in the Postgres-backed
-``RunStore`` (``store.py``), so runs survive a restart and are shared state across
-horizontally-scaled control-plane instances.
+Persistence lives in the Postgres-backed ``RunStore`` (``store.py``), so runs survive a
+restart and are shared state across horizontally-scaled control-plane instances.
 """
 
 from __future__ import annotations
@@ -17,8 +16,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 from ulid import ULID
 
-# ``waiting`` is the additive durable-wait status — a run paused at a ``human`` node,
-# checkpointed on ``DBOS.recv``. It is NOT ``failed`` and is deliberately EXCLUDED from the
+# ``waiting`` is the durable-wait status — a run paused at a ``human`` node,
+# checkpointed on ``DBOS.recv``. It is NOT ``failed`` and is EXCLUDED from the
 # reconciliation sweep (which touches only ``created``/``streaming``), so a run can wait
 # indefinitely across a worker restart without being reconciled to ``failed``.
 RunStatus = Literal["created", "streaming", "waiting", "completed", "failed"]
@@ -185,7 +184,7 @@ class StoredVersion(BaseModel):
 
 class AgentDraft(BaseModel):
     """A mutable, autosaved, possibly-invalid agent graph — the editor's work-in-progress,
-    the deliberate opposite of ``StoredVersion`` (immutable, content-addressed, validated).
+    the opposite of ``StoredVersion`` (immutable, content-addressed, validated).
     The ``ir`` is never validated or hashed; ``view`` is the layout, split off exactly like the
     registry's ir/view. ``agent_id`` is the registry agent this draft edits (``None`` for a
     never-published graph; a plain breadcrumb, never an enforced link). ``owner_id`` is the
@@ -305,7 +304,7 @@ class Connection(BaseModel):
         return data
 
 
-# ── Bench domain entities — the deferred test/benchmark layer ────────────────────────────────────
+# ── Bench domain entities — the test/benchmark layer ───────────────────────────────────────────
 # Like Run/Agent*/Trigger these are domain shapes the store maps the ``bench_*`` rows onto,
 # never the ORM rows. A benchmark is honest only if pinned to exactly what ran; a preset is a
 # literal param snippet, never a live reference. The bench adds NO execution path — these record

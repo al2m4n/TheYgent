@@ -186,8 +186,8 @@ const SIZE_OPTIONS = [
 ];
 
 // ── the Registries page: installed models + an Add flow ──────────────────────
-// Install progress no longer lives here — it's reported to the global NotificationCenter
-// (bottom-right, persists across navigation). Starting an install just spawns a toast.
+// Install progress is reported to the global NotificationCenter (bottom-right, persists across
+// navigation). Starting an install just spawns a toast.
 
 export function Registries() {
   const [adding, setAdding] = useState(false);
@@ -484,8 +484,7 @@ function InstalledPanel() {
                     </ItemMedia>
                     <ItemContent>
                       <ItemTitle>
-                        {/* The logical id opens the registration (settings / hub detail) — the same
-                            thing the whole row used to do, now an explicit target. */}
+                        {/* The logical id opens the registration (settings / hub detail). */}
                         <button
                           type="button"
                           onClick={() => setInspectModel(m)}
@@ -815,8 +814,8 @@ const MODALITY_OPTIONS = ["chat", "vision", "embeddings", "audio.transcription",
 // Editable settings for a registration that ISN'T a hub install: reachable (openai-compatible)
 // APIs and managed models pointing at local weights. PUT /admin/models/{id} is an upsert, so save
 // overlays the edited fields onto the binding exactly as fetched (same camelCase wire shape,
-// nothing stripped) and re-registers under the same logical id. Renaming is deliberately not
-// offered — a different logical id is a new registration, not an edit.
+// nothing stripped) and re-registers under the same logical id. Renaming is not offered — a
+// different logical id is a new registration, not an edit.
 function RegistrationSettingsModal({
   model,
   onClose,
@@ -1665,4 +1664,4 @@ function InstallDialog({
   );
 }
 
-// (Live download progress now renders in the global NotificationCenter — see lib/notify.tsx.)
+// (Live download progress renders in the global NotificationCenter — see lib/notify.tsx.)

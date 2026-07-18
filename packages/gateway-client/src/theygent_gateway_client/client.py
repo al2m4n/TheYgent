@@ -1,16 +1,16 @@
 """GatewayClient — the transport-only OpenAI-compatible client.
 
 Wraps the official async ``openai`` SDK pointed at the inference plane's ``/v1/*``
-data plane. The SDK is deliberate: it speaks the exact OpenAI shape the inference-plane
-seam promises, so using it from the control-plane *is* the end-to-end proof that the seam
-is OpenAI-compatible (and we get streaming + types for free).
+data plane. The SDK speaks the exact OpenAI shape the inference-plane seam promises,
+so using it from the control-plane is an end-to-end proof that the seam is
+OpenAI-compatible (and it provides streaming + types for free).
 
 Invariants this module holds:
 
 * **Transport-only.** No ``Run``, no registry, no model resolution, no error policy.
   It forwards a logical model id + messages/params and hands back chunks/objects. The
-  caller (control-plane) owns run identity and decides how to map errors. We even keep
-  ``run_id`` out of the signature — callers pass an opaque ``extra_headers`` dict (the
+  caller (control-plane) owns run identity and decides how to map errors. Even
+  ``run_id`` stays out of the signature — callers pass an opaque ``extra_headers`` dict (the
   control-plane puts ``x-theygent-run-id`` there), so nothing run-shaped leaks in.
 * **Errors surface, not swallowed.** A non-200 from inference (e.g. ``503
   engine_unavailable``, ``404 model_not_found``) raises ``openai.APIStatusError`` at the
@@ -154,15 +154,14 @@ class GatewayClient:
         a mid-stream failure raises during iteration.
 
         ``tools``/``tool_choice`` carry the OpenAI function-calling protocol verbatim —
-        a NAMED transport-seam extension (not buried in ``params``) so the function-calling
+        explicit named kwargs (not buried in ``params``) so the function-calling
         contract is explicit and type-checked. The inference plane forwards them to the engine
         (no inference-side change); a model that ignores them simply streams content. Forwarded
         only when set, so a tools-less call is byte-identical to a call without tools.
 
         ``include_usage`` requests token accounting on the stream via the OpenAI
         ``stream_options`` field: the server appends a final chunk carrying ``usage``
-        (verified against real local engines, which emit it only when asked). Another
-        named transport-seam extension — off by default, so a plain call is unchanged;
+        (local engines emit it only when asked). Off by default, so a plain call is unchanged;
         an upstream that ignores the field simply streams without usage (the caller must
         treat missing usage as "not reported", never fail on it).
         """
