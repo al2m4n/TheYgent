@@ -4,6 +4,8 @@ name: web
 #   - PRs touching the site: validate that every local asset reference resolves, then deploy a
 #     per-branch Cloudflare Pages *preview* so the change can be eyeballed before merge.
 #   - Pushes to main: deploy the production site.
+#   - Releases: re-deploy production from the tagged commit, so a release always ships
+#     exactly the site state it was cut from (release events carry no path filter).
 # There is no build step — the folder is uploaded as-is. Reuses the same Cloudflare Pages secrets
 # as the docs pipeline (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID); only the Pages project differs.
 
@@ -17,10 +19,18 @@ on:
     paths:
       - "apps/web/**"
       - ".github/workflows/web.yml"
+  release:
+    types: [published]
 
 concurrency:
   group: web-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
-  cancel-in-progress: false
+  # PR runs supersede each other; publish runs must never be killed mid-deploy.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Deploys authenticate via the Cloudflare secrets, not GITHUB_TOKEN — nothing here
+# needs a write-capable repo token.
+permissions:
+  contents: read
 
 env:
   CF_PAGES_PROJECT: theygent-web
@@ -40,21 +50,32 @@ jobs:
         run: python3 .github/scripts/check_web_assets.py "$SITE_DIR"
 
       - name: Deploy preview to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        # Fork PRs receive no secrets from GitHub — the asset check above still runs for
+        # them, but the preview deploy would fail with an empty token, so it runs for
+        # same-repo branches only. The Pages preview branch is the PR number, not the
+        # head-ref name: ref names may contain shell metacharacters and this command
+        # line is shell-executed inside the action.
+        if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=${{ github.head_ref }} --commit-dirty=true
+          # npm, not the default package-manager sniff: the repo root has pnpm-lock.yaml, and
+          # `pnpm add wrangler` at a pnpm workspace root fails without -w.
+          packageManager: npm
+          command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=pr-${{ github.event.pull_request.number }} --commit-dirty=true
 
   publish:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Deploy to Cloudflare Pages (production)
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # npm, not the default package-manager sniff — see the preview step's note.
+          packageManager: npm
           command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true

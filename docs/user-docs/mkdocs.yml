@@ -78,7 +78,7 @@ nav:
   - Getting Started:
       - getting-started/index.md
       - Installation: getting-started/installation.md
-      - Running Theygent: getting-started/running.md
+      - Running TheYgent: getting-started/running.md
       - Your First Chat: getting-started/first-chat.md
       - Your First Agent: getting-started/first-agent.md
   - Samples:

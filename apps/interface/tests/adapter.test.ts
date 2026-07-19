@@ -569,7 +569,7 @@ describe("port editing", () => {
   it("builds a working two-branch router (local/remote) that survives a save round-trip", () => {
     let ir = addNode(sampleGraph(), "router", { x: 0, y: 0 });
     const routerId = ir.nodes?.at(-1)?.id as string;
-    // one extra out-port, then name the two branches — the router shape hybrid_route.json uses.
+    // one extra out-port, then name the two branches — the classic local/remote router shape.
     ir = addPort(ir, routerId, "out");
     ir = renamePort(ir, routerId, "out", "out", "local");
     ir = renamePort(ir, routerId, "out", "out2", "remote");

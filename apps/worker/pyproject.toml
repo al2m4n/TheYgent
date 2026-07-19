@@ -3,6 +3,7 @@ name = "theygent-worker"
 version = "0.1.0"
 description = "theygent durable worker — runs compiled IR workflows on DBOS (process type 2: the durable runtime)"
 requires-python = ">=3.12"
+license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
 dependencies = [
     # The worker IS the durable runtime standing up: it imports the control-plane's durable package
     # (the in-workflow lowering + the DBOS runtime) and its stores, and the IR. It reaches

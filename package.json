@@ -1,5 +1,6 @@
 {
   "name": "theygent",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
   "packageManager": "pnpm@11.8.0"
 }

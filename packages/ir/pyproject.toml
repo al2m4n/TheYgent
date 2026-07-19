@@ -3,6 +3,7 @@ name = "theygent-ir"
 version = "0.1.0"
 description = "theygent Agent Graph IR — Pydantic models, single source of truth"
 requires-python = ">=3.12"
+license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
 dependencies = ["pydantic>=2.6"]
 
 [build-system]
