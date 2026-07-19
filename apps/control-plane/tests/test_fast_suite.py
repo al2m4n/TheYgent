@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import _auth
 import httpx
 import pytest
 from _fake_inference import FULL_MESSAGE, FakeInference
@@ -163,6 +164,7 @@ async def test_concurrent_runs_stay_independent(fake_inference: FakeInference) -
     # Drive the lifespan so the async engine/sessionmaker exist (ASGITransport won't).
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            await _auth.attach_async(ac)
             body = {"input": "hi", "model": "triage-fast", "stream": False}
             r1, r2 = await asyncio.gather(ac.post("/runs", json=body), ac.post("/runs", json=body))
 

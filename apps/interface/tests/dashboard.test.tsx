@@ -12,6 +12,7 @@ import {
 } from "@tanstack/react-router";
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AuthProvider } from "../src/lib/auth";
 import { Dashboard } from "../src/routes/Dashboard";
 
 // A moment in the recent past, so TimeAgo renders a stable "…ago" without a fixed clock.
@@ -104,6 +105,25 @@ function pathOf(url: string): string {
 function onlineMock() {
   const fetchMock = vi.fn(async (url: string) => {
     const path = pathOf(url);
+    // The dashboard renders inside AuthProvider (its role gates read the signed-in user).
+    if (path === "/auth/status")
+      return jsonResponse({
+        setup_required: false,
+        user: {
+          id: "usr_1",
+          username: "sam",
+          display_name: "Sam",
+          email: null,
+          role: "admin",
+          disabled: false,
+          has_password: true,
+          avatar_url: null,
+          created_at: HOUR_AGO,
+          updated_at: HOUR_AGO,
+          last_login_at: null,
+        },
+        providers: [],
+      });
     if (path === "/readyz") return jsonResponse(READY);
     // Exact overview totals — large numbers so the K/M abbreviation + hover-exact is exercised.
     if (path === "/stats") return jsonResponse({ runs: 2_500_000, sessions: 56, agents: 1234 });
@@ -143,7 +163,9 @@ function renderDashboard(): void {
   });
   render(
     <QueryClientProvider client={client}>
-      <RouterProvider router={router} />
+      <AuthProvider>
+        <RouterProvider router={router} />
+      </AuthProvider>
     </QueryClientProvider>,
   );
 }

@@ -125,6 +125,7 @@ nav:
       - Durable Runs: running/durable.md
       - Human-in-the-Loop: running/human-in-the-loop.md
       - Triggers & Webhooks: running/triggers.md
+      - Users, Roles & Sign-in: running/users.md
       - Observability: running/observability.md
       - The Bench: running/bench.md
   - Import & Export:

@@ -54,6 +54,10 @@ class ChatSessionRow(Base):
     # the column stays ``metadata``. Opaque JSONB the client owns (kind/model/title …);
     # the control plane stores and returns it, never interprets it.
     meta: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    # Who owns this conversation. A breadcrumb (plain string, no FK): sessions must outlive
+    # the account that created them, and pre-auth rows are NULL (visible to every signed-in
+    # user — they predate ownership). List/read endpoints filter on it; admins see all.
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class RunRow(Base):
@@ -80,6 +84,9 @@ class RunRow(Base):
     # historical runs stay intact and keep recording the id of what fired them — the lineage of what
     # *did* run must outlive the trigger definition, so a referential constraint is the wrong tool.
     trigger_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Who started this run. NULL = system-initiated (a schedule/webhook firing, or a pre-auth
+    # row). A breadcrumb like ``trigger_id`` — run history must outlive the account, so no FK.
+    user_id: Mapped[str | None] = mapped_column(String, nullable=True)
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     # The run's final accumulated output, durable with or without a session. NULL for a run that
     # never reached a terminal output (e.g. a failed run). TEXT — outputs can be large; kept
@@ -680,3 +687,129 @@ class PlatformSettingRow(Base):
     key: Mapped[str] = mapped_column(Text, primary_key=True)  # dotted catalog key
     value: Mapped[Any] = mapped_column(JSONB, nullable=False)  # any JSON value (never SQL NULL)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+# ── Identity & access rows ────────────────────────────────────────────────────────────────────────
+# The identity layer that fills the three long-standing auth seams (``require_auth``,
+# ``require_token``, ``governance.authorize``). Accounts are local (scrypt password) and/or
+# federated (OIDC identities); every credential presented over the wire is an opaque bearer token
+# stored HASHED (sha256) — the raw token exists only in the response that minted it. Roles are a
+# closed three-value set enforced at the app layer (no native enum, per house convention).
+
+
+class UserAccountRow(Base):
+    """One account. ``user_account``, not ``user`` — the bare name is a reserved word in
+    Postgres and would force quoting through every raw-SQL test helper. ``password_hash`` is a
+    self-describing scrypt string (``auth.py``); NULL for an SSO-only account (no password
+    login possible). ``role`` is the account's ceiling — API keys may narrow it, never widen."""
+
+    __tablename__ = "user_account"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``usr_<ulid>``
+    # Lowercased at create/login so lookups are case-insensitive without citext.
+    username: Mapped[str] = mapped_column(String)
+    display_name: Mapped[str] = mapped_column(String)
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
+    role: Mapped[str] = mapped_column(String)  # admin | editor | viewer
+    password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)  # NULL = SSO-only
+    # An avatar image URL from a sign-in provider's userinfo (the OIDC ``picture`` claim),
+    # refreshed on each SSO sign-in. NULL for a local account (the UI shows initials instead).
+    # A plain http(s) URL to the provider's CDN, never a secret.
+    avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    disabled: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+    last_login_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
+
+    __table_args__ = (Index("uq_user_account_username", "username", unique=True),)
+
+
+class AuthIdentityRow(Base):
+    """One federated identity linked to an account — the (provider, subject) pair an OIDC
+    login resolves to a user. Local password accounts have no identity row. CASCADE with the
+    user: an identity without its account is meaningless."""
+
+    __tablename__ = "auth_identity"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``idn_<ulid>``
+    user_id: Mapped[str] = mapped_column(ForeignKey("user_account.id", ondelete="CASCADE"))
+    # Breadcrumb to auth_provider.id — an identity stays meaningful (and auditable) after its
+    # provider config is deleted, so no FK.
+    provider_id: Mapped[str] = mapped_column(String)
+    subject: Mapped[str] = mapped_column(String)  # the provider's stable ``sub`` claim
+    email: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        UniqueConstraint("provider_id", "subject", name="uq_auth_identity_provider_subject"),
+        Index("ix_auth_identity_user", "user_id"),
+    )
+
+
+class AuthSessionRow(Base):
+    """One interactive sign-in. ``token_hash`` is sha256 of the opaque ``tys_…`` bearer the
+    browser holds — a DB leak exposes no usable credentials. Expiry is absolute
+    (``expires_at``); ``last_seen_at`` is telemetry, throttled to one write per few minutes,
+    never the expiry input. CASCADE with the user: deleting an account signs it out."""
+
+    __tablename__ = "auth_session"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``ses_<ulid>``
+    user_id: Mapped[str] = mapped_column(ForeignKey("user_account.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(String)  # sha256 hex of the bearer (never the token)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    expires_at: Mapped[datetime] = mapped_column(_TZ)
+    last_seen_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        Index("uq_auth_session_token_hash", "token_hash", unique=True),
+        Index("ix_auth_session_user", "user_id"),
+    )
+
+
+class ApiKeyRow(Base):
+    """One long-lived programmatic credential (``tyk_…`` bearer, stored hashed). ``role`` is
+    the key's OWN role, capped at the owner's role when minted; the effective authority at use
+    time is min(key.role, owner.role), so demoting a user instantly narrows every key they
+    minted. ``revoked_at`` soft-deletes — the row stays as an audit breadcrumb."""
+
+    __tablename__ = "api_key"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``key_<ulid>``
+    user_id: Mapped[str] = mapped_column(ForeignKey("user_account.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String)  # human label ("staging frontend")
+    role: Mapped[str] = mapped_column(String)  # admin | editor | viewer (≤ owner at mint)
+    token_hash: Mapped[str] = mapped_column(String)  # sha256 hex of the bearer
+    # First characters of the raw token ("tyk_ab12…") — the only recoverable fragment,
+    # so the UI can identify a key without ever storing the token.
+    token_prefix: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    last_used_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
+
+    __table_args__ = (
+        Index("uq_api_key_token_hash", "token_hash", unique=True),
+        Index("ix_api_key_user", "user_id"),
+    )
+
+
+class AuthProviderRow(Base):
+    """One configured sign-in provider (OIDC, or plain OAuth2 via explicit endpoints).
+    ``config`` holds NON-SECRET material only: ``issuer_url`` (discovery) or explicit
+    ``authorization_endpoint``/``token_endpoint``/``userinfo_endpoint``, ``client_id``,
+    ``scopes``, ``auto_provision``, ``default_role``, ``allowed_domains``. The client secret
+    lives behind ``client_secret_ref`` in the encrypted ``secret`` table — same discipline as
+    connections. ``slug`` is the stable URL fragment (``/auth/oidc/{slug}/…``)."""
+
+    __tablename__ = "auth_provider"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)  # ``idp_<ulid>``
+    name: Mapped[str] = mapped_column(String)  # button label ("Okta", "Google")
+    slug: Mapped[str] = mapped_column(String)  # url-safe stable handle
+    config: Mapped[dict] = mapped_column(JSONB)  # non-secret config only (never the secret)
+    client_secret_ref: Mapped[str | None] = mapped_column(String, nullable=True)  # → secret.id
+    enabled: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("uq_auth_provider_slug", "slug", unique=True),)

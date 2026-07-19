@@ -81,13 +81,39 @@ export function inferenceUrl(): string {
   return readOverride("inference") ?? INFERENCE_URL;
 }
 
-// The static dev token the control-plane's no-op `require_auth` accepts. Centralised so
-// swapping in a real token flow later touches only this function.
-function authHeaders(): Record<string, string> {
-  const token =
-    (typeof localStorage !== "undefined" && localStorage.getItem("theygent.token")) || "dev-local";
-  return { Authorization: `Bearer ${token}` };
+// ── the session bearer ───────────────────────────────────────────────────────
+// The control plane's real auth: an opaque `tys_…` session token minted by /auth/login or
+// /auth/setup (or a `tyk_…` API key someone pastes in deliberately). Stored in localStorage —
+// the sanctioned home for the token per AGENTS.md — and attached to every control-plane call.
+
+const TOKEN_KEY = "theygent.token";
+
+export function getAuthToken(): string | null {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage.getItem(TOKEN_KEY) : null;
+  } catch {
+    return null;
+  }
 }
+
+export function setAuthToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // no localStorage (tests / privacy mode) — the session simply won't persist.
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/** Fired on window whenever the control plane answers 401 `unauthorized` — the session died
+ *  (expired, revoked, or the account was disabled). The auth provider listens and returns the
+ *  app to the sign-in screen. `invalid_credentials` (a failed login attempt) never fires it. */
+export const UNAUTHORIZED_EVENT = "theygent:unauthorized";
 
 export class ApiError extends Error {
   status: number;
@@ -110,6 +136,9 @@ async function toError(res: Response): Promise<ApiError> {
     if (err?.code) code = err.code;
   } catch {
     // non-JSON error body; keep the status line.
+  }
+  if (res.status === 401 && code === "unauthorized" && typeof window !== "undefined") {
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
   }
   return new ApiError(message, res.status, code);
 }
@@ -660,6 +689,75 @@ export interface BenchPresetRecord extends BenchPresetInput {
   updated_at: string;
 }
 
+// ── identity & access (control plane, snake_case) ────────────────────────────
+// Accounts, roles, sessions, API keys, and sign-in providers. Tokens are opaque bearers the
+// server returns exactly once; the client stores only the current session token (above).
+
+export type Role = "viewer" | "editor" | "admin";
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  display_name: string;
+  email: string | null;
+  role: Role;
+  disabled: boolean;
+  has_password: boolean;
+  /** Avatar image URL from a sign-in provider (null = local account → show initials). */
+  avatar_url: string | null;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
+}
+
+/** A sign-in provider as the LOGIN PAGE sees it (slug + button label only). */
+export interface PublicProvider {
+  slug: string;
+  name: string;
+}
+
+export interface AuthStatus {
+  setup_required: boolean;
+  user: AuthUser | null;
+  providers: PublicProvider[];
+}
+
+export interface AuthSession {
+  token: string;
+  user: AuthUser;
+}
+
+export interface MeView {
+  user: AuthUser;
+  /** The EFFECTIVE role of the presented credential (an API key may be narrower). */
+  role: Role;
+  credential: "session" | "api_key";
+}
+
+export interface ApiKeyInfo {
+  id: string;
+  user_id: string;
+  name: string;
+  role: Role;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The admin view of a sign-in provider. `config` is non-secret; the client secret only ever
+ *  surfaces as `has_client_secret`. */
+export interface AuthProviderInfo {
+  id: string;
+  name: string;
+  slug: string;
+  config: Record<string, unknown>;
+  enabled: boolean;
+  has_client_secret: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // ── platform settings (control plane, snake_case) ────────────────────────────
 // The typed settings catalog the Settings page renders from. Precedence per key:
 // explicit env > stored > default. Two DISTINCT env states: `env_pinned` locks the field in the
@@ -677,7 +775,7 @@ export type SettingType =
   | "list[registry]"
   | "secret";
 export type SettingSource = "env" | "stored" | "default";
-export type SettingGroup = "telemetry" | "mcp" | "rag";
+export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth";
 
 /** The read shape of a `secret` value: presence + non-secret names only. */
 export interface SensitiveValue {
@@ -1661,7 +1759,139 @@ export const api = {
 
   getInferenceDiagnostics: () =>
     request<InferenceDiagnostics>(inferenceUrl(), "/admin/diagnostics"),
+
+  // ── control plane: identity & access ────────────────────────────────────────
+  // /auth/status is the SPA's one boot probe (works with or without a token); setup/login mint
+  // the session bearer the client stores. Everything else rides that bearer like any call.
+  authStatus: () => request<AuthStatus>(controlPlaneUrl(), "/auth/status"),
+
+  authSetup: (body: { username: string; password: string; display_name?: string }) =>
+    request<AuthSession>(controlPlaneUrl(), "/auth/setup", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  authLogin: (body: { username: string; password: string }) =>
+    request<AuthSession>(controlPlaneUrl(), "/auth/login", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // Trade the one-time code the OIDC callback delivers in its fragment for the real session
+  // bearer — over a POST body, so the long-lived token never rides a redirect URL.
+  oidcExchange: (code: string) =>
+    request<AuthSession>(controlPlaneUrl(), "/auth/oidc/exchange", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+
+  authLogout: () => request<void>(controlPlaneUrl(), "/auth/logout", { method: "POST" }),
+
+  me: () => request<MeView>(controlPlaneUrl(), "/auth/me"),
+
+  updateMe: (body: { display_name?: string }) =>
+    request<AuthUser>(controlPlaneUrl(), "/auth/me", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  changeMyPassword: (body: { current_password?: string; new_password: string }) =>
+    request<AuthUser>(controlPlaneUrl(), "/auth/me/password", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listApiKeys: () => request<{ api_keys: ApiKeyInfo[] }>(controlPlaneUrl(), "/auth/api-keys"),
+
+  // The raw token appears in THIS response and never again — surface it once, prominently.
+  createApiKey: (body: { name: string; role?: Role }) =>
+    request<{ token: string; api_key: ApiKeyInfo }>(controlPlaneUrl(), "/auth/api-keys", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  revokeApiKey: (keyId: string) =>
+    request<void>(controlPlaneUrl(), `/auth/api-keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
+
+  listUsers: () => request<{ users: AuthUser[] }>(controlPlaneUrl(), "/users"),
+
+  createUser: (body: {
+    username: string;
+    display_name?: string;
+    password?: string;
+    role?: Role;
+    email?: string;
+  }) =>
+    request<AuthUser>(controlPlaneUrl(), "/users", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateUser: (
+    userId: string,
+    body: { display_name?: string; role?: Role; disabled?: boolean; email?: string },
+  ) =>
+    request<AuthUser>(controlPlaneUrl(), `/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  resetUserPassword: (userId: string, password: string) =>
+    request<AuthUser>(controlPlaneUrl(), `/users/${encodeURIComponent(userId)}/password`, {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+
+  deleteUser: (userId: string) =>
+    request<void>(controlPlaneUrl(), `/users/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    }),
+
+  listAuthProviders: () =>
+    request<{ providers: AuthProviderInfo[] }>(controlPlaneUrl(), "/auth/providers"),
+
+  createAuthProvider: (body: {
+    name: string;
+    slug: string;
+    config: Record<string, unknown>;
+    client_secret?: string;
+    enabled?: boolean;
+  }) =>
+    request<AuthProviderInfo>(controlPlaneUrl(), "/auth/providers", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateAuthProvider: (
+    providerId: string,
+    body: {
+      name?: string;
+      config?: Record<string, unknown>;
+      client_secret?: string;
+      enabled?: boolean;
+    },
+  ) =>
+    request<AuthProviderInfo>(
+      controlPlaneUrl(),
+      `/auth/providers/${encodeURIComponent(providerId)}`,
+      { method: "PATCH", body: JSON.stringify(body) },
+    ),
+
+  deleteAuthProvider: (providerId: string) =>
+    request<void>(controlPlaneUrl(), `/auth/providers/${encodeURIComponent(providerId)}`, {
+      method: "DELETE",
+    }),
 };
+
+/** Where the control plane should send the browser to begin an OIDC sign-in — a NAVIGATION
+ *  (window.location), not a fetch: the flow is a chain of redirects ending back at
+ *  `{origin}/auth/callback#token=…`, which the auth provider consumes on boot. */
+export function oidcStartUrl(slug: string): string {
+  const returnTo = `${window.location.origin}/auth/callback`;
+  return `${controlPlaneUrl()}/auth/oidc/${encodeURIComponent(slug)}/start?return_to=${encodeURIComponent(returnTo)}`;
+}
 
 // ── streaming (the run composer + live trace) ────────────────────────────────
 // POST + read the SSE body on the SAME request: the composer creates and streams from one POST,

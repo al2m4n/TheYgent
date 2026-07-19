@@ -11,7 +11,7 @@ The interface uses these same endpoints, so anything you can do in the UI you ca
     Control-plane **request bodies and stored run/session records use `snake_case`** (`session_id`, `content_hash`). The immediate run **result** envelope and streaming (SSE) frames use `camelCase` (`runId`). The **inference plane** (`/v1/*` and `/admin/*`) is `camelCase` throughout. The graph document (`ir`) is always `camelCase`. Keep them straight when you assemble a body.
 
 !!! warning "Authentication"
-    On a local install the control plane's interactive endpoints are **open** — there is no per-request auth in front of runs, agents, or sessions. Two surfaces are the exception and carry real auth: `POST /agents/{id}/invoke` (a bearer token, [`THEYGENT_INVOKE_TOKEN`](environment.md)) and webhook delivery `POST /hooks/{id}` (an HMAC signature). Do not expose the control plane to an untrusted network.
+    Every control-plane endpoint below requires a bearer token — `Authorization: Bearer <token>` — where the token is either your interactive session or, for scripts and your own frontends, an **API key** minted from your profile. Endpoints are gated by role (viewer / editor / admin); see [Users, roles & sign-in](../running/users.md). Three surfaces differ: `/healthz` + `/readyz` are open, webhook delivery `POST /hooks/{id}` carries an HMAC signature instead, and `POST /agents/{id}/invoke` accepts an API key or the shared [`THEYGENT_INVOKE_TOKEN`](environment.md). The inference plane is a separate, locally-trusted service — still do not expose either plane to an untrusted network.
 
 ---
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 
+import _auth
 import httpx
 from _db import count_messages, fetch_messages
 from _fake_inference import FULL_MESSAGE, FakeInference
@@ -86,6 +87,7 @@ async def test_concurrent_same_session_runs_do_not_collide(
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            await _auth.attach_async(ac)
             results = await asyncio.gather(*(ac.post("/runs", json=body) for _ in range(n)))
 
     assert all(r.status_code == 200 and r.json()["status"] == "completed" for r in results)

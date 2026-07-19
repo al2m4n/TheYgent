@@ -66,6 +66,9 @@ class Run(BaseModel):
     # Which trigger fired this run (None = interactive) — giving an unattended run
     # lineage back to the schedule/webhook that fired it.
     trigger_id: str | None = None
+    # Who started this run (None = system-initiated, or a pre-auth row). A breadcrumb like
+    # trigger_id — run history outlives the account, so never an enforced FK.
+    user_id: str | None = None
     # The run's final output, persisted on success so GET /runs/{id} can return it for a
     # session-less run too (not only the live SSE stream). None until a terminal output is reached.
     output: str | None = None
@@ -100,6 +103,8 @@ class SessionSummary(BaseModel):
     # Opaque client-owned JSONB (kind/model/title …) — stored and returned verbatim,
     # never interpreted by the control plane.
     metadata: dict[str, Any] | None = None
+    # Who owns the conversation (None = pre-auth/shared row, visible to every signed-in user).
+    user_id: str | None = None
 
 
 class SessionMessage(BaseModel):
@@ -120,6 +125,8 @@ class SessionDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     metadata: dict[str, Any] | None = None
+    # Who owns the conversation (None = pre-auth/shared row) — the ownership checks' input.
+    user_id: str | None = None
     messages: list[SessionMessage] = Field(default_factory=list)
 
 

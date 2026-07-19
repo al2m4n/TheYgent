@@ -280,6 +280,31 @@ CATALOG: tuple[SettingSpec, ...] = (
         ),
         group="rag",
     ),
+    SettingSpec(
+        key="auth.session_ttl_hours",
+        type="int",
+        default=168,
+        apply="live (next sign-in)",
+        constraints={"min": 1, "max": 8760},
+        description=(
+            "How long an interactive sign-in stays valid. Applies to sessions minted after "
+            "the change; existing sessions keep the expiry they were issued with."
+        ),
+        group="auth",
+    ),
+    SettingSpec(
+        key="auth.oidc_redirect_url",
+        type="str",
+        default="http://localhost:8080/auth/oidc/callback",
+        env_var="THEYGENT_OIDC_REDIRECT_URL",
+        env_mode="pin",
+        description=(
+            "The redirect URI sign-in providers send the browser back to — register this "
+            "exact URL with each provider. Change it when the API runs behind a reverse "
+            "proxy or a non-default bind."
+        ),
+        group="auth",
+    ),
 )
 
 _SPECS: dict[str, SettingSpec] = {s.key: s for s in CATALOG}

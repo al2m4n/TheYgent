@@ -10,20 +10,16 @@ import {
   type LucideIcon,
   MessageSquare,
   MessagesSquare,
-  Monitor,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Plug,
   Settings,
   Settings2,
   SquarePen,
-  Sun,
-  User,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
-import { Modal } from "../components/ui";
-import { Avatar, AvatarFallback } from "../components/ui/avatar";
+import { ProfileModal } from "../auth/ProfileModal";
+import { Avatar, AvatarFallback, AvatarImage } from "../components/ui/avatar";
 import {
   Sidebar,
   SidebarContent,
@@ -45,13 +41,13 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../components/ui/sidebar";
-import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { TooltipProvider } from "../components/ui/tooltip";
+import { useAuth } from "../lib/auth";
 import { statusTone, toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
 import { NotificationCenter } from "../lib/notify";
 import type { Run, SessionSummary } from "../lib/runtypes";
-import { type ThemePref, useTheme } from "../lib/theme";
+import { useTheme } from "../lib/theme";
 import { flattenPages, useRunsInfinite, useSessionsInfinite } from "../queries";
 
 // The shell: a collapsible LEFT sidebar + the routed view. The interface is canvas-first, so chrome
@@ -165,7 +161,7 @@ export function Root() {
       >
         <AppSidebar onOpenSettings={() => setSettingsOpen(true)} />
 
-        {settingsOpen && <UserSettingsModal onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen && <ProfileModal onClose={() => setSettingsOpen(false)} />}
 
         {/* The single scroll region: the document never scrolls (body is overflow-hidden), so the
             sidebar stays fixed while a long page scrolls here. Routes that own their height (the
@@ -189,6 +185,10 @@ export function Root() {
 // The rail itself: brand head, the three nav groups + recents, and the profile footer. In icon
 // mode every entry collapses to its icon and the label moves into the menu button's tooltip.
 function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+  // The rail is role-aware: viewers see the using surfaces (Dashboard, Agents, chat); the
+  // builder entries (Runs, Configuration) appear from editor up; the Settings entry is the
+  // admin's. Hiding is UX — the routes and the API enforce the same floors regardless.
+  const { hasRole } = useAuth();
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border p-0">
@@ -210,7 +210,7 @@ function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <SidebarGroupContent>
             <SidebarMenu>
               <NavItem item={NAV_AGENTS} />
-              <RunsNav />
+              {hasRole("editor") && <RunsNav />}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -224,8 +224,12 @@ function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
-        <SidebarSeparator />
-        <ConfigGroup />
+        {hasRole("editor") && (
+          <>
+            <SidebarSeparator />
+            <ConfigGroup showSettings={hasRole("admin")} />
+          </>
+        )}
       </SidebarContent>
 
       {/* Bottom: the user/profile entry — USER settings (identity, theme), not app settings. */}
@@ -528,7 +532,7 @@ function readConfigOpen(): boolean {
   }
 }
 
-function ConfigGroup() {
+function ConfigGroup({ showSettings }: { showSettings: boolean }) {
   const [open, setOpen] = useState(readConfigOpen);
   const { state } = useSidebar();
   useEffect(() => {
@@ -562,7 +566,8 @@ function ConfigGroup() {
             {NAV_CONFIG_HEAD.map((item) => (
               <NavItem key={item.to} item={item} />
             ))}
-            <NavItem item={NAV_SETTINGS} />
+            {/* Platform settings are the admin's — the group itself is editor-and-up. */}
+            {showSettings && <NavItem item={NAV_SETTINGS} />}
           </SidebarMenu>
         </SidebarGroupContent>
       )}
@@ -570,79 +575,34 @@ function ConfigGroup() {
   );
 }
 
-// The user/profile entry — an avatar chip that opens the settings modal. Expanded shows the
-// (placeholder) identity; collapsed is the avatar alone with a hover tooltip.
-function ProfileButton({ onClick }: { onClick?: () => void }) {
+// The user/profile entry — the signed-in account's chip; opens the profile modal (identity,
+// theme, password, API keys, sign out). Expanded shows name + role; collapsed is the avatar
+// alone with a hover tooltip.
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
   return (
-    <SidebarMenuButton size="lg" aria-label="Open settings" tooltip="Profile" onClick={onClick}>
-      <Avatar size="sm">
-        <AvatarFallback className="bg-primary text-primary-foreground">
-          <User />
-        </AvatarFallback>
-      </Avatar>
-      <span className="flex min-w-0 flex-col text-left leading-tight">
-        <span className="truncate text-sm text-sidebar-foreground">Local user</span>
-        <span className="truncate text-[11px] text-muted-foreground">single-user</span>
-      </span>
-    </SidebarMenuButton>
+    parts
+      .slice(0, 2)
+      .map((p) => p[0]?.toUpperCase() ?? "")
+      .join("") || "?"
   );
 }
 
-// The USER settings modal (opened from the profile entry): identity + theme. App-level
-// configuration (endpoints, credentials) lives on the /settings page under Configuration.
-const THEME_OPTIONS: { pref: ThemePref; icon: LucideIcon; label: string }[] = [
-  { pref: "light", icon: Sun, label: "Light" },
-  { pref: "dark", icon: Moon, label: "Dark" },
-  { pref: "system", icon: Monitor, label: "System" },
-];
-
-function UserSettingsModal({ onClose }: { onClose: () => void }) {
-  const { pref, setTheme } = useTheme();
+function ProfileButton({ onClick }: { onClick?: () => void }) {
+  const { user } = useAuth();
+  const name = user?.display_name || user?.username || "…";
   return (
-    <Modal title="User settings" width="max-w-lg" onClose={onClose}>
-      <div className="flex min-h-[160px] flex-col">
-        {/* Identity + placeholder for the user configuration to come. */}
-        <div className="flex items-center gap-3">
-          <Avatar size="lg">
-            <AvatarFallback className="bg-primary text-primary-foreground">
-              <User size={18} strokeWidth={2} />
-            </AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-foreground">Local user</div>
-            <div className="text-xs text-muted-foreground">single-user · localhost</div>
-          </div>
-        </div>
-
-        {/* Theme switch — icon-only buttons pinned to the bottom-right corner. */}
-        <div className="mt-auto flex items-center justify-between border-t border-border pt-3">
-          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Theme
-          </span>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            value={pref}
-            onValueChange={(next) => {
-              // Radix reports "" when the active item is re-clicked — a theme is never unset.
-              if (next) setTheme(next as ThemePref);
-            }}
-            aria-label="Theme"
-          >
-            {THEME_OPTIONS.map(({ pref: p, icon: Icon, label }) => (
-              <ToggleGroupItem
-                key={p}
-                value={p}
-                aria-label={`${label} theme`}
-                title={`${label} theme`}
-                className="data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
-              >
-                <Icon size={16} strokeWidth={2} />
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </div>
-      </div>
-    </Modal>
+    <SidebarMenuButton size="lg" aria-label="Open profile" tooltip="Profile" onClick={onClick}>
+      <Avatar size="sm">
+        {user?.avatar_url && <AvatarImage src={user.avatar_url} alt="" />}
+        <AvatarFallback className="bg-primary text-[11px] font-semibold text-primary-foreground">
+          {initialsOf(name)}
+        </AvatarFallback>
+      </Avatar>
+      <span className="flex min-w-0 flex-col text-left leading-tight">
+        <span className="truncate text-sm text-sidebar-foreground">{name}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{user?.role ?? ""}</span>
+      </span>
+    </SidebarMenuButton>
   );
 }

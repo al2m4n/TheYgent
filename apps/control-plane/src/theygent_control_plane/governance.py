@@ -1,20 +1,16 @@
-"""The one authorization chokepoint — a seam, with enforcement not yet implemented.
+"""The one authorization chokepoint — now enforcing the three-role model.
 
-Even when I/O *is* persisted, **who may view it** is a separate axis from whether it was captured.
-This module freezes the seam every sensitive trace/io read flows through — a single
-``authorize(principal, permission, resource) -> bool`` — so a future identity/RBAC layer can fill
-the function and **every read surface is gated with zero retrofit**. In single-user localhost
-it returns allow; the endpoints route through it *from day one* (retrofitting auth onto N endpoints
-later is the expensive path this step avoids).
+Every sensitive read/config surface has routed through ``authorize(principal, permission,
+resource)`` since long before an identity layer existed — the seam was frozen precisely so
+enforcement could land here once, with zero endpoint retrofit. That day is now: ``Principal``
+carries the role the auth layer (``auth.py`` + ``require_auth`` in ``app.py``) resolved from the
+presented bearer, and ``authorize`` ranks it against a per-permission floor.
 
-**This builds NO identity, roles, SSO, or RBAC enforcement** — the platform has no auth layer for
-one to enforce against. So: a ``Principal`` placeholder, a handful of permission strings, and one
-no-op-allow function. The shape — ``authorize(principal, permission, resource)`` — is the
-hard-to-reverse part (it is what lets roles/grants slot in behind it unchanged), not the body.
-
-Mirrors the ``require_token`` discipline: the single global token there is the degenerate
-single-tenant case of a future token→principal lookup; this authorizer is the degenerate
-single-tenant case of a future principal→roles→grants check. Both are the seam, not the system.
+The mapping stays deliberately coarse — a permission maps to a minimum role, nothing
+resource-instance-specific. Ownership checks (a viewer reading only their own chat sessions) live
+at the endpoints that carry an owner column; this module answers only "may this ROLE exercise
+this PERMISSION at all?". Keep it that way: a second, hidden ownership system inside the
+chokepoint would be impossible to audit from the route table.
 """
 
 from __future__ import annotations
@@ -22,6 +18,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from theygent_control_plane.auth import Role, role_at_least
 
 logger = logging.getLogger("theygent.control_plane.governance")
 
@@ -42,32 +40,39 @@ Permission = Literal[
     "transfer:import",
 ]
 
+#: Minimum role per permission. Viewers keep trace/io read: the chat surface embeds the run
+#: waterfall (and what payloads exist there is already governed by the per-agent IO policy);
+#: configuring agents is builder work; settings and whole-install transfer are the install
+#: owner's — an export aggregates every secret-adjacent read at once.
+_PERMISSION_FLOOR: dict[Permission, Role] = {
+    "trace:read": "viewer",
+    "io:read": "viewer",
+    "agent:configure": "editor",
+    "settings:read": "admin",
+    "settings:write": "admin",
+    "transfer:export": "admin",
+    "transfer:import": "admin",
+}
+
 
 @dataclass(frozen=True)
 class Principal:
-    """The caller's identity placeholder. In single-user localhost there is exactly one,
-    anonymous principal; a future identity layer fills ``id``/roles/workspace from the
-    resolved bearer (the ``require_token`` attach-point) WITHOUT reshaping the call sites. Built
-    as a slot, not a system — nothing consumes ``id`` yet (a speculative principal that nothing
-    reads would erode the seam; it stays unconsumed until the feature that needs it exists)."""
+    """The caller's resolved identity. ``id`` is the account id (``None`` for the process
+    itself); ``role`` is the EFFECTIVE role of the presented credential — an API key's meet
+    with its owner, never the account ceiling blindly."""
 
     id: str | None = None
+    role: Role = "admin"
 
 
-#: The single-user principal every request resolves to today (no auth layer yet). A future
-#: identity layer replaces this with a real resolution off the request credential.
-LOCAL_PRINCIPAL = Principal(id=None)
+#: The process acting as itself — internal paths (dispatcher-fired runs, boot reconciles) that
+#: never traverse the HTTP auth layer. Full authority by construction, not by token.
+SYSTEM_PRINCIPAL = Principal(id=None, role="admin")
 
 
 def authorize(principal: Principal, permission: Permission, resource: Any) -> bool:
-    """THE authorization chokepoint. Returns whether ``principal`` may exercise ``permission``
-    on ``resource``. **Single-user localhost: always allow** — but every sensitive read/config
-    endpoint routes through HERE, so a future identity layer makes this one function
-    resolve real principals → roles → grants (and the ``agent``/``run`` rows gain
-    ``owner_id``/``workspace_id`` columns) and every gate tightens at once, with no endpoint change.
-
-    ``resource`` is the thing being acted on (a ``Run`` for trace/io reads, an agent id for config)
-    — accepted as ``Any`` because the seam must not assume a resource shape the auth layer hasn't
-    designed yet. Do NOT add role checks / ownership logic here: a no-op allow that
-    everything passes through is the point; a fake gate is not."""
-    return True
+    """THE authorization chokepoint: whether ``principal`` may exercise ``permission`` on
+    ``resource``. Role-vs-floor only — ``resource`` stays in the signature (and is deliberately
+    unused) so instance-level policy can land here later without touching a call site."""
+    del resource  # coarse role gate today; the parameter is the seam for finer policy
+    return role_at_least(principal.role, _PERMISSION_FLOOR[permission])

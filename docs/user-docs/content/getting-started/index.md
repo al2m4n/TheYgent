@@ -45,7 +45,7 @@ graph LR
   IP --> E[Local engine servers]
 ```
 
-Everything runs where *you* point it: model weights download to `~/.theygent/inference/models/` on your machine, the model registry stays in a local file, and the control plane's data sits in your own Postgres. Nothing reaches a hosted API unless you explicitly register one — you own every hop. All services bind to localhost by default; TheYgent is a single-user local install with no account or sign-up. Once they are up, you work entirely in your browser at `http://localhost:5174`. Read more in [Architecture](../concepts/index.md).
+Everything runs where *you* point it: model weights download to `~/.theygent/inference/models/` on your machine, the model registry stays in a local file, and the control plane's data sits in your own Postgres. Nothing reaches a hosted API unless you explicitly register one — you own every hop. All services bind to localhost by default. Accounts are local too: the first time you open the interface, a short wizard creates the install's admin account, and any further [users, roles, and sign-in providers](../running/users.md) are yours to manage. Once the services are up, you work entirely in your browser at `http://localhost:5174`. Read more in [Architecture](../concepts/index.md).
 
 ## The ten-minute path
 

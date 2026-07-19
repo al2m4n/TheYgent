@@ -110,6 +110,12 @@ Notes on the topology:
   credentials are re-entered on the target.
 - **The control plane is a modular monolith.** One FastAPI app, internally modularized.
   FastAPI is only the API surface: no durable orchestration lives in request handlers.
+- **The control plane carries the identity layer.** Every management call resolves a
+  bearer — an interactive session or a personal API key, both stored hashed — to a
+  principal with one of three roles (`viewer < editor < admin`), enforced per endpoint;
+  a fresh install is closed until first-run setup creates the admin account, and sign-in
+  can federate to any OIDC/OAuth2 provider. See
+  [control-plane.md](./control-plane.md).
 - **Inference is the one component that earns its own service** — it pins a GPU, holds
   multi-gigabyte weights, and is already an HTTP server.
 - **The worker** hosts the durable runtime as a separate deployable for server topologies;

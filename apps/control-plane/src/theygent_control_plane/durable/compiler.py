@@ -652,10 +652,12 @@ async def _create_run_step(
     graph_version: str | None,
     chash: str | None,
     trigger_id: str | None,
+    user_id: str | None = None,
 ) -> None:
     """Idempotently create the Run row with id == the DBOS workflow id, so a resumed run reuses
     the same row and ``GET /runs/{id}`` correlates across a crash. ON CONFLICT DO NOTHING makes a
-    step re-execution a no-op."""
+    step re-execution a no-op. ``user_id`` is the initiating account (None for a trigger firing) —
+    the ownership breadcrumb the run read/resume gates enforce."""
     res = _res()
     async with res.sessionmaker() as session, session.begin():
         await res.store.ensure_run(
@@ -666,6 +668,7 @@ async def _create_run_step(
             graph_version=graph_version,
             content_hash=chash,
             trigger_id=trigger_id,
+            user_id=user_id,
         )
 
 
@@ -740,16 +743,19 @@ def _node_input(ports: _PortInputs, node: Node) -> Any:
     return {p.id: ports.values.get(p.id) for p in declared}
 
 
-def _child_ref(config: Any, depth: int) -> dict[str, Any]:
+def _child_ref(config: Any, depth: int, user_id: str | None = None) -> dict[str, Any]:
     """Build the pinned child ``agent_ref`` for a composed body, carrying the nesting ``depth``.
     Depth rides INSIDE the opaque ``agent_ref`` dict so the frozen ``theygent_run`` signature is
     untouched — ``_resolve_ir_step`` ignores it, the depth guard reads it. ``config`` is a
-    Subgraph/Loop/MapConfig — all share ``agent``/``version``/``content_hash``."""
+    Subgraph/Loop/MapConfig — all share ``agent``/``version``/``content_hash``. ``user_id``
+    propagates the initiating account to the child run so a human gate inside a composed body
+    is only resumable by its owner, exactly like the top-level run."""
     return {
         "agent_id": config.agent,
         "version": config.version,
         "content_hash": config.content_hash,
         "depth": depth,
+        "user_id": user_id,
     }
 
 
@@ -819,6 +825,7 @@ async def _durable_walk(
     depth: int = 0,
     run_trace: Any = None,
     ir_dict: dict[str, Any] | None = None,
+    user_id: str | None = None,
 ) -> tuple[Any, bool, str | None]:
     """Walk a validated IR deterministically, awaiting an activity step per ``activity`` node and
     running ``orchestration``/``boundary`` inline. This mirrors ``walker.walk`` exactly — same
@@ -922,7 +929,11 @@ async def _durable_walk(
                     child_wid = f"{run_id}-sg-{node.id}"
                     with SetWorkflowID(child_wid):
                         handle = await DBOS.start_workflow_async(
-                            theygent_run, _child_ref(config, depth + 1), child_input, None, None
+                            theygent_run,
+                            _child_ref(config, depth + 1, user_id),
+                            child_input,
+                            None,
+                            None,
                         )
                     child = await handle.get_result()
                     if child.get("status") == "failed":
@@ -1336,7 +1347,7 @@ async def _durable_walk(
                             with SetWorkflowID(child_wid):
                                 handle = await DBOS.start_workflow_async(
                                     theygent_run,
-                                    _child_ref(config, depth + 1),
+                                    _child_ref(config, depth + 1, user_id),
                                     current,
                                     None,
                                     None,
@@ -1378,7 +1389,7 @@ async def _durable_walk(
                     results = await _map_fanout(
                         run_id,
                         node,
-                        _child_ref(config, depth + 1),
+                        _child_ref(config, depth + 1, user_id),
                         collection,
                         config.concurrency,
                         run_trace,
@@ -1485,14 +1496,19 @@ async def theygent_run(
 
     run_id = DBOS.workflow_id  # stable across resume — the run row is keyed by it
     # Composition nesting depth rides inside the opaque agent_ref dict (the frozen signature is
-    # untouched). 0 at the top; a subgraph/loop/map child is spawned with depth+1.
+    # untouched). 0 at the top; a subgraph/loop/map child is spawned with depth+1. The initiating
+    # account rides the same channel — a durable run started from the cockpit carries its owner
+    # so the run read/resume gates apply (a trigger-fired run has no user_id → ownerless).
     depth = int(agent_ref.get("depth", 0)) if isinstance(agent_ref, dict) else 0
+    user_id = agent_ref.get("user_id") if isinstance(agent_ref, dict) else None
     ir_dict = await _resolve_ir_step(agent_ref)
     if ir_dict is None:
         # A dangling pin should be caught at trigger-create time; if it somehow reaches here, fail
         # honestly rather than hang. No run row exists yet — record one so it is visible.
         reason = f"agent {agent_ref.get('agent_id')!r} pin did not resolve"
-        await _create_run_step(run_id, "", agent_ref.get("agent_id"), None, None, trigger_id)
+        await _create_run_step(
+            run_id, "", agent_ref.get("agent_id"), None, None, trigger_id, user_id
+        )
         await _complete_run_step(run_id, "failed", None, reason)
         return {"runId": run_id, "status": "failed", "error": reason}
 
@@ -1503,11 +1519,11 @@ async def theygent_run(
         llms = llm_models(ir)
         model = llms[0][1] if llms else ""
     except EngineNameNotAllowed as exc:
-        await _create_run_step(run_id, "", ir.id, ir.version, chash, trigger_id)
+        await _create_run_step(run_id, "", ir.id, ir.version, chash, trigger_id, user_id)
         await _complete_run_step(run_id, "failed", None, str(exc))
         return {"runId": run_id, "status": "failed", "error": str(exc)}
 
-    await _create_run_step(run_id, model, ir.id, ir.version, chash, trigger_id)
+    await _create_run_step(run_id, model, ir.id, ir.version, chash, trigger_id, user_id)
 
     # Open the run's observability trace. Worker attribution = ``DBOS.executor_id`` (the worker
     # executing this workflow — ``local`` single-worker, a distinct id per distributed worker; on a
@@ -1518,7 +1534,7 @@ async def theygent_run(
 
     try:
         output, _produced, empty_reason = await _durable_walk(
-            ir, input_value, run_id, depth, run_trace, ir_dict
+            ir, input_value, run_id, depth, run_trace, ir_dict, user_id
         )
     except (RouterError, TemplateError, TransformError, EngineNameNotAllowed) as exc:
         return await _fail_run(run_id, run_trace, str(exc))

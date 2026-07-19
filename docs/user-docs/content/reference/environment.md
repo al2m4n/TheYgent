@@ -27,7 +27,8 @@ Every setting TheYgent reads from the environment. You configure these in the `.
 | Variable | Default | Effect |
 |---|---|---|
 | `THEYGENT_DURABLE` | off | Set to `1` (also `true`/`yes`/`on`) to run the durable runtime in-process, enabling crash-resumable runs and the `human`/`subgraph`/`loop`/`map` node types. Interactive runs are unchanged either way. See [Durable runs](../running/durable.md). |
-| `THEYGENT_INVOKE_TOKEN` | unset | The single bearer token that gates `POST /agents/{id}/invoke`. **While unset, that endpoint is closed and every call returns 401.** Set it to enable token-authed, non-interactive invocation. |
+| `THEYGENT_INVOKE_TOKEN` | unset | A shared per-deploy bearer token for `POST /agents/{id}/invoke`. Personal [API keys](../running/users.md#personal-api-keys) (`tyk_…`) also open that endpoint, so this variable is optional; **with it unset and no API key presented, the endpoint is closed and every call returns 401.** |
+| `THEYGENT_OIDC_REDIRECT_URL` | `http://localhost:8080/auth/oidc/callback` | Pins the `auth.oidc_redirect_url` platform setting — the redirect URL [sign-in providers](../running/users.md#single-sign-on) send the browser back to, and the exact URL you register with each provider. Change it when the control plane sits behind a reverse proxy or a non-default bind. |
 | `THEYGENT_SECRET_KEY` | unset → ephemeral dev key | Fernet key(s) encrypting the connection secret store. **Unset means an in-memory key: stored secrets do not survive a restart** (you'll see a loud warning). Generate a real key and set it to persist secrets; supply a comma-separated list to rotate (the first encrypts, all decrypt). |
 | `THEYGENT_ARTIFACT_DIR` | `<system tmp>/theygent-artifacts` | Where generated audio/image artifacts are stored on local disk. |
 | `DBOS_SYSTEM_DATABASE_URL` | your `DATABASE_URL` | Optional override to put durable-runtime checkpoints on a different Postgres. State is confined to a separate `dbos` schema. |

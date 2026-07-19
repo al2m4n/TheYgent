@@ -14,6 +14,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path
 
+import _auth
 import pytest
 from _db import truncate
 from _fake_inference import FakeInference
@@ -78,7 +79,25 @@ def clean_db(request: pytest.FixtureRequest) -> Iterator[None]:
         return
     pg_url = request.getfixturevalue("pg_url")
     asyncio.run(truncate(pg_url))
+    _auth.reset_cache()  # the truncate wiped user_account — the cached bearer died with it
     yield
+
+
+@pytest.fixture(autouse=True)
+def authed_testclients(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The API is closed until a signed-in principal presents a bearer (the identity layer),
+    # so EVERY entered TestClient authenticates through the real /auth endpoints before the
+    # test sees it. Hooked here — not in ~90 construction sites — via __enter__: nothing is
+    # bypassed; the suite simply signs in (as admin, the superset role). Tests that assert
+    # role/deny behavior build their own users or strip the header (see test_auth.py).
+    original_enter = TestClient.__enter__
+
+    def enter_and_sign_in(self: TestClient) -> TestClient:
+        entered = original_enter(self)
+        _auth.attach(entered)
+        return entered
+
+    monkeypatch.setattr(TestClient, "__enter__", enter_and_sign_in)
 
 
 @pytest.fixture

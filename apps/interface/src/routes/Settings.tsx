@@ -13,7 +13,9 @@ import { InferenceTab } from "../components/settings/InferenceTab";
 import { McpTab } from "../components/settings/McpTab";
 import { OverviewTab } from "../components/settings/OverviewTab";
 import { RagTab } from "../components/settings/RagTab";
+import { SignInTab } from "../components/settings/SignInTab";
 import { TelemetryTab } from "../components/settings/TelemetryTab";
+import { UsersTab } from "../components/settings/UsersTab";
 import { usePlatformSettingsForm } from "../components/settings/useSettingsForm";
 import { Page } from "../components/ui";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -21,6 +23,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 
 const TABS = [
   { value: "overview", label: "Overview" },
+  { value: "users", label: "Users" },
+  { value: "signin", label: "Sign-in" },
   { value: "inference", label: "Inference" },
   { value: "telemetry", label: "Telemetry" },
   { value: "rag", label: "RAG" },
@@ -53,6 +57,12 @@ export function Settings() {
 
         <TabsContent value="overview">
           <OverviewTab form={form} />
+        </TabsContent>
+        <TabsContent value="users">
+          <UsersTab />
+        </TabsContent>
+        <TabsContent value="signin">
+          <SignInTab form={form} />
         </TabsContent>
         <TabsContent value="inference">
           <InferenceTab />

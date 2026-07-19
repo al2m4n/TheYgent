@@ -40,7 +40,13 @@ import httpx
 import yaml
 from fastapi import Depends, FastAPI, Header, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text as sa_text
@@ -59,9 +65,33 @@ from theygent_ir import (
 
 from theygent_control_plane import db
 from theygent_control_plane.artifacts import LocalArtifactStore
+from theygent_control_plane.auth import (
+    API_KEY_TOKEN_PREFIX,
+    MIN_PASSWORD_LENGTH,
+    SESSION_TOKEN_PREFIX,
+    AuthStore,
+    OidcError,
+    Role,
+    StateSealer,
+    build_authorize_url,
+    discover_endpoints,
+    email_allowed,
+    email_verified,
+    exchange_code,
+    extract_identity,
+    fetch_userinfo,
+    hash_password,
+    new_pkce_pair,
+    new_state_binding,
+    normalize_slug,
+    normalize_username,
+    picture_url,
+    role_at_least,
+    validate_provider_config,
+)
 from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
 from theygent_control_plane.gates import GateBackend
-from theygent_control_plane.governance import LOCAL_PRINCIPAL, authorize
+from theygent_control_plane.governance import Principal, authorize
 from theygent_control_plane.mcp import (
     McpClient,
     McpConnectionError,
@@ -106,7 +136,7 @@ from theygent_control_plane.run import (
     TriggerKind,
     new_ulid,
 )
-from theygent_control_plane.secrets import SecretStore, secret_keys_from_env
+from theygent_control_plane.secrets import SecretDecryptError, SecretStore, secret_keys_from_env
 from theygent_control_plane.settings import (
     SettingsService,
     SettingsValidationError,
@@ -491,6 +521,89 @@ class OtlpTestRequest(BaseModel):
     headers: dict[str, str] | None = None
 
 
+# ── identity & access request models ─────────────────────────────────────────────────────────────
+
+
+class SetupRequest(BaseModel):
+    # POST /auth/setup — the first-run wizard's one call: create the first (admin) account.
+    # Only valid while the install has ZERO users; afterwards it is a hard 409.
+    username: str
+    password: str
+    display_name: str | None = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UpdateMeRequest(BaseModel):
+    display_name: str | None = None
+
+
+class ChangePasswordRequest(BaseModel):
+    # ``current_password`` is required when a password exists; an SSO-only account setting its
+    # FIRST password has nothing to present, so it may be absent in exactly that case.
+    current_password: str | None = None
+    new_password: str
+
+
+class CreateApiKeyRequest(BaseModel):
+    # ``role`` defaults to the caller's own; anything wider is a 400 (keys narrow, never widen).
+    name: str
+    role: Role | None = None
+
+
+class CreateUserRequest(BaseModel):
+    # Admin-creates-account. ``password`` optional: an SSO-only account is created without one
+    # (the user signs in through a provider; ``has_password`` stays false).
+    username: str
+    display_name: str | None = None
+    password: str | None = None
+    role: Role = "viewer"
+    email: str | None = None
+
+
+class UpdateUserRequest(BaseModel):
+    display_name: str | None = None
+    role: Role | None = None
+    disabled: bool | None = None
+    email: str | None = None
+
+
+class SetUserPasswordRequest(BaseModel):
+    # Admin reset — no current-password proof (that's the point of an admin reset); every other
+    # session of the target account is revoked in the same transaction.
+    password: str
+
+
+class OidcExchangeRequest(BaseModel):
+    # The SPA trades the short-lived one-time code (delivered in the callback fragment) for the
+    # real session bearer over a POST body — so the long-lived bearer never rides a redirect URL
+    # (and thus never a proxy's response-header log).
+    code: str
+
+
+class CreateProviderRequest(BaseModel):
+    # Register a sign-in provider. ``config`` is NON-SECRET (issuer/endpoints/client_id/scopes/
+    # provisioning policy — validated in auth.validate_provider_config); ``client_secret`` goes
+    # to the encrypted secret store and is never echoed back (the connections discipline).
+    name: str
+    slug: str
+    config: dict[str, Any] = {}
+    client_secret: str | None = None  # write-only
+    enabled: bool = True
+
+
+class UpdateProviderRequest(BaseModel):
+    # PATCH: rename / edit non-secret config / enable / ROTATE the client secret. ``slug`` is
+    # immutable (it is the URL identity sign-in flows and IdP redirect registrations hang off).
+    name: str | None = None
+    config: dict[str, Any] | None = None
+    client_secret: str | None = None  # write-only; non-empty rotates in place
+    enabled: bool | None = None
+
+
 # The Fernet-key resolution lives in secrets.py (`secret_keys_from_env`) — the worker reads the
 # same keys, and two copies of "how keys are read" would eventually disagree.
 
@@ -648,6 +761,11 @@ def create_app(
     resolved_secret_keys = secret_key if secret_key is not None else secret_keys_from_env()
     secrets = SecretStore.from_keys(resolved_secret_keys)
     secret_key_ephemeral = not resolved_secret_keys  # surfaced in the settings boot block
+    # The identity layer: accounts/sessions/API keys/sign-in providers (auth.py). The state
+    # sealer shares the secret-store key material so in-flight OIDC state survives replicas;
+    # with no key configured it degrades to an ephemeral in-process key exactly like SecretStore.
+    auth_store = AuthStore()
+    state_sealer = StateSealer(resolved_secret_keys)
     # The observability seam. One live SpanBus for the /trace/stream side-channel (shared with
     # the in-process durable runtime so its spans stream too). The Telemetry object (the capture
     # wrapper's home) needs the sessionmaker, so it is built in the lifespan once that exists —
@@ -930,11 +1048,55 @@ def create_app(
     app.state.secrets = secrets  # encrypted secret store
     app.state.invoke_token = token
 
-    # Auth placeholder so RBAC slots in later without reshaping handlers — a no-op
-    # dependency today; build nothing now. The cockpit/management surfaces stay open on
-    # single-user localhost; only the *unattended* surfaces get a real check below.
-    async def require_auth() -> None:
-        return None
+    # ── Request auth: bearer → Principal ──────────────────────────────────────────
+    # The one place a credential resolves to authority. Every management/cockpit route
+    # depends on `require_auth` (any signed-in role) or a `require_editor`/`require_admin`
+    # tightening; the unattended surfaces keep their own gates (`require_token`, webhook
+    # HMAC). A fresh install has zero users, so every bearer fails and the whole API is
+    # closed until POST /auth/setup creates the first admin — the lockout needs no special
+    # casing. Handlers never parse credentials; they receive the resolved Principal.
+
+    async def require_auth(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> Principal:
+        presented = _bearer_token(authorization)
+        if presented is None:
+            raise AuthError("authentication required (Authorization: Bearer …)")
+        principal: Principal | None = None
+        # Prefix-dispatch, then one indistinguishable 401 for every miss (unknown token,
+        # expired session, revoked key, disabled account) — error shape must not leak which.
+        if presented.startswith(SESSION_TOKEN_PREFIX):
+            async with tx() as session:
+                user = await auth_store.resolve_session(session, presented)
+            if user is not None:
+                principal = Principal(id=user.id, role=user.role)
+        elif presented.startswith(API_KEY_TOKEN_PREFIX):
+            async with tx() as session:
+                resolved = await auth_store.resolve_api_key(session, presented)
+            if resolved is not None:
+                key_user, effective_role = resolved
+                principal = Principal(id=key_user.id, role=effective_role)
+        if principal is None:
+            raise AuthError("invalid or expired credentials")
+        request.state.principal = principal
+        return principal
+
+    def _require_role(minimum: Role):
+        # Role-floor tighteners over require_auth. FastAPI caches the sub-dependency per
+        # request, so a route depending on require_editor resolves the bearer exactly once.
+        async def dependency(principal: Principal = Depends(require_auth)) -> Principal:
+            if not role_at_least(principal.role, minimum):
+                raise AuthError(
+                    f"this endpoint requires the {minimum} role",
+                    code="forbidden",
+                    status=403,
+                )
+            return principal
+
+        return dependency
+
+    require_editor = _require_role("editor")
+    require_admin = _require_role("admin")
 
     @app.exception_handler(AuthError)
     async def _on_auth_error(_request: Request, exc: AuthError) -> JSONResponse:
@@ -943,26 +1105,23 @@ def create_app(
         return _error(exc.message, status=exc.status, code=exc.code)
 
     async def require_token(authorization: str | None = Header(default=None)) -> None:
-        # The minimum real auth — a single bearer token gating the unattended invoke +
-        # webhook-management surfaces. Constant-time compare; deny-by-default when no token is
-        # configured (an open unattended entry point is never the safe default). NOT RBAC/SSO.
-        #
-        # Attach-point for future workspace/owner scoping without a reshape: this dependency is
-        # the ONE place resolving a credential to authority — no handler outside it checks auth. The
-        # single global token is the degenerate single-tenant case of a future token→workspace
-        # lookup; scoping lands by making THIS function resolve the bearer to a principal (and the
-        # `agent`/`trigger` tables gain the deferred `workspace_id` column), so the call sites
-        # (`Depends(require_token)`) and the firing path stay shaped as they are. Build only the
-        # token now (no speculative principal that nothing consumes — that would erode the seam).
+        # The unattended-invoke gate. Two accepted credentials: the per-deploy
+        # THEYGENT_INVOKE_TOKEN (constant-time compare; the pre-identity contract, kept so
+        # existing deployments don't break) and any active API key — the per-user programmatic
+        # credential external callers mint in the UI. Interactive session bearers are
+        # deliberately NOT accepted here: /invoke is the unattended surface. Deny-by-default:
+        # with no env token configured and no matching key, the surface is closed.
         presented = _bearer_token(authorization)
-        # Compare as BYTES: str compare_digest raises TypeError on non-ASCII input, and this
-        # header is attacker-controlled — a crafted byte must yield a clean 401, never a 500.
-        if (
-            not token
-            or presented is None
-            or not hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8"))
-        ):
-            raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
+        if presented is not None:
+            # Compare as BYTES: str compare_digest raises TypeError on non-ASCII input, and this
+            # header is attacker-controlled — a crafted byte must yield a clean 401, never a 500.
+            if token and hmac.compare_digest(presented.encode("utf-8"), token.encode("utf-8")):
+                return
+            if presented.startswith(API_KEY_TOKEN_PREFIX):
+                async with tx() as session:
+                    if await auth_store.resolve_api_key(session, presented) is not None:
+                        return
+        raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
 
     async def get_session() -> AsyncIterator[AsyncSession]:
         # Request-scoped session for read handlers. Writes that outlive the handler
@@ -1003,8 +1162,8 @@ def create_app(
 
     # ── theygent-native API: /runs ───────────────────────────────────────
 
-    @app.post("/runs", dependencies=[Depends(require_auth)])
-    async def create_run(req: RunRequest) -> Any:
+    @app.post("/runs")
+    async def create_run(req: RunRequest, principal: Principal = Depends(require_auth)) -> Any:
         # An engine name is not a logical id. Reject before anything reaches the
         # wire — we never rewrite a logical id into an engine name either.
         if req.model in _ENGINE_NAMES:
@@ -1019,9 +1178,13 @@ def create_app(
         # immediately — GET /runs/{id} works during streaming and across a restart.
         async with tx() as session:
             if req.session_id:
-                await store.ensure_chat_session(session, req.session_id)
+                await store.ensure_chat_session(session, req.session_id, user_id=principal.id)
             run = await store.create_run(
-                session, model=req.model, session_id=req.session_id, params=req.params
+                session,
+                model=req.model,
+                session_id=req.session_id,
+                params=req.params,
+                user_id=principal.id,
             )
 
         # Naive full replay: prior turns verbatim + the new input. No summarization,
@@ -1287,32 +1450,58 @@ def create_app(
         logger.info("run.completed", extra={"run_id": run.id})
         return {"runId": run.id, "status": "completed", "output": output}
 
-    @app.get("/runs", dependencies=[Depends(require_auth)])
+    def _may_touch_run(principal: Principal, owner_id: str | None) -> bool:
+        # Run output IS conversation content — the same ownership rule the /sessions surface
+        # enforces (own + ownerless rows; admins see all). A run's output/session_id would
+        # otherwise leak the exact answer text /sessions correctly denies (the two are sibling
+        # views of one conversation). Mirrors _may_touch_session deliberately.
+        return principal.role == "admin" or owner_id is None or owner_id == principal.id
+
+    @app.get("/runs")
     async def list_runs(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
         session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
     ) -> Any:
         # A thin, read-only, paginated list over already-persisted runs (newest first). Additive,
-        # not a reshape; /runs/{id} and POST /runs are untouched.
-        # NOT an aggregation/summary endpoint.
-        runs = await store.list_runs(session, limit=limit, before=before)
+        # not a reshape; /runs/{id} and POST /runs are untouched. Non-admins see their own +
+        # ownerless (system/pre-auth) rows only — the /sessions ownership boundary, mirrored.
+        for_user = None if principal.role == "admin" else (principal.id or "")
+        runs = await store.list_runs(session, limit=limit, before=before, for_user=for_user)
         return {"runs": [r.model_dump(mode="json") for r in runs]}
 
-    @app.get("/runs/{run_id}", dependencies=[Depends(require_auth)])
-    async def get_run(run_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+    @app.get("/runs/{run_id}")
+    async def get_run(
+        run_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
         run = await store.get_run(session, run_id)
-        if run is None:
+        # 404 (not 403) on another account's run — its id must be indistinguishable from a
+        # nonexistent one (no id-probing oracle), exactly like GET /sessions/{id}.
+        if run is None or not _may_touch_run(principal, run.user_id):
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         return run.model_dump(mode="json")
 
-    @app.post("/runs/{run_id}/resume", dependencies=[Depends(require_auth)])
-    async def resume_run(run_id: str, req: ResumeRunRequest) -> Any:
+    @app.post("/runs/{run_id}/resume")
+    async def resume_run(
+        run_id: str, req: ResumeRunRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # The durable human-in-the-loop entry. Deliver the awaited input to a `waiting` run →
         # DBOS.send to the checkpointed workflow, which resumes from the recv point (even across
         # a worker restart). Authed like the other interactive run surfaces (the person answering
         # a human gate is the cockpit user; starting the durable run uses the same auth) — the
         # unattended surfaces (/invoke, /hooks) keep their token/signature gates.
+        #
+        # Ownership FIRST, before the durable-mode gate: resume DELIVERS attacker-controlled input
+        # into the run's human gate, so a non-owner must not even learn the run exists — the same
+        # 404-as-if-absent as get_run, in EVERY mode (a mode-dependent error would itself leak
+        # that the run exists).
+        async with tx() as session:
+            run = await store.get_run(session, run_id)
+        if run is None or not _may_touch_run(principal, run.user_id):
+            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         # Durable mode only; non-durable runs can't durably wait, so resume is a 400 there (honest).
         runtime = getattr(app.state, "durable_runtime", None)
         if runtime is None:
@@ -1325,10 +1514,6 @@ def create_app(
         # when durable mode is actually live — which it is, since `runtime` exists.
         from theygent_control_plane.durable.runtime import WorkflowGoneError
 
-        async with tx() as session:
-            run = await store.get_run(session, run_id)
-        if run is None:
-            return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
         if run.status != "waiting":
             return _error(
                 f"run {run_id!r} is {run.status!r}, not waiting — nothing to resume",
@@ -1408,16 +1593,18 @@ def create_app(
     # pass through the single ``authorize`` chokepoint. /runs, /graphs/runs, /agents/* are
     # untouched. No external trace backend — the UI reads theygent's own store.
 
-    @app.get("/runs/{run_id}/trace", dependencies=[Depends(require_auth)])
-    async def get_run_trace(run_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+    @app.get("/runs/{run_id}/trace")
+    async def get_run_trace(
+        run_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
         # The waterfall payload: the run's span tree (timing + status + worker attribution + scalar
         # attrs + edge sizes), ordered by start_ns. NO payloads — those are the lazy /io call.
         run = await store.get_run(session, run_id)
         if run is None:
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
-        if not authorize(
-            LOCAL_PRINCIPAL, "trace:read", run
-        ):  # the authz chokepoint (no-op allow now)
+        if not authorize(principal, "trace:read", run):  # the authz chokepoint
             return _error("not permitted to read this run's trace", status=403, code="forbidden")
         telemetry: Telemetry = app.state.telemetry
         spans = await telemetry.trace_store.list_spans(session, run_id)
@@ -1427,8 +1614,8 @@ def create_app(
             "spans": [s.model_dump(mode="json") for s in spans],
         }
 
-    @app.get("/runs/{run_id}/trace/stream", dependencies=[Depends(require_auth)])
-    async def stream_run_trace(run_id: str) -> Any:
+    @app.get("/runs/{run_id}/trace/stream")
+    async def stream_run_trace(run_id: str, principal: Principal = Depends(require_auth)) -> Any:
         # The LIVE waterfall: subscribe to the in-process SpanBus and relay span open/close
         # events as they happen, so the waterfall grows during a streaming run (the in-flight amber
         # bar settles green/red on its close event). The durable record is /trace; this is the
@@ -1437,7 +1624,7 @@ def create_app(
             run = await store.get_run(s, run_id)
         if run is None:
             return _error(f"unknown run {run_id!r}", status=404, code="run_not_found")
-        if not authorize(LOCAL_PRINCIPAL, "trace:read", run):
+        if not authorize(principal, "trace:read", run):
             return _error("not permitted to read this run's trace", status=403, code="forbidden")
         telemetry = app.state.telemetry
         bus = telemetry.bus
@@ -1491,9 +1678,12 @@ def create_app(
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
-    @app.get("/runs/{run_id}/nodes/{node_id}/io", dependencies=[Depends(require_auth)])
+    @app.get("/runs/{run_id}/nodes/{node_id}/io")
     async def get_node_io(
-        run_id: str, node_id: str, session: AsyncSession = Depends(get_session)
+        run_id: str,
+        node_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
     ) -> Any:
         # The click-through: the full per-node I/O, lazy. Gated states are NOT errors — the
         # timeline stays legible; only payloads are gated, with a clear reason: not-permitted
@@ -1506,7 +1696,7 @@ def create_app(
         io = await telemetry.io_store.get_io(session, run_id, node_id)
         # Authz: io:read denial returns the timing/sizes shape with payloads omitted + a reason —
         # "captured but not visible to you" is a DIFFERENT message from "not captured".
-        if not authorize(LOCAL_PRINCIPAL, "io:read", run):
+        if not authorize(principal, "io:read", run):
             level = io.capture_level if io is not None else await _effective_capture(run.graph_id)
             return _io_response(
                 run_id,
@@ -1574,23 +1764,41 @@ def create_app(
             "reason": reason,
         }
 
-    @app.get("/sessions", dependencies=[Depends(require_auth)])
+    def _may_touch_session(principal: Principal, owner_id: str | None) -> bool:
+        # Conversations are per-account: you see your own plus ownerless (pre-auth) rows;
+        # admins see all (they operate the install). This is the one ownership rule for the
+        # /sessions surface — deliberately at the endpoints, not inside authorize() (the
+        # chokepoint stays a pure role gate; a hidden ownership system there would be
+        # unauditable from the route table).
+        return principal.role == "admin" or owner_id is None or owner_id == principal.id
+
+    @app.get("/sessions")
     async def list_sessions(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
         session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
     ) -> Any:
         # Read-only paginated session list (newest activity first). Same additive shape as
-        # GET /runs.
-        sessions = await store.list_chat_sessions(session, limit=limit, before=before)
+        # GET /runs. Non-admins get their own + ownerless rows only.
+        for_user = None if principal.role == "admin" else (principal.id or "")
+        sessions = await store.list_chat_sessions(
+            session, limit=limit, before=before, for_user=for_user
+        )
         return {"sessions": [s.model_dump(mode="json") for s in sessions]}
 
-    @app.get("/sessions/{session_id}", dependencies=[Depends(require_auth)])
+    @app.get("/sessions/{session_id}")
     async def get_session_detail(
-        session_id: str, session: AsyncSession = Depends(get_session)
+        session_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
     ) -> Any:
         detail = await store.get_chat_session(session, session_id)
         if detail is None:
+            return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
+        if not _may_touch_session(principal, detail.user_id):
+            # 404, not 403: another account's session id must be indistinguishable from a
+            # nonexistent one (no id-probing oracle).
             return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
         return detail.model_dump(mode="json")
 
@@ -1599,25 +1807,36 @@ def create_app(
     # here. The run paths keep writing their own turns exactly as before; these endpoints are
     # a second writer, serialized by the same FOR UPDATE lock in ``append_turn``.
 
-    @app.post("/sessions", status_code=201, dependencies=[Depends(require_auth)])
-    async def create_session_endpoint(req: CreateSessionRequest) -> Any:
+    @app.post("/sessions", status_code=201)
+    async def create_session_endpoint(
+        req: CreateSessionRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # Idempotent ensure: a missing id mints one server-side (the same idgen runs use); an
         # existing id updates metadata iff provided (whole-value replace) and returns the row.
+        # A fresh session belongs to its creator; the ensure path never reassigns an owner.
         session_id = req.id or new_ulid()
         async with tx() as session:
+            existing = await store.get_chat_session(session, session_id)
+            if existing is not None and not _may_touch_session(principal, existing.user_id):
+                return _error(
+                    f"unknown session {session_id!r}", status=404, code="session_not_found"
+                )
             summary = await store.upsert_chat_session(
-                session, session_id=session_id, metadata=req.metadata
+                session, session_id=session_id, metadata=req.metadata, user_id=principal.id
             )
         return JSONResponse(summary.model_dump(mode="json"), status_code=201)
 
-    @app.post("/sessions/{session_id}/turns", status_code=201, dependencies=[Depends(require_auth)])
-    async def append_session_turns(session_id: str, req: AppendTurnsRequest) -> Any:
+    @app.post("/sessions/{session_id}/turns", status_code=201)
+    async def append_session_turns(
+        session_id: str, req: AppendTurnsRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # Append a client-written user/assistant pair with run_id NULL — the same FOR-UPDATE +
         # max(position)+1 mechanics as the run paths, so client and run writers interleave
         # without colliding. No implicit create: an unknown session is a 404, not an ensure
         # (POST /sessions is the ensure).
         async with tx() as session:
-            if await store.get_chat_session(session, session_id) is None:
+            existing = await store.get_chat_session(session, session_id)
+            if existing is None or not _may_touch_session(principal, existing.user_id):
                 return _error(
                     f"unknown session {session_id!r}", status=404, code="session_not_found"
                 )
@@ -1637,12 +1856,19 @@ def create_app(
             {"messages": [m.model_dump(mode="json") for m in appended]}, status_code=201
         )
 
-    @app.delete("/sessions/{session_id}", dependencies=[Depends(require_auth)])
-    async def delete_session_endpoint(session_id: str) -> Any:
+    @app.delete("/sessions/{session_id}")
+    async def delete_session_endpoint(
+        session_id: str, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # One transaction: detach the session's runs (run history outlives the conversation it
         # happened in, so run.session_id is nulled — never a run delete), drop its messages,
-        # drop the session row.
+        # drop the session row. Ownership-gated like every other /sessions read/write.
         async with tx() as session:
+            existing = await store.get_chat_session(session, session_id)
+            if existing is None or not _may_touch_session(principal, existing.user_id):
+                return _error(
+                    f"unknown session {session_id!r}", status=404, code="session_not_found"
+                )
             deleted = await store.delete_chat_session(session, session_id)
         if not deleted:
             return _error(f"unknown session {session_id!r}", status=404, code="session_not_found")
@@ -1707,8 +1933,12 @@ def create_app(
     # response, GET /connections elides config.spec); import is id-preserving, idempotent, and
     # skip-on-exists. Secrets never enter a bundle in either direction — see transfer.py.
 
-    @app.post("/export", dependencies=[Depends(require_auth)])
-    async def export_bundle(request: Request, session: AsyncSession = Depends(get_session)) -> Any:
+    @app.post("/export")
+    async def export_bundle(
+        request: Request,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
         # The body is read raw, not via a pydantic model (the /import posture): ``include`` is a
         # non-empty subset of the bundle sections (agents | runs | traces | sessions | mcp | rag;
         # ``traces`` implies ``runs`` — the server adds them), and EVERY malformed request — a
@@ -1727,15 +1957,15 @@ def create_app(
             )
         # A whole-install export aggregates every sensitive read at once — through the authz
         # chokepoint so RBAC tightens it with the per-resource reads, no retrofit.
-        if not authorize(LOCAL_PRINCIPAL, "transfer:export", None):
+        if not authorize(principal, "transfer:export", None):
             return _error("not permitted to export", status=403, code="forbidden")
         bundle = await build_export_bundle(session, include=include)
         logger.info("transfer.exported", extra={"include": sorted(include)})
         return bundle
 
-    @app.post("/import", dependencies=[Depends(require_auth)])
-    async def import_bundle(request: Request) -> Any:
-        if not authorize(LOCAL_PRINCIPAL, "transfer:import", None):
+    @app.post("/import")
+    async def import_bundle(request: Request, principal: Principal = Depends(require_auth)) -> Any:
+        if not authorize(principal, "transfer:import", None):
             return _error("not permitted to import", status=403, code="forbidden")
         # The body is a raw bundle, not a pydantic model: the app owns the 400 shape for a
         # non-bundle body (`invalid_bundle`), and an unknown future format_version must fail
@@ -1783,8 +2013,10 @@ def create_app(
     # produce a Run exactly as /runs does — but IR-driven. A graph run is still a
     # Run, so GET /runs/{id} is unchanged. /runs itself is untouched.
 
-    @app.post("/graphs/runs", dependencies=[Depends(require_auth)])
-    async def create_graph_run(req: GraphRunRequest) -> Any:
+    @app.post("/graphs/runs")
+    async def create_graph_run(
+        req: GraphRunRequest, principal: Principal = Depends(require_editor)
+    ) -> Any:
         # 1. Validate the IR — Pydantic envelope then semantic graph checks. Either failure is a
         #    400 with a precise message; NO Run is created.
         try:
@@ -1797,7 +2029,11 @@ def create_app(
         #    the registry there). Everything below — engine/tool/MCP up-front checks, the Run row,
         #    SSE relay, session memory — is identical.
         return await _execute_ir_run(
-            ir, input_value=req.input, session_id=req.session_id, stream=req.stream
+            ir,
+            input_value=req.input,
+            session_id=req.session_id,
+            stream=req.stream,
+            user_id=principal.id,
         )
 
     async def _execute_ir_run(
@@ -1807,6 +2043,7 @@ def create_app(
         session_id: str | None,
         stream: bool,
         trigger_id: str | None = None,
+        user_id: str | None = None,
     ) -> Any:
         """Run a *validated* IRDocument through the interactive walker — the one execution path
         /graphs/runs (inline IR), /agents/{id}/runs + /agents/{id}/invoke (saved IR), and the
@@ -1950,7 +2187,7 @@ def create_app(
         # version, chash == the stored content hash), so the Run row carries it.
         async with tx() as session:
             if session_id:
-                await store.ensure_chat_session(session, session_id)
+                await store.ensure_chat_session(session, session_id, user_id=user_id)
             run = await store.create_run(
                 session,
                 model=run_model,
@@ -1960,6 +2197,7 @@ def create_app(
                 graph_version=ir.version,
                 content_hash=chash,
                 trigger_id=trigger_id,
+                user_id=user_id,
             )
 
         # Session memory is unchanged through the graph path: prior turns replay into the llm
@@ -2206,7 +2444,7 @@ def create_app(
     # hash, so a stored agent and the Run it produces agree byte-for-byte. Single-user localhost:
     # no auth/RBAC/sharing built.
 
-    @app.post("/agents", status_code=201, dependencies=[Depends(require_auth)])
+    @app.post("/agents", status_code=201, dependencies=[Depends(require_editor)])
     async def create_agent(req: CreateAgentRequest) -> Any:
         # Validate the IR; the agent id + first version come FROM the IR (the IR carries its
         # identity). View is stripped before hashing. A NEW agent only — re-using an existing
@@ -2271,7 +2509,7 @@ def create_app(
             return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
         return detail.model_dump(mode="json")
 
-    @app.post("/agents/{agent_id}/versions", dependencies=[Depends(require_auth)])
+    @app.post("/agents/{agent_id}/versions", dependencies=[Depends(require_editor)])
     async def add_agent_version(agent_id: str, req: AddVersionRequest) -> Any:
         try:
             ir = parse_document(req.ir)
@@ -2331,7 +2569,7 @@ def create_app(
             )
         return sv.model_dump(mode="json")
 
-    @app.delete("/agents/{agent_id}", dependencies=[Depends(require_auth)])
+    @app.delete("/agents/{agent_id}", dependencies=[Depends(require_editor)])
     async def delete_agent(agent_id: str) -> Response:
         # A deliberate contract extension to the append-only registry: remove an agent AND its
         # hard-FK'd dependents (triggers — including any mirrored DBOS schedule, the io-policy
@@ -2347,15 +2585,19 @@ def create_app(
         logger.info("agent.deleted", extra={"agent_id": agent_id, "triggers": len(trigger_ids)})
         return Response(status_code=204)
 
-    @app.get("/agents/{agent_id}/io-policy", dependencies=[Depends(require_auth)])
-    async def get_io_policy(agent_id: str, session: AsyncSession = Depends(get_session)) -> Any:
+    @app.get("/agents/{agent_id}/io-policy")
+    async def get_io_policy(
+        agent_id: str,
+        session: AsyncSession = Depends(get_session),
+        principal: Principal = Depends(require_editor),
+    ) -> Any:
         # The effective + stored capture policy. ``effective`` is what actually happens
         # (ceiling ∧ topology ∧ stored), so the agent-settings control shows the real behavior —
         # e.g. "Full requested; capped to Sizes only by this deployment".
         # Through the authz chokepoint.
         if await agents.get_agent(session, agent_id) is None:
             return _error(f"unknown agent {agent_id!r}", status=404, code="agent_not_found")
-        if not authorize(LOCAL_PRINCIPAL, "agent:configure", agent_id):
+        if not authorize(principal, "agent:configure", agent_id):
             return _error("not permitted to view this agent's policy", status=403, code="forbidden")
         telemetry: Telemetry = app.state.telemetry
         row = await telemetry.policy_store.get_policy(session, agent_id)
@@ -2367,14 +2609,16 @@ def create_app(
         )
         return view.model_dump(mode="json")
 
-    @app.put("/agents/{agent_id}/io-policy", dependencies=[Depends(require_auth)])
-    async def put_io_policy(agent_id: str, req: IoPolicyRequest) -> Any:
+    @app.put("/agents/{agent_id}/io-policy")
+    async def put_io_policy(
+        agent_id: str, req: IoPolicyRequest, principal: Principal = Depends(require_editor)
+    ) -> Any:
         # Set the capture policy. Gated on ``agent:configure`` (the authz chokepoint). Editing
         # it does NOT mint a new agent version — the policy lives beside the agent row, not in the
         # hashed IR (version immutability), so ``contentHash`` is unchanged
         # (surfaced in the UI copy).
         telemetry: Telemetry = app.state.telemetry
-        if not authorize(LOCAL_PRINCIPAL, "agent:configure", agent_id):
+        if not authorize(principal, "agent:configure", agent_id):
             return _error("not permitted to configure this agent", status=403, code="forbidden")
         async with tx() as session:
             if await agents.get_agent(session, agent_id) is None:
@@ -2385,7 +2629,7 @@ def create_app(
                 io_capture=req.io_capture,
                 io_retention_seconds=req.io_retention_seconds,
                 redact_rules=req.redact_rules,
-                updated_by=LOCAL_PRINCIPAL.id,  # NULL in single-user; the auth milestone fills it
+                updated_by=principal.id,
             )
             view = telemetry.policy_store.view(
                 agent_id=agent_id,
@@ -2488,18 +2732,20 @@ def create_app(
             "orphaned": snap["orphaned"],
         }
 
-    @app.get("/settings", dependencies=[Depends(require_auth)])
-    async def get_settings() -> Any:
-        if not authorize(LOCAL_PRINCIPAL, "settings:read", "platform"):
+    @app.get("/settings")
+    async def get_settings(principal: Principal = Depends(require_admin)) -> Any:
+        if not authorize(principal, "settings:read", "platform"):
             return _error("not permitted to read platform settings", status=403, code="forbidden")
         return await _settings_payload()
 
-    @app.patch("/settings", dependencies=[Depends(require_auth)])
-    async def patch_settings(changes: dict[str, Any]) -> Any:
+    @app.patch("/settings")
+    async def patch_settings(
+        changes: dict[str, Any], principal: Principal = Depends(require_admin)
+    ) -> Any:
         # Body: {key: value|null, ...}. Atomic: any invalid key → 422 and NOTHING stored; null
         # resets a key to default (and deletes an orphaned row). Post-commit live hooks are
         # best-effort — their failures come back per-key in apply_errors, never a rollback.
-        if not authorize(LOCAL_PRINCIPAL, "settings:write", "platform"):
+        if not authorize(principal, "settings:write", "platform"):
             return _error("not permitted to change platform settings", status=403, code="forbidden")
         svc: SettingsService = app.state.settings
         try:
@@ -2510,14 +2756,16 @@ def create_app(
             logger.info("settings.patched", extra={"keys": sorted(changes)})
         return {**await _settings_payload(), "apply_errors": apply_errors}
 
-    @app.post("/settings/otlp:test", dependencies=[Depends(require_auth)])
-    async def test_otlp_collector(req: OtlpTestRequest) -> Any:
+    @app.post("/settings/otlp:test")
+    async def test_otlp_collector(
+        req: OtlpTestRequest, principal: Principal = Depends(require_admin)
+    ) -> Any:
         # One-shot collector probe: a fresh exporter built exactly as the real export path
         # builds one (same endpoint semantics + headers), one synthetic payload-free span,
         # bounded timeout. The batch pipeline can't answer reachability (it swallows failures
         # by design), and the span never touches the local span table. Body overrides let the
         # UI test values BEFORE saving them.
-        if not authorize(LOCAL_PRINCIPAL, "settings:write", "platform"):
+        if not authorize(principal, "settings:write", "platform"):
             return _error("not permitted to test the collector", status=403, code="forbidden")
         svc: SettingsService = app.state.settings
         endpoint = req.endpoint or await svc.get("telemetry.otlp_endpoint")
@@ -2621,8 +2869,10 @@ def create_app(
             ir, input_value=input_value, session_id=None, stream=False, trigger_id=trigger.id
         )
 
-    @app.post("/agents/{agent_id}/runs", dependencies=[Depends(require_auth)])
-    async def run_agent(agent_id: str, req: AgentRunRequest) -> Any:
+    @app.post("/agents/{agent_id}/runs")
+    async def run_agent(
+        agent_id: str, req: AgentRunRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # Invoke-by-reference: resolve the agent's IR (pinned contentHash > pinned version >
         # latest), then run it through the existing walker path (_execute_ir_run) — same SSE relay,
         # same Run row (recording the agent's graph_id/graph_version/contentHash), same session
@@ -2635,11 +2885,17 @@ def create_app(
         assert ir is not None
         logger.info("agent.invoked", extra={"agent_id": agent_id})
         return await _execute_ir_run(
-            ir, input_value=req.input, session_id=req.session_id, stream=req.stream
+            ir,
+            input_value=req.input,
+            session_id=req.session_id,
+            stream=req.stream,
+            user_id=principal.id,
         )
 
-    @app.post("/agents/{agent_id}/durable-runs", dependencies=[Depends(require_auth)])
-    async def run_agent_durable(agent_id: str, req: AgentRunRequest) -> Any:
+    @app.post("/agents/{agent_id}/durable-runs")
+    async def run_agent_durable(
+        agent_id: str, req: AgentRunRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
         # Run a SAVED agent on the durable runtime and hand back a run id to poll — the way a user
         # executes a durable-only agent (loop/map/subgraph/human) from the UI, since those types
         # can't run on the interactive path. This is ADDITIVE: it touches no interactive handler; it
@@ -2671,6 +2927,9 @@ def create_app(
             # would run a different IR than the one validated here.
             "content_hash": req.content_hash or (None if req.version else ir.content_hash),
             "enqueued_ns": now_ns(),  # the workflow emits the enqueue→pickup wait span
+            # The initiating account rides the opaque agent_ref (like depth) so the resulting
+            # durable run records its owner — a human gate is then only resumable by them.
+            "user_id": principal.id,
         }
         handle = await runtime.enqueue_run(agent_ref, req.input, session_id=req.session_id)
         run_id = handle.workflow_id
@@ -2706,7 +2965,7 @@ def create_app(
         # layout rather than 500 on the one typed column this surface has.
         return ir, view if isinstance(view, dict) else None
 
-    @app.post("/drafts", status_code=201, dependencies=[Depends(require_auth)])
+    @app.post("/drafts", status_code=201, dependencies=[Depends(require_editor)])
     async def create_draft(req: CreateDraftRequest) -> Any:
         split = _split_draft_ir(req.ir)
         if isinstance(split, JSONResponse):
@@ -2717,7 +2976,7 @@ def create_app(
         logger.info("draft.created", extra={"draft_id": draft.id, "agent_id": req.agent_id})
         return draft.model_dump(mode="json")
 
-    @app.put("/drafts/{draft_id}", dependencies=[Depends(require_auth)])
+    @app.put("/drafts/{draft_id}", dependencies=[Depends(require_editor)])
     async def update_draft(draft_id: str, req: UpdateDraftRequest) -> Any:
         split = _split_draft_ir(req.ir)
         if isinstance(split, JSONResponse):
@@ -2729,7 +2988,7 @@ def create_app(
             return _error(f"unknown draft {draft_id!r}", status=404, code="draft_not_found")
         return draft.model_dump(mode="json")
 
-    @app.get("/drafts", dependencies=[Depends(require_auth)])
+    @app.get("/drafts", dependencies=[Depends(require_editor)])
     async def list_drafts(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -2741,7 +3000,7 @@ def create_app(
         rows = await drafts.list_drafts(session, limit=limit, before=before, agent_id=agent_id)
         return {"drafts": [d.model_dump(mode="json", exclude={"ir", "view"}) for d in rows]}
 
-    @app.get("/drafts/{draft_id}", dependencies=[Depends(require_auth)])
+    @app.get("/drafts/{draft_id}", dependencies=[Depends(require_editor)])
     async def get_draft(draft_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         # The editor's reload source: the full draft, ir view-stripped with view alongside.
         draft = await drafts.get_draft(session, draft_id)
@@ -2749,7 +3008,7 @@ def create_app(
             return _error(f"unknown draft {draft_id!r}", status=404, code="draft_not_found")
         return draft.model_dump(mode="json")
 
-    @app.delete("/drafts/{draft_id}", status_code=204, dependencies=[Depends(require_auth)])
+    @app.delete("/drafts/{draft_id}", status_code=204, dependencies=[Depends(require_editor)])
     async def delete_draft(draft_id: str) -> Response:
         async with tx() as session:
             deleted = await drafts.delete_draft(session, draft_id)
@@ -2810,7 +3069,7 @@ def create_app(
         if runtime is not None:
             await runtime.delete_schedule(trigger_id)
 
-    @app.post("/triggers", dependencies=[Depends(require_auth)])
+    @app.post("/triggers", dependencies=[Depends(require_editor)])
     async def create_trigger(req: CreateTriggerRequest) -> Any:
         invalid = _validate_trigger(req.kind, req.version, req.content_hash, req.config)
         if invalid is not None:
@@ -2846,7 +3105,7 @@ def create_app(
         )
         return JSONResponse(trigger.public_dump(), status_code=201)
 
-    @app.get("/triggers", dependencies=[Depends(require_auth)])
+    @app.get("/triggers", dependencies=[Depends(require_editor)])
     async def list_triggers(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -2855,14 +3114,14 @@ def create_app(
         rows = await triggers.list_triggers(session, limit=limit, before=before)
         return {"triggers": [t.public_dump() for t in rows]}
 
-    @app.get("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    @app.get("/triggers/{trigger_id}", dependencies=[Depends(require_editor)])
     async def get_trigger(trigger_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         trigger = await triggers.get(session, trigger_id)
         if trigger is None:
             return _error(f"unknown trigger {trigger_id!r}", status=404, code="trigger_not_found")
         return trigger.public_dump()
 
-    @app.patch("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    @app.patch("/triggers/{trigger_id}", dependencies=[Depends(require_editor)])
     async def patch_trigger(trigger_id: str, req: UpdateTriggerRequest) -> Any:
         async with tx() as session:
             existing = await triggers.get(session, trigger_id)
@@ -2886,7 +3145,7 @@ def create_app(
         logger.info("trigger.updated", extra={"trigger_id": trigger_id, "enabled": updated.enabled})
         return updated.public_dump()
 
-    @app.delete("/triggers/{trigger_id}", dependencies=[Depends(require_auth)])
+    @app.delete("/triggers/{trigger_id}", dependencies=[Depends(require_editor)])
     async def delete_trigger(trigger_id: str) -> Response:
         async with tx() as session:
             deleted = await triggers.delete(session, trigger_id)
@@ -2984,7 +3243,7 @@ def create_app(
                 )
         return None
 
-    @app.post("/connections", status_code=201, dependencies=[Depends(require_auth)])
+    @app.post("/connections", status_code=201, dependencies=[Depends(require_editor)])
     async def create_connection(req: CreateConnectionRequest) -> Any:
         invalid = _validate_connection(req.kind, req.config)
         if invalid is not None:
@@ -3004,7 +3263,7 @@ def create_app(
         logger.info("connection.created", extra={"connection_id": conn.id, "kind": conn.kind})
         return JSONResponse(conn.public_dump(), status_code=201)
 
-    @app.get("/connections", dependencies=[Depends(require_auth)])
+    @app.get("/connections", dependencies=[Depends(require_editor)])
     async def list_connections(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -3013,7 +3272,7 @@ def create_app(
         rows = await connections.list_connections(session, limit=limit, before=before)
         return {"connections": [c.public_dump() for c in rows]}
 
-    @app.get("/connections/{connection_id}", dependencies=[Depends(require_auth)])
+    @app.get("/connections/{connection_id}", dependencies=[Depends(require_editor)])
     async def get_connection(
         connection_id: str, session: AsyncSession = Depends(get_session)
     ) -> Any:
@@ -3026,7 +3285,7 @@ def create_app(
             )
         return conn.public_dump()
 
-    @app.patch("/connections/{connection_id}", dependencies=[Depends(require_auth)])
+    @app.patch("/connections/{connection_id}", dependencies=[Depends(require_editor)])
     async def patch_connection(connection_id: str, req: UpdateConnectionRequest) -> Any:
         async with tx() as session:
             existing = await connections.get(session, connection_id)
@@ -3064,7 +3323,7 @@ def create_app(
         return updated.public_dump()
 
     @app.delete(
-        "/connections/{connection_id}", status_code=204, dependencies=[Depends(require_auth)]
+        "/connections/{connection_id}", status_code=204, dependencies=[Depends(require_editor)]
     )
     async def delete_connection(connection_id: str) -> Response:
         async with tx() as session:
@@ -3104,7 +3363,7 @@ def create_app(
                 )
         return None
 
-    @app.post("/rag/sources", status_code=201, dependencies=[Depends(require_auth)])
+    @app.post("/rag/sources", status_code=201, dependencies=[Depends(require_editor)])
     async def create_rag_source(req: CreateRagSourceRequest) -> Any:
         if not req.name.strip():
             return _error("source name must be non-empty", status=400, code="invalid_rag_source")
@@ -3130,7 +3389,7 @@ def create_app(
         logger.info("rag.source_created", extra={"source_id": source.id, "kind": source.kind})
         return JSONResponse(source.public_dump(), status_code=201)
 
-    @app.get("/rag/sources", dependencies=[Depends(require_auth)])
+    @app.get("/rag/sources", dependencies=[Depends(require_editor)])
     async def list_rag_sources(
         limit: int = Query(default=100, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -3139,7 +3398,7 @@ def create_app(
         rows = await rag_store.list_sources(session, limit=limit, before=before)
         return {"sources": [s.public_dump() for s in rows]}
 
-    @app.get("/rag/sources/{source_id}", dependencies=[Depends(require_auth)])
+    @app.get("/rag/sources/{source_id}", dependencies=[Depends(require_editor)])
     async def get_rag_source(source_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         source = await rag_store.get_source(session, source_id)
         if source is None:
@@ -3148,7 +3407,7 @@ def create_app(
             )
         return source.public_dump()
 
-    @app.get("/rag/sources/{source_id}/documents", dependencies=[Depends(require_auth)])
+    @app.get("/rag/sources/{source_id}/documents", dependencies=[Depends(require_editor)])
     async def list_rag_documents(
         source_id: str, session: AsyncSession = Depends(get_session)
     ) -> Any:
@@ -3160,7 +3419,7 @@ def create_app(
         docs = await rag_store.list_documents(session, source_id)
         return {"documents": [d.public_dump() for d in docs]}
 
-    @app.patch("/rag/sources/{source_id}", dependencies=[Depends(require_auth)])
+    @app.patch("/rag/sources/{source_id}", dependencies=[Depends(require_editor)])
     async def patch_rag_source(source_id: str, req: UpdateRagSourceRequest) -> Any:
         async with tx() as session:
             existing = await rag_store.get_source(session, source_id)
@@ -3178,7 +3437,7 @@ def create_app(
         assert updated is not None
         return updated.public_dump()
 
-    @app.delete("/rag/sources/{source_id}", status_code=204, dependencies=[Depends(require_auth)])
+    @app.delete("/rag/sources/{source_id}", status_code=204, dependencies=[Depends(require_editor)])
     async def delete_rag_source(source_id: str) -> Response:
         # Stop any in-flight ingest first, then cascade-delete documents + chunks with the row.
         app.state.rag_ingest.cancel(source_id)
@@ -3192,7 +3451,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.post(
-        "/rag/sources/{source_id}:ingest", status_code=202, dependencies=[Depends(require_auth)]
+        "/rag/sources/{source_id}:ingest", status_code=202, dependencies=[Depends(require_editor)]
     )
     async def ingest_rag_source(source_id: str) -> Any:
         # Start (or re-run) the crawl. Idempotent economy: unchanged pages are hash-skipped,
@@ -3223,7 +3482,7 @@ def create_app(
         logger.info("rag.crawl_started", extra={"source_id": source_id})
         return JSONResponse({**source.public_dump(), "status": "ingesting"}, status_code=202)
 
-    @app.post("/rag/sources/{source_id}:cancel", dependencies=[Depends(require_auth)])
+    @app.post("/rag/sources/{source_id}:cancel", dependencies=[Depends(require_editor)])
     async def cancel_rag_ingest(
         source_id: str, session: AsyncSession = Depends(get_session)
     ) -> Any:
@@ -3239,7 +3498,7 @@ def create_app(
     @app.post(
         "/rag/sources/{source_id}/documents",
         status_code=202,
-        dependencies=[Depends(require_auth)],
+        dependencies=[Depends(require_editor)],
     )
     async def upload_rag_document(
         source_id: str, request: Request, filename: str = Query(default="")
@@ -3313,7 +3572,7 @@ def create_app(
         )
         return JSONResponse({**source.public_dump(), "status": "ingesting"}, status_code=202)
 
-    @app.post("/rag/sources/{source_id}/query", dependencies=[Depends(require_auth)])
+    @app.post("/rag/sources/{source_id}/query", dependencies=[Depends(require_editor)])
     async def query_rag_source(source_id: str, req: RagQueryRequest) -> Any:
         # The same retrieval the ``rag`` node runs — exposed so a builder can inspect what the
         # model would see before wiring the source into an agent.
@@ -3403,7 +3662,7 @@ def create_app(
             "connected": mcp.is_connected(name),
         }
 
-    @app.put("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
+    @app.put("/admin/mcp/servers/{name}", dependencies=[Depends(require_editor)])
     async def put_mcp_server(name: str, request: Request) -> Any:
         try:
             raw = await request.json()
@@ -3439,7 +3698,7 @@ def create_app(
     def _suite_dump(suite: BenchSuite) -> dict[str, Any]:
         return suite.model_dump(mode="json")
 
-    @app.post("/bench/suites", dependencies=[Depends(require_auth)])
+    @app.post("/bench/suites", dependencies=[Depends(require_editor)])
     async def create_suite(req: CreateSuiteRequest) -> Any:
         try:
             suite = BenchSuite(
@@ -3470,7 +3729,7 @@ def create_app(
             await bench.create_suite(session, suite)
         return JSONResponse(_suite_dump(suite), status_code=201)
 
-    @app.get("/bench/suites", dependencies=[Depends(require_auth)])
+    @app.get("/bench/suites", dependencies=[Depends(require_editor)])
     async def list_suites(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -3479,14 +3738,14 @@ def create_app(
         rows = await bench.list_suites(session, limit=limit, before=before)
         return {"suites": [_suite_dump(s) for s in rows]}
 
-    @app.get("/bench/suites/{suite_id}", dependencies=[Depends(require_auth)])
+    @app.get("/bench/suites/{suite_id}", dependencies=[Depends(require_editor)])
     async def get_suite(suite_id: str, session: AsyncSession = Depends(get_session)) -> Any:
         suite = await bench.get_suite(session, suite_id)
         if suite is None:
             return _error(f"unknown suite {suite_id!r}", status=404, code="suite_not_found")
         return _suite_dump(suite)
 
-    @app.post("/bench/runs", dependencies=[Depends(require_auth)])
+    @app.post("/bench/runs", dependencies=[Depends(require_editor)])
     async def record_bench_run(req: RecordBenchRunRequest) -> Any:
         # The server owns the digests: two runs differing only in a param get different
         # ``params_digest`` and are distinct results. Raw ``output`` is persisted ONLY when capture
@@ -3518,7 +3777,7 @@ def create_app(
             await bench.record_run(session, run)
         return JSONResponse(run.model_dump(mode="json"), status_code=201)
 
-    @app.get("/bench/runs", dependencies=[Depends(require_auth)])
+    @app.get("/bench/runs", dependencies=[Depends(require_editor)])
     async def list_bench_runs(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -3539,7 +3798,7 @@ def create_app(
         )
         return {"runs": [r.model_dump(mode="json") for r in rows]}
 
-    @app.get("/bench/compare", dependencies=[Depends(require_auth)])
+    @app.get("/bench/compare", dependencies=[Depends(require_editor)])
     async def compare_bench_runs(
         a: str = Query(...),
         b: str = Query(...),
@@ -3568,7 +3827,7 @@ def create_app(
             ),
         }
 
-    @app.post("/bench/presets", dependencies=[Depends(require_auth)])
+    @app.post("/bench/presets", dependencies=[Depends(require_editor)])
     async def create_preset(req: CreatePresetRequest) -> Any:
         preset = BenchPreset(
             name=req.name,
@@ -3580,7 +3839,7 @@ def create_app(
             await bench.create_preset(session, preset)
         return JSONResponse(preset.model_dump(mode="json"), status_code=201)
 
-    @app.get("/bench/presets", dependencies=[Depends(require_auth)])
+    @app.get("/bench/presets", dependencies=[Depends(require_editor)])
     async def list_presets(
         limit: int = Query(default=50, ge=1, le=200),
         before: str | None = Query(default=None),
@@ -3593,7 +3852,7 @@ def create_app(
         )
         return {"presets": [p.model_dump(mode="json") for p in rows]}
 
-    @app.delete("/bench/presets/{preset_id}", dependencies=[Depends(require_auth)])
+    @app.delete("/bench/presets/{preset_id}", dependencies=[Depends(require_editor)])
     async def delete_preset(preset_id: str) -> Response:
         async with tx() as session:
             deleted = await bench.delete_preset(session, preset_id)
@@ -3601,20 +3860,22 @@ def create_app(
             return _error(f"unknown preset {preset_id!r}", status=404, code="preset_not_found")
         return Response(status_code=204)
 
-    @app.get("/admin/mcp/servers", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/servers", dependencies=[Depends(require_editor)])
     async def list_mcp_servers() -> Any:
         # Only NAME-registered servers list here. Connection-backed servers register in the
         # manager under their connection id (`con_…`) on first use — surfacing those rows here
         # would hand the editor's `server` picker an id that belongs in the `connection` field.
         return {"servers": [s for s in mcp.states() if not str(s["name"]).startswith("con_")]}
 
-    @app.get("/admin/mcp/servers/{name}", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/servers/{name}", dependencies=[Depends(require_editor)])
     async def get_mcp_server(name: str) -> Any:
         if name not in mcp:
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
         return JSONResponse(_mcp_view(name))
 
-    @app.delete("/admin/mcp/servers/{name}", status_code=204, dependencies=[Depends(require_auth)])
+    @app.delete(
+        "/admin/mcp/servers/{name}", status_code=204, dependencies=[Depends(require_editor)]
+    )
     async def delete_mcp_server(name: str) -> Response:
         if name not in mcp:
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
@@ -3624,7 +3885,7 @@ def create_app(
             await mcp_store.delete_server(s, name)
         return Response(status_code=204)
 
-    @app.get("/admin/mcp/servers/{name}/tools", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/servers/{name}/tools", dependencies=[Depends(require_editor)])
     async def get_mcp_tools(name: str) -> Any:
         # Capability probe: connects if needed (lazy), returns the cached tool list. A server that
         # won't spawn is a clean 503, never a 500 (mirrors engine_unavailable).
@@ -3641,7 +3902,7 @@ def create_app(
             ]
         }
 
-    @app.post("/admin/mcp/servers/{name}:warm", dependencies=[Depends(require_auth)])
+    @app.post("/admin/mcp/servers/{name}:warm", dependencies=[Depends(require_editor)])
     async def warm_mcp_server(name: str) -> Any:
         if name not in mcp:
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
@@ -3651,7 +3912,7 @@ def create_app(
             return _error(str(exc), status=503, code="mcp_unavailable")
         return JSONResponse(_mcp_view(name))
 
-    @app.post("/admin/mcp/servers/{name}:close", dependencies=[Depends(require_auth)])
+    @app.post("/admin/mcp/servers/{name}:close", dependencies=[Depends(require_editor)])
     async def close_mcp_server(name: str) -> Any:
         if name not in mcp:
             return _error(f"unknown MCP server {name!r}", status=404, code="mcp_server_not_found")
@@ -3696,7 +3957,7 @@ def create_app(
                 code="invalid_connection",
             )
 
-    @app.get("/connections/{connection_id}/mcp/tools", dependencies=[Depends(require_auth)])
+    @app.get("/connections/{connection_id}/mcp/tools", dependencies=[Depends(require_editor)])
     async def get_connection_mcp_tools(connection_id: str) -> Any:
         cfg = await _mcp_connection_config(connection_id)
         if isinstance(cfg, JSONResponse):
@@ -3712,7 +3973,7 @@ def create_app(
             ]
         }
 
-    @app.post("/connections/{connection_id}/mcp:warm", dependencies=[Depends(require_auth)])
+    @app.post("/connections/{connection_id}/mcp:warm", dependencies=[Depends(require_editor)])
     async def warm_connection_mcp(connection_id: str) -> Any:
         cfg = await _mcp_connection_config(connection_id)
         if isinstance(cfg, JSONResponse):
@@ -3723,7 +3984,7 @@ def create_app(
             return _error(str(exc), status=503, code="mcp_unavailable")
         return {"id": connection_id, "connected": mcp.is_connected(connection_id)}
 
-    @app.post("/connections/{connection_id}/mcp:close", dependencies=[Depends(require_auth)])
+    @app.post("/connections/{connection_id}/mcp:close", dependencies=[Depends(require_editor)])
     async def close_connection_mcp(connection_id: str) -> Any:
         # Close is best-effort teardown of the live connection; the connection row is untouched.
         await mcp.close(connection_id)
@@ -3733,7 +3994,9 @@ def create_app(
     # The authorize flow may only run from here (a user clicked Connect); anywhere else the
     # broker fails fast so an unattended run binds `err` instead of waiting on a browser.
 
-    @app.post("/connections/{connection_id}/mcp-oauth:start", dependencies=[Depends(require_auth)])
+    @app.post(
+        "/connections/{connection_id}/mcp-oauth:start", dependencies=[Depends(require_editor)]
+    )
     async def start_mcp_oauth(connection_id: str) -> Any:
         cfg = await _mcp_connection_config(connection_id)
         if isinstance(cfg, JSONResponse):
@@ -3754,7 +4017,7 @@ def create_app(
         result = await app.state.oauth_broker.start(connection_id, connect)
         return JSONResponse(result)
 
-    @app.get("/connections/{connection_id}/mcp-oauth", dependencies=[Depends(require_auth)])
+    @app.get("/connections/{connection_id}/mcp-oauth", dependencies=[Depends(require_editor)])
     async def mcp_oauth_status(connection_id: str) -> Any:
         storage = DbTokenStorage(app.state.sessionmaker, connections, secrets, connection_id)
         tokens = await storage.get_tokens()
@@ -3812,11 +4075,11 @@ def create_app(
         entry["installedAs"] = conn.name if conn is not None else None
         entry["installedConnection"] = conn.id if conn is not None else None
 
-    @app.get("/admin/mcp/registries", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/registries", dependencies=[Depends(require_editor)])
     async def list_mcp_registries() -> Any:
         return {"registries": [r.model_dump(by_alias=True) for r in mcp_registry.registries()]}
 
-    @app.get("/admin/mcp/catalog", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/catalog", dependencies=[Depends(require_editor)])
     async def browse_mcp_catalog(
         registry: str = Query(default="official"),
         search: str = Query(default=""),
@@ -3835,7 +4098,7 @@ def create_app(
             _stamp_installed(entry, index)
         return {"entries": entries, "nextCursor": page.next_cursor}
 
-    @app.get("/admin/mcp/catalog/entry", dependencies=[Depends(require_auth)])
+    @app.get("/admin/mcp/catalog/entry", dependencies=[Depends(require_editor)])
     async def get_mcp_catalog_entry(
         registry: str = Query(),
         name: str = Query(),
@@ -3850,7 +4113,7 @@ def create_app(
         _stamp_installed(payload["entry"], index)
         return payload
 
-    @app.post("/admin/mcp/catalog/install", dependencies=[Depends(require_auth)])
+    @app.post("/admin/mcp/catalog/install", dependencies=[Depends(require_editor)])
     async def install_mcp_catalog_entry(req: McpCatalogInstallRequest) -> Any:
         try:
             detail = await mcp_registry.get_server(req.registry, req.name, version=req.version)
@@ -3924,7 +4187,7 @@ def create_app(
 
     # ── generated-server preview: tools from a spec/endpoint, nothing created ──
 
-    @app.post("/admin/mcp/generated:preview", dependencies=[Depends(require_auth)])
+    @app.post("/admin/mcp/generated:preview", dependencies=[Depends(require_editor)])
     async def preview_generated_mcp(req: GeneratedPreviewRequest) -> Any:
         spec = req.spec
         if req.kind == "openapi" and spec is None:
@@ -4011,6 +4274,676 @@ def create_app(
             ],
             "url": url,
         }
+
+    # ── identity & access (/auth, /users) ────────────────────────────────────────
+    # The identity layer over auth.py. Unauthenticated by design: /auth/status (the SPA's boot
+    # probe), /auth/setup (valid only while zero users exist), /auth/login, and the two OIDC
+    # browser legs. Everything else here rides the same require_auth/require_admin gates as the
+    # rest of the API. Raw bearers appear exactly twice on the wire: the response that minted
+    # them, and the OIDC callback's redirect fragment (a fragment never reaches server logs).
+
+    _OIDC_STATE_TTL_S = 600  # authorize → callback round-trip budget
+    _OIDC_EXCHANGE_TTL_S = 60  # callback → SPA one-time-code redemption budget
+    _OIDC_STATE_COOKIE = "theygent_oidc_state"  # browser-binding cookie (double-submit vs CSRF)
+
+    def _user_payload(user) -> dict[str, Any]:
+        return user.model_dump(mode="json")
+
+    async def _session_ttl_hours() -> int:
+        return int(await app.state.settings.get("auth.session_ttl_hours"))
+
+    def _validate_return_to(raw: str | None) -> str | None:
+        # The OIDC flow ends by redirecting the browser back to the SPA with a fresh bearer in
+        # the fragment — so the destination must be one of OUR origins (the CORS allowlist is
+        # exactly the set of browser origins this install trusts). Anything else is an open
+        # redirect that hands the token to a stranger.
+        if not raw:
+            if not resolved_cors_origins:
+                return None
+            return f"{resolved_cors_origins[0]}/auth/callback"
+        candidate = raw.strip()
+        for origin in resolved_cors_origins:
+            if candidate == origin or candidate.startswith(origin.rstrip("/") + "/"):
+                return candidate
+        return None
+
+    @app.get("/auth/status")
+    async def auth_status(authorization: str | None = Header(default=None)) -> Any:
+        # The SPA's one boot call: does this install need first-run setup, is the presented
+        # bearer (if any) still good, and which sign-in buttons to draw. Providers surface as
+        # slug+name ONLY — config (client ids, endpoints) is the admin surface's business.
+        presented = _bearer_token(authorization)
+        user = None
+        async with tx() as session:
+            user_count = await auth_store.count_users(session)
+            providers = await auth_store.list_providers(session, enabled_only=True)
+            if presented is not None and presented.startswith(SESSION_TOKEN_PREFIX):
+                user = await auth_store.resolve_session(session, presented)
+        return {
+            "setup_required": user_count == 0,
+            "user": _user_payload(user) if user is not None else None,
+            "providers": [{"slug": p.slug, "name": p.name} for p in providers],
+        }
+
+    @app.post("/auth/setup", status_code=201)
+    async def auth_setup(req: SetupRequest) -> Any:
+        # First-run: create the install's first account (always admin) and sign it in. Locked
+        # to the zero-users state under an advisory lock, so two racing setups cannot both
+        # succeed — one 201, the other a clean 409.
+        username = normalize_username(req.username)
+        if username is None:
+            return _error(
+                "username must be 2-64 chars: lowercase letters/digits, then . _ - allowed",
+                status=400,
+                code="invalid_username",
+            )
+        if len(req.password) < MIN_PASSWORD_LENGTH:
+            return _error(
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters",
+                status=400,
+                code="password_too_short",
+            )
+        password_hash = hash_password(req.password)
+        ttl = await _session_ttl_hours()
+        async with tx() as session:
+            await session.execute(
+                sa_text("SELECT pg_advisory_xact_lock(hashtext('theygent_auth_setup'))")
+            )
+            if await auth_store.count_users(session) > 0:
+                return _error(
+                    "setup is already complete — sign in instead",
+                    status=409,
+                    code="setup_already_complete",
+                )
+            user = await auth_store.create_user(
+                session,
+                username=username,
+                display_name=req.display_name or req.username,
+                role="admin",
+                password_hash=password_hash,
+            )
+            await auth_store.touch_last_login(session, user.id)
+            bearer, _sid = await auth_store.create_session(session, user.id, ttl_hours=ttl)
+            user = await auth_store.get_user(session, user.id) or user
+        logger.info("auth.setup_complete", extra={"user_id": user.id})
+        return JSONResponse({"token": bearer, "user": _user_payload(user)}, status_code=201)
+
+    @app.post("/auth/login")
+    async def auth_login(req: LoginRequest) -> Any:
+        ttl = await _session_ttl_hours()
+        async with tx() as session:
+            user = await auth_store.verify_login(session, req.username, req.password)
+            if user is None:
+                # One answer for unknown user / wrong password / SSO-only account — plus the
+                # dummy-hash timing leveling inside verify_login.
+                return _error(
+                    "invalid username or password", status=401, code="invalid_credentials"
+                )
+            if user.disabled:
+                return _error("this account is disabled", status=403, code="account_disabled")
+            await auth_store.touch_last_login(session, user.id)
+            bearer, _sid = await auth_store.create_session(session, user.id, ttl_hours=ttl)
+            user = await auth_store.get_user(session, user.id) or user
+        logger.info("auth.login", extra={"user_id": user.id})
+        return {"token": bearer, "user": _user_payload(user)}
+
+    @app.post("/auth/logout", dependencies=[Depends(require_auth)])
+    async def auth_logout(authorization: str | None = Header(default=None)) -> Any:
+        presented = _bearer_token(authorization)
+        if presented is not None and presented.startswith(SESSION_TOKEN_PREFIX):
+            async with tx() as session:
+                await auth_store.revoke_session(session, presented)
+        # An API-key bearer has no session to revoke; logout is a no-op success for it.
+        return Response(status_code=204)
+
+    @app.get("/auth/me")
+    async def auth_me(
+        principal: Principal = Depends(require_auth),
+        authorization: str | None = Header(default=None),
+    ) -> Any:
+        presented = _bearer_token(authorization) or ""
+        credential = "api_key" if presented.startswith(API_KEY_TOKEN_PREFIX) else "session"
+        async with tx() as session:
+            user = await auth_store.get_user(session, principal.id or "")
+        if user is None:  # pragma: no cover - the principal was just resolved
+            raise AuthError("invalid or expired credentials")
+        # ``role`` is the EFFECTIVE role of the presented credential (an API key may be
+        # narrower than the account); ``user.role`` stays the account ceiling.
+        return {"user": _user_payload(user), "role": principal.role, "credential": credential}
+
+    @app.patch("/auth/me")
+    async def update_me(req: UpdateMeRequest, principal: Principal = Depends(require_auth)) -> Any:
+        async with tx() as session:
+            user = await auth_store.update_user(
+                session, principal.id or "", display_name=req.display_name
+            )
+        if user is None:  # pragma: no cover - the principal was just resolved
+            raise AuthError("invalid or expired credentials")
+        return _user_payload(user)
+
+    @app.post("/auth/me/password")
+    async def change_my_password(
+        req: ChangePasswordRequest,
+        principal: Principal = Depends(require_auth),
+        authorization: str | None = Header(default=None),
+    ) -> Any:
+        # Session-credential only: an API key must never be able to rotate the password of the
+        # account it hangs off (a leaked key would otherwise escalate to full account takeover).
+        presented = _bearer_token(authorization) or ""
+        if not presented.startswith(SESSION_TOKEN_PREFIX):
+            return _error(
+                "changing a password requires an interactive session, not an API key",
+                status=403,
+                code="forbidden",
+            )
+        if len(req.new_password) < MIN_PASSWORD_LENGTH:
+            return _error(
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters",
+                status=400,
+                code="password_too_short",
+            )
+        async with tx() as session:
+            user = await auth_store.get_user(session, principal.id or "")
+            if user is None:  # pragma: no cover - the principal was just resolved
+                raise AuthError("invalid or expired credentials")
+            if user.has_password:
+                # Proof of possession before rotation; an SSO-only account setting its FIRST
+                # password has nothing to present.
+                if not req.current_password or (
+                    await auth_store.verify_login(session, user.username, req.current_password)
+                    is None
+                ):
+                    return _error(
+                        "current password is incorrect", status=403, code="invalid_credentials"
+                    )
+            await auth_store.set_password(session, user.id, hash_password(req.new_password))
+            # A password change signs out every OTHER session — the standard containment move
+            # if the old password was compromised. The session performing the change survives.
+            await auth_store.revoke_user_sessions(session, user.id, keep_token=presented)
+            user = await auth_store.get_user(session, user.id) or user
+        logger.info("auth.password_changed", extra={"user_id": user.id})
+        return _user_payload(user)
+
+    # -- personal API keys (self-service, any role) --
+
+    @app.get("/auth/api-keys")
+    async def list_api_keys(principal: Principal = Depends(require_auth)) -> Any:
+        async with tx() as session:
+            keys = await auth_store.list_api_keys(session, principal.id or "")
+        return {"api_keys": [k.model_dump(mode="json") for k in keys]}
+
+    @app.post("/auth/api-keys", status_code=201)
+    async def create_api_key(
+        req: CreateApiKeyRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_api_key")
+        role = req.role or principal.role
+        if not role_at_least(principal.role, role):
+            return _error(
+                "an API key's role cannot exceed your own", status=400, code="invalid_api_key"
+            )
+        async with tx() as session:
+            bearer, key = await auth_store.create_api_key(
+                session, user_id=principal.id or "", name=req.name, role=role
+            )
+        logger.info("auth.api_key_created", extra={"key_id": key.id, "role": role})
+        # The raw token appears in THIS response and never again.
+        return JSONResponse(
+            {"token": bearer, "api_key": key.model_dump(mode="json")}, status_code=201
+        )
+
+    @app.delete("/auth/api-keys/{key_id}")
+    async def revoke_api_key(key_id: str, principal: Principal = Depends(require_auth)) -> Any:
+        async with tx() as session:
+            key = await auth_store.get_api_key(session, key_id)
+            if key is None or (key.user_id != principal.id and principal.role != "admin"):
+                # Another account's key id is indistinguishable from a nonexistent one.
+                return _error(f"unknown API key {key_id!r}", status=404, code="api_key_not_found")
+            await auth_store.revoke_api_key(session, key_id)
+        logger.info("auth.api_key_revoked", extra={"key_id": key_id})
+        return Response(status_code=204)
+
+    # -- user administration (admin only) --
+
+    @app.get("/users", dependencies=[Depends(require_admin)])
+    async def list_users(session: AsyncSession = Depends(get_session)) -> Any:
+        return {"users": [_user_payload(u) for u in await auth_store.list_users(session)]}
+
+    @app.post("/users", status_code=201, dependencies=[Depends(require_admin)])
+    async def create_user_endpoint(req: CreateUserRequest) -> Any:
+        username = normalize_username(req.username)
+        if username is None:
+            return _error(
+                "username must be 2-64 chars: lowercase letters/digits, then . _ - allowed",
+                status=400,
+                code="invalid_username",
+            )
+        if req.password is not None and len(req.password) < MIN_PASSWORD_LENGTH:
+            return _error(
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters",
+                status=400,
+                code="password_too_short",
+            )
+        password_hash = hash_password(req.password) if req.password is not None else None
+        async with tx() as session:
+            if await auth_store.get_user_by_username(session, username) is not None:
+                return _error(f"username {username!r} is taken", status=409, code="username_taken")
+            user = await auth_store.create_user(
+                session,
+                username=username,
+                display_name=req.display_name or req.username,
+                role=req.role,
+                password_hash=password_hash,
+                email=(req.email or "").strip().lower() or None,
+            )
+        logger.info("auth.user_created", extra={"user_id": user.id, "role": user.role})
+        return JSONResponse(_user_payload(user), status_code=201)
+
+    async def _lock_admin_guard(session: AsyncSession) -> None:
+        # Serialize every last-admin count-and-mutate against each other, exactly as /auth/setup
+        # serializes the zero-users check. Without it two concurrent demote/disable/delete
+        # transactions each read the OTHER admin as still-active (they touch different rows, so no
+        # write-write conflict), both pass the guard, and both commit — stranding the install with
+        # zero admins (write skew). One shared fixed key makes the second transaction block until
+        # the first commits, then observe the updated count.
+        await session.execute(
+            sa_text("SELECT pg_advisory_xact_lock(hashtext('theygent_admin_guard'))")
+        )
+
+    @app.patch("/users/{user_id}", dependencies=[Depends(require_admin)])
+    async def update_user_endpoint(user_id: str, req: UpdateUserRequest) -> Any:
+        async with tx() as session:
+            await _lock_admin_guard(session)
+            target = await auth_store.get_user(session, user_id)
+            if target is None:
+                return _error(f"unknown user {user_id!r}", status=404, code="user_not_found")
+            # The last-admin guard: no change may leave the install without an active admin —
+            # a locked-out install has no in-band recovery.
+            demotes = req.role is not None and req.role != "admin"
+            disables = req.disabled is True
+            if (
+                (demotes or disables)
+                and target.role == "admin"
+                and not target.disabled
+                and await auth_store.count_active_admins(session, excluding=target.id) == 0
+            ):
+                return _error(
+                    "this is the last active admin — promote another admin first",
+                    status=409,
+                    code="last_admin",
+                )
+            user = await auth_store.update_user(
+                session,
+                user_id,
+                display_name=req.display_name,
+                role=req.role,
+                disabled=req.disabled,
+                email=req.email,
+            )
+            assert user is not None
+            if req.disabled is True:
+                # Disabling revokes every live session now — resolve_session also re-checks,
+                # but leaving revocable state around would be sloppy containment.
+                await auth_store.revoke_user_sessions(session, user_id)
+        logger.info("auth.user_updated", extra={"user_id": user_id})
+        return _user_payload(user)
+
+    @app.post("/users/{user_id}/password", dependencies=[Depends(require_admin)])
+    async def reset_user_password(user_id: str, req: SetUserPasswordRequest) -> Any:
+        if len(req.password) < MIN_PASSWORD_LENGTH:
+            return _error(
+                f"password must be at least {MIN_PASSWORD_LENGTH} characters",
+                status=400,
+                code="password_too_short",
+            )
+        async with tx() as session:
+            if await auth_store.get_user(session, user_id) is None:
+                return _error(f"unknown user {user_id!r}", status=404, code="user_not_found")
+            await auth_store.set_password(session, user_id, hash_password(req.password))
+            # An admin reset invalidates every live session of the target — the reset exists
+            # because the old credential can no longer be trusted.
+            await auth_store.revoke_user_sessions(session, user_id)
+            user = await auth_store.get_user(session, user_id)
+        logger.info("auth.password_reset", extra={"user_id": user_id})
+        return _user_payload(user)
+
+    @app.delete("/users/{user_id}", dependencies=[Depends(require_admin)])
+    async def delete_user_endpoint(user_id: str) -> Any:
+        async with tx() as session:
+            await _lock_admin_guard(session)
+            target = await auth_store.get_user(session, user_id)
+            if target is None:
+                return _error(f"unknown user {user_id!r}", status=404, code="user_not_found")
+            if (
+                target.role == "admin"
+                and not target.disabled
+                and await auth_store.count_active_admins(session, excluding=target.id) == 0
+            ):
+                return _error(
+                    "this is the last active admin — promote another admin first",
+                    status=409,
+                    code="last_admin",
+                )
+            await auth_store.delete_user(session, user_id)
+        logger.info("auth.user_deleted", extra={"user_id": user_id})
+        return Response(status_code=204)
+
+    # -- sign-in providers (admin only; the login page reads slug+name via /auth/status) --
+
+    @app.get("/auth/providers", dependencies=[Depends(require_admin)])
+    async def list_auth_providers(session: AsyncSession = Depends(get_session)) -> Any:
+        providers = await auth_store.list_providers(session)
+        return {"providers": [p.model_dump(mode="json") for p in providers]}
+
+    @app.post("/auth/providers", status_code=201, dependencies=[Depends(require_admin)])
+    async def create_auth_provider(req: CreateProviderRequest) -> Any:
+        slug = normalize_slug(req.slug)
+        if slug is None:
+            return _error(
+                "slug must be 1-64 chars: lowercase letters/digits/hyphens",
+                status=400,
+                code="invalid_provider",
+            )
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_provider")
+        try:
+            config = validate_provider_config(req.config)
+        except ValueError as exc:
+            return _error(str(exc), status=400, code="invalid_provider")
+        async with tx() as session:
+            if await auth_store.get_provider_by_slug(session, slug) is not None:
+                return _error(
+                    f"provider slug {slug!r} is taken", status=409, code="provider_exists"
+                )
+            secret_ref = (
+                await secrets.create(session, req.client_secret) if req.client_secret else None
+            )
+            provider = await auth_store.create_provider(
+                session,
+                name=req.name,
+                slug=slug,
+                config=config,
+                client_secret_ref=secret_ref,
+                enabled=req.enabled,
+            )
+        logger.info("auth.provider_created", extra={"provider_id": provider.id, "slug": slug})
+        return JSONResponse(provider.model_dump(mode="json"), status_code=201)
+
+    @app.patch("/auth/providers/{provider_id}", dependencies=[Depends(require_admin)])
+    async def update_auth_provider(provider_id: str, req: UpdateProviderRequest) -> Any:
+        config = None
+        if req.config is not None:
+            try:
+                config = validate_provider_config(req.config)
+            except ValueError as exc:
+                return _error(str(exc), status=400, code="invalid_provider")
+        async with tx() as session:
+            existing = await auth_store.get_provider(session, provider_id)
+            if existing is None:
+                return _error(
+                    f"unknown provider {provider_id!r}", status=404, code="provider_not_found"
+                )
+            if req.client_secret:
+                # Rotate in place (same ref) or attach a first secret — the connections
+                # discipline: write-only, encrypted, never echoed.
+                existing_ref = await auth_store.provider_secret_ref(session, provider_id)
+                if existing_ref is not None:
+                    await secrets.set(session, existing_ref, req.client_secret)
+                else:
+                    fresh_ref = await secrets.create(session, req.client_secret)
+                    await auth_store.update_provider(
+                        session,
+                        provider_id,
+                        client_secret_ref=fresh_ref,
+                        set_client_secret_ref=True,
+                    )
+            provider = await auth_store.update_provider(
+                session, provider_id, name=req.name, config=config, enabled=req.enabled
+            )
+            assert provider is not None
+        logger.info("auth.provider_updated", extra={"provider_id": provider_id})
+        return provider.model_dump(mode="json")
+
+    @app.delete("/auth/providers/{provider_id}", dependencies=[Depends(require_admin)])
+    async def delete_auth_provider(provider_id: str) -> Any:
+        async with tx() as session:
+            if await auth_store.get_provider(session, provider_id) is None:
+                return _error(
+                    f"unknown provider {provider_id!r}", status=404, code="provider_not_found"
+                )
+            secret_ref = await auth_store.delete_provider(session, provider_id)
+            await secrets.delete(session, secret_ref)
+        logger.info("auth.provider_deleted", extra={"provider_id": provider_id})
+        return Response(status_code=204)
+
+    # -- the OIDC browser flow (two unauthenticated legs, like /mcp/oauth/callback) --
+
+    @app.get("/auth/oidc/{slug}/start")
+    async def start_oidc_login(slug: str, return_to: str | None = Query(default=None)) -> Any:
+        # Leg 1: resolve the provider, mint PKCE + nonce, seal the flow state, and bounce the
+        # browser to the provider's authorize endpoint. ``return_to`` (where the SPA gets the
+        # browser back) must be one of OUR origins — see _validate_return_to.
+        destination = _validate_return_to(return_to)
+        if destination is None:
+            return _error(
+                "return_to must be one of this install's allowed origins",
+                status=400,
+                code="invalid_return_to",
+            )
+        async with tx() as session:
+            provider = await auth_store.get_provider_by_slug(session, slug)
+        if provider is None or not provider.enabled:
+            return _error(f"unknown provider {slug!r}", status=404, code="provider_not_found")
+        try:
+            endpoints = await discover_endpoints(provider.config)
+        except OidcError as exc:
+            logger.warning("auth.oidc_discovery_failed", extra={"slug": slug, "error": str(exc)})
+            return _error(str(exc), status=502, code="oidc_error")
+        verifier, challenge = new_pkce_pair()
+        nonce = new_ulid()
+        # Bind this flow to THIS browser: a random value goes into the sealed state AND a cookie,
+        # and leg 2 requires the two to match. Without it, an attacker who ran their own flow and
+        # captured a valid (state, code) could lure a victim to the callback and get the ATTACKER's
+        # identity minted into the victim's browser (login CSRF / session fixation).
+        binding = new_state_binding()
+        # The sealed state carries the RESOLVED endpoints too, so the callback exchanges
+        # against exactly what was discovered here (no second discovery to disagree).
+        state = state_sealer.seal(
+            {
+                "provider_id": provider.id,
+                "return_to": destination,
+                "verifier": verifier,
+                "nonce": nonce,
+                "binding": binding,
+                "token_endpoint": endpoints["token_endpoint"],
+                "userinfo_endpoint": endpoints["userinfo_endpoint"],
+            }
+        )
+        redirect_uri = str(await app.state.settings.get("auth.oidc_redirect_url"))
+        url = build_authorize_url(
+            authorization_endpoint=endpoints["authorization_endpoint"],
+            client_id=str(provider.config.get("client_id", "")),
+            redirect_uri=redirect_uri,
+            scopes=str(provider.config.get("scopes", "openid profile email")),
+            state=state,
+            nonce=nonce,
+            code_challenge=challenge,
+        )
+        response = RedirectResponse(url, status_code=302)
+        # samesite=lax (NOT strict): the cookie MUST ride the cross-site top-level GET the IdP
+        # redirects the browser back with. secure tracks the redirect scheme so the cookie still
+        # works on the http-localhost default while being https-only on a real deploy. Scoped to
+        # the callback path — the SPA never needs it.
+        response.set_cookie(
+            _OIDC_STATE_COOKIE,
+            binding,
+            max_age=_OIDC_STATE_TTL_S,
+            httponly=True,
+            samesite="lax",
+            secure=redirect_uri.startswith("https"),
+            path="/auth/oidc",
+        )
+        return response
+
+    def _oidc_bounce(
+        return_to: str, *, error: str | None = None, code: str | None = None
+    ) -> RedirectResponse:
+        # The flow always ends back at the SPA; the outcome rides in the URL FRAGMENT (a
+        # request-URL fragment is not sent to servers). ``code`` is a SHORT-LIVED one-time code the
+        # SPA trades for the real bearer — never the bearer itself, so the long-lived credential
+        # never enters this response's Location header (which reverse proxies routinely log). The
+        # browser-binding cookie is cleared here — it is single-use.
+        fragment = f"code={code}" if code is not None else f"error={error}"
+        response = RedirectResponse(f"{return_to}#{fragment}", status_code=302)
+        response.delete_cookie(_OIDC_STATE_COOKIE, path="/auth/oidc")
+        return response
+
+    @app.get("/auth/oidc/callback")
+    async def oidc_callback(
+        request: Request,
+        code: str | None = Query(default=None),
+        state: str | None = Query(default=None),
+        error: str | None = Query(default=None),
+    ) -> Any:
+        # Leg 2: the provider sent the browser back. Everything here is attacker-reachable, so
+        # each failure is a stable fragment code on the validated return_to — except a bad
+        # state, which yields a plain 400 (without the sealed state there IS no trusted
+        # return_to to bounce to).
+        payload = state_sealer.unseal(state or "", max_age_s=_OIDC_STATE_TTL_S)
+        if payload is None:
+            return _error(
+                "invalid or expired sign-in state — start the sign-in again",
+                status=400,
+                code="invalid_oidc_state",
+            )
+        # The browser-binding check: the cookie set on leg 1 must match the sealed binding. A
+        # forged/replayed state from another browser carries no matching cookie → the same opaque
+        # 400 as a bad state (attacker learns nothing).
+        cookie_binding = request.cookies.get(_OIDC_STATE_COOKIE)
+        if not cookie_binding or not hmac.compare_digest(
+            str(payload.get("binding") or ""), cookie_binding
+        ):
+            return _error(
+                "invalid or expired sign-in state — start the sign-in again",
+                status=400,
+                code="invalid_oidc_state",
+            )
+        return_to = _validate_return_to(str(payload.get("return_to") or ""))
+        if return_to is None:  # pragma: no cover - sealed by us, but re-validated anyway
+            return _error("invalid return_to", status=400, code="invalid_return_to")
+        if error is not None:
+            return _oidc_bounce(return_to, error="oidc_denied")
+        if not code:
+            return _oidc_bounce(return_to, error="oidc_error")
+        async with tx() as session:
+            provider = await auth_store.get_provider(session, str(payload.get("provider_id") or ""))
+            if provider is None or not provider.enabled:
+                return _oidc_bounce(return_to, error="provider_not_found")
+            try:
+                client_secret = await secrets.resolve(
+                    session, await auth_store.provider_secret_ref(session, provider.id)
+                )
+            except SecretDecryptError:
+                # The stored client secret can't be decrypted — the classic case is
+                # THEYGENT_SECRET_KEY being unset (an ephemeral key) and the process having
+                # restarted, orphaning the ciphertext. A clean bounce beats a 500; the fix is to
+                # set a persistent key and re-enter the secret (Settings → Sign-in → Edit).
+                logger.error("auth.oidc_secret_unreadable", extra={"provider_id": provider.id})
+                return _oidc_bounce(return_to, error="provider_secret_unreadable")
+        redirect_uri = str(await app.state.settings.get("auth.oidc_redirect_url"))
+        try:
+            access_token = await exchange_code(
+                token_endpoint=str(payload.get("token_endpoint") or ""),
+                code=code,
+                redirect_uri=redirect_uri,
+                client_id=str(provider.config.get("client_id", "")),
+                client_secret=client_secret,
+                code_verifier=str(payload.get("verifier") or ""),
+            )
+            claims = await fetch_userinfo(
+                userinfo_endpoint=str(payload.get("userinfo_endpoint") or ""),
+                access_token=access_token,
+            )
+            subject, email, display_name, username_hint = extract_identity(claims)
+            avatar = picture_url(claims)
+        except OidcError as exc:
+            logger.warning(
+                "auth.oidc_failed", extra={"provider_id": provider.id, "error": str(exc)}
+            )
+            return _oidc_bounce(return_to, error="oidc_error")
+        ttl = await _session_ttl_hours()
+        async with tx() as session:
+            user = await auth_store.find_identity_user(session, provider.id, subject)
+            if user is None:
+                if not email_allowed(email, provider.config.get("allowed_domains")):
+                    return _oidc_bounce(return_to, error="domain_not_allowed")
+                # Link to a pre-provisioned account by exact email match — how an admin adds a
+                # colleague before their first sign-in. Three conditions, ALL required, because
+                # this branch grants a session for whatever account it selects:
+                #   • the email is AFFIRMATIVELY verified (fail closed on absent/non-bool — a
+                #     lenient plain-OAuth2 provider must not link by an unverified email);
+                #   • the account has no password (a password account is never claimable via a
+                #     provider merely asserting its email); AND
+                #   • the account has ZERO existing identities — i.e. it was pre-provisioned and
+                #     never signed in. Without this an ALREADY-ACTIVE SSO account (an admin's,
+                #     even) would be claimable by a SECOND provider asserting the same email.
+                if email and email_verified(claims):
+                    candidate = await auth_store.get_user_by_email(session, email)
+                    if (
+                        candidate is not None
+                        and not candidate.has_password
+                        and await auth_store.count_identities(session, candidate.id) == 0
+                    ):
+                        user = candidate
+                if user is None:
+                    if not provider.config.get("auto_provision", True):
+                        return _oidc_bounce(return_to, error="account_not_provisioned")
+                    username = normalize_username(username_hint) or f"user-{new_ulid().lower()}"
+                    if await auth_store.get_user_by_username(session, username) is not None:
+                        username = f"{username[:48]}-{new_ulid().lower()[-6:]}"
+                    user = await auth_store.create_user(
+                        session,
+                        username=username,
+                        display_name=display_name,
+                        role=provider.config.get("default_role", "viewer"),
+                        password_hash=None,
+                        email=email,
+                    )
+                await auth_store.link_identity(
+                    session,
+                    user_id=user.id,
+                    provider_id=provider.id,
+                    subject=subject,
+                    email=email,
+                )
+            if user.disabled:
+                return _oidc_bounce(return_to, error="account_disabled")
+            # Refresh the avatar from the provider on every sign-in (new, linked, or returning) —
+            # a no-op when unchanged, and never clears a stored one when the provider omits it.
+            await auth_store.set_avatar_url(session, user.id, avatar)
+            await auth_store.touch_last_login(session, user.id)
+            bearer, _sid = await auth_store.create_session(session, user.id, ttl_hours=ttl)
+        logger.info("auth.oidc_login", extra={"provider_id": provider.id, "user_id": user.id})
+        # Seal the freshly-minted bearer into a 60s one-time code; the SPA redeems it at
+        # POST /auth/oidc/exchange. Only this seconds-lived code ever touches the Location header.
+        exchange = state_sealer.seal({"kind": "oidc_exchange", "bearer": bearer})
+        return _oidc_bounce(return_to, code=exchange)
+
+    @app.post("/auth/oidc/exchange")
+    async def oidc_exchange(req: OidcExchangeRequest) -> Any:
+        # The SPA's callback trades the one-time code for the real session — over a POST body, so
+        # the long-lived bearer never rides a URL. The code is a short-TTL sealed blob; an
+        # unbounded/tampered/expired one is a clean 401 (attacker-supplied input).
+        payload = state_sealer.unseal(req.code, max_age_s=_OIDC_EXCHANGE_TTL_S)
+        if payload is None or payload.get("kind") != "oidc_exchange":
+            raise AuthError("invalid or expired sign-in code — start the sign-in again")
+        bearer = str(payload.get("bearer") or "")
+        async with tx() as session:
+            user = await auth_store.resolve_session(session, bearer)
+        if user is None:  # the session was revoked between mint and redeem
+            raise AuthError("invalid or expired sign-in code — start the sign-in again")
+        return {"token": bearer, "user": _user_payload(user)}
 
     # ── liveness / readiness ─────────────────────────────────────────────
 
