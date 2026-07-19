@@ -150,11 +150,16 @@ The control-plane and worker carry HorizontalPodAutoscalers (scale up/down with 
 
 ## Contributing
 
-Start with the developer documentation table above, then [AGENTS.md](AGENTS.md) — the
-rules every change must satisfy: all tests pass (`make test` + `make lint`), user- and
-developer-docs move with behavior changes, and the architectural guardrails hold.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the mechanics — development setup, pull
+requests, CI, and the contributor license agreement
+([CONTRIBUTOR_LICENSE_AGREEMENT.md](CONTRIBUTOR_LICENSE_AGREEMENT.md)). The rules every
+change must satisfy are in [AGENTS.md](AGENTS.md): all tests pass (`make test` +
+`make lint`), user- and developer-docs move with behavior changes, and the architectural
+guardrails hold. Security reports: see [SECURITY.md](SECURITY.md).
 
 ## License
 
-Fair-code, under the Sustainable Use License: free to use, modify, and self-host; the one
-limit is repackaging TheYgent as a competing hosted service. See [LICENSE.md](LICENSE.md).
+Fair-code, under the Sustainable Use License: free to use, modify, self-host, and build
+on for your own internal business or personal purposes; commercializing TheYgent itself —
+selling it, or offering it as a hosted service — is reserved. See
+[LICENSE.md](LICENSE.md).

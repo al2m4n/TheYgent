@@ -2,6 +2,7 @@
   "name": "@theygent/ir-types",
   "version": "0.0.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "description": "Generated TypeScript IR types + node-type registry — the FE/BE IR lockstep seam.",
   "main": "src/index.ts",

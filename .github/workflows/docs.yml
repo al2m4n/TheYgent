@@ -23,7 +23,12 @@ on:
 
 concurrency:
   group: docs-${{ github.event_name == 'pull_request' && github.ref || 'publish' }}
-  cancel-in-progress: false
+  # PR runs supersede each other; publish runs must never be killed mid-mike-push.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Least privilege by default; the publish job overrides with contents: write for mike.
+permissions:
+  contents: read
 
 env:
   CF_PAGES_PROJECT: theygent-docs
@@ -34,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
       - run: uv run --project docs/user-docs mkdocs build --strict -f docs/user-docs/mkdocs.yml
 
   publish:
@@ -47,7 +52,7 @@ jobs:
         with:
           fetch-depth: 0 # mike reads and extends the gh-pages branch history
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
 
       - name: Configure git identity for mike
         run: |
@@ -97,7 +102,7 @@ jobs:
         run: rm -rf _site/.git
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

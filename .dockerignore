@@ -42,9 +42,7 @@ logs
 **/*.bin
 **/*.mlx
 
-# Internal docs, fixtures, and scratch notes — not needed by any image.
+# Internal docs and scratch notes — not needed by any image.
 docs
-session-fixtures
-detail-test-fixtures
 *.md
 !README.md

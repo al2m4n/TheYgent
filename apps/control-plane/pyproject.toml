@@ -3,6 +3,7 @@ name = "theygent-control-plane"
 version = "0.1.0"
 description = "theygent control-plane — the cockpit API. Owns a single run end to end over the inference HTTP seam."
 requires-python = ">=3.12"
+license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
 dependencies = [
     "theygent-gateway-client",
     # The control-plane imports the Agent Graph IR — the walker validates + executes an IRDocument.

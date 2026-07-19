@@ -4,11 +4,11 @@ Copyright (c) 2026 Arman Bahlakeh
 
 Portions of this software are licensed as follows:
 
-- Content of branches other than the main branch (i.e. "main") is not licensed.
-- All third party components incorporated into the Theygent software are licensed
+- Content of branches other than the main branch is not licensed.
+- All third party components incorporated into the TheYgent software are licensed
   under the original license provided by the owner of the applicable component.
-- Content outside of the above mentioned files or restrictions is available under
-  the "Sustainable Use License" as defined below.
+- Content not covered by the restrictions above is available under the
+  "Sustainable Use License" as defined below.
 
 ## Sustainable Use License
 
