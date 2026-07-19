@@ -13,6 +13,7 @@ import { InferenceTab } from "../components/settings/InferenceTab";
 import { McpTab } from "../components/settings/McpTab";
 import { OverviewTab } from "../components/settings/OverviewTab";
 import { RagTab } from "../components/settings/RagTab";
+import { SamplesTab } from "../components/settings/SamplesTab";
 import { SignInTab } from "../components/settings/SignInTab";
 import { TelemetryTab } from "../components/settings/TelemetryTab";
 import { UsersTab } from "../components/settings/UsersTab";
@@ -23,6 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 
 const TABS = [
   { value: "overview", label: "Overview" },
+  { value: "samples", label: "Samples" },
   { value: "users", label: "Users" },
   { value: "signin", label: "Sign-in" },
   { value: "inference", label: "Inference" },
@@ -57,6 +59,9 @@ export function Settings() {
 
         <TabsContent value="overview">
           <OverviewTab form={form} />
+        </TabsContent>
+        <TabsContent value="samples">
+          <SamplesTab />
         </TabsContent>
         <TabsContent value="users">
           <UsersTab />

@@ -81,6 +81,8 @@ nav:
       - Running Theygent: getting-started/running.md
       - Your First Chat: getting-started/first-chat.md
       - Your First Agent: getting-started/first-agent.md
+  - Samples:
+      - samples/index.md
   - Concepts:
       - concepts/index.md
       - Agents & Graphs: concepts/agents-and-graphs.md

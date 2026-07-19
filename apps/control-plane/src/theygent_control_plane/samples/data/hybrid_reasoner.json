@@ -1,0 +1,200 @@
+{
+  "id": "hybrid-reasoner",
+  "title": "Hybrid reasoner",
+  "description": "Two models in one run: a local triage model classifies every request and a router sends easy ones to your local model and hard ones (coding, analysis, long-form) to an API model. Nothing is proxied — each branch calls its own model directly.",
+  "capabilities": [
+    "two models in one run",
+    "router",
+    "transform",
+    "local + API hybrid"
+  ],
+  "durable": false,
+  "input_example": "Write a Python function that merges two sorted lists in O(n).",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Runs triage and answers the easy questions on your machine.",
+      "keys": ["triage", "local"]
+    },
+    "remote": {
+      "label": "API model",
+      "description": "Answers the hard questions (coding, multi-step reasoning, long-form).",
+      "keys": ["remote"]
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_hybrid_reasoner",
+    "name": "sample-hybrid-reasoner",
+    "version": "1.0.0",
+    "metadata": { "sample": "hybrid-reasoner" },
+    "models": {
+      "triage": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 64,
+          "chat_template_kwargs": { "enable_thinking": false }
+        }
+      },
+      "local": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.3,
+          "maxTokens": 512,
+          "chat_template_kwargs": { "enable_thinking": false }
+        }
+      },
+      "remote": {
+        "binding": "openai-compatible",
+        "model": "your-api-model",
+        "params": { "maxTokens": 1024 }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Request",
+        "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+      },
+      {
+        "id": "n_triage",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Triage (local)",
+        "config": {
+          "model": "triage",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a routing classifier. Decide which model should answer the user request:\n- \"local\": greetings, short factual questions, simple rewrites, casual chat\n- \"remote\": coding, multi-step reasoning, analysis, long-form writing, anything hard\nRespond with ONLY minified JSON, nothing else — exactly {\"route\":\"local\"} or {\"route\":\"remote\"}."
+            },
+            { "role": "user", "content": "$in" }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "in", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_pack",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "Route + question",
+        "config": {
+          "expr": "{\"route\": \"$in.triage.route\", \"question\": \"$in.question\"}"
+        },
+        "ports": {
+          "in": [
+            { "id": "question", "type": "any" },
+            { "id": "triage", "type": "any" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_route",
+        "type": "router",
+        "kind": "orchestration",
+        "label": "Route by difficulty",
+        "config": { "select": "$in.in.route" },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "local", "type": "any" },
+            { "id": "remote", "type": "any" }
+          ]
+        }
+      },
+      {
+        "id": "n_local",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer locally",
+        "config": {
+          "model": "local",
+          "messages": [
+            { "role": "system", "content": "Answer briefly and directly." },
+            { "role": "user", "content": "$in.in.question" }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "in", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_remote",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer via API",
+        "config": {
+          "model": "remote",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a capable assistant. Give a thorough, correct answer."
+            },
+            { "role": "user", "content": "$in.in.question" }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "in", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_out_local",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Local answer",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      },
+      {
+        "id": "n_out_remote",
+        "type": "output",
+        "kind": "boundary",
+        "label": "API answer",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      }
+    ],
+    "edges": [
+      { "id": "e_in", "source": "n_in", "sourceHandle": "out", "target": "n_triage", "targetHandle": "in", "channel": "data" },
+      { "id": "e_pack_q", "source": "n_in", "sourceHandle": "out", "target": "n_pack", "targetHandle": "question", "channel": "data" },
+      { "id": "e_pack_t", "source": "n_triage", "sourceHandle": "out", "target": "n_pack", "targetHandle": "triage", "channel": "data" },
+      { "id": "e_route", "source": "n_pack", "sourceHandle": "out", "target": "n_route", "targetHandle": "in", "channel": "data" },
+      { "id": "e_local", "source": "n_route", "sourceHandle": "local", "target": "n_local", "targetHandle": "in", "channel": "data" },
+      { "id": "e_remote", "source": "n_route", "sourceHandle": "remote", "target": "n_remote", "targetHandle": "in", "channel": "data" },
+      { "id": "e_out_local", "source": "n_local", "sourceHandle": "out", "target": "n_out_local", "targetHandle": "in", "channel": "data" },
+      { "id": "e_out_remote", "source": "n_remote", "sourceHandle": "out", "target": "n_out_remote", "targetHandle": "in", "channel": "data" }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": { "position": { "x": 0, "y": 140 } },
+        "n_triage": { "position": { "x": 260, "y": 40 } },
+        "n_pack": { "position": { "x": 520, "y": 140 } },
+        "n_route": { "position": { "x": 780, "y": 140 } },
+        "n_local": { "position": { "x": 1040, "y": 20 } },
+        "n_remote": { "position": { "x": 1040, "y": 260 } },
+        "n_out_local": { "position": { "x": 1300, "y": 20 } },
+        "n_out_remote": { "position": { "x": 1300, "y": 260 } }
+      }
+    }
+  }
+}

@@ -1,0 +1,369 @@
+{
+  "id": "batch-briefing",
+  "title": "Batch briefing",
+  "description": "Durable parallel fan-out with a cost ceiling: a MAP node fans one child agent out per topic (two at a time), collecting a brief for each — a crashed worker resumes only the unfinished branches. Each worker checks a shared daily token budget BEFORE calling its model, so an over-budget fleet returns budget notices instead of burning tokens. Ships with a weekly schedule trigger, DISABLED until you arm it.",
+  "capabilities": [
+    "parallel fan-out (map)",
+    "agents calling agents",
+    "token budget (quota)",
+    "cron trigger (ships disabled)",
+    "durable runtime"
+  ],
+  "durable": true,
+  "input_example": [
+    "on-device LLM inference",
+    "vector databases",
+    "EU data-residency rules"
+  ],
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Writes each topic's brief inside the fan-out.",
+      "keys": [
+        "analyst"
+      ]
+    }
+  },
+  "connections": [],
+  "trigger": {
+    "kind": "schedule",
+    "enabled": false,
+    "config": {
+      "cron": "0 7 * * 1",
+      "input": [
+        "on-device LLM inference",
+        "vector databases",
+        "EU data-residency rules"
+      ]
+    }
+  },
+  "extra_agents": [
+    {
+      "schemaVersion": "1.0",
+      "id": "agt_sample_briefing_worker",
+      "name": "sample-briefing-worker",
+      "version": "1.0.0",
+      "metadata": {
+        "sample": "batch-briefing"
+      },
+      "models": {
+        "analyst": {
+          "binding": "mlx",
+          "model": "your-local-model",
+          "params": {
+            "temperature": 0.3,
+            "maxTokens": 220,
+            "chat_template_kwargs": {
+              "enable_thinking": false
+            }
+          }
+        }
+      },
+      "tools": {},
+      "nodes": [
+        {
+          "id": "n_in",
+          "type": "input",
+          "kind": "boundary",
+          "label": "Topic",
+          "ports": {
+            "in": [],
+            "out": [
+              {
+                "id": "out",
+                "type": "any"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_budget",
+          "type": "quota",
+          "kind": "activity",
+          "label": "Shared daily budget",
+          "config": {
+            "keyExpr": "sample-briefing-worker",
+            "budgetTokens": 150000,
+            "windowSeconds": 86400
+          },
+          "ports": {
+            "in": [
+              {
+                "id": "in",
+                "type": "any"
+              }
+            ],
+            "out": [
+              {
+                "id": "allow",
+                "type": "any"
+              },
+              {
+                "id": "deny",
+                "type": "any"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_brief",
+          "type": "llm",
+          "kind": "activity",
+          "label": "Write the brief",
+          "config": {
+            "model": "analyst",
+            "messages": [
+              {
+                "role": "system",
+                "content": "Write a two-sentence executive brief on the topic: what it is, and why it matters right now. Be concrete — no filler."
+              },
+              {
+                "role": "user",
+                "content": "$in"
+              }
+            ]
+          },
+          "ports": {
+            "in": [
+              {
+                "id": "in",
+                "type": "any"
+              },
+              {
+                "id": "tools",
+                "type": "any",
+                "required": false,
+                "role": "tool"
+              }
+            ],
+            "out": [
+              {
+                "id": "out",
+                "type": "any"
+              }
+            ]
+          }
+        },
+        {
+          "id": "n_out",
+          "type": "output",
+          "kind": "boundary",
+          "label": "Brief",
+          "ports": {
+            "in": [
+              {
+                "id": "in",
+                "type": "any"
+              }
+            ],
+            "out": []
+          }
+        },
+        {
+          "id": "n_over_budget",
+          "type": "output",
+          "kind": "boundary",
+          "label": "Budget exhausted",
+          "ports": {
+            "in": [
+              {
+                "id": "in",
+                "type": "any"
+              }
+            ],
+            "out": []
+          }
+        }
+      ],
+      "edges": [
+        {
+          "id": "e_gate",
+          "source": "n_in",
+          "sourceHandle": "out",
+          "target": "n_budget",
+          "targetHandle": "in",
+          "channel": "data"
+        },
+        {
+          "id": "e_brief",
+          "source": "n_budget",
+          "sourceHandle": "allow",
+          "target": "n_brief",
+          "targetHandle": "in",
+          "channel": "data"
+        },
+        {
+          "id": "e_out",
+          "source": "n_brief",
+          "sourceHandle": "out",
+          "target": "n_out",
+          "targetHandle": "in",
+          "channel": "data"
+        },
+        {
+          "id": "e_deny",
+          "source": "n_budget",
+          "sourceHandle": "deny",
+          "target": "n_over_budget",
+          "targetHandle": "in",
+          "channel": "data"
+        }
+      ],
+      "view": {
+        "nodes": {
+          "n_in": {
+            "position": {
+              "x": 0,
+              "y": 140
+            }
+          },
+          "n_budget": {
+            "position": {
+              "x": 260,
+              "y": 140
+            }
+          },
+          "n_brief": {
+            "position": {
+              "x": 540,
+              "y": 60
+            }
+          },
+          "n_out": {
+            "position": {
+              "x": 820,
+              "y": 60
+            }
+          },
+          "n_over_budget": {
+            "position": {
+              "x": 540,
+              "y": 300
+            }
+          }
+        }
+      }
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_batch_briefing",
+    "name": "sample-batch-briefing",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "batch-briefing"
+    },
+    "models": {},
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Topics",
+        "config": {
+          "modality": "json",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_fanout",
+        "type": "map",
+        "kind": "orchestration",
+        "label": "One worker per topic",
+        "config": {
+          "agent": "agt_sample_briefing_worker",
+          "version": "1.0.0",
+          "concurrency": 2,
+          "onError": "collect"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Briefs",
+        "config": {
+          "modality": "json"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_fan",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_fanout",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_out",
+        "source": "n_fanout",
+        "sourceHandle": "out",
+        "target": "n_out",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_fanout": {
+          "position": {
+            "x": 280,
+            "y": 140
+          }
+        },
+        "n_out": {
+          "position": {
+            "x": 560,
+            "y": 140
+          }
+        }
+      }
+    }
+  }
+}

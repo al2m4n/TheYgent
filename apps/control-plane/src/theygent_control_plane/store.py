@@ -1322,6 +1322,22 @@ class ConnectionStore:
         row = await session.get(ConnectionRow, connection_id)
         return _to_connection(row) if row is not None else None
 
+    async def find_by_name(
+        self, session: AsyncSession, *, kind: ConnectionKind, name: str
+    ) -> Connection | None:
+        """The newest connection of ``kind`` with exactly this ``name``. Names are human labels,
+        not unique — newest-first makes the lookup deterministic when duplicates exist. The
+        sample installer uses this to reuse a previously created sample connection instead of
+        minting one per install."""
+        stmt = (
+            select(ConnectionRow)
+            .where(ConnectionRow.kind == kind, ConnectionRow.name == name)
+            .order_by(ConnectionRow.created_at.desc(), ConnectionRow.id.desc())
+            .limit(1)
+        )
+        row = (await session.execute(stmt)).scalars().first()
+        return _to_connection(row) if row is not None else None
+
     async def list_connections(
         self, session: AsyncSession, *, limit: int, before: str | None = None
     ) -> list[Connection]:
