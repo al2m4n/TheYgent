@@ -5,7 +5,7 @@ The control plane ([apps/control-plane](../../apps/control-plane), package
 runs end to end (prompt runs, inline graph runs, saved-agent invokes, trigger fires), chat
 sessions and memory, the agent registry and drafts, triggers and webhooks, connections and
 encrypted secrets, RAG sources, the bench store, MCP hosting, the observability waterfall,
-and platform settings. It is a modular monolith on purpose: every subsystem shares one
+platform settings, and the identity layer (accounts, roles, sessions, API keys, SSO). It is a modular monolith on purpose: every subsystem shares one
 Postgres and one process, but each lives behind its own injected store so the boundaries
 stay visible and testable. The one thing it never does is run a model — model traffic
 leaves exclusively over the inference plane's OpenAI-compatible HTTP seam (see
@@ -44,14 +44,31 @@ A change to this service must not break these:
 - **Secrets never inline.** Secret-looking connection config keys are rejected; plaintext
   exists only inside `SecretStore.resolve()` at step time; rotation keeps the same
   `secret_ref` so no referencing agent's `contentHash` moves.
-- **Unattended surfaces are deny-by-default.** `/agents/{id}/invoke` returns 401 while
-  `THEYGENT_INVOKE_TOKEN` is unset; token comparison is constant-time over bytes; webhooks
-  are authed per-trigger by HMAC over the raw body. Everything else sits behind a no-op
-  auth placeholder for the single-user localhost topology.
+- **Every request resolves to a `Principal` at one seam.** `require_auth` maps the
+  presented bearer — a `tys_` session or a `tyk_` API key, both stored only as sha256
+  hashes (passwords are scrypt) — to `Principal{id, role}`; `require_editor` /
+  `require_admin` tighten it per route (`403 forbidden` below the floor). Roles are the
+  closed ordered set `viewer < editor < admin`; an API key's effective role is the meet of
+  its minted role and its owner's *current* role, so demotion bites without rotation. A
+  fresh install has zero users, so every bearer fails and the API is closed until
+  `POST /auth/setup` creates the first admin (a hard `409 setup_already_complete` after) —
+  the lockout needs no special casing. Sign-in federation is OIDC/OAuth2 authorization
+  code + PKCE resolved server-side (code exchange + userinfo, `auth.py`), with in-flight
+  flow state carried in a Fernet-sealed, TTL-bound `state` parameter double-submitted with a
+  browser-binding cookie (login-CSRF defense) and the callback handing the SPA a single-use,
+  short-TTL code it trades at `POST /auth/oidc/exchange` — so the session bearer never rides a
+  redirect URL. The last active admin can never be demoted/disabled/deleted (`409 last_admin`).
+- **Unattended surfaces are deny-by-default.** `/agents/{id}/invoke` accepts the
+  per-deploy `THEYGENT_INVOKE_TOKEN` (constant-time compare over bytes) or an active API
+  key — never an interactive session bearer — and returns 401 with neither; webhooks
+  are authed per-trigger by HMAC over the raw body.
 - **Every sensitive read passes one chokepoint.** Trace, node I/O, settings, and the
   whole-install export/import surface (`transfer:export` / `transfer:import`) route through
-  `governance.authorize()` (allow-all today). Do not add role logic elsewhere — the seam is
-  the deliverable, so real RBAC lands with zero endpoint retrofit.
+  `governance.authorize()`, which ranks the resolved role against a per-permission floor
+  (`trace:read`/`io:read` = viewer, `agent:configure` = editor, settings and transfer =
+  admin). Do not add role logic elsewhere — the seam froze early precisely so enforcement
+  could land here once, with zero endpoint retrofit; ownership checks (a viewer's own chat
+  sessions) live at the endpoints that carry an owner column.
 - **Errors use the house envelope**: every 4xx/5xx is `{"error": {"message", "code"}}` with
   stable snake_case codes, never FastAPI's `{detail}`. Pre-stream failures surface as
   clean HTTP statuses, never a 200 followed by a broken SSE stream.
@@ -80,14 +97,15 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `settings.py` | The typed platform-settings catalog, env pin/cap resolution, TTL-cached `SettingsService` with live-apply hooks |
 | `artifacts.py` | Local blob store for audio/image artifacts (`art_` refs); bytes are never journaled, refs are |
 | `dispatcher.py` | In-process cron dispatcher over the persisted trigger registry (single-instance; durable mode replaces it) |
-| `governance.py` | The `authorize(principal, permission, resource)` chokepoint |
+| `governance.py` | The `authorize(principal, permission, resource)` chokepoint — role-vs-floor per permission |
+| `auth.py` | The identity layer: scrypt password hashing, opaque hashed bearers (sessions + API keys), the `AuthStore`, provider-config validation, and the sealed-state OIDC/OAuth2 code-flow helpers |
 | `transfer.py` | The export/import bundle: DB-level bundle build (full rows, secret material stripped) and the id-preserving, idempotent, skip-on-exists apply behind `POST /export` / `POST /import` |
 | `walker.py`, `durable/` | Graph execution — summarized below, detailed in [graph-execution.md](./graph-execution.md) and [durable-execution.md](./durable-execution.md) |
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
-| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0017` |
+| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0018` |
 
 ## HTTP surface
 
@@ -99,7 +117,8 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Group | Endpoints |
 |-------|-----------|
 | Runs | `POST /runs` (prompt run, SSE or JSON) · `GET /runs` · `GET /runs/{id}` · `POST /runs/{id}/resume` (durable human gate) |
-| Graph/agent execution | `POST /graphs/runs` (inline IR) · `POST /agents/{id}/runs` · `POST /agents/{id}/invoke` (bearer token) · `POST /agents/{id}/durable-runs` · `POST /hooks/{trigger_id}` (HMAC webhook) |
+| Graph/agent execution | `POST /graphs/runs` (inline IR) · `POST /agents/{id}/runs` · `POST /agents/{id}/invoke` (invoke token or API key) · `POST /agents/{id}/durable-runs` · `POST /hooks/{trigger_id}` (HMAC webhook) |
+| Identity & access | `GET /auth/status` (unauthenticated boot probe) · `POST /auth/setup` (zero-users only) · `POST /auth/login` · `POST /auth/logout` · `GET/PATCH /auth/me` · `POST /auth/me/password` · `GET/POST /auth/api-keys` · `DELETE /auth/api-keys/{id}` · `GET/POST /users` · `PATCH/DELETE /users/{id}` · `POST /users/{id}/password` · `GET/POST /auth/providers` · `PATCH/DELETE /auth/providers/{id}` · browser legs `GET /auth/oidc/{slug}/start` · `GET /auth/oidc/callback` · `POST /auth/oidc/exchange` |
 | Sessions | `GET/POST /sessions` · `GET/DELETE /sessions/{id}` · `POST /sessions/{id}/turns` |
 | Agent registry | `POST/GET /agents` · `GET /agents/{id}` · `DELETE /agents/{id}` (one-transaction cascade: triggers incl. DBOS schedule drop, io-policy, versions; drafts/runs keep breadcrumbs) · `POST /agents/{id}/versions` · `GET /agents/{id}/versions/{version}` · `GET/PUT /agents/{id}/io-policy` · `GET /stats` |
 | Drafts | `POST /drafts` · `PUT/GET/DELETE /drafts/{id}` · `GET /drafts` — deliberately unvalidated, unhashed working copies; only publish validates |
@@ -114,8 +133,8 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 
 ## Postgres: schema, domain, stores
 
-One database, 22 tables in the `public` schema, owned end to end by the Alembic chain
-`0001 → 0017` (sessions were originally named `thread` — the chain replays history, and
+One database, 27 tables in the `public` schema, owned end to end by the Alembic chain
+`0001 → 0019` (sessions were originally named `thread` — the chain replays history, and
 the rename is itself a migration). By area:
 
 | Area | Tables |
@@ -128,6 +147,7 @@ the rename is itself a migration). By area:
 | RAG | `rag_source`, `rag_document`, `rag_chunk` (untyped pgvector column + dim + generated tsvector) |
 | Bench | `bench_suite`, `bench_case`, `bench_run`, `bench_preset` |
 | Platform | `platform_setting`, `gate_counter` (fixed-window rate limits) |
+| Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers), `auth_provider` (client secret behind a `secret_ref`) |
 
 The durable runtime keeps its checkpoint tables in a separate `dbos` schema in the same
 database — owned by its own migrator, never by Alembic.
@@ -135,7 +155,8 @@ database — owned by its own migrator, never by Alembic.
 Conventions for new persisted resources: `TIMESTAMPTZ created_at/updated_at`, prefixed
 ULID string primary keys (`con_`, `drf_`, `sec_`, `art_`, `rag_`), JSONB for opaque
 config, and breadcrumb string columns instead of foreign keys where lineage must outlive
-the referent (`run.trigger_id` survives trigger deletion).
+the referent (`run.trigger_id` survives trigger deletion; `run.user_id` /
+`chat_session.user_id` survive account deletion, and are `NULL` on pre-identity rows).
 
 The `run` row's status column follows one lifecycle, shared by both runtimes:
 
@@ -280,7 +301,8 @@ artifacts restore under their original refs via `PUT /artifacts/{ref}`. Both rou
 | `THEYGENT_INFERENCE_PLANE_URL` | Inference-plane base URL incl. `/v1` (default `http://127.0.0.1:8081/v1`) |
 | `THEYGENT_CONTROL_PLANE_HOST` / `_PORT` | Bind address (default `127.0.0.1:8080`) |
 | `THEYGENT_DURABLE` | Opt into the durable runtime (see [durable-execution.md](./durable-execution.md)) |
-| `THEYGENT_INVOKE_TOKEN` | Bearer token for unattended invokes; unset = those surfaces closed |
+| `THEYGENT_INVOKE_TOKEN` | Shared per-deploy bearer for unattended invokes (API keys open them too); with neither presented the surface is closed |
+| `THEYGENT_OIDC_REDIRECT_URL` | Pins the `auth.oidc_redirect_url` setting — the redirect URI registered with sign-in providers (default `http://localhost:8080/auth/oidc/callback`) |
 | `THEYGENT_SECRET_KEY` | Comma-separated Fernet keys (first encrypts, all decrypt); ephemeral dev key with a loud warning when unset |
 | `THEYGENT_CORS_ORIGINS` | Allowed SPA origins (default the Vite dev ports) |
 | `THEYGENT_ARTIFACT_DIR` | Artifact blob directory |
@@ -318,8 +340,10 @@ Coverage worth knowing about: `test_migrations.py` (the chain itself), `test_mcp
 (transports, generated servers, hub — against fixtures captured from live registries),
 `test_rag.py` (chunker, hybrid query, hash-skip, a real local-site crawl, both runtimes),
 `test_observability_*.py` (capture in both runtimes plus the API), `test_settings.py`
-(sink swap, kill switch, probe), and `test_reconcile.py` (the startup sweeps). The
-repo-wide picture is in [testing.md](./testing.md).
+(sink swap, kill switch, probe), `test_auth.py` (setup lockout, the role-floor matrix,
+API-key narrowing, last-admin guards, and the OIDC flow against a fake IdP), and
+`test_reconcile.py` (the startup sweeps). The repo-wide picture is in
+[testing.md](./testing.md).
 
 ## See also
 

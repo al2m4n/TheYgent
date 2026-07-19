@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Iterator
 
+import _auth
 import httpx
 import pytest
 from _durable import BlockingInference, canonical_ir, reset_dbos_schema, save_agent
@@ -877,11 +878,13 @@ def test_resume_requires_durable_mode(fake_inference, pg_url: str) -> None:
         start_dispatcher=False,
     )
     with TestClient(app) as c:
-        r = c.post(
-            "/runs/anything/resume",
-            json={"input": "x"},
-            headers={"Authorization": f"Bearer {TOKEN}"},
-        )
+        # Resume rides the interactive session auth (the client's attached bearer), never the
+        # invoke token. Resume checks run ownership/existence FIRST (a non-owner must not learn a
+        # run exists), so use a real run the caller owns to reach the durable-mode gate itself.
+        run_id = c.post(
+            "/runs", json={"input": "hi", "model": "triage-fast", "stream": False}
+        ).json()["runId"]
+        r = c.post(f"/runs/{run_id}/resume", json={"input": "x"})
         assert r.status_code == 400
         assert r.json()["error"]["code"] == "durable_required"
 
@@ -900,21 +903,21 @@ async def test_resume_guards_unknown_and_non_waiting(pg_url: str) -> None:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
-                hdr = {"Authorization": f"Bearer {TOKEN}"}
+                await _auth.attach_async(ac)
                 # Resume is an INTERACTIVE surface (the person answering the gate is the cockpit
                 # user, same auth as starting the durable run) — no invoke token required. The
                 # token gates only the unattended surfaces (/invoke, /hooks).
                 no_token = await ac.post("/runs/nope/resume", json={"input": "x"})
                 assert no_token.status_code == 404  # past auth; unknown run
                 # Unknown run → 404.
-                r404 = await ac.post("/runs/nope/resume", json={"input": "x"}, headers=hdr)
+                r404 = await ac.post("/runs/nope/resume", json={"input": "x"})
                 assert r404.status_code == 404
                 # A completed (non-waiting) run → 409: nothing to resume.
                 gr = await ac.post(
                     "/graphs/runs", json={"ir": trivial_ir(), "input": "hi", "stream": False}
                 )
                 rid = gr.json()["runId"]
-                r409 = await ac.post(f"/runs/{rid}/resume", json={"input": "x"}, headers=hdr)
+                r409 = await ac.post(f"/runs/{rid}/resume", json={"input": "x"})
                 assert r409.status_code == 409
                 assert r409.json()["error"]["code"] == "run_not_waiting"
 
@@ -938,7 +941,7 @@ async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
-                hdr = {"Authorization": f"Bearer {TOKEN}"}
+                await _auth.attach_async(ac)
                 assert (await ac.post("/agents", json={"ir": ir})).status_code == 201
                 # Hand-create a waiting run row pointing at the human node (the durable workflow's
                 # checkpoint is irrelevant to the validation gate, which runs before any send).
@@ -958,12 +961,10 @@ async def test_resume_validates_against_declared_schema(pg_url: str) -> None:
                 # payload likewise fails the gate. (The satisfied-payload happy path — gate passes,
                 # workflow resumes, run completes — is proven end-to-end by the kill/resume test
                 # above; here we hand-create the row so there is no live workflow to send to.)
-                bad = await ac.post(f"/runs/{run.id}/resume", json={"input": {}}, headers=hdr)
+                bad = await ac.post(f"/runs/{run.id}/resume", json={"input": {}})
                 assert bad.status_code == 422
                 assert bad.json()["error"]["code"] == "resume_schema_mismatch"
-                bad2 = await ac.post(
-                    f"/runs/{run.id}/resume", json={"input": "not-an-object"}, headers=hdr
-                )
+                bad2 = await ac.post(f"/runs/{run.id}/resume", json={"input": "not-an-object"})
                 assert bad2.status_code == 422
 
 
@@ -984,6 +985,7 @@ async def test_resume_refuses_waiting_run_without_awaiting_node(pg_url: str) -> 
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
+                await _auth.attach_async(ac)
                 sm = app.state.sessionmaker
                 async with sm() as s, s.begin():
                     run = await RunStore().create_run(
@@ -1145,6 +1147,7 @@ async def test_durable_runs_endpoint_rejects_unexecutable_types(pg_url: str) -> 
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
+                await _auth.attach_async(ac)
                 assert (await ac.post("/agents", json={"ir": ir})).status_code == 201
                 r = await ac.post(f"/agents/{ir['id']}/durable-runs", json={"input": "x"})
                 assert r.status_code == 400

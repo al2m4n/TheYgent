@@ -20,6 +20,8 @@ From a fresh clone with `.env` set and `make engines` done, this is the only com
 
 **[http://localhost:5174](http://localhost:5174)**
 
+On a fresh install the interface greets you with a **first-run wizard**: pick a username and password to create the install's admin account, and you land in the app signed in. Everything about accounts, roles, and single sign-on is covered in [Users, roles & sign-in](../running/users.md).
+
 ## The three services
 
 | Service | URL | What it does |

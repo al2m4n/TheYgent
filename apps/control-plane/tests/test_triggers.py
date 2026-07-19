@@ -20,6 +20,7 @@ import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
+import _auth
 import httpx
 import pytest
 from _fake_inference import FULL_MESSAGE, FakeInference
@@ -396,6 +397,7 @@ async def test_schedule_tick_fires_pinned_version_with_trigger_id(
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(
                 ac, ir=_agent_ir(prompt="SCHED: $in"), version="0.1.0"
             )
@@ -415,6 +417,7 @@ async def test_disabled_schedule_does_not_fire(fake_inference: FakeInference, pg
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
             assert (await ac.patch(f"/triggers/{tid}", json={"enabled": False})).status_code == 200
             fired = await app.state.dispatcher.tick(_DUE)
@@ -433,6 +436,7 @@ async def test_schedule_persists_and_fires_across_restart(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app1), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
 
     app2 = _app(fake_inference.v1_url, pg_url)  # "restart": new app/session, same durable DB
@@ -440,6 +444,7 @@ async def test_schedule_persists_and_fires_across_restart(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app2), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             fired = await app2.state.dispatcher.tick(_DUE)
             assert fired == [tid]
             runs = (await ac.get("/runs")).json()["runs"]
@@ -458,6 +463,7 @@ async def test_hash_pinned_schedule_runs_that_content_after_newer_publishes(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             agent_id, tid = await _save_and_schedule(ac, ir=ir_a, content_hash_pin=hash_a)
             # Publish a newer version AFTER the pin was taken.
             newer = await ac.post(
@@ -483,6 +489,7 @@ async def test_schedule_does_not_double_fire_on_immediate_retick(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
             assert await app.state.dispatcher.tick(_DUE) == [tid]  # fires once
             assert await app.state.dispatcher.tick(_DUE) == []  # same instant → not due again
@@ -501,6 +508,7 @@ async def test_completed_at_stamped_for_evidence_gate(
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
             await app.state.dispatcher.tick(_DUE)
             run = next(r for r in (await ac.get("/runs")).json()["runs"] if r["trigger_id"] == tid)
@@ -517,6 +525,7 @@ async def test_schedule_fire_against_unreachable_inference_fails_honestly(pg_url
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as ac:
+            await _auth.attach_async(ac)
             _agent, tid = await _save_and_schedule(ac, ir=_agent_ir(), version="0.1.0")
             fired = await app.state.dispatcher.tick(_DUE)
             assert fired == [tid]  # the schedule fired (and advanced) even though the run failed

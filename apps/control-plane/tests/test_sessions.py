@@ -10,6 +10,7 @@ same real Postgres + real Alembic schema as the rest of the fast suite.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from _db import count_messages
 from fastapi.testclient import TestClient
@@ -165,7 +166,8 @@ def test_append_turns_losing_race_with_delete_is_404(client: TestClient) -> None
     # exists while the row is really gone — the locked append then appends nothing and the
     # endpoint must 404, never 201 with an empty pair.
     async def fake_get_chat_session(session: object, session_id: str) -> object:
-        return object()  # "exists" at check time; gone by append time
+        # "exists" at check time (ownerless, so the ownership gate passes); gone by append time.
+        return SimpleNamespace(user_id=None)
 
     client.app.state.store.get_chat_session = fake_get_chat_session  # type: ignore[method-assign]
     r = _turns(client, "ghost", "q", "a")

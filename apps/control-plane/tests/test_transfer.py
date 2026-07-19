@@ -18,6 +18,7 @@ import asyncio
 import copy
 import json
 
+import _auth
 import asyncpg
 import pytest
 from _db import plain_dsn, truncate
@@ -222,6 +223,9 @@ def test_export_import_round_trip(client: TestClient, pg_url: str) -> None:
 
     # Wipe the install, restore from the bundle.
     asyncio.run(truncate(pg_url))
+    # The truncate wiped user_account too — sign the client back in before importing.
+    _auth.reset_cache()
+    _auth.attach(client)
     resp = client.post("/import", json=bundle)
     assert resp.status_code == 200
     report = resp.json()["report"]
@@ -308,6 +312,9 @@ def test_import_is_idempotent(client: TestClient, pg_url: str) -> None:
     _seed(client)
     bundle = client.post("/export", json={"include": ALL_SECTIONS}).json()
     asyncio.run(truncate(pg_url))
+    # The truncate wiped user_account too — sign the client back in before importing.
+    _auth.reset_cache()
+    _auth.attach(client)
     assert client.post("/import", json=bundle).status_code == 200
 
     second = client.post("/import", json=bundle)
@@ -661,6 +668,9 @@ def test_mcp_server_sse_transport_round_trips(client: TestClient, pg_url: str) -
     assert entry["transport"] == "sse"
 
     asyncio.run(truncate(pg_url))
+    # The truncate wiped user_account too — sign the client back in before importing.
+    _auth.reset_cache()
+    _auth.attach(client)
     resp = client.post("/import", json=bundle)
     assert resp.status_code == 200
     assert resp.json()["report"]["mcp_servers"]["created"] == 1

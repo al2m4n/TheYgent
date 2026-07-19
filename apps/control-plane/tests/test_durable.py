@@ -23,6 +23,7 @@ import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
+import _auth
 import httpx
 import pytest
 from _durable import (
@@ -583,6 +584,7 @@ async def test_schedule_runs_via_dbos_and_disable_removes_it(pg_url: str) -> Non
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
+                await _auth.attach_async(ac)
                 agent_id = await _save_agent_http(ac, _agent_ir(prompt="SCHED: $in"))
                 created = await ac.post(
                     "/triggers",
@@ -689,6 +691,7 @@ async def test_webhook_fires_durably_with_lineage(pg_url: str) -> None:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://test"
             ) as ac:
+                await _auth.attach_async(ac)
                 agent_id = await _save_agent_http(
                     ac, _agent_ir(prompt="$in.in.text", agent_id="agt_hook")
                 )

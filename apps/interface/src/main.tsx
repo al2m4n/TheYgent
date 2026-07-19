@@ -4,6 +4,8 @@ import "@xyflow/react/dist/style.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
+import { AuthGate } from "./auth/AuthGate";
+import { AuthProvider } from "./lib/auth";
 import { ThemeProvider } from "./lib/theme";
 import { router } from "./router";
 
@@ -20,7 +22,13 @@ createRoot(root).render(
   <StrictMode>
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        {/* The router (and every data fetch behind it) renders only once a session exists —
+            the AuthGate shows the first-run wizard / sign-in screen instead until then. */}
+        <AuthProvider>
+          <AuthGate>
+            <RouterProvider router={router} />
+          </AuthGate>
+        </AuthProvider>
       </QueryClientProvider>
     </ThemeProvider>
   </StrictMode>,

@@ -16,22 +16,23 @@ All three run the **same** graph on the **same** run path as an interactive run;
 !!! note "Where triggers are managed"
     Webhook and schedule triggers are created and managed over the control-plane API (the endpoints below). The interface shows a **read-only** list of an agent's triggers on the `input` node's inspector panel — there is no in-app create/edit screen for them yet. The curl examples on this page are the way to set them up.
 
-All examples target the control plane at `http://localhost:8080`.
+All examples target the control plane at `http://localhost:8080`. Managing triggers (`POST /triggers` and friends) requires an editor-or-above bearer in the `Authorization` header — see [Users, roles & sign-in](users.md).
 
 ## Token invoke
 
-The simplest unattended entry point: a single endpoint, `POST /agents/{id}/invoke`, gated by one bearer token. Nothing to register — it is always available once the token is set.
+The simplest unattended entry point: a single endpoint, `POST /agents/{id}/invoke`, gated by a bearer token. Nothing to register — it accepts two kinds of credential:
 
-**Set the token.** Provide `THEYGENT_INVOKE_TOKEN` in the control plane's environment (see [Environment variables](../reference/environment.md)):
+- **A personal API key** (`tyk_…`) — the recommended, per-user way; mint one from your profile menu. See [API keys](users.md#personal-api-keys).
+- **The shared `THEYGENT_INVOKE_TOKEN`** — one per-deploy secret set in the control plane's environment (see [Environment variables](../reference/environment.md)):
 
 ```bash
 THEYGENT_INVOKE_TOKEN=a-long-random-secret
 ```
 
 !!! warning "Deny by default"
-    When `THEYGENT_INVOKE_TOKEN` is **unset**, the invoke endpoint is **closed** — every call returns `401`. This is deliberate: an open unattended surface is never the default. Set the token to open it.
+    With `THEYGENT_INVOKE_TOKEN` **unset** and no API key presented, the invoke endpoint is **closed** — every call returns `401`. This is deliberate: an open unattended surface is never the default. Interactive sign-in tokens (`tys_…`) deliberately do not open it either.
 
-**Call it** with the token in the `Authorization` header:
+**Call it** with either credential in the `Authorization` header:
 
 ```bash
 curl -X POST http://localhost:8080/agents/agent.my-agent/invoke \
@@ -180,4 +181,5 @@ curl -X PATCH http://localhost:8080/triggers/TRIGGER_ID \
 - [Durable runs](durable.md) — make unattended fires crash-resumable.
 - [Referencing inputs](../building/input-references.md) — how a webhook payload maps into the graph.
 - [Runs](index.md) — every fire produces a run you can inspect.
+- [Users, roles & sign-in](users.md) — API keys, the per-user credential for the invoke endpoint.
 - [Environment variables](../reference/environment.md) — `THEYGENT_INVOKE_TOKEN` and the rest.

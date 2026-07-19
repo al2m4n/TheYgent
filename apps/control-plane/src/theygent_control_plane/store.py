@@ -93,6 +93,7 @@ def _to_run(row: RunRow) -> Run:
         graph_version=row.graph_version,
         content_hash=row.content_hash,
         trigger_id=row.trigger_id,
+        user_id=row.user_id,
         output=row.output,
         awaiting_node=row.awaiting_node,
         created_at=row.created_at,
@@ -122,10 +123,12 @@ class RunStore:
         graph_version: str | None = None,
         content_hash: str | None = None,
         trigger_id: str | None = None,
+        user_id: str | None = None,
     ) -> Run:
         # Graph fields default to None so the /runs path is unchanged; /graphs/runs passes them
         # (the IR's id/version/contentHash). trigger_id defaults to None so every
-        # interactive path is unchanged; a schedule-/webhook-fired run passes it.
+        # interactive path is unchanged; a schedule-/webhook-fired run passes it. user_id is
+        # the starting account (None = system-initiated) — a breadcrumb, like trigger_id.
         run = Run(
             model=model,
             session_id=session_id,
@@ -133,6 +136,7 @@ class RunStore:
             graph_version=graph_version,
             content_hash=content_hash,
             trigger_id=trigger_id,
+            user_id=user_id,
         )
         session.add(
             RunRow(
@@ -145,6 +149,7 @@ class RunStore:
                 graph_version=graph_version,
                 content_hash=content_hash,
                 trigger_id=trigger_id,
+                user_id=user_id,
                 error=None,
                 runtime="inproc",
                 created_at=run.created_at,
@@ -164,6 +169,7 @@ class RunStore:
         graph_version: str | None = None,
         content_hash: str | None = None,
         trigger_id: str | None = None,
+        user_id: str | None = None,
     ) -> Run:
         """Idempotently create a run row with a CALLER-CHOSEN id. The durable workflow uses
         its own ``DBOS.workflow_id`` as the run id so a resumed run reuses the same row and
@@ -171,7 +177,10 @@ class RunStore:
         process dies after the row commits but before the step result is journaled (at-least-once),
         so this is ON CONFLICT DO NOTHING — a re-exec is a no-op, never a duplicate-PK crash. The
         session-memory path is unused on the durable ``fire()`` route (session_id is None), so this
-        creates a session-less run, exactly like an interactive graph run minus the new-ULID id."""
+        creates a session-less run, exactly like an interactive graph run minus the new-ULID id.
+        ``user_id`` is the initiating account (None = a schedule/webhook firing) — the ownership
+        breadcrumb the run read/resume gates check, so a durable human-in-the-loop run is only
+        resumable by its owner."""
         ts = now()
         await session.execute(
             pg_insert(RunRow)
@@ -185,6 +194,7 @@ class RunStore:
                 graph_version=graph_version,
                 content_hash=content_hash,
                 trigger_id=trigger_id,
+                user_id=user_id,
                 error=None,
                 # A durable run recovers and resumes across a crash — the startup reconcile
                 # sweep must not terminalize it (its fate belongs to the workflow engine).
@@ -203,15 +213,26 @@ class RunStore:
         return _to_run(row) if row is not None else None
 
     async def list_runs(
-        self, session: AsyncSession, *, limit: int, before: str | None = None
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+        before: str | None = None,
+        for_user: str | None = None,
     ) -> list[Run]:
         """Recent runs, newest first — the cockpit home page.
 
         Keyset pagination on ``(created_at, id)`` DESC: ``before`` is a run id cursor; rows
         strictly older than that run are returned. A read-only list over already-persisted
         rows. An unknown ``before`` id is ignored (treated as no cursor), never an error.
+        ``for_user`` scopes the list to that account's runs plus ownerless (system/pre-auth)
+        rows — the non-admin view, mirroring ``list_chat_sessions``; ``None`` returns everything
+        (the admin view). Run output is conversation content, so the same ownership boundary
+        the /sessions surface enforces applies here.
         """
         stmt = select(RunRow).order_by(RunRow.created_at.desc(), RunRow.id.desc()).limit(limit)
+        if for_user is not None:
+            stmt = stmt.where(or_(RunRow.user_id.is_(None), RunRow.user_id == for_user))
         if before is not None:
             anchor = await session.get(RunRow, before)
             if anchor is not None:
@@ -254,6 +275,7 @@ class RunStore:
                 ChatSessionRow.created_at,
                 ChatSessionRow.updated_at,
                 ChatSessionRow.meta.label("meta"),
+                ChatSessionRow.user_id,
                 func.coalesce(counts.c.message_count, 0).label("message_count"),
                 func.coalesce(counts.c.last_message_at, ChatSessionRow.updated_at).label(
                     "last_activity"
@@ -273,10 +295,16 @@ class RunStore:
             message_count=int(row.message_count),
             preview=row.preview,
             metadata=row.meta,
+            user_id=row.user_id,
         )
 
     async def list_chat_sessions(
-        self, session: AsyncSession, *, limit: int, before: str | None = None
+        self,
+        session: AsyncSession,
+        *,
+        limit: int,
+        before: str | None = None,
+        for_user: str | None = None,
     ) -> list[SessionSummary]:
         """Recent sessions, newest-activity first.
 
@@ -284,12 +312,18 @@ class RunStore:
         message preview (always ``position == 0`` — turns are appended as user/assistant
         pairs, so the very first user turn is position 0), and the client-owned metadata.
         ``before`` is a session id cursor on ``(created_at, id)`` DESC, mirroring ``list_runs``.
+        ``for_user`` scopes the list to that account's sessions plus ownerless (pre-auth)
+        rows — the non-admin view; ``None`` returns everything (the admin view).
         """
         stmt = (
             self._session_summary_stmt()
             .order_by(ChatSessionRow.created_at.desc(), ChatSessionRow.id.desc())
             .limit(limit)
         )
+        if for_user is not None:
+            stmt = stmt.where(
+                or_(ChatSessionRow.user_id.is_(None), ChatSessionRow.user_id == for_user)
+            )
         if before is not None:
             anchor = await session.get(ChatSessionRow, before)
             if anchor is not None:
@@ -326,6 +360,7 @@ class RunStore:
             created_at=chat_session.created_at,
             updated_at=chat_session.updated_at,
             metadata=chat_session.meta,
+            user_id=chat_session.user_id,
             messages=[
                 SessionMessage(
                     id=row.id,
@@ -444,27 +479,37 @@ class RunStore:
         )
         return cast("CursorResult[Any]", result).rowcount or 0
 
-    async def ensure_chat_session(self, session: AsyncSession, session_id: str) -> None:
+    async def ensure_chat_session(
+        self, session: AsyncSession, session_id: str, *, user_id: str | None = None
+    ) -> None:
         """Idempotently create the session row (existing or new). ON CONFLICT DO
-        NOTHING so a follow-up run in an existing session is a no-op, not a PK violation."""
+        NOTHING so a follow-up run in an existing session is a no-op, not a PK violation —
+        which also means an existing session KEEPS its owner (``user_id`` lands on insert
+        only, never reassigns)."""
         ts = now()
         await session.execute(
             pg_insert(ChatSessionRow)
-            .values(id=session_id, created_at=ts, updated_at=ts, meta=None)
+            .values(id=session_id, created_at=ts, updated_at=ts, meta=None, user_id=user_id)
             .on_conflict_do_nothing(index_elements=[ChatSessionRow.id])
         )
 
     async def upsert_chat_session(
-        self, session: AsyncSession, *, session_id: str, metadata: dict[str, Any] | None
+        self,
+        session: AsyncSession,
+        *,
+        session_id: str,
+        metadata: dict[str, Any] | None,
+        user_id: str | None = None,
     ) -> SessionSummary:
         """The client-write ensure: create the session row, or — when it already exists and
         ``metadata`` was provided — replace its metadata WHOLE (never a deep merge; the value is
         opaque and client-owned). ``metadata=None`` on an existing row changes nothing, so the
-        call is an idempotent ensure. Returns the summary row either way (the caller owns the
-        transaction, like every other store method)."""
+        call is an idempotent ensure. ``user_id`` sets the owner ON CREATE ONLY — the conflict
+        branch never reassigns ownership. Returns the summary row either way (the caller owns
+        the transaction, like every other store method)."""
         ts = now()
         stmt = pg_insert(ChatSessionRow).values(
-            id=session_id, created_at=ts, updated_at=ts, meta=metadata
+            id=session_id, created_at=ts, updated_at=ts, meta=metadata, user_id=user_id
         )
         if metadata is not None:
             stmt = stmt.on_conflict_do_update(

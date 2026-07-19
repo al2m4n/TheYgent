@@ -30,6 +30,7 @@ import {
   inferenceUrl,
   residentEngines,
 } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { engineTone, statusTone, toneOf } from "../lib/categories";
 import { exactCount, formatCount, shortId } from "../lib/format";
 import type { Run, SessionSummary } from "../lib/runtypes";
@@ -139,25 +140,30 @@ export function Dashboard() {
   const runsQ = useRunsInfinite();
   const sessionsQ = useSessionsInfinite();
   const agentsQ = useAgentsInfinite();
+  const { hasRole } = useAuth();
 
   // Cheap single-call registries that enrich the control-plane card. Each is independent and
   // tolerated to fail (retry off) — a down control plane just leaves the counts at "—". MCP servers
   // come from TWO places: hand-defined name-keyed servers AND `mcp_server` connections (the hub
-  // install path); the count merges both, matching the MCP page.
+  // install path); the count merges both, matching the MCP page. Builder-surface resources —
+  // a viewer's requests would only 403, so they don't fire (the counts render "—").
   const mcp = useQuery({
     queryKey: ["mcpServers"],
     queryFn: () => api.listMcpServers(),
     retry: false,
+    enabled: hasRole("editor"),
   });
   const connections = useQuery({
     queryKey: ["connections"],
     queryFn: () => api.listConnections(),
     retry: false,
+    enabled: hasRole("editor"),
   });
   const rag = useQuery({
     queryKey: ["ragSources"],
     queryFn: () => api.listRagSources(),
     retry: false,
+    enabled: hasRole("editor"),
   });
 
   // Total configured MCP servers. `connected` is a LAZY warm flag (an idle server reads as
@@ -204,13 +210,15 @@ export function Dashboard() {
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Link
-            to="/editor"
-            search={{ agent: undefined, version: undefined }}
-            className={buttonClass("default")}
-          >
-            <Plus size={14} /> New agent
-          </Link>
+          {hasRole("editor") && (
+            <Link
+              to="/editor"
+              search={{ agent: undefined, version: undefined }}
+              className={buttonClass("default")}
+            >
+              <Plus size={14} /> New agent
+            </Link>
+          )}
           <Link to="/chat" className={buttonClass("primary")}>
             <SquarePen size={14} /> New chat
           </Link>

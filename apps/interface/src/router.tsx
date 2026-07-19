@@ -1,5 +1,8 @@
 import { Link, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import type { ComponentType } from "react";
 import { Empty, Page, linkClass } from "./components/ui";
+import type { Role } from "./lib/api";
+import { useAuth } from "./lib/auth";
 import { Chat } from "./routes/Chat";
 import { Dashboard } from "./routes/Dashboard";
 import { Editor } from "./routes/Editor";
@@ -29,6 +32,28 @@ function NotFound() {
   );
 }
 
+// Role floor per route: the builder surfaces need editor, Settings needs admin. A deep link
+// below the caller's role renders an honest in-shell notice (the API 403s regardless — this
+// is UX, not the security boundary). The nav already hides these entries for lower roles.
+function requireRole(minimum: Role, Component: ComponentType) {
+  return function GuardedRoute() {
+    const { hasRole } = useAuth();
+    if (!hasRole(minimum)) {
+      return (
+        <Page>
+          <Empty>
+            This page needs the {minimum} role — ask an admin to widen yours.{" "}
+            <Link to="/" className={linkClass}>
+              Back to the dashboard
+            </Link>
+          </Empty>
+        </Page>
+      );
+    }
+    return <Component />;
+  };
+}
+
 const rootRoute = createRootRoute({ component: Root, notFoundComponent: NotFound });
 
 // The dashboard is the home page (`/`); the published-agents grid lives at `/agents`.
@@ -54,13 +79,13 @@ const chatRoute = createRoute({
 const runsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs",
-  component: RunsList,
+  component: requireRole("editor", RunsList),
 });
 
 const runDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/runs/$runId",
-  component: RunDetail,
+  component: requireRole("editor", RunDetail),
 });
 
 const sessionsRoute = createRoute({
@@ -78,13 +103,13 @@ const sessionDetailRoute = createRoute({
 const registriesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/registries",
-  component: Registries,
+  component: requireRole("editor", Registries),
 });
 
 const editorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/editor",
-  component: Editor,
+  component: requireRole("editor", Editor),
   // Open an existing agent version via ?agent=<id>&version=<v>, a draft via ?draft=<id> (which
   // wins over agent/version — a draft knows the agent it edits); absent ⇒ a new blank graph.
   validateSearch: (
@@ -99,19 +124,19 @@ const editorRoute = createRoute({
 const mcpRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/mcp",
-  component: Mcp,
+  component: requireRole("editor", Mcp),
 });
 
 const ragRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/rag",
-  component: Rag,
+  component: requireRole("editor", Rag),
 });
 
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
-  component: Settings,
+  component: requireRole("admin", Settings),
 });
 
 const routeTree = rootRoute.addChildren([
