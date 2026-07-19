@@ -104,15 +104,18 @@ Published agents are also reachable over HTTP on the control plane (default `htt
 
 ```bash
 curl http://localhost:8080/agents/agent.triage/runs \
+  -H "Authorization: Bearer tyk_your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"input": "cancel my subscription", "stream": false}'
 ```
 
 You can pin a specific version with `"version"` or a specific hash with `"content_hash"`; otherwise the latest published version runs. There is also a token-authed, non-interactive `POST /agents/{id}/invoke` for unattended callers, and a fire-and-poll `POST /agents/{id}/durable-runs` for durable execution. Drafts have their own small CRUD surface (`/drafts`) that the editor drives. The full surface is in the [API reference](../reference/api.md).
 
+You don't have to assemble any of this by hand: every agent on the Agents page carries an **API access** action (the `</>` icon in the card footer, or the **API** button in list view) that opens a per-agent dialog with these endpoints pre-filled — the exact URLs for *this* agent, which credential opens each one, a copy-able curl for each (the example body is derived from the agent's input fields), and any [triggers](../running/triggers.md) already deployed for it. An agent built around a durable-only node shows the durable-run recipe instead of the interactive one. Authentication is the platform's own and is the same for every agent: interactive runs accept a signed-in session or a personal [API key](../running/users.md#personal-api-keys), while the unattended invoke endpoint takes an API key or the deploy-wide `THEYGENT_INVOKE_TOKEN` (sessions deliberately don't open it). The only narrower credential is a webhook trigger's per-trigger signing secret.
+
 ## Exporting and deleting agents
 
-Beyond Run, every agent on the Agents page carries two more actions — a download icon and a trash icon in the card footer (grid view), or **Export** / **Delete** buttons in the Actions column (list view).
+Beyond Run and API access, every agent on the Agents page carries two more actions — a download icon and a trash icon in the card footer (grid view), or **Export** / **Delete** buttons in the Actions column (list view).
 
 ### Export an agent as JSON
 

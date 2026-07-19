@@ -7,10 +7,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Bot, ChevronRight, Download, NotebookPen, Plus, Trash2 } from "lucide-react";
+import { Bot, ChevronRight, Code, Download, NotebookPen, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AgentBench } from "../bench/AgentBench";
 import { AgentThumbnail, useThumbVariant } from "../components/AgentThumbnail";
+import { ApiAccessModal } from "../components/ApiAccessModal";
 import { FilterBar } from "../components/Filters";
 import { GraphPreview } from "../components/GraphPreview";
 import { TimeAgo } from "../components/TimeAgo";
@@ -81,6 +82,7 @@ export function Home() {
   const agents = useMemo(() => flattenPages(data), [data]);
   const loadMoreRef = useInView(fetchNextPage, { enabled: hasNextPage && !isFetchingNextPage });
   const [benchAgentId, setBenchAgentId] = useState<string | null>(null);
+  const [apiAgent, setApiAgent] = useState<AgentSummary | null>(null);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<Sort>("modified");
   const [view, setView] = useViewMode("agents", "grid");
@@ -364,6 +366,7 @@ export function Home() {
                   agent={a}
                   draft={draftByAgent.get(a.id)}
                   onBench={() => setBenchAgentId(a.id)}
+                  onApi={() => setApiAgent(a)}
                   onExport={() => void exportAgent(a)}
                   onDelete={() => setConfirmDelete(a)}
                   exporting={exportingId === a.id}
@@ -379,6 +382,7 @@ export function Home() {
               agents={shown}
               draftByAgent={draftByAgent}
               onBench={setBenchAgentId}
+              onApi={setApiAgent}
               onExport={(a) => void exportAgent(a)}
               onDelete={setConfirmDelete}
               exportingId={exportingId}
@@ -400,6 +404,8 @@ export function Home() {
       )}
 
       {benchAgentId && <BenchModal agentId={benchAgentId} onClose={() => setBenchAgentId(null)} />}
+
+      {apiAgent && <ApiAccessModal agent={apiAgent} onClose={() => setApiAgent(null)} />}
 
       {confirmDelete && (
         <ConfirmDialog
@@ -566,6 +572,7 @@ function AgentTable({
   agents,
   draftByAgent,
   onBench,
+  onApi,
   onExport,
   onDelete,
   exportingId,
@@ -577,6 +584,7 @@ function AgentTable({
   agents: AgentSummary[];
   draftByAgent: Map<string, DraftSummary>;
   onBench: (id: string) => void;
+  onApi: (a: AgentSummary) => void;
   onExport: (a: AgentSummary) => void;
   onDelete: (a: AgentSummary) => void;
   exportingId: string | null;
@@ -648,6 +656,16 @@ function AgentTable({
                   <Button
                     size="sm"
                     variant="outline"
+                    aria-label={`API access for ${a.name}`}
+                    title="API access — endpoints and call examples"
+                    disabled={!a.latest_version}
+                    onClick={() => onApi(a)}
+                  >
+                    API
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
                     aria-label={`Export ${a.name}`}
                     disabled={!a.latest_version || exportingId === a.id}
                     onClick={() => onExport(a)}
@@ -700,6 +718,7 @@ function AgentCard({
   agent,
   draft,
   onBench,
+  onApi,
   onExport,
   onDelete,
   exporting,
@@ -711,6 +730,7 @@ function AgentCard({
   agent: AgentSummary;
   draft: DraftSummary | undefined;
   onBench: () => void;
+  onApi: () => void;
   onExport: () => void;
   onDelete: () => void;
   exporting: boolean;
@@ -824,6 +844,16 @@ function AgentCard({
       <CardFooter className="justify-between border-t px-3 py-2">
         <span className="text-[11px] text-muted-foreground">By me</span>
         <div className="flex items-center gap-1">
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label={`API access for ${agent.name}`}
+            title="API access — endpoints and call examples"
+            disabled={!hasVersion}
+            onClick={onApi}
+          >
+            <Code />
+          </Button>
           <Button
             size="icon-sm"
             variant="ghost"
