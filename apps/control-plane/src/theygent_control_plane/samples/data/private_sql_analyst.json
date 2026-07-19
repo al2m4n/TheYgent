@@ -1,0 +1,222 @@
+{
+  "id": "private-sql-analyst",
+  "title": "Private SQL analyst",
+  "description": "A data-privacy pattern: the API model sees ONLY the database schema and your question — never a single row — and writes a SELECT statement; a deterministic guardrail refuses any statement that does not start with SELECT; the query then runs on a local SQLite MCP server and a LOCAL model reads the rows and answers. The row data never leaves this machine.",
+  "capabilities": [
+    "data privacy",
+    "two models in one run",
+    "guardrail (rule)",
+    "MCP tool (stdio)",
+    "multi-input"
+  ],
+  "durable": false,
+  "input_example": "Which three customers spent the most overall, and how much did each spend?",
+  "model_slots": {
+    "remote": {
+      "label": "API model",
+      "description": "Writes the SQL. It only ever sees the schema — never a single row.",
+      "keys": ["remote"]
+    },
+    "local": {
+      "label": "Local model",
+      "description": "Reads the actual rows and answers — the data stays on this machine.",
+      "keys": ["local"]
+    }
+  },
+  "connections": [
+    {
+      "key": "crm_db",
+      "name": "sample-crm-sqlite",
+      "config": {
+        "transport": "stdio",
+        "command": "uvx",
+        "args": ["mcp-server-sqlite", "--db-path", "{seed:crm_sqlite}"]
+      },
+      "seed": "crm_sqlite"
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_private_sql_analyst",
+    "name": "sample-private-sql-analyst",
+    "version": "1.0.0",
+    "metadata": { "sample": "private-sql-analyst" },
+    "models": {
+      "remote": {
+        "binding": "openai-compatible",
+        "model": "your-api-model",
+        "params": { "maxTokens": 400 }
+      },
+      "local": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.2,
+          "maxTokens": 600,
+          "chat_template_kwargs": { "enable_thinking": false }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Question",
+        "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+      },
+      {
+        "id": "n_sql",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Write SQL (API, schema only)",
+        "config": {
+          "model": "remote",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You write SQLite queries for this database. You only see the schema below — you never see any data.\n\nCREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, country TEXT, signup_date TEXT);\nCREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER REFERENCES customers(id), amount_eur REAL, status TEXT, ordered_at TEXT);\n\nWrite exactly ONE SQLite SELECT statement that answers the user's question. Start with the word SELECT — no CTEs, no other statements. Output ONLY the raw SQL: no markdown, no code fences, no explanation."
+            },
+            { "role": "user", "content": "$in" }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "in", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_pack",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "Pack question + SQL",
+        "config": {
+          "expr": "{\"question\": \"$in.question\", \"sql\": \"$in.sql\"}"
+        },
+        "ports": {
+          "in": [
+            { "id": "question", "type": "any" },
+            { "id": "sql", "type": "any" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_guard",
+        "type": "guardrail",
+        "kind": "orchestration",
+        "label": "SELECT-only gate",
+        "config": {
+          "check": {
+            "type": "rule",
+            "rule": {
+              "kind": "regex",
+              "spec": {
+                "mode": "allow",
+                "pattern": "(?i)\"sql\":\\s*\"(\\\\[nrt]|\\s)*select\\b"
+              }
+            }
+          },
+          "onBlock": {
+            "message": "Blocked by guardrail: the generated statement was not a read-only SELECT, so it never reached the database."
+          }
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "pass", "type": "any" },
+            { "id": "block", "type": "any" }
+          ]
+        }
+      },
+      {
+        "id": "n_query",
+        "type": "mcp_tool",
+        "kind": "activity",
+        "label": "Run query (local SQLite)",
+        "config": {
+          "connection": "{connection:crm_db}",
+          "tool": "read_query",
+          "args": { "query": "$in.in.sql" },
+          "description": "Run a read-only SELECT against the local demo SQLite database."
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "out", "type": "any" },
+            { "id": "err", "type": "error" },
+            { "id": "use", "type": "any", "role": "tool" }
+          ]
+        }
+      },
+      {
+        "id": "n_answer",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer from rows (local)",
+        "config": {
+          "model": "local",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a careful data analyst. Answer using ONLY the SQL result rows you are given. The row data is private and never left this machine."
+            },
+            {
+              "role": "user",
+              "content": "Question: $in.req.question\n\nSQL that ran locally: $in.req.sql\n\nResult rows:\n$in.rows\n\nAnswer the question from these rows. If the rows are empty or missing, say the query returned no usable rows."
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "rows", "type": "any", "required": false },
+            { "id": "req", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Answer",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      },
+      {
+        "id": "n_blocked",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Refused",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      }
+    ],
+    "edges": [
+      { "id": "e_q", "source": "n_in", "sourceHandle": "out", "target": "n_sql", "targetHandle": "in", "channel": "data" },
+      { "id": "e_pack_q", "source": "n_in", "sourceHandle": "out", "target": "n_pack", "targetHandle": "question", "channel": "data" },
+      { "id": "e_pack_sql", "source": "n_sql", "sourceHandle": "out", "target": "n_pack", "targetHandle": "sql", "channel": "data" },
+      { "id": "e_guard", "source": "n_pack", "sourceHandle": "out", "target": "n_guard", "targetHandle": "in", "channel": "data" },
+      { "id": "e_run", "source": "n_guard", "sourceHandle": "pass", "target": "n_query", "targetHandle": "in", "channel": "data" },
+      { "id": "e_rows", "source": "n_query", "sourceHandle": "out", "target": "n_answer", "targetHandle": "rows", "channel": "data" },
+      { "id": "e_req", "source": "n_guard", "sourceHandle": "pass", "target": "n_answer", "targetHandle": "req", "channel": "data" },
+      { "id": "e_ans", "source": "n_answer", "sourceHandle": "out", "target": "n_out", "targetHandle": "in", "channel": "data" },
+      { "id": "e_block", "source": "n_guard", "sourceHandle": "block", "target": "n_blocked", "targetHandle": "in", "channel": "data" }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": { "position": { "x": 0, "y": 140 } },
+        "n_sql": { "position": { "x": 260, "y": 40 } },
+        "n_pack": { "position": { "x": 520, "y": 140 } },
+        "n_guard": { "position": { "x": 780, "y": 140 } },
+        "n_query": { "position": { "x": 1040, "y": 40 } },
+        "n_answer": { "position": { "x": 1300, "y": 140 } },
+        "n_out": { "position": { "x": 1560, "y": 140 } },
+        "n_blocked": { "position": { "x": 1040, "y": 300 } }
+      }
+    }
+  }
+}

@@ -104,6 +104,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
+| `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
 | `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0018` |
 
@@ -122,6 +123,7 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Sessions | `GET/POST /sessions` · `GET/DELETE /sessions/{id}` · `POST /sessions/{id}/turns` |
 | Agent registry | `POST/GET /agents` · `GET /agents/{id}` · `DELETE /agents/{id}` (one-transaction cascade: triggers incl. DBOS schedule drop, io-policy, versions; drafts/runs keep breadcrumbs) · `POST /agents/{id}/versions` · `GET /agents/{id}/versions/{version}` · `GET/PUT /agents/{id}/io-policy` · `GET /stats` |
 | Drafts | `POST /drafts` · `PUT/GET/DELETE /drafts/{id}` · `GET /drafts` — deliberately unvalidated, unhashed working copies; only publish validates |
+| Samples | `GET /samples` · `POST /samples/install` — the shipped example-agent catalog (`samples/`, an in-code catalog like settings). Installs stamp caller-chosen model slots + minted connection ids into the shipped IR, then go through the SAME publish gate as `POST /agents`; a deliberate, additive contract extension |
 | Triggers | `POST/GET /triggers` · `GET/PATCH/DELETE /triggers/{id}` — kinds `http \| schedule \| webhook`, each pinning exactly one of version/content-hash |
 | Connections | `POST/GET /connections` · `GET/PATCH/DELETE /connections/{id}` · connection-backed MCP ops (`/connections/{id}/mcp/tools`, `:warm`, `:close`, `mcp-oauth:start`, `mcp-oauth`) |
 | MCP admin | `PUT/GET/DELETE /admin/mcp/servers/{name}` · `GET .../tools` · `:warm`/`:close` · hub browse/install (`/admin/mcp/registries`, `/admin/mcp/catalog`, `/admin/mcp/catalog/install`, `/admin/mcp/generated:preview`) · `GET /mcp/oauth/callback` |

@@ -1,0 +1,438 @@
+{
+  "id": "expense-approver",
+  "title": "Expense approver",
+  "description": "Human in the loop with a real approve/reject: a local model assesses the risk of an expense request, the run then WAITS durably for a human decision, and a router either executes the (placeholder) payment step or refuses. Runs on the durable runtime — the wait survives restarts.",
+  "capabilities": [
+    "human in the loop",
+    "durable runtime",
+    "router",
+    "transform",
+    "builtin tool step"
+  ],
+  "durable": true,
+  "input_example": {
+    "amount": 1250,
+    "currency": "EUR",
+    "to": "conference organizer",
+    "memo": "Conference sponsorship"
+  },
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Assesses the request's risk before a human decides.",
+      "keys": [
+        "assistant"
+      ]
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_expense_approver",
+    "name": "sample-expense-approver",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "expense-approver"
+    },
+    "models": {
+      "assistant": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 300,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Expense request",
+        "config": {
+          "modality": "json",
+          "schema": {
+            "type": "object",
+            "required": [
+              "amount",
+              "currency",
+              "to"
+            ],
+            "properties": {
+              "amount": {
+                "type": "number"
+              },
+              "currency": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              },
+              "memo": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_assess",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Risk assessment (local)",
+        "config": {
+          "model": "assistant",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a payments risk analyst. Assess the expense request and reply with ONLY minified JSON, exactly this shape:\n{\"risk\":\"low\",\"summary\":\"<one short sentence>\"}\nwhere risk is one of \"low\", \"medium\", \"high\"."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_brief",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "Brief for the approver",
+        "config": {
+          "expr": "{\"request\": \"$in.request\", \"assessment\": \"$in.assessment\"}"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "request",
+              "type": "any"
+            },
+            {
+              "id": "assessment",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_review",
+        "type": "human",
+        "kind": "boundary",
+        "label": "Human approval",
+        "config": {
+          "prompt": "Approve or reject this expense request. Resume the run with {\"decision\": \"approve\"} or {\"decision\": \"reject\"}.",
+          "inputSchema": {
+            "required": [
+              "decision"
+            ]
+          },
+          "timeout": 86400,
+          "onTimeout": "fail"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_route",
+        "type": "router",
+        "kind": "orchestration",
+        "label": "Approve or reject",
+        "config": {
+          "select": "$in.in.decision"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "approve",
+              "type": "any"
+            },
+            {
+              "id": "reject",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_receipt",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "Build receipt",
+        "config": {
+          "expr": "{\"status\": \"approved\", \"decision\": \"$in.in\", \"note\": \"Replace the echo step downstream with an http tool that calls your real payment API.\"}"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_execute",
+        "type": "tool",
+        "kind": "activity",
+        "label": "Execute (placeholder)",
+        "config": {
+          "tool": "echo",
+          "args": {
+            "value": "$in"
+          },
+          "description": "Placeholder side effect — swap this echo step for an http tool that calls your payment API."
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            },
+            {
+              "id": "err",
+              "type": "error"
+            },
+            {
+              "id": "use",
+              "type": "any",
+              "role": "tool"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_done",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Executed",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_rejected",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Rejected",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_assess",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_assess",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_brief_req",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_brief",
+        "targetHandle": "request",
+        "channel": "data"
+      },
+      {
+        "id": "e_brief_risk",
+        "source": "n_assess",
+        "sourceHandle": "out",
+        "target": "n_brief",
+        "targetHandle": "assessment",
+        "channel": "data"
+      },
+      {
+        "id": "e_review",
+        "source": "n_brief",
+        "sourceHandle": "out",
+        "target": "n_review",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_route",
+        "source": "n_review",
+        "sourceHandle": "out",
+        "target": "n_route",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_approve",
+        "source": "n_route",
+        "sourceHandle": "approve",
+        "target": "n_receipt",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_exec",
+        "source": "n_receipt",
+        "sourceHandle": "out",
+        "target": "n_execute",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_done",
+        "source": "n_execute",
+        "sourceHandle": "out",
+        "target": "n_done",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_reject",
+        "source": "n_route",
+        "sourceHandle": "reject",
+        "target": "n_rejected",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_assess": {
+          "position": {
+            "x": 260,
+            "y": 40
+          }
+        },
+        "n_brief": {
+          "position": {
+            "x": 520,
+            "y": 140
+          }
+        },
+        "n_review": {
+          "position": {
+            "x": 780,
+            "y": 140
+          }
+        },
+        "n_route": {
+          "position": {
+            "x": 1040,
+            "y": 140
+          }
+        },
+        "n_receipt": {
+          "position": {
+            "x": 1300,
+            "y": 40
+          }
+        },
+        "n_execute": {
+          "position": {
+            "x": 1560,
+            "y": 40
+          }
+        },
+        "n_done": {
+          "position": {
+            "x": 1820,
+            "y": 40
+          }
+        },
+        "n_rejected": {
+          "position": {
+            "x": 1300,
+            "y": 260
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "id": "handbook-qa",
+  "title": "Handbook Q&A",
+  "description": "Retrieval as a model capability, fully local: the installer creates a retrieval source in your own Postgres (pgvector), seeds it with a fictional TheYgent company handbook, and wires it to a local model as a search tool the model decides to call — answers cite the handbook section they came from.",
+  "capabilities": [
+    "local RAG (pgvector)",
+    "retrieval as a model capability",
+    "seeded knowledge base"
+  ],
+  "durable": false,
+  "input_example": "How long does TheYgent keep customer data, and who approves an exception?",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Answers from the handbook. Pick a model with tool-calling support.",
+      "keys": [
+        "assistant"
+      ]
+    },
+    "embedding": {
+      "label": "Embedding model",
+      "description": "Indexes and searches the handbook — pinned on the retrieval source.",
+      "keys": [],
+      "modality": "embeddings"
+    }
+  },
+  "connections": [],
+  "rag_sources": [
+    {
+      "key": "handbook",
+      "name": "sample-handbook",
+      "embedding_slot": "embedding",
+      "seed_doc": "handbook_md"
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_handbook_qa",
+    "name": "sample-handbook-qa",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "handbook-qa"
+    },
+    "models": {
+      "assistant": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 700,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Question",
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_llm",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer from the handbook",
+        "config": {
+          "model": "assistant",
+          "maxToolIterations": 4,
+          "messages": [
+            {
+              "role": "system",
+              "content": "You answer questions about TheYgent (the fictional demo company) using ONLY the company handbook. ALWAYS search the handbook with the n_handbook tool before answering, and cite the section heading your answer came from. If the handbook does not cover the question, say exactly that."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_handbook",
+        "type": "rag",
+        "kind": "activity",
+        "label": "Handbook search (LLM-driven)",
+        "config": {
+          "source": "{rag:handbook}",
+          "topK": 4,
+          "description": "Search the fictional TheYgent company handbook. Pass a short search query."
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any",
+              "required": false
+            }
+          ],
+          "out": [
+            {
+              "id": "use",
+              "type": "any",
+              "role": "tool"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Answer",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_q",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_llm",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_cap",
+        "source": "n_handbook",
+        "sourceHandle": "use",
+        "target": "n_llm",
+        "targetHandle": "tools",
+        "channel": "tool"
+      },
+      {
+        "id": "e_out",
+        "source": "n_llm",
+        "sourceHandle": "out",
+        "target": "n_out",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 100
+          }
+        },
+        "n_llm": {
+          "position": {
+            "x": 300,
+            "y": 100
+          }
+        },
+        "n_handbook": {
+          "position": {
+            "x": 300,
+            "y": 300
+          }
+        },
+        "n_out": {
+          "position": {
+            "x": 600,
+            "y": 100
+          }
+        }
+      }
+    }
+  }
+}

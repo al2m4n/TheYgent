@@ -1,0 +1,255 @@
+{
+  "id": "tool-belt",
+  "title": "Tool belt",
+  "description": "The two ways to use a tool, in one agent: a GraphQL API turned into an MCP server runs as a flow STEP (it always executes), while a REST API turned into an MCP server is WIRED TO the local model as a capability the model decides to call. A rate-limit gate protects the whole flow.",
+  "capabilities": [
+    "MCP from OpenAPI (REST)",
+    "MCP from GraphQL",
+    "tool as step vs LLM-driven",
+    "rate limit"
+  ],
+  "durable": false,
+  "input_example": {
+    "code": "DE",
+    "question": "Should I pack a jacket for the capital right now?"
+  },
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Answers the question and decides whether to call the weather tool. Pick a model with tool-calling support.",
+      "keys": ["default"]
+    }
+  },
+  "connections": [
+    {
+      "key": "countries",
+      "name": "sample-countries-graphql",
+      "config": {
+        "transport": "graphql",
+        "url": "https://countries.trevorblades.com/graphql"
+      }
+    },
+    {
+      "key": "open_meteo",
+      "name": "sample-open-meteo",
+      "config": {
+        "transport": "openapi",
+        "url": "https://api.open-meteo.com",
+        "spec": {
+          "openapi": "3.0.0",
+          "info": { "title": "Open-Meteo Forecast", "version": "1.0" },
+          "paths": {
+            "/v1/forecast": {
+              "get": {
+                "operationId": "get_weather_forecast",
+                "summary": "Current weather forecast for a coordinate",
+                "parameters": [
+                  {
+                    "name": "latitude",
+                    "in": "query",
+                    "required": true,
+                    "schema": { "type": "number" }
+                  },
+                  {
+                    "name": "longitude",
+                    "in": "query",
+                    "required": true,
+                    "schema": { "type": "number" }
+                  },
+                  {
+                    "name": "current",
+                    "in": "query",
+                    "required": false,
+                    "description": "Comma-separated current-weather variables, e.g. \"temperature_2m,wind_speed_10m\"",
+                    "schema": { "type": "string" }
+                  }
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Forecast payload",
+                    "content": {
+                      "application/json": { "schema": { "type": "object" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_tool_belt",
+    "name": "sample-tool-belt",
+    "version": "1.0.0",
+    "metadata": { "sample": "tool-belt" },
+    "models": {
+      "default": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 2048,
+          "chat_template_kwargs": { "enable_thinking": false }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Request",
+        "config": {
+          "modality": "json",
+          "schema": {
+            "type": "object",
+            "required": ["code", "question"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "ISO-3166 two-letter country code, e.g. DE"
+              },
+              "question": { "type": "string" }
+            }
+          }
+        },
+        "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+      },
+      {
+        "id": "n_gate",
+        "type": "ratelimit",
+        "kind": "activity",
+        "label": "Rate limit",
+        "config": {
+          "keyExpr": "sample-tool-belt",
+          "limit": 30,
+          "windowSeconds": 3600
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "allow", "type": "any" },
+            { "id": "deny", "type": "any" }
+          ]
+        }
+      },
+      {
+        "id": "n_vars",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "GraphQL variables",
+        "config": { "expr": "{\"code\": \"$in.in.code\"}" },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_country",
+        "type": "mcp_tool",
+        "kind": "activity",
+        "label": "Country facts (step)",
+        "config": {
+          "connection": "{connection:countries}",
+          "tool": "run_query",
+          "args": {
+            "query": "query($code: ID!) { country(code: $code) { name capital currency } }",
+            "variables": "$in"
+          },
+          "description": "Fetch country facts from a GraphQL API turned into an MCP server. This node is a STEP: it always runs, the model has no say."
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "out", "type": "any" },
+            { "id": "err", "type": "error" },
+            { "id": "use", "type": "any", "role": "tool" }
+          ]
+        }
+      },
+      {
+        "id": "n_llm",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Assistant (local)",
+        "config": {
+          "model": "default",
+          "maxToolIterations": 4,
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a travel assistant. The workflow already fetched country facts for you (a step tool that always runs). You ALSO have a weather tool that YOU may decide to call: pass the capital city's latitude and longitude, and current=\"temperature_2m,wind_speed_10m\". Call it only if the question involves weather or packing; otherwise answer directly."
+            },
+            {
+              "role": "user",
+              "content": "Country facts (fetched by the flow): $in.country\n\nQuestion: $in.req.question"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "country", "type": "any", "required": false },
+            { "id": "req", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_weather",
+        "type": "mcp_tool",
+        "kind": "activity",
+        "label": "Weather (LLM-driven)",
+        "config": {
+          "connection": "{connection:open_meteo}",
+          "tool": "get_weather_forecast",
+          "description": "Get current weather for a coordinate. Args: latitude, longitude, current (comma-separated variables, e.g. \"temperature_2m,wind_speed_10m\")."
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any", "required": false }],
+          "out": [{ "id": "use", "type": "any", "role": "tool" }]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Answer",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      },
+      {
+        "id": "n_limited",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Rate limited",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      }
+    ],
+    "edges": [
+      { "id": "e_gate", "source": "n_in", "sourceHandle": "out", "target": "n_gate", "targetHandle": "in", "channel": "data" },
+      { "id": "e_vars", "source": "n_gate", "sourceHandle": "allow", "target": "n_vars", "targetHandle": "in", "channel": "data" },
+      { "id": "e_req", "source": "n_gate", "sourceHandle": "allow", "target": "n_llm", "targetHandle": "req", "channel": "data" },
+      { "id": "e_country", "source": "n_vars", "sourceHandle": "out", "target": "n_country", "targetHandle": "in", "channel": "data" },
+      { "id": "e_facts", "source": "n_country", "sourceHandle": "out", "target": "n_llm", "targetHandle": "country", "channel": "data" },
+      { "id": "e_cap", "source": "n_weather", "sourceHandle": "use", "target": "n_llm", "targetHandle": "tools", "channel": "tool" },
+      { "id": "e_out", "source": "n_llm", "sourceHandle": "out", "target": "n_out", "targetHandle": "in", "channel": "data" },
+      { "id": "e_deny", "source": "n_gate", "sourceHandle": "deny", "target": "n_limited", "targetHandle": "in", "channel": "data" }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": { "position": { "x": 0, "y": 140 } },
+        "n_gate": { "position": { "x": 260, "y": 140 } },
+        "n_vars": { "position": { "x": 520, "y": 40 } },
+        "n_country": { "position": { "x": 780, "y": 40 } },
+        "n_llm": { "position": { "x": 1040, "y": 140 } },
+        "n_weather": { "position": { "x": 780, "y": 300 } },
+        "n_out": { "position": { "x": 1300, "y": 140 } },
+        "n_limited": { "position": { "x": 520, "y": 300 } }
+      }
+    }
+  }
+}

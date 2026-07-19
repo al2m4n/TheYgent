@@ -1,0 +1,312 @@
+{
+  "id": "second-opinion",
+  "title": "Second opinion",
+  "description": "Ask a local model AND an API model the same question independently, then a local judge reconciles the two answers into one — flagging any disagreement. Cross-provider consensus in a single run, with no orchestration code.",
+  "capabilities": [
+    "multi-model consensus",
+    "multi-input join",
+    "two models in one run"
+  ],
+  "durable": false,
+  "input_example": "Is it safe to store JWTs in localStorage?",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Gives its own answer, and referees the final merge.",
+      "keys": [
+        "local",
+        "judge"
+      ]
+    },
+    "remote": {
+      "label": "API model",
+      "description": "The second, independent opinion.",
+      "keys": [
+        "remote"
+      ]
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_second_opinion",
+    "name": "sample-second-opinion",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "second-opinion"
+    },
+    "models": {
+      "local": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.2,
+          "maxTokens": 512,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      },
+      "remote": {
+        "binding": "openai-compatible",
+        "model": "your-api-model",
+        "params": {
+          "maxTokens": 512
+        }
+      },
+      "judge": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 700,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Question",
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_local",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Local answer",
+        "config": {
+          "model": "local",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Answer accurately and concisely."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_remote",
+        "type": "llm",
+        "kind": "activity",
+        "label": "API answer",
+        "config": {
+          "model": "remote",
+          "messages": [
+            {
+              "role": "system",
+              "content": "Answer accurately and concisely."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_judge",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Referee (local)",
+        "config": {
+          "model": "judge",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a neutral referee. Two assistants answered the same question independently. Produce the single best final answer: keep the stronger one, or merge them when each covers something the other missed. If they materially disagree, say so explicitly and explain which position is better supported. Never mention \"Answer A\" or \"Answer B\" in the final text."
+            },
+            {
+              "role": "user",
+              "content": "Question: $in.q\n\nAnswer A (local model):\n$in.a\n\nAnswer B (API model):\n$in.b"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "a",
+              "type": "any"
+            },
+            {
+              "id": "b",
+              "type": "any"
+            },
+            {
+              "id": "q",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Final answer",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_local",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_local",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_remote",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_remote",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_a",
+        "source": "n_local",
+        "sourceHandle": "out",
+        "target": "n_judge",
+        "targetHandle": "a",
+        "channel": "data"
+      },
+      {
+        "id": "e_b",
+        "source": "n_remote",
+        "sourceHandle": "out",
+        "target": "n_judge",
+        "targetHandle": "b",
+        "channel": "data"
+      },
+      {
+        "id": "e_q",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_judge",
+        "targetHandle": "q",
+        "channel": "data"
+      },
+      {
+        "id": "e_out",
+        "source": "n_judge",
+        "sourceHandle": "out",
+        "target": "n_out",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_local": {
+          "position": {
+            "x": 300,
+            "y": 20
+          }
+        },
+        "n_remote": {
+          "position": {
+            "x": 300,
+            "y": 260
+          }
+        },
+        "n_judge": {
+          "position": {
+            "x": 620,
+            "y": 140
+          }
+        },
+        "n_out": {
+          "position": {
+            "x": 900,
+            "y": 140
+          }
+        }
+      }
+    }
+  }
+}

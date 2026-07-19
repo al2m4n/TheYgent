@@ -1,0 +1,337 @@
+{
+  "id": "visual-inspector",
+  "title": "Visual inspector",
+  "description": "Vision inside a pipeline, not a chat window: a local vision model inspects an image against your acceptance criteria, emits a structured pass/fail verdict, and a router sends the run down the matching branch — the skeleton of a visual QC line.",
+  "capabilities": [
+    "vision in a pipeline",
+    "structured verdict",
+    "guardrail (json_schema)",
+    "router"
+  ],
+  "durable": false,
+  "input_example": {
+    "image_url": "https://upload.wikimedia.org/wikipedia/commons/f/f9/STOP_sign.jpg",
+    "criteria": "The sign must be red, octagonal, and clearly readable."
+  },
+  "model_slots": {
+    "vision": {
+      "label": "Vision model",
+      "description": "A local vision-capable model that inspects the image.",
+      "keys": [
+        "inspector"
+      ],
+      "modality": "vision"
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_visual_inspector",
+    "name": "sample-visual-inspector",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "visual-inspector"
+    },
+    "models": {
+      "inspector": {
+        "binding": "mlx",
+        "model": "your-vision-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 200
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Image + criteria",
+        "config": {
+          "modality": "json",
+          "schema": {
+            "type": "object",
+            "required": [
+              "image_url",
+              "criteria"
+            ],
+            "properties": {
+              "image_url": {
+                "type": "string"
+              },
+              "criteria": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_inspect",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Inspect (vision)",
+        "config": {
+          "model": "inspector",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a visual quality inspector. Check the image against the acceptance criteria. Respond with ONLY minified JSON, exactly: {\"verdict\":\"pass\",\"reason\":\"<one short sentence>\"} where verdict is \"pass\" or \"fail\"."
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Acceptance criteria: $in.in.criteria"
+                },
+                {
+                  "type": "image_url",
+                  "imageUrl": {
+                    "url": "$in.in.image_url"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_wellformed",
+        "type": "guardrail",
+        "kind": "orchestration",
+        "label": "Verdict is well-formed?",
+        "config": {
+          "check": {
+            "type": "rule",
+            "rule": {
+              "kind": "json_schema",
+              "spec": {
+                "required": [
+                  "verdict"
+                ]
+              }
+            }
+          }
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "pass",
+              "type": "any"
+            },
+            {
+              "id": "block",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_route",
+        "type": "router",
+        "kind": "orchestration",
+        "label": "Pass or fail",
+        "config": {
+          "select": "$in.in.verdict"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "pass",
+              "type": "any"
+            },
+            {
+              "id": "fail",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_accepted",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Accepted",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_rejected",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Rejected",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_malformed",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Malformed verdict",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_inspect",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_inspect",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_check",
+        "source": "n_inspect",
+        "sourceHandle": "out",
+        "target": "n_wellformed",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_route",
+        "source": "n_wellformed",
+        "sourceHandle": "pass",
+        "target": "n_route",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_pass",
+        "source": "n_route",
+        "sourceHandle": "pass",
+        "target": "n_accepted",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_fail",
+        "source": "n_route",
+        "sourceHandle": "fail",
+        "target": "n_rejected",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_malformed",
+        "source": "n_wellformed",
+        "sourceHandle": "block",
+        "target": "n_malformed",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_inspect": {
+          "position": {
+            "x": 260,
+            "y": 140
+          }
+        },
+        "n_wellformed": {
+          "position": {
+            "x": 540,
+            "y": 140
+          }
+        },
+        "n_route": {
+          "position": {
+            "x": 820,
+            "y": 140
+          }
+        },
+        "n_accepted": {
+          "position": {
+            "x": 1100,
+            "y": 40
+          }
+        },
+        "n_rejected": {
+          "position": {
+            "x": 1100,
+            "y": 240
+          }
+        },
+        "n_malformed": {
+          "position": {
+            "x": 820,
+            "y": 320
+          }
+        }
+      }
+    }
+  }
+}

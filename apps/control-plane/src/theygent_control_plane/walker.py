@@ -1018,9 +1018,11 @@ async def execute_speak(
         audio = await gateway.speak(
             model=model_id, text=text, voice=voice, params=gw_params, extra_headers=extra_headers
         )
+        # The store write is part of the step's ok/err contract too: a full disk or an
+        # unwritable artifact dir binds ``err`` like an engine failure, never a failed run.
+        ref = await artifacts.put(audio, _AUDIO_FORMAT_MIME.get(fmt, "application/octet-stream"))
     except Exception as exc:
         return ActivityOutcome(ok=False, value=f"speak failed: {exc}")
-    ref = await artifacts.put(audio, _AUDIO_FORMAT_MIME.get(fmt, "application/octet-stream"))
     return ActivityOutcome(ok=True, value=ref)
 
 
@@ -1053,9 +1055,11 @@ async def execute_imagine(
         image = await gateway.generate_image(
             model=model_id, prompt=prompt, params=params, extra_headers=extra_headers
         )
+        # Store write inside the contract, mirroring ``execute_speak``: an artifact-dir
+        # failure binds ``err`` instead of failing the run.
+        ref = await artifacts.put(image, _IMAGE_MIME)
     except Exception as exc:
         return ActivityOutcome(ok=False, value=f"imagine failed: {exc}")
-    ref = await artifacts.put(image, _IMAGE_MIME)
     return ActivityOutcome(ok=True, value=ref)
 
 

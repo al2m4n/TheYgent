@@ -1,0 +1,126 @@
+{
+  "id": "art-department",
+  "title": "Art department",
+  "description": "Local image generation in a pipeline: a local model turns your rough brief into one vivid, concrete image prompt, and a local diffusion model paints it. If generation fails (no image engine resident), the error port routes to an honest text fallback instead of a broken run.",
+  "capabilities": [
+    "local image generation",
+    "prompt refinement",
+    "media err fallback"
+  ],
+  "durable": false,
+  "input_example": "A cozy reading nook on a rainy evening.",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "The art director — rewrites your brief into a strong image prompt.",
+      "keys": ["director"]
+    },
+    "image": {
+      "label": "Image model",
+      "description": "A local image-generation model (diffusion).",
+      "keys": ["painter"],
+      "modality": "images.generation"
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_art_department",
+    "name": "sample-art-department",
+    "version": "1.0.0",
+    "metadata": { "sample": "art-department" },
+    "models": {
+      "director": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.6,
+          "maxTokens": 150,
+          "chat_template_kwargs": { "enable_thinking": false }
+        }
+      },
+      "painter": {
+        "binding": "mlx",
+        "model": "your-image-model",
+        "params": { "size": "512x512" }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Brief",
+        "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+      },
+      {
+        "id": "n_director",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Art director (local)",
+        "config": {
+          "model": "director",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are an art director. Rewrite the brief into ONE vivid, concrete image-generation prompt of under 60 words: subject, style, lighting, composition. Output ONLY the prompt — no quotes, no preamble."
+            },
+            { "role": "user", "content": "$in" }
+          ]
+        },
+        "ports": {
+          "in": [
+            { "id": "in", "type": "any" },
+            { "id": "tools", "type": "any", "required": false, "role": "tool" }
+          ],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_painter",
+        "type": "imagine",
+        "kind": "activity",
+        "label": "Paint (local)",
+        "config": { "model": "painter" },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [
+            { "id": "out", "type": "any" },
+            { "id": "err", "type": "error" }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Image",
+        "config": { "modality": "image" },
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      },
+      {
+        "id": "n_no_image",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Generation failed",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      }
+    ],
+    "edges": [
+      { "id": "e_direct", "source": "n_in", "sourceHandle": "out", "target": "n_director", "targetHandle": "in", "channel": "data" },
+      { "id": "e_paint", "source": "n_director", "sourceHandle": "out", "target": "n_painter", "targetHandle": "in", "channel": "data" },
+      { "id": "e_image", "source": "n_painter", "sourceHandle": "out", "target": "n_out", "targetHandle": "in", "channel": "data" },
+      { "id": "e_err", "source": "n_painter", "sourceHandle": "err", "target": "n_no_image", "targetHandle": "in", "channel": "data" }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": { "position": { "x": 0, "y": 140 } },
+        "n_director": { "position": { "x": 260, "y": 140 } },
+        "n_painter": { "position": { "x": 540, "y": 140 } },
+        "n_out": { "position": { "x": 820, "y": 60 } },
+        "n_no_image": { "position": { "x": 820, "y": 240 } }
+      }
+    }
+  }
+}

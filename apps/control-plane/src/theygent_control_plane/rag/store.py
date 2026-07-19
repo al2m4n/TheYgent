@@ -143,6 +143,24 @@ class RagStore:
         await session.flush()
         return _source_domain(row)
 
+    async def find_source_by_name(self, session: AsyncSession, *, name: str) -> RagSource | None:
+        """The newest source with exactly this ``name``. Names are human labels, not unique —
+        newest-first keeps the lookup deterministic. The sample installer uses this to reuse a
+        previously created sample source instead of minting one per install."""
+        row = (
+            (
+                await session.execute(
+                    select(RagSourceRow)
+                    .where(RagSourceRow.name == name)
+                    .order_by(RagSourceRow.created_at.desc(), RagSourceRow.id.desc())
+                    .limit(1)
+                )
+            )
+            .scalars()
+            .first()
+        )
+        return _source_domain(row) if row is not None else None
+
     async def source_exists(self, session: AsyncSession, source_id: str) -> bool:
         """Existence only — no counts. The up-front run check and the upload gate call this on
         hot paths where ``get_source``'s two COUNT aggregations are waste."""

@@ -838,6 +838,53 @@ export interface OtlpTestResult {
   latency_ms: number;
 }
 
+// ── sample agents (the shipped example catalog, Settings → Samples) ─────────
+// A sample installs as an ORDINARY registry agent (same tables, same publish gate); the only
+// per-install inputs are the model slots — logical model ids are environment bindings, so the
+// catalog can never ship them.
+
+export interface SampleView {
+  id: string;
+  title: string;
+  description: string;
+  capabilities: string[];
+  /** True = uses durable-only nodes (human/subgraph/loop/map); needs THEYGENT_DURABLE=1. */
+  durable: boolean;
+  input_example: unknown;
+  agent_id: string;
+  agent_name: string;
+  /** Every agent this sample installs, children first — composition samples ship >1. */
+  agent_names: string[];
+  installed: boolean;
+  /** `modality` narrows the picker (vision, audio, image-gen, embeddings); null = chat. */
+  model_slots: Record<string, { label: string; description: string; modality: string | null }>;
+  connections: { key: string; name: string; transport: string }[];
+  rag_sources: { key: string; name: string }[];
+  /** A trigger the install creates (shipped disabled — arming it is the user's click). */
+  trigger: { kind: string; enabled: boolean } | null;
+}
+
+export interface SamplesView {
+  samples: SampleView[];
+}
+
+export interface SampleInstallEntry {
+  id: string;
+  agent_id: string;
+  /** `error` = that sample failed and persisted nothing; the rest of the batch continued. */
+  status: "installed" | "already_installed" | "error";
+  code?: string;
+  message?: string;
+  connections: { key: string; connection_id: string; created: boolean }[];
+  rag_sources: { key: string; source_id: string; created: boolean }[];
+  /** Degraded-install notes (e.g. seed ingest could not start) — the install itself stood. */
+  warnings: string[];
+}
+
+export interface SamplesInstallReport {
+  report: SampleInstallEntry[];
+}
+
 // ── transfer bundles (whole-install export/import — snake_case control envelope) ──
 // The control bundle is the POST /export response and the POST /import body: a snake_case
 // envelope carrying the stored camelCase IR docs verbatim. Secrets NEVER appear in a bundle —
@@ -1743,6 +1790,20 @@ export const api = {
   // endpoint/headers before persisting them; omitted fields fall back to the stored settings.
   testOtlp: (body: { endpoint?: string; headers?: Record<string, string> } = {}) =>
     request<OtlpTestResult>(controlPlaneUrl(), "/settings/otlp:test", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ── control plane: sample agents (Settings → Samples) ───────────────────────
+  listSamples: () => request<SamplesView>(controlPlaneUrl(), "/samples"),
+
+  // `models` fills each sample's declared slots with {logical_id, binding}; an unfilled slot on
+  // a to-be-installed sample is a 400 `sample_models_required` before anything is written.
+  installSamples: (body: {
+    ids: string[];
+    models: Record<string, { logical_id: string; binding: string }>;
+  }) =>
+    request<SamplesInstallReport>(controlPlaneUrl(), "/samples/install", {
       method: "POST",
       body: JSON.stringify(body),
     }),

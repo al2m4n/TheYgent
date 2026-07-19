@@ -1,0 +1,331 @@
+{
+  "id": "voice-desk",
+  "title": "Voice desk",
+  "description": "Voice in, voice out: speech-to-text transcribes the audio, a model answers in spoken prose, text-to-speech reads it back. Pick local models for all three slots and the audio never leaves your machine. Each media step's error port routes to an honest failure output.",
+  "capabilities": [
+    "speech-to-text",
+    "text-to-speech",
+    "voice in, voice out",
+    "media err ports"
+  ],
+  "durable": false,
+  "input_example": "art_<id> from POST /artifacts, or an https URL to a .wav/.mp3",
+  "model_slots": {
+    "stt": {
+      "label": "Speech-to-text model",
+      "description": "A transcription model (e.g. a whisper variant) — pick a local one to keep audio on this machine.",
+      "keys": [
+        "ears"
+      ],
+      "modality": "audio.transcription"
+    },
+    "local": {
+      "label": "Local model",
+      "description": "Writes the spoken answer.",
+      "keys": [
+        "brain"
+      ]
+    },
+    "tts": {
+      "label": "Text-to-speech model",
+      "description": "A voice model that reads the answer back — pick a local one to keep audio on this machine.",
+      "keys": [
+        "mouth"
+      ],
+      "modality": "audio.speech"
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_voice_desk",
+    "name": "sample-voice-desk",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "voice-desk"
+    },
+    "models": {
+      "ears": {
+        "binding": "mlx",
+        "model": "your-stt-model",
+        "params": {}
+      },
+      "brain": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.3,
+          "maxTokens": 300,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      },
+      "mouth": {
+        "binding": "mlx",
+        "model": "your-tts-model",
+        "params": {
+          "voice": "alloy"
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Voice note",
+        "config": {
+          "modality": "audio"
+        },
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_ears",
+        "type": "transcribe",
+        "kind": "activity",
+        "label": "Transcribe (local)",
+        "config": {
+          "model": "ears"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "audio",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "text",
+              "type": "any"
+            },
+            {
+              "id": "err",
+              "type": "error"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_brain",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer (local)",
+        "config": {
+          "model": "brain",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a concise voice assistant. Reply in at most three short sentences of plain spoken prose — no lists, no markdown, no headings."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_mouth",
+        "type": "speak",
+        "kind": "activity",
+        "label": "Speak (local)",
+        "config": {
+          "model": "mouth"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "text",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "audio",
+              "type": "any"
+            },
+            {
+              "id": "err",
+              "type": "error"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Spoken answer",
+        "config": {
+          "modality": "audio"
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_stt_failed",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Transcription failed",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_tts_failed",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Speech failed",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_audio",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_ears",
+        "targetHandle": "audio",
+        "channel": "data"
+      },
+      {
+        "id": "e_text",
+        "source": "n_ears",
+        "sourceHandle": "text",
+        "target": "n_brain",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_say",
+        "source": "n_brain",
+        "sourceHandle": "out",
+        "target": "n_mouth",
+        "targetHandle": "text",
+        "channel": "data"
+      },
+      {
+        "id": "e_out",
+        "source": "n_mouth",
+        "sourceHandle": "audio",
+        "target": "n_out",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_stt_err",
+        "source": "n_ears",
+        "sourceHandle": "err",
+        "target": "n_stt_failed",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_tts_err",
+        "source": "n_mouth",
+        "sourceHandle": "err",
+        "target": "n_tts_failed",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_ears": {
+          "position": {
+            "x": 260,
+            "y": 140
+          }
+        },
+        "n_brain": {
+          "position": {
+            "x": 520,
+            "y": 140
+          }
+        },
+        "n_mouth": {
+          "position": {
+            "x": 780,
+            "y": 140
+          }
+        },
+        "n_out": {
+          "position": {
+            "x": 1040,
+            "y": 140
+          }
+        },
+        "n_stt_failed": {
+          "position": {
+            "x": 260,
+            "y": 320
+          }
+        },
+        "n_tts_failed": {
+          "position": {
+            "x": 780,
+            "y": 320
+          }
+        }
+      }
+    }
+  }
+}

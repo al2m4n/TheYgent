@@ -1,0 +1,300 @@
+{
+  "id": "pii-firewall",
+  "title": "PII firewall",
+  "description": "A privacy router: a deterministic PII guardrail inspects every request BEFORE any model runs. Clean requests may use the API model; anything containing an email, SSN-style id, or card-like number is answered by the LOCAL model instead — the personal data never leaves this machine.",
+  "capabilities": [
+    "PII firewall",
+    "guardrail (pii)",
+    "private routing",
+    "two models in one run"
+  ],
+  "durable": false,
+  "input_example": "Draft a polite payment reminder to billing@customer.example about invoice #4471.",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Handles every request that contains personal data.",
+      "keys": [
+        "local"
+      ]
+    },
+    "remote": {
+      "label": "API model",
+      "description": "Handles requests the PII check cleared.",
+      "keys": [
+        "remote"
+      ]
+    }
+  },
+  "connections": [],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_pii_firewall",
+    "name": "sample-pii-firewall",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "pii-firewall"
+    },
+    "models": {
+      "local": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.3,
+          "maxTokens": 700,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      },
+      "remote": {
+        "binding": "openai-compatible",
+        "model": "your-api-model",
+        "params": {
+          "maxTokens": 700
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Request",
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_guard",
+        "type": "guardrail",
+        "kind": "orchestration",
+        "label": "PII check",
+        "config": {
+          "check": {
+            "type": "rule",
+            "rule": {
+              "kind": "pii",
+              "spec": {}
+            }
+          }
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": [
+            {
+              "id": "pass",
+              "type": "any"
+            },
+            {
+              "id": "block",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_remote",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer via API (no PII)",
+        "config": {
+          "model": "remote",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a capable assistant. Answer well."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_local",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Answer locally (PII detected)",
+        "config": {
+          "model": "local",
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a private assistant running locally. The request contains personal data (an email, id, or card-like number), so it was kept on this machine. Answer it fully and normally — do not lecture about privacy."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out_api",
+        "type": "output",
+        "kind": "boundary",
+        "label": "API answer",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      },
+      {
+        "id": "n_out_private",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Private answer",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_guard",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_guard",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_clean",
+        "source": "n_guard",
+        "sourceHandle": "pass",
+        "target": "n_remote",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_pii",
+        "source": "n_guard",
+        "sourceHandle": "block",
+        "target": "n_local",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_out_api",
+        "source": "n_remote",
+        "sourceHandle": "out",
+        "target": "n_out_api",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_out_private",
+        "source": "n_local",
+        "sourceHandle": "out",
+        "target": "n_out_private",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 140
+          }
+        },
+        "n_guard": {
+          "position": {
+            "x": 280,
+            "y": 140
+          }
+        },
+        "n_remote": {
+          "position": {
+            "x": 560,
+            "y": 20
+          }
+        },
+        "n_local": {
+          "position": {
+            "x": 560,
+            "y": 260
+          }
+        },
+        "n_out_api": {
+          "position": {
+            "x": 860,
+            "y": 20
+          }
+        },
+        "n_out_private": {
+          "position": {
+            "x": 860,
+            "y": 260
+          }
+        }
+      }
+    }
+  }
+}

@@ -40,6 +40,17 @@ Published agents are immutable, content-addressed versions. See [Drafts & publis
 
 Individual versions are immutable — there is no endpoint to edit or delete a *single* version. Deleting the agent removes every version at once; there is no delete for runs.
 
+### Samples
+
+The shipped example-agent catalog. Installing publishes an ordinary agent (same registry, same
+gate as `POST /agents`) with your chosen models stamped into its bindings, creating any MCP
+connections the sample needs. See [Sample agents](../samples/index.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/samples` | The catalog: title, capabilities, model slots, connections, and per-sample `installed` state. Any signed-in role. |
+| POST | `/samples/install` | Install by catalog id. Body `{ids, models: {slot: {logical_id, binding}}}`. Editor role. Unfilled slots → `400 sample_models_required`, an illegal binding → `400 sample_model_invalid` (nothing written in either case); unknown id → `404 sample_not_found`. Beyond agents (children first for composition samples), an install creates the sample's MCP connections and RAG sources (reused by name on reinstall) and registers any shipped trigger **disabled**. The response `report` carries one entry per sample — `installed`, `already_installed`, or `error` (that sample rolled back and persisted nothing; the rest of the batch still ran) — with `connections`, `rag_sources`, and `warnings` (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces. |
+
 ### Drafts
 
 The editor's autosave tier: mutable work-in-progress graphs. A draft is **never validated as a graph** (a half-wired document must still save; only "the `ir` is a JSON object" is enforced → `400 invalid_draft`) and never hashed. The canvas layout (`view`) is stored alongside the document. See [Drafts & publishing](../building/saving-agents.md).

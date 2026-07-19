@@ -1,0 +1,159 @@
+{
+  "id": "editorial-loop",
+  "title": "Editorial loop",
+  "description": "A self-correcting agent: a bounded LOOP re-runs a writer-critic child agent — draft, harsh self-critique, rewrite — until the child approves its own draft or three rounds are up. The loop is durable (it survives restarts mid-revision) and every round is visible in the run waterfall.",
+  "capabilities": [
+    "self-correcting loop",
+    "agents calling agents",
+    "bounded iterations",
+    "durable runtime"
+  ],
+  "durable": true,
+  "input_example": "A thermos that brews tea at exactly 80 degrees.",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "The writer-critic inside the loop.",
+      "keys": ["writer"]
+    }
+  },
+  "connections": [],
+  "extra_agents": [
+    {
+      "schemaVersion": "1.0",
+      "id": "agt_sample_editorial_writer",
+      "name": "sample-editorial-writer",
+      "version": "1.0.0",
+      "metadata": { "sample": "editorial-loop" },
+      "models": {
+        "writer": {
+          "binding": "mlx",
+          "model": "your-local-model",
+          "params": {
+            "temperature": 0.2,
+            "maxTokens": 500,
+            "chat_template_kwargs": { "enable_thinking": false }
+          }
+        }
+      },
+      "tools": {},
+      "nodes": [
+        {
+          "id": "n_in",
+          "type": "input",
+          "kind": "boundary",
+          "label": "Topic or prior round",
+          "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+        },
+        {
+          "id": "n_write",
+          "type": "llm",
+          "kind": "activity",
+          "label": "Write + critique",
+          "config": {
+            "model": "writer",
+            "messages": [
+              {
+                "role": "system",
+                "content": "You are a writer-critic pair producing a crisp three-sentence product blurb. The input is EITHER a topic string (first round) OR JSON {\"draft\":...,\"critique\":...} from your previous round. If a draft and critique arrive, rewrite the draft to fix every point in the critique; otherwise write a first draft on the topic. Then critique your new draft harshly: clarity, concreteness, length. Reply with ONLY minified JSON, exactly: {\"approved\":false,\"draft\":\"...\",\"critique\":\"...\"} — set approved to true ONLY when the draft needs no further changes, and always include all three fields."
+              },
+              { "role": "user", "content": "$in" }
+            ]
+          },
+          "ports": {
+            "in": [
+              { "id": "in", "type": "any" },
+              { "id": "tools", "type": "any", "required": false, "role": "tool" }
+            ],
+            "out": [{ "id": "out", "type": "any" }]
+          }
+        },
+        {
+          "id": "n_out",
+          "type": "output",
+          "kind": "boundary",
+          "label": "Round result",
+          "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+        }
+      ],
+      "edges": [
+        { "id": "e1", "source": "n_in", "sourceHandle": "out", "target": "n_write", "targetHandle": "in", "channel": "data" },
+        { "id": "e2", "source": "n_write", "sourceHandle": "out", "target": "n_out", "targetHandle": "in", "channel": "data" }
+      ],
+      "view": {
+        "nodes": {
+          "n_in": { "position": { "x": 0, "y": 100 } },
+          "n_write": { "position": { "x": 280, "y": 100 } },
+          "n_out": { "position": { "x": 560, "y": 100 } }
+        }
+      }
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_editorial_loop",
+    "name": "sample-editorial-loop",
+    "version": "1.0.0",
+    "metadata": { "sample": "editorial-loop" },
+    "models": {},
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Topic",
+        "ports": { "in": [], "out": [{ "id": "out", "type": "any" }] }
+      },
+      {
+        "id": "n_loop",
+        "type": "loop",
+        "kind": "orchestration",
+        "label": "Revise until approved",
+        "config": {
+          "agent": "agt_sample_editorial_writer",
+          "version": "1.0.0",
+          "maxIterations": 3,
+          "condition": "$in.in.approved"
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_final",
+        "type": "transform",
+        "kind": "orchestration",
+        "label": "Extract the final draft",
+        "config": {
+          "expr": "{\"final_draft\": \"$in.in.draft\", \"approved\": \"$in.in.approved\", \"last_critique\": \"$in.in.critique\"}"
+        },
+        "ports": {
+          "in": [{ "id": "in", "type": "any" }],
+          "out": [{ "id": "out", "type": "any" }]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Final blurb",
+        "ports": { "in": [{ "id": "in", "type": "any" }], "out": [] }
+      }
+    ],
+    "edges": [
+      { "id": "e_loop", "source": "n_in", "sourceHandle": "out", "target": "n_loop", "targetHandle": "in", "channel": "data" },
+      { "id": "e_final", "source": "n_loop", "sourceHandle": "out", "target": "n_final", "targetHandle": "in", "channel": "data" },
+      { "id": "e_out", "source": "n_final", "sourceHandle": "out", "target": "n_out", "targetHandle": "in", "channel": "data" }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": { "position": { "x": 0, "y": 100 } },
+        "n_loop": { "position": { "x": 280, "y": 100 } },
+        "n_final": { "position": { "x": 560, "y": 100 } },
+        "n_out": { "position": { "x": 840, "y": 100 } }
+      }
+    }
+  }
+}

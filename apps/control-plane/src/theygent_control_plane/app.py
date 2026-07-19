@@ -33,7 +33,7 @@ import shutil
 import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 from urllib.parse import urljoin
 
 import httpx
@@ -51,6 +51,7 @@ from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text as sa_text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
@@ -62,6 +63,7 @@ from theygent_ir import (
     parse_document,
     validate_graph,
 )
+from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
 from theygent_control_plane.artifacts import LocalArtifactStore
@@ -135,6 +137,14 @@ from theygent_control_plane.run import (
     Trigger,
     TriggerKind,
     new_ulid,
+)
+from theygent_control_plane.samples import (
+    SampleModelsError,
+    load_catalog,
+    render_connection_config,
+    render_ir,
+    seed_demo_file,
+    seed_document,
 )
 from theygent_control_plane.secrets import SecretDecryptError, SecretStore, secret_keys_from_env
 from theygent_control_plane.settings import (
@@ -440,6 +450,32 @@ class CreateConnectionRequest(BaseModel):
     config: dict[str, Any] = {}
     secret: str | None = None  # write-only; goes to the encrypted secret store, never echoed back
     enabled: bool = True
+
+
+class SampleModelChoice(BaseModel):
+    # One filled model slot: the logical id the inference plane knows plus the binding it is
+    # served through. Logical ids only — engine names are rejected downstream like everywhere.
+    logical_id: str
+    binding: str
+
+
+class InstallSamplesRequest(BaseModel):
+    # Install shipped sample agents by catalog id. ``models`` fills each sample's declared model
+    # slots (``local`` / ``remote``); a sample whose slot is unfilled is a 400, never a silent
+    # install of the placeholder binding.
+    ids: list[str]
+    models: dict[str, SampleModelChoice] = Field(default_factory=dict)
+
+
+class _SampleInstallProblem(Exception):
+    """A per-sample install failure raised INSIDE the install transaction. Raising (never
+    returning) is what makes the transaction roll back — ``tx()`` commits on any clean exit,
+    including an early ``return`` of an error response — so nothing of the failed sample
+    persists. Caught outside the transaction and reported as that sample's report entry."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(message)
 
 
 class UpdateConnectionRequest(BaseModel):
@@ -2641,6 +2677,361 @@ def create_app(
             "agent.io_policy_set", extra={"agent_id": agent_id, "io_capture": req.io_capture}
         )
         return view.model_dump(mode="json")
+
+    # ── sample agents (/samples) ──────────────────────────────────────────
+    # The shipped example-agent catalog (samples/): browse it and install entries as ordinary
+    # registry agents. A deliberate, named contract extension — the catalog is in-code (like the
+    # settings catalog), installs go through the SAME publish gate as POST /agents, and the only
+    # per-install inputs are the model slots (logical ids are environment bindings, never
+    # portable content) — so an installed sample is a plain agent the user edits or deletes.
+
+    def _sample_entry(spec: Any, installed: bool) -> dict[str, Any]:
+        return {
+            "id": spec.id,
+            "title": spec.title,
+            "description": spec.description,
+            "capabilities": list(spec.capabilities),
+            "durable": spec.durable,
+            "input_example": spec.input_example,
+            "agent_id": spec.agent_id,
+            "agent_name": spec.ir["name"],
+            # Children first, primary last — the same order the installer publishes them in.
+            "agent_names": [str(ir["name"]) for ir in spec.all_irs()],
+            "installed": installed,
+            "model_slots": {
+                slot: {
+                    "label": s.label,
+                    "description": s.description,
+                    "modality": s.modality,
+                }
+                for slot, s in spec.model_slots.items()
+            },
+            "connections": [
+                {"key": c.key, "name": c.name, "transport": c.config.get("transport", "stdio")}
+                for c in spec.connections
+            ],
+            "rag_sources": [{"key": r.key, "name": r.name} for r in spec.rag_sources],
+            "trigger": (
+                {"kind": spec.trigger["kind"], "enabled": bool(spec.trigger.get("enabled"))}
+                if spec.trigger
+                else None
+            ),
+        }
+
+    async def _sample_installed(session: AsyncSession, spec: Any) -> bool:
+        # "Installed" means EVERY agent the sample ships exists — a deleted child (a dangling
+        # subgraph/loop/map pin) reads as not-installed, and reinstalling repairs it by
+        # publishing only what is missing.
+        for ir in spec.all_irs():
+            if await agents.get_agent(session, str(ir["id"])) is None:
+                return False
+        return True
+
+    @app.get("/samples", dependencies=[Depends(require_auth)])
+    async def list_samples(session: AsyncSession = Depends(get_session)) -> Any:
+        entries = []
+        for spec in load_catalog():
+            entries.append(_sample_entry(spec, await _sample_installed(session, spec)))
+        return {"samples": entries}
+
+    @app.post("/samples/install", dependencies=[Depends(require_editor)])
+    async def install_samples(req: InstallSamplesRequest) -> Any:
+        if not req.ids:
+            return _error("ids must be a non-empty list", status=400, code="invalid_install")
+        catalog = {spec.id: spec for spec in load_catalog()}
+        unknown = [sid for sid in req.ids if sid not in catalog]
+        if unknown:
+            return _error(
+                f"unknown sample(s): {', '.join(sorted(set(unknown)))}",
+                status=404,
+                code="sample_not_found",
+            )
+        specs = [catalog[sid] for sid in dict.fromkeys(req.ids)]
+        models = {slot: (c.logical_id, c.binding) for slot, c in req.models.items()}
+
+        # Validate the caller's model choices BEFORE any write. Binding values are checked
+        # against the frozen enum here so a typo is a 400 naming the slot — not a 500 from
+        # ``parse_document`` after connections were already created.
+        allowed_bindings = get_args(BindingName)
+        for slot, choice in req.models.items():
+            if choice.binding not in allowed_bindings:
+                return _error(
+                    f"slot {slot!r}: binding {choice.binding!r} is not one of "
+                    f"{', '.join(allowed_bindings)}",
+                    status=400,
+                    code="sample_model_invalid",
+                )
+        async with tx() as session:
+            to_install = [spec for spec in specs if not await _sample_installed(session, spec)]
+        missing: dict[str, list[str]] = {}
+        for spec in to_install:
+            absent = [
+                slot
+                for slot in spec.model_slots
+                if not (models.get(slot, ("", ""))[0] or "").strip()
+            ]
+            if absent:
+                missing[spec.id] = sorted(absent)
+        if missing:
+            detail = "; ".join(f"{sid}: {', '.join(slots)}" for sid, slots in missing.items())
+            return _error(
+                f"model slot(s) not filled — {detail}",
+                status=400,
+                code="sample_models_required",
+            )
+
+        async def _install_one(spec: Any) -> dict[str, Any]:
+            # One sample = ONE transaction (connections, rag sources, child agents, the primary
+            # agent, the trigger). Failures RAISE out of the ``async with`` so the transaction
+            # rolls back (``tx()`` commits on any clean exit, early returns included) — a failed
+            # sample persists nothing, and the batch continues with a per-sample error entry
+            # (the /import precedent: one bad entity never aborts). Seed-document ingest is the
+            # one post-commit step: it embeds in the background against the inference plane, so
+            # it runs only after the sample's rows are durably in place.
+            conn_report: list[dict[str, Any]] = []
+            rag_report: list[dict[str, Any]] = []
+            pending_uploads: list[tuple[Any, str]] = []  # (source, seed_doc) — kicked post-commit
+            warnings: list[str] = []
+            async with tx() as session:
+                if await _sample_installed(session, spec):
+                    return {
+                        "id": spec.id,
+                        "agent_id": spec.agent_id,
+                        "status": "already_installed",
+                        "connections": [],
+                        "rag_sources": [],
+                        "warnings": [],
+                    }
+                # Connections: find-or-create by name so a reinstall (after deleting the agent)
+                # reuses the existing server instead of minting duplicates. Sample connections
+                # carry no secret — they target public demo APIs and a local seeded file. The
+                # demo file is (re)seeded even on reuse: it lives under the artifact dir (a
+                # tempdir by default), so it can vanish while the connection row persists.
+                connection_ids: dict[str, str] = {}
+                for c in spec.connections:
+                    seed_paths: dict[str, str] = {}
+                    if c.seed is not None:
+                        seed_paths[c.seed] = await asyncio.to_thread(
+                            seed_demo_file, c.seed, app.state.artifacts.base_dir
+                        )
+                    existing = await connections.find_by_name(
+                        session, kind="mcp_server", name=c.name
+                    )
+                    if existing is not None:
+                        connection_ids[c.key] = existing.id
+                        conn_report.append(
+                            {"key": c.key, "connection_id": existing.id, "created": False}
+                        )
+                        continue
+                    config = render_connection_config(c, seed_paths)
+                    invalid = _validate_connection("mcp_server", config)
+                    if invalid is not None:  # a shipped config failing validation is a catalog bug
+                        raise _SampleInstallProblem(
+                            "sample_invalid",
+                            f"sample {spec.id!r} ships an invalid connection {c.key!r}",
+                        )
+                    conn = await connections.create(
+                        session,
+                        name=c.name,
+                        kind="mcp_server",
+                        config=config,
+                        secret_ref=None,
+                        enabled=True,
+                    )
+                    connection_ids[c.key] = conn.id
+                    conn_report.append({"key": c.key, "connection_id": conn.id, "created": True})
+                # Retrieval sources: find-or-create by name; the embedding model is the caller's
+                # slot choice, pinned on the source (never in the IR — re-ingest keeps hashes
+                # stable). A reused source keeps ITS pinned embedding model and is not re-seeded.
+                rag_ids: dict[str, str] = {}
+                for r in spec.rag_sources:
+                    embedding_id = (models.get(r.embedding_slot, ("", ""))[0] or "").strip()
+                    found = await rag_store.find_source_by_name(session, name=r.name)
+                    if found is not None:
+                        rag_ids[r.key] = found.id
+                        rag_report.append({"key": r.key, "source_id": found.id, "created": False})
+                        if embedding_id and found.embedding_model != embedding_id:
+                            # Loud, not fatal: the embedding model is pinned per source, so the
+                            # slot choice cannot apply to a reused source.
+                            warnings.append(
+                                f"reusing retrieval source {r.name!r}, which is pinned to "
+                                f"embedding model {found.embedding_model!r} — your choice "
+                                f"{embedding_id!r} was not applied"
+                            )
+                        continue
+                    if not embedding_id:  # backstop; the pre-flight already 400s this
+                        raise _SampleInstallProblem(
+                            "sample_models_required",
+                            f"sample {spec.id!r} requires a model for slot {r.embedding_slot!r}",
+                        )
+                    source = await rag_store.create_source(
+                        session,
+                        name=r.name,
+                        kind="upload",
+                        config={},
+                        embedding_model=embedding_id,
+                    )
+                    rag_ids[r.key] = source.id
+                    rag_report.append({"key": r.key, "source_id": source.id, "created": True})
+                    pending_uploads.append((source, r.seed_doc))
+                try:
+                    rendered_docs = render_ir(
+                        spec, models=models, connection_ids=connection_ids, rag_ids=rag_ids
+                    )
+                    parsed = []
+                    for rendered in rendered_docs:
+                        ir = parse_document(rendered)
+                        validate_graph(ir)
+                        parsed.append(ir)
+                except SampleModelsError as exc:
+                    raise _SampleInstallProblem("sample_models_required", str(exc)) from exc
+                except (ValidationError, GraphValidationError, ValueError) as exc:
+                    # The shipped IR no longer validates — loud and named; the raise rolls the
+                    # transaction back so nothing of this sample persists.
+                    raise _SampleInstallProblem(
+                        "sample_invalid", f"sample {spec.id!r} did not validate: {exc}"
+                    ) from exc
+                # Children first (a parent's subgraph/loop/map pin must resolve), primary last.
+                # This is also the REPAIR path: any agent that already exists is skipped, so a
+                # user who deleted only a child (or only the primary) gets the missing pieces
+                # back. An existing agent that lacks the pinned shipped version gets that
+                # version added — identical content is idempotent; user-edited content under
+                # the same coordinate is a 409 surfaced as this sample's error entry.
+                chash = ""
+                for ir in parsed:
+                    existing = await agents.get_agent(session, ir.id)
+                    if existing is not None:
+                        detail = await agents.get_agent_detail(session, ir.id)
+                        has_version = detail is not None and any(
+                            v.version == ir.version for v in detail.versions
+                        )
+                        if has_version:
+                            continue
+                        doc, view, chash = _canonical_ir_and_view(ir)
+                        try:
+                            await agents.add_version(
+                                session,
+                                agent_id=ir.id,
+                                version=ir.version,
+                                content_hash=chash,
+                                ir=doc,
+                                view=view,
+                            )
+                        except VersionConflict as exc:
+                            raise _SampleInstallProblem(
+                                "sample_invalid",
+                                f"agent {ir.id!r} already has different content at version "
+                                f"{ir.version!r}; delete it to reinstall this sample",
+                            ) from exc
+                        continue
+                    doc, view, chash = _canonical_ir_and_view(ir)
+                    await agents.create_agent(session, agent_id=ir.id, name=ir.name)
+                    await agents.add_version(
+                        session,
+                        agent_id=ir.id,
+                        version=ir.version,
+                        content_hash=chash,
+                        ir=doc,
+                        view=view,
+                    )
+                trigger_row = None
+                if spec.trigger is not None:
+                    existing_triggers = await triggers.list_triggers(session, limit=200)
+                    if not any(t.agent_id == spec.agent_id for t in existing_triggers):
+                        # Shipped triggers go through the SAME validation as POST /triggers —
+                        # a malformed catalog trigger must fail the install loudly, not lie
+                        # dormant until the user arms it. Pinned to the shipped version, and
+                        # disabled unless the spec says otherwise: arming an unattended entry
+                        # point is the user's explicit click.
+                        invalid = _validate_trigger(
+                            spec.trigger["kind"],
+                            str(spec.ir["version"]),
+                            None,
+                            dict(spec.trigger.get("config") or {}),
+                        )
+                        if invalid is not None:
+                            raise _SampleInstallProblem(
+                                "sample_invalid",
+                                f"sample {spec.id!r} ships an invalid trigger",
+                            )
+                        trigger_row = await triggers.create(
+                            session,
+                            agent_id=spec.agent_id,
+                            kind=spec.trigger["kind"],
+                            version=str(spec.ir["version"]),
+                            content_hash=None,
+                            config=dict(spec.trigger.get("config") or {}),
+                            enabled=bool(spec.trigger.get("enabled", False)),
+                        )
+            if trigger_row is not None:
+                try:
+                    await _sync_schedule(trigger_row)
+                except Exception as exc:
+                    warnings.append(
+                        f"schedule sync for the shipped trigger failed: {exc}; toggle the "
+                        "trigger to retry"
+                    )
+            for source, doc_name in pending_uploads:
+                # Post-commit, best-effort: embedding runs in the background against the
+                # inference plane; a failure leaves the source empty (the agent still installs
+                # and honestly finds no matches) and is reported as a warning, never an abort.
+                try:
+                    filename, content_type, data = seed_document(doc_name)
+                    app.state.rag_ingest.start_upload(
+                        source, filename=filename, content_type=content_type, data=data
+                    )
+                except Exception as exc:
+                    warnings.append(
+                        f"seed ingest for {source.name!r} did not start: {exc}; upload the "
+                        "handbook document again from the RAG page"
+                    )
+            logger.info(
+                "sample.installed",
+                extra={"sample_id": spec.id, "agent_id": spec.agent_id, "content_hash": chash},
+            )
+            return {
+                "id": spec.id,
+                "agent_id": spec.agent_id,
+                "status": "installed",
+                "connections": conn_report,
+                "rag_sources": rag_report,
+                "warnings": warnings,
+            }
+
+        report: list[dict[str, Any]] = []
+        for spec in specs:
+            try:
+                report.append(await _install_one(spec))
+            except _SampleInstallProblem as exc:
+                logger.warning(
+                    "sample.install_failed", extra={"sample_id": spec.id, "code": exc.code}
+                )
+                report.append(
+                    {
+                        "id": spec.id,
+                        "agent_id": spec.agent_id,
+                        "status": "error",
+                        "code": exc.code,
+                        "message": str(exc),
+                        "connections": [],
+                        "rag_sources": [],
+                        "warnings": [],
+                    }
+                )
+            except IntegrityError:
+                # Lost a concurrent-install race on the agent PK: the whole transaction
+                # (connections included) rolled back — the winner's install stands.
+                report.append(
+                    {
+                        "id": spec.id,
+                        "agent_id": spec.agent_id,
+                        "status": "already_installed",
+                        "connections": [],
+                        "rag_sources": [],
+                        "warnings": [],
+                    }
+                )
+        return {"report": report}
 
     # ── platform settings (/settings) ─────────────────────────────────────
     # The runtime-editable knobs (telemetry export, capture bounds, MCP timeouts/registries,
