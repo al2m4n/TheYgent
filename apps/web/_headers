@@ -4,8 +4,23 @@
 /assets/*
   Cache-Control: public, max-age=604800
 
+/styles.css
+  Cache-Control: public, max-age=3600, must-revalidate
+
+/main.js
+  Cache-Control: public, max-age=3600, must-revalidate
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   Permissions-Policy: geolocation=(), microphone=(), camera=()
+
+# The production project subdomain and the per-deployment URLs serve exact duplicates of
+# theygent.ai and, unlike preview deployments, get no automatic noindex from Cloudflare —
+# keep them out of search so the canonical domain owns every ranking signal.
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.:project.pages.dev/*
+  X-Robots-Tag: noindex

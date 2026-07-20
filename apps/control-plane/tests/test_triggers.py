@@ -288,7 +288,7 @@ def test_webhook_valid_signature_fires_with_payload_as_input(
     resp = authed_client.post(
         f"/hooks/{tid}",
         content=raw,
-        headers={"X-Theygent-Signature": _sign("shh", raw), "Content-Type": "application/json"},
+        headers={"X-TheYgent-Signature": _sign("shh", raw), "Content-Type": "application/json"},
     )
     assert resp.status_code == 202, resp.text  # accepted + fired
     body = resp.json()
@@ -307,7 +307,7 @@ def test_webhook_bad_signature_rejected(authed_client: TestClient) -> None:
     resp = authed_client.post(
         f"/hooks/{tid}",
         content=raw,
-        headers={"X-Theygent-Signature": "sha256=deadbeef", "Content-Type": "application/json"},
+        headers={"X-TheYgent-Signature": "sha256=deadbeef", "Content-Type": "application/json"},
     )
     assert resp.status_code == 401
     assert resp.json()["error"]["code"] == "invalid_signature"
@@ -323,7 +323,7 @@ def test_webhook_missing_signature_rejected(authed_client: TestClient) -> None:
 def test_webhook_unknown_404(authed_client: TestClient) -> None:
     raw = b"{}"
     resp = authed_client.post(
-        "/hooks/nope", content=raw, headers={"X-Theygent-Signature": _sign("shh", raw)}
+        "/hooks/nope", content=raw, headers={"X-TheYgent-Signature": _sign("shh", raw)}
     )
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "trigger_not_found"
@@ -334,7 +334,7 @@ def test_webhook_disabled_rejected(authed_client: TestClient) -> None:
     authed_client.patch(f"/triggers/{tid}", json={"enabled": False})
     raw = json.dumps({"text": "x"}).encode()
     resp = authed_client.post(
-        f"/hooks/{tid}", content=raw, headers={"X-Theygent-Signature": _sign("shh", raw)}
+        f"/hooks/{tid}", content=raw, headers={"X-TheYgent-Signature": _sign("shh", raw)}
     )
     assert resp.status_code == 409
     assert resp.json()["error"]["code"] == "trigger_disabled"

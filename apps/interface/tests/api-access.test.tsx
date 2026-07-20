@@ -346,7 +346,7 @@ describe("Agents page API access dialog", () => {
     ]);
     await openDialog();
     await screen.findByText(/hooks\/trg_1/);
-    expect(screen.getAllByText(/X-Theygent-Signature/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/X-TheYgent-Signature/).length).toBeGreaterThan(0);
     // Another agent's trigger never leaks into this dialog.
     expect(screen.queryByText(/trg_other/)).not.toBeInTheDocument();
   });

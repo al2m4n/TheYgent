@@ -70,6 +70,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the lastmod stamp below can read the site's real last-change date.
+          fetch-depth: 0
+
+      # Crawlers trust <lastmod> only when it is consistently accurate, so stamp it with the
+      # date of the last commit that touched the site — not the wall clock, which would lie
+      # on release-triggered redeploys that change nothing.
+      - name: Stamp sitemap lastmod with the site's last-change date
+        run: |
+          sed -i "s|<lastmod>[^<]*</lastmod>|<lastmod>$(git log -1 --format=%cs -- "$SITE_DIR")</lastmod>|" "$SITE_DIR/sitemap.xml"
 
       - name: Deploy to Cloudflare Pages (production)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
@@ -79,3 +89,13 @@ jobs:
           # npm, not the default package-manager sniff — see the preview step's note.
           packageManager: npm
           command: pages deploy ${{ env.SITE_DIR }} --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true
+
+      # IndexNow tells Bing-family and other participating engines about the change within
+      # minutes instead of a crawl cycle. The key is public by design: the engine verifies
+      # ownership by fetching https://theygent.ai/<key>.txt, which ships with the site.
+      # Push-only: IndexNow asks that only changed URLs be submitted, and release-triggered
+      # redeploys change nothing.
+      - name: Ping IndexNow
+        if: github.event_name == 'push'
+        run: |
+          curl -fsS "https://api.indexnow.org/indexnow?url=https://theygent.ai/&key=2c3a1d08fc0c4282bde9e66bf199a0d2" || echo "IndexNow ping failed (non-fatal)"

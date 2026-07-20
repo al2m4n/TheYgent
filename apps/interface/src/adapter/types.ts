@@ -8,7 +8,7 @@
 import type { XYPosition } from "@xyflow/react";
 
 /** What a canvas node renders. Minimal by design — see the file header. */
-export interface TheygentNodeData extends Record<string, unknown> {
+export interface TheYgentNodeData extends Record<string, unknown> {
   /** Human label shown on the node (falls back to the node id when the IR has none). */
   label: string;
   /** The IR node `type` (`llm` | `tool` | `router` | …) — selects styling + handle layout. */
@@ -36,7 +36,7 @@ export interface PortView {
 }
 
 /** What a canvas edge carries beyond its endpoints (the IR `channel` + router `condition`). */
-export interface TheygentEdgeData extends Record<string, unknown> {
+export interface TheYgentEdgeData extends Record<string, unknown> {
   channel: "data" | "control" | "tool";
   condition: string | null;
 }

@@ -19,8 +19,8 @@ pnpm --version
 ## 1. Clone the repository
 
 ```bash
-git clone https://github.com/al2m4n/theygent.git
-cd theygent
+git clone https://github.com/al2m4n/TheYgent.git
+cd TheYgent
 ```
 
 Run every command below (and every `make` target) from this repository root.

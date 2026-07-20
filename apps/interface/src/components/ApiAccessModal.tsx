@@ -69,7 +69,7 @@ function webhookCurl(base: string, triggerId: string): string {
     "",
     `curl -X POST '${base}/hooks/${triggerId}' \\`,
     `  -H 'Content-Type: application/json' \\`,
-    `  -H "X-Theygent-Signature: sha256=$SIG" \\`,
+    `  -H "X-TheYgent-Signature: sha256=$SIG" \\`,
     `  -d "$BODY"`,
   ].join("\n");
 }
@@ -312,7 +312,7 @@ function TriggerBlock({
         <>
           <p className={NOTE}>
             Fire it by POSTing JSON to the URL below, signed with HMAC-SHA256 of the raw body in the{" "}
-            <span className="mono">X-Theygent-Signature</span> header. The parsed body becomes the
+            <span className="mono">X-TheYgent-Signature</span> header. The parsed body becomes the
             run input.
           </p>
           <Snippet label="webhook request" code={webhookCurl(base, trigger.id)} />

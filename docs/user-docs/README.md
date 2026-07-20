@@ -24,12 +24,24 @@ mike maintains the version tree (one subdirectory per version + a version picker
 header) on the `gh-pages` branch; the workflow then deploys that whole tree to Cloudflare
 Pages with wrangler.
 
+Domain-root files (`robots.txt`, `llms.txt`) live in `root/` here — mike owns the
+`gh-pages` root, so the workflow copies them into the deploy tree on every publish.
+`site_url` in `mkdocs.yml` deliberately ends in `/latest/`: pages are served under mike's
+version prefixes, and anchoring the URL at the stable alias makes every version's
+canonical link and sitemap point at `/latest/`, so search rankings and AI citations never
+fragment across versions.
+
 One-time setup for a fork/new deployment:
 
 1. Create a Cloudflare Pages project (direct upload) named `theygent-docs`
    (or change `CF_PAGES_PROJECT` in the workflow).
 2. Add repo secrets `CLOUDFLARE_API_TOKEN` (Pages:Edit permission) and
    `CLOUDFLARE_ACCOUNT_ID`.
+3. Zone settings are load-bearing for the crawler policy in `root/robots.txt`: in the
+   Cloudflare dashboard for the domain, allow AI crawlers in AI Crawl Control (the
+   default block returns 403 to GPTBot/ClaudeBot/etc. before robots.txt is ever read)
+   and disable the managed robots.txt / Content Signals injection, which otherwise
+   prepends contradictory `Disallow` groups over the deployed file.
 
 ## Writing rules
 

@@ -29,17 +29,17 @@ import {
 import type { Connection, Edge as RFEdge, Node as RFNode, XYPosition } from "@xyflow/react";
 import { expectedKind } from "../lib/kind";
 import { ORIGIN, autoLayout } from "./layout";
-import type { TheygentEdgeData, TheygentNodeData, ViewBlock } from "./types";
+import type { TheYgentEdgeData, TheYgentNodeData, ViewBlock } from "./types";
 
-export type TheygentRFNode = RFNode<TheygentNodeData, "theygent">;
-export type TheygentRFEdge = RFEdge<TheygentEdgeData>;
+export type TheYgentRFNode = RFNode<TheYgentNodeData, "theygent">;
+export type TheYgentRFEdge = RFEdge<TheYgentEdgeData>;
 
 export interface RFGraph {
-  nodes: TheygentRFNode[];
-  edges: TheygentRFEdge[];
+  nodes: TheYgentRFNode[];
+  edges: TheYgentRFEdge[];
 }
 
-export type { Selection, TheygentEdgeData, TheygentNodeData, ViewBlock } from "./types";
+export type { Selection, TheYgentEdgeData, TheYgentNodeData, ViewBlock } from "./types";
 
 // ── Load: IR → React Flow ─────────────────────────────────────────────────────
 
@@ -68,8 +68,8 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
   const positions = resolvePositions(nodes, edges, view);
 
   const vnodes = view.nodes ?? {};
-  const rfNodes: TheygentRFNode[] = nodes.map((n) => {
-    const data: TheygentNodeData = {
+  const rfNodes: TheYgentRFNode[] = nodes.map((n) => {
+    const data: TheYgentNodeData = {
       label: n.label ?? n.id,
       nodeType: n.type,
       ports: {
@@ -94,7 +94,7 @@ export function irToReactFlow(ir: IRDocument): RFGraph {
     return { id: n.id, type: "theygent", position: positions[n.id] ?? { x: 0, y: 0 }, data };
   });
 
-  const rfEdges: TheygentRFEdge[] = edges.map((e) => ({
+  const rfEdges: TheYgentRFEdge[] = edges.map((e) => ({
     id: e.id,
     source: e.source,
     target: e.target,

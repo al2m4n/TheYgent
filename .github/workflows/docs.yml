@@ -66,19 +66,28 @@ jobs:
         # version is set. Once a release exists we keep the root pinned to the
         # stable "latest"; before the first release there is only "dev", so point
         # the root there instead of leaving it a 404.
+        #
+        # Until the first release exists, alias latest → dev: every page's canonical,
+        # each sitemap, robots.txt, and llms.txt point into /latest/, so the alias must
+        # resolve from the very first publish. The first real release reassigns it.
+        # --alias-type=copy everywhere: mike's default symlink alias only survives the
+        # wrangler upload because wrangler stat()s (rather than lstat()s) entries — an
+        # accident of implementation its own symlink guard shows it does not intend.
         run: |
           uv run --project docs/user-docs mike deploy --push -F docs/user-docs/mkdocs.yml dev
           if uv run --project docs/user-docs mike list -F docs/user-docs/mkdocs.yml | grep -qw latest; then
             default=latest
           else
-            default=dev
+            uv run --project docs/user-docs mike alias --push --alias-type=copy -F docs/user-docs/mkdocs.yml dev latest
+            default=latest
           fi
           uv run --project docs/user-docs mike set-default --push -F docs/user-docs/mkdocs.yml "$default"
 
       - name: Publish versioned docs (release)
         if: github.event_name == 'release'
+        # --alias-type=copy: see the dev-publish step — /latest/ must be real files.
         run: |
-          uv run --project docs/user-docs mike deploy --push --update-aliases \
+          uv run --project docs/user-docs mike deploy --push --update-aliases --alias-type=copy \
             -F docs/user-docs/mkdocs.yml "${{ github.event.release.tag_name }}" latest
           uv run --project docs/user-docs mike set-default --push \
             -F docs/user-docs/mkdocs.yml latest
@@ -100,6 +109,19 @@ jobs:
 
       - name: Strip git metadata from the deploy tree
         run: rm -rf _site/.git
+
+      # mike owns the gh-pages root (version dirs, versions.json, the default-version
+      # redirect), so domain-root files live in docs/user-docs/root/ and are injected
+      # into the deploy tree here — every publish re-materializes them. Sourced from
+      # origin/main (available: fetch-depth 0) rather than the checked-out ref, so a
+      # release cut from an older tag still ships the current root policy files.
+      # 404.html at the deployment root makes Cloudflare Pages return real 404s
+      # instead of SPA-falling-back to the mike redirect page with a 200.
+      - name: Add domain-root SEO files to the deploy tree
+        run: |
+          for f in robots.txt llms.txt 404.html; do
+            git show "origin/main:docs/user-docs/root/$f" > "_site/$f"
+          done
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0

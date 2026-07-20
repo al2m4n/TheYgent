@@ -710,7 +710,7 @@ async def test_webhook_fires_durably_with_lineage(pg_url: str) -> None:
                 resp = await ac.post(
                     f"/hooks/{tid}",
                     content=raw,
-                    headers={"X-Theygent-Signature": sig, "Content-Type": "application/json"},
+                    headers={"X-TheYgent-Signature": sig, "Content-Type": "application/json"},
                 )
                 assert resp.status_code == 202, resp.text
                 body = resp.json()

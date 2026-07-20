@@ -32,8 +32,8 @@ import { CircleHelp, Redo2, Undo2, Wand2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type Selection,
-  type TheygentRFEdge,
-  type TheygentRFNode,
+  type TheYgentRFEdge,
+  type TheYgentRFNode,
   addNode,
   connect,
   deleteEdges,
@@ -44,9 +44,9 @@ import {
 } from "../adapter";
 import { notify } from "../lib/notify";
 import { useTheme } from "../lib/theme";
-import { TheygentNode } from "./NodeView";
+import { TheYgentNode } from "./NodeView";
 
-const nodeTypes = { theygent: TheygentNode };
+const nodeTypes = { theygent: TheYgentNode };
 
 interface Props {
   ir: IRDocument;
@@ -102,10 +102,10 @@ function structuralSignature(ir: IRDocument): string {
 }
 
 function withSelection(
-  nodes: TheygentRFNode[],
-  edges: TheygentRFEdge[],
+  nodes: TheYgentRFNode[],
+  edges: TheYgentRFEdge[],
   sel: Selection,
-): { nodes: TheygentRFNode[]; edges: TheygentRFEdge[] } {
+): { nodes: TheYgentRFNode[]; edges: TheYgentRFEdge[] } {
   return {
     nodes: nodes.map((n) => ({ ...n, selected: sel?.kind === "node" && sel.id === n.id })),
     edges: edges.map((e) => ({ ...e, selected: sel?.kind === "edge" && sel.id === e.id })),
@@ -131,8 +131,8 @@ function GraphCanvasInner({
   const { screenToFlowPosition, fitView } = useReactFlow();
   const { resolved } = useTheme();
   const dark = resolved === "dark";
-  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheygentRFNode>([]);
-  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheygentRFEdge>([]);
+  const [rfNodes, setRfNodes, onNodesChange] = useNodesState<TheYgentRFNode>([]);
+  const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState<TheYgentRFEdge>([]);
   const [menu, setMenu] = useState<Menu>(null);
   // Pins the interaction legend open — the button click path for touch/keyboard users, who never
   // get the hover reveal.

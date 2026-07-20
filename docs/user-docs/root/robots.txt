@@ -1,4 +1,4 @@
-# robots.txt — theygent.ai
+# robots.txt — docs.theygent.ai
 #
 # Policy: every crawler — classic search engines and AI/answer engines alike —
 # is welcome everywhere on this site. The named groups below make that welcome
@@ -6,7 +6,9 @@
 # that bot, so every group here must stay "Allow: /" — never add a Disallow to
 # one group without mirroring the decision in every group.
 #
-# Curated machine-readable site summary: https://theygent.ai/llms.txt
+# This file lives in docs/user-docs/root/ on the main branch and is copied to the
+# deploy tree root by .github/workflows/docs.yml (mike owns the gh-pages root).
+# Curated machine-readable summary: https://docs.theygent.ai/llms.txt
 
 User-agent: *
 Allow: /
@@ -74,4 +76,5 @@ User-agent: Diffbot
 User-agent: Timpibot
 Allow: /
 
-Sitemap: https://theygent.ai/sitemap.xml
+# The stable alias's sitemap — every version's pages canonicalize into these URLs.
+Sitemap: https://docs.theygent.ai/latest/sitemap.xml

@@ -1,0 +1,44 @@
+# TheYgent
+
+> TheYgent is a no-code, local-first platform for building and running AI agents on a visual canvas. Inference runs on the user's own machine — llama.cpp, MLX, or vLLM — or on any OpenAI-compatible API they register, chosen per agent and per call. It is source-available fair-code software under the Sustainable Use License, self-hosted on bare metal, Docker Compose, or Kubernetes. The core promise: you own every hop.
+
+Key facts:
+
+- The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
+- Models are addressed by a logical ID (for example `triage-fast`); the engine underneath — `mlx`, `vllm`, `llamacpp`, or `openai-compatible` — can be swapped without touching the graph. One graph can mix local and hosted models side by side.
+- TheYgent is never an involuntary middleman between users and their models: prompts, payloads, and model weights are not proxied through the vendor's servers. Hosted APIs can be registered at any time; when data crosses the wire, it does so because the user sent it there.
+- Tooling: built-in tools, HTTP tools, and any MCP (Model Context Protocol) server over stdio or HTTP, plus autonomous LLM tool-calling wired visually on the canvas.
+- Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
+- Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
+- Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
+- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && make up` brings up three local services (interface :5174, control plane :8080, inference plane :8081). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
+- License: the Sustainable Use License (fair-code). Free to use, modify, and self-host for internal business, personal, and non-commercial purposes; selling it — including offering it as a hosted service — is not permitted.
+
+## Docs
+
+- [Documentation home](https://docs.theygent.ai/latest/): start here — installation, concepts, and guides
+- [Installation](https://docs.theygent.ai/latest/getting-started/installation/): prerequisites and setup for macOS and Linux
+- [Your First Agent](https://docs.theygent.ai/latest/getting-started/first-agent/): build and run an agent on the canvas
+- [Concepts: Agents & Graphs](https://docs.theygent.ai/latest/concepts/agents-and-graphs/): how a graph becomes an agent
+- [Concepts: Models & Engines](https://docs.theygent.ai/latest/concepts/models-and-engines/): logical model IDs and the engine bindings (mlx, vllm, llamacpp, openai-compatible)
+- [Node Reference](https://docs.theygent.ai/latest/building/nodes/): every node type — LLM, tools, MCP, RAG, router, transform, guardrail, rate limit and quota, human approval, subgraph/loop/map, audio and images
+- [MCP](https://docs.theygent.ai/latest/mcp/): using Model Context Protocol tools and servers
+- [RAG](https://docs.theygent.ai/latest/rag/): retrieval sources, crawling, and document upload
+- [Durable Runs](https://docs.theygent.ai/latest/running/durable/): crash-resumable execution
+- [Triggers & Webhooks](https://docs.theygent.ai/latest/running/triggers/): token endpoints, HMAC-signed webhooks, cron schedules
+- [Observability](https://docs.theygent.ai/latest/running/observability/): run waterfalls and OTLP export
+- [API Reference](https://docs.theygent.ai/latest/reference/api/): control-plane and inference-plane HTTP APIs
+- [Troubleshooting](https://docs.theygent.ai/latest/reference/troubleshooting/): common issues and fixes
+
+## Source
+
+- [GitHub repository](https://github.com/al2m4n/TheYgent): source code, issues, releases, samples
+- [License](https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md): the Sustainable Use License, in full
+
+## Optional
+
+- [Marketing site](https://theygent.ai/): product overview
+- [Glossary](https://docs.theygent.ai/latest/reference/glossary/): terms used across the product
+- [Environment Variables](https://docs.theygent.ai/latest/reference/environment/): configuration reference
+- [Import & Export](https://docs.theygent.ai/latest/import-export/): moving agents and data between installs
+- [The Bench](https://docs.theygent.ai/latest/running/bench/): testing and benchmarking models and agents

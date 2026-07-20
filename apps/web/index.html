@@ -3,13 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TheYgent — Build Agents on a Canvas. Run Them Where You Point.</title>
+    <title>TheYgent — Local-First, No-Code AI Agent Builder with MCP Tools</title>
     <meta
       name="description"
-      content="TheYgent is a no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop."
+      content="Build AI agents on a visual canvas and run them locally — llama.cpp, MLX, vLLM, or any OpenAI-compatible API. MCP tools, RAG, triggers. Self-hosted, fair-code."
     />
     <link rel="canonical" href="https://theygent.ai/" />
-    <meta name="theme-color" content="#0b0e14" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="dark light" />
 
     <!-- Open Graph / social -->
@@ -24,6 +25,8 @@
     <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="TheYgent — Build Agents on a Canvas, Run Them Where You Point" />
     <meta
@@ -31,10 +34,171 @@
       content="A no-code, local-first studio for building and running AI agents. You own every hop."
     />
     <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta name="twitter:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
 
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
     <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
     <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css" />
+
+    <!-- Structured data: one entity graph. The FAQPage answers must stay verbatim-identical
+         to the visible FAQ section below — markup invisible on the page violates Google's
+         structured-data policy. No aggregateRating/review: never fabricate ratings. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://theygent.ai/#organization",
+            "name": "TheYgent",
+            "url": "https://theygent.ai/",
+            "logo": {
+              "@type": "ImageObject",
+              "@id": "https://theygent.ai/#logo",
+              "url": "https://theygent.ai/assets/logo/theygent-logo.svg",
+              "caption": "TheYgent logo"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "description": "TheYgent is a no-code, local-first, fair-code platform for building and running AI agents on a visual canvas. Free to use, modify, and self-host under the Sustainable Use License.",
+            "founder": { "@type": "Person", "name": "Arman Bahlakeh" },
+            "sameAs": ["https://github.com/al2m4n/TheYgent"]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://theygent.ai/#website",
+            "url": "https://theygent.ai/",
+            "name": "TheYgent",
+            "description": "TheYgent is a no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop.",
+            "inLanguage": "en",
+            "publisher": { "@id": "https://theygent.ai/#organization" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://theygent.ai/#software",
+            "name": "TheYgent",
+            "url": "https://theygent.ai/",
+            "description": "A no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop.",
+            "applicationCategory": "DeveloperApplication",
+            "applicationSubCategory": "AI agent builder",
+            "operatingSystem": "macOS, Linux",
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "isAccessibleForFree": true,
+            "license": "https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md",
+            "downloadUrl": "https://github.com/al2m4n/TheYgent",
+            "installUrl": "https://github.com/al2m4n/TheYgent",
+            "softwareHelp": {
+              "@type": "CreativeWork",
+              "name": "TheYgent Documentation",
+              "url": "https://docs.theygent.ai/"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "featureList": [
+              "Visual canvas builder — compose agents from nodes and edges, no code",
+              "Local inference engines: llama.cpp, MLX, vLLM",
+              "Register any OpenAI-compatible API, chosen per agent and per call",
+              "MCP (Model Context Protocol) tools and servers over stdio or HTTP",
+              "RAG retrieval sources: crawl or upload, embedded locally into pgvector",
+              "Triggers: token-authed endpoints, HMAC-signed webhooks, cron schedules",
+              "Durable runs that checkpoint every step and resume after a crash",
+              "Observability: per-run span waterfalls with opt-in OTLP export",
+              "Voice, vision, and image generation in agent graphs",
+              "Self-hosted: bare metal, Docker Compose, or Kubernetes"
+            ],
+            "author": { "@id": "https://theygent.ai/#organization" },
+            "publisher": { "@id": "https://theygent.ai/#organization" },
+            "sameAs": ["https://github.com/al2m4n/TheYgent", "https://docs.theygent.ai/"]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "TheYgent is a no-code, local-first platform for building and running AI agents on a visual canvas. You drag nodes — LLMs, MCP tools, routers, RAG retrieval, guardrails, human approvals — wire them with edges, and run the graph as an agent. Inference runs on your own machine via llama.cpp, MLX, or vLLM, or on any OpenAI-compatible API you register, chosen per agent and per call."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Is TheYgent open source?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "TheYgent is source-available under a fair-code license (the Sustainable Use License), not an OSI-approved open-source license. The full source is on GitHub, and you are free to use, modify, and self-host it for internal business, personal, and non-commercial purposes. Selling it — including offering it as a hosted service — is not permitted."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does TheYgent send my data to the cloud?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "TheYgent never proxies your prompts, payloads, or model weights through anyone's servers — you own every hop. By default everything runs on your machine: local engines, your own Postgres, localhost interfaces. If you register a hosted API for a model, that traffic goes directly from your machine to the provider you chose — it crosses the wire only because you sent it there."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which local inference engines does TheYgent support?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Three local engines plus a universal escape hatch: llama.cpp (runs on any machine, CPU or GPU), MLX (Apple Silicon), and vLLM (NVIDIA GPUs) — plus any OpenAI-compatible API you register. Models get a logical ID, so you can swap the engine underneath without touching the agent graph, and one graph can mix local and hosted models side by side."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I use MCP (Model Context Protocol) tools in my agents?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. TheYgent connects to any MCP server over stdio or HTTP, and you can browse and install servers from the MCP registry inside the app. MCP tools drop onto the canvas as nodes, so a local model can call the same tools a hosted assistant would — running in your own trust domain."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need to write code to build an agent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. The canvas is the whole workflow: drag nodes from the palette, connect them, configure each one in the inspector, and run. Publishing an agent mints an immutable, content-addressed version you can invoke by API, roll back, or wire to a trigger — all without writing code."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can agents run unattended — on a schedule or from a webhook?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. A published agent can sit behind a token-authenticated endpoint, an HMAC-signed webhook, or a cron schedule. Runs can be durable: every step is checkpointed, so if the process dies mid-run it resumes from the last completed node — loops, subgraphs, and human-approval waits included."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I self-host TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Clone the repo and run make up for bare metal, or deploy the same three services with Docker Compose or Kubernetes — it's one architecture in every topology. There's no vendor account and no cloud dependency — the only account is the local admin you create in the first-run wizard; the stack listens on localhost by default and stores everything in your own Postgres."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does TheYgent support RAG (retrieval-augmented generation)?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Crawl a site or upload documents, embed them locally into pgvector in your own Postgres, and wire a retrieval node into any graph. Embedding and retrieval both run through engines you choose — keep the embedding model local and your documents never leave your machine; bind a hosted API and they go only where you pointed them."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can one agent use both local and hosted models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes — engine choice is per node, not per app. A common pattern is a fast local model handling triage on-device while a larger hosted model, reached through an API you registered, takes the escalations. Because nodes reference logical model IDs, swapping any binding later doesn't touch a single edge."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <!-- Set the theme before first paint so a stored light preference doesn't flash dark.
@@ -88,6 +252,7 @@
           <a href="#multi-engine">Engines</a>
           <a href="#capabilities">Capabilities</a>
           <a href="#production">Production</a>
+          <a href="#faq">FAQ</a>
           <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
         </nav>
 
@@ -101,7 +266,7 @@
           >
             <span class="theme-dot"></span><span class="theme-label mono">dark</span>
           </button>
-          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/theygent" rel="noopener">
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
             <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -120,8 +285,9 @@
         <a href="#multi-engine">Engines</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#production">Production</a>
+        <a href="#faq">FAQ</a>
         <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-        <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
       </div>
     </header>
 
@@ -133,7 +299,7 @@
           <div class="hero-copy">
             <p class="eyebrow mono"><i class="dia"></i>Local-First · Fair-Code · You Own Every Hop</p>
             <h1 id="hero-h">
-              Build Agents on a Canvas.<br />
+              Build AI Agents on a Canvas.<br />
               <span class="ramp-text">Run Them Where You Point.</span>
             </h1>
             <p class="lede">
@@ -143,7 +309,7 @@
               <span class="pill mono">triage-fast</span>. TheYgent never proxies your prompts, payloads, or weights.
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="https://github.com/al2m4n/theygent" rel="noopener">
+              <a class="btn btn-primary" href="https://github.com/al2m4n/TheYgent" rel="noopener">
                 <svg class="gh" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                   <path
                     fill="currentColor"
@@ -245,9 +411,9 @@
             <div class="panel term cut-card" aria-label="Terminal showing make up bringing the local services online">
               <div class="panel-bar">
                 <span class="dots"><i></i><i></i><i></i></span>
-                <span class="panel-file mono">~/theygent — make up</span>
+                <span class="panel-file mono">~/TheYgent — make up</span>
               </div>
-              <pre class="term-body mono" aria-hidden="true"><code><span class="c-prompt">$</span> git clone github.com/al2m4n/theygent &amp;&amp; cd theygent
+              <pre class="term-body mono" aria-hidden="true"><code><span class="c-prompt">$</span> git clone github.com/al2m4n/TheYgent &amp;&amp; cd TheYgent
 <span class="c-prompt">$</span> make up
 <span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>  <span class="c-dim">mlx · vllm · llama.cpp</span>
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>  <span class="c-dim">postgres :5432</span>
@@ -368,8 +534,9 @@
             <p class="eyebrow mono"><i class="dia"></i>The Builder</p>
             <h2 id="build-h">Compose Agents <span class="ramp-text">Visually.</span></h2>
             <p class="section-lede">
-              Drag nodes onto a canvas, wire them with edges, configure them in the inspector, and run — without writing
-              code. The graph <em>is</em> the agent; saving it mints a content-addressed version you can roll back to.
+              A visual AI agent builder: drag nodes onto a canvas, wire them with edges, configure them in the
+              inspector, and run — no code required. The graph <em>is</em> the agent; saving it mints a
+              content-addressed version you can roll back to.
             </p>
             <ul class="node-legend mono">
               <li><i class="dot d-slate"></i>input · output</li>
@@ -461,8 +628,8 @@
           <h2 id="eng-h">One ID per Call. <span class="ramp-text">Any Engine Underneath.</span></h2>
           <p class="section-lede">
             Give a model a logical ID once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
-            API you register — and every edge on the canvas stays untouched. Engine choice is per node, not per app: one
-            graph can run local and hosted models side by side.
+            API you register — and every edge on the canvas stays untouched: no vendor lock-in, no rewiring. Engine
+            choice is per node, not per app: one graph can run local and hosted models side by side.
           </p>
 
           <div class="datasheet cut-card">
@@ -530,7 +697,8 @@
           <p class="eyebrow mono"><i class="dia"></i>The Runtime</p>
           <h2 id="caps-h">Everything a Real Agent <span class="ramp-text">Needs.</span></h2>
           <p class="section-lede">
-            Chat, tools, retrieval, models, and automation — one local runtime, no glue code.
+            Chat, tools, retrieval, models, and automation — one local runtime that orchestrates all of it, no glue
+            code.
           </p>
 
           <div class="card-grid">
@@ -542,7 +710,7 @@
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-violet"></i>tools</span>
               <h3>Tools &amp; MCP</h3>
-              <p>Built-in tools, HTTP calls, and any MCP server over stdio or HTTP — running in your own trust domain.</p>
+              <p>Built-in tools, HTTP calls, and any MCP (Model Context Protocol) server over stdio or HTTP — running in your own trust domain.</p>
             </article>
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-amber"></i>automation</span>
@@ -552,7 +720,7 @@
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-green"></i>memory</span>
               <h3>Retrieval Sources</h3>
-              <p>Crawl a site or upload documents, embed them locally into pgvector, and wire retrieval into any graph.</p>
+              <p>Crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.</p>
             </article>
             <article class="cap cut-card reveal">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>models</span>
@@ -593,7 +761,7 @@
               </li>
               <li>
                 <span class="pt-k mono"><i class="dia dia-violet"></i>Deployable</span>
-                <span class="pt-v">The same three services in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
+                <span class="pt-v">The same three services, self-hosted in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
               </li>
             </ul>
           </div>
@@ -660,7 +828,7 @@
             <ul class="qs-facts mono">
               <li><i class="dia"></i>Three local services + your Postgres</li>
               <li><i class="dia"></i>Bring your own models, or register an API</li>
-              <li><i class="dia"></i>No account, no sign-up, localhost by default</li>
+              <li><i class="dia"></i>No vendor account — localhost by default</li>
             </ul>
           </div>
 
@@ -668,15 +836,117 @@
             <div class="panel-bar">
               <span class="dots"><i></i><i></i><i></i></span>
               <span class="panel-file mono">Quickstart</span>
-              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/theygent.git&#10;cd theygent&#10;make up">Copy</button>
+              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/TheYgent.git&#10;cd TheYgent&#10;make up">Copy</button>
             </div>
-            <pre class="term-body mono"><code><span class="c-prompt">$</span> git clone https://github.com/al2m4n/theygent.git
-<span class="c-prompt">$</span> cd theygent
+            <pre class="term-body mono"><code><span class="c-prompt">$</span> git clone https://github.com/al2m4n/TheYgent.git
+<span class="c-prompt">$</span> cd TheYgent
 <span class="c-prompt">$</span> make up
 <span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>   <span class="c-dim">postgres :5432</span>
 <span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>
 <span class="c-dim"># open</span> <span class="c-accent">http://localhost:5174</span></code></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── FAQ ─────────────────────
+           Answers mirror the FAQPage JSON-LD in <head> verbatim — keep them in sync.
+           details/summary keeps every answer readable with JS off. -->
+      <section class="section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>What is TheYgent?</h3></summary>
+              <p>
+                TheYgent is a no-code, local-first platform for building and running AI agents on a visual canvas. You
+                drag nodes — LLMs, MCP tools, routers, RAG retrieval, guardrails, human approvals — wire them with
+                edges, and run the graph as an agent. Inference runs on your own machine via
+                <span class="tok">llama.cpp</span>, <span class="tok">MLX</span>, or <span class="tok">vLLM</span>, or
+                on any OpenAI-compatible API you register, chosen per agent and per call.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Is TheYgent open source?</h3></summary>
+              <p>
+                TheYgent is source-available under a fair-code license (the Sustainable Use License), not an
+                OSI-approved open-source license. The full source is on GitHub, and you are free to use, modify, and
+                self-host it for internal business, personal, and non-commercial purposes. Selling it — including
+                offering it as a hosted service — is not permitted.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does TheYgent send my data to the cloud?</h3></summary>
+              <p>
+                TheYgent never proxies your prompts, payloads, or model weights through anyone&rsquo;s servers — you own
+                every hop. By default everything runs on your machine: local engines, your own Postgres, localhost
+                interfaces. If you register a hosted API for a model, that traffic goes directly from your machine to
+                the provider you chose — it crosses the wire only because you sent it there.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Which local inference engines does TheYgent support?</h3></summary>
+              <p>
+                Three local engines plus a universal escape hatch: <span class="tok">llama.cpp</span> (runs on any
+                machine, CPU or GPU), <span class="tok">MLX</span> (Apple Silicon), and <span class="tok">vLLM</span>
+                (NVIDIA GPUs) — plus any OpenAI-compatible API you register. Models get a logical ID, so you can swap
+                the engine underneath without touching the agent graph, and one graph can mix local and hosted models
+                side by side.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can I use MCP (Model Context Protocol) tools in my agents?</h3></summary>
+              <p>
+                Yes. TheYgent connects to any MCP server over stdio or HTTP, and you can browse and install servers
+                from the MCP registry inside the app. MCP tools drop onto the canvas as nodes, so a local model can
+                call the same tools a hosted assistant would — running in your own trust domain.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Do I need to write code to build an agent?</h3></summary>
+              <p>
+                No. The canvas is the whole workflow: drag nodes from the palette, connect them, configure each one in
+                the inspector, and run. Publishing an agent mints an immutable, content-addressed version you can
+                invoke by API, roll back, or wire to a trigger — all without writing code.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can agents run unattended — on a schedule or from a webhook?</h3></summary>
+              <p>
+                Yes. A published agent can sit behind a token-authenticated endpoint, an HMAC-signed webhook, or a cron
+                schedule. Runs can be durable: every step is checkpointed, so if the process dies mid-run it resumes
+                from the last completed node — loops, subgraphs, and human-approval waits included.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>How do I self-host TheYgent?</h3></summary>
+              <p>
+                Clone the repo and run <span class="pill mono">make up</span> for bare metal, or deploy the same three
+                services with Docker Compose or Kubernetes — it&rsquo;s one architecture in every topology.
+                There&rsquo;s no vendor account and no cloud dependency — the only account is the local admin you
+                create in the first-run wizard; the stack listens on localhost by default and stores everything in
+                your own Postgres.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does TheYgent support RAG (retrieval-augmented generation)?</h3></summary>
+              <p>
+                Yes. Crawl a site or upload documents, embed them locally into pgvector in your own Postgres, and wire
+                a retrieval node into any graph. Embedding and retrieval both run through engines you choose — keep
+                the embedding model local and your documents never leave your machine; bind a hosted API and they go
+                only where you pointed them.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can one agent use both local and hosted models?</h3></summary>
+              <p>
+                Yes — engine choice is per node, not per app. A common pattern is a fast local model handling triage
+                on-device while a larger hosted model, reached through an API you registered, takes the escalations.
+                Because nodes reference logical model IDs, swapping any binding later doesn&rsquo;t touch a single
+                edge.
+              </p>
+            </details>
           </div>
         </div>
       </section>
@@ -693,11 +963,12 @@
           <p class="eyebrow mono"><i class="dia"></i>The License</p>
           <h2 id="lic-h">Source-Available, <span class="ramp-text">Fair-Code.</span></h2>
           <p class="section-lede lic-lede">
-            Free to use, modify, and self-host under the Sustainable Use License. The one limit: you can&rsquo;t
-            repackage it as a competing hosted service. No CLA wall, no bait-and-switch — the core is the core.
+            Free to use, modify, and self-host for internal business, personal, and non-commercial use under the
+            Sustainable Use License. What you can&rsquo;t do: sell it or offer it as a hosted service. No CLA wall,
+            no bait-and-switch — the core is the core.
           </p>
           <div class="cta-row">
-            <a class="btn btn-ghost" href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">Read the License&nbsp;→</a>
+            <a class="btn btn-ghost" href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">Read the License&nbsp;→</a>
           </div>
         </div>
       </section>
@@ -709,11 +980,11 @@
           <img class="cta-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="" width="940" height="200" />
           <h2 id="cta-h">Your Canvas. Your Engines. <span class="ramp-text">Your Agents.</span></h2>
           <p class="section-lede cta-lede">
-            No account, no cloud dependency, no lock-in. Clone the repo, run
+            No vendor account, no cloud dependency, no lock-in. Clone the repo, run
             <span class="pill mono">make up</span>, and your first agent is on the canvas in minutes.
           </p>
           <div class="cta-row">
-            <a class="btn btn-primary" href="https://github.com/al2m4n/theygent" rel="noopener">
+            <a class="btn btn-primary" href="https://github.com/al2m4n/TheYgent" rel="noopener">
               <svg class="gh" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                 <path
                   fill="currentColor"
@@ -746,12 +1017,14 @@
             <a href="#capabilities">Capabilities</a>
             <a href="#production">Production</a>
             <a href="#quickstart">Quickstart</a>
+            <a href="#faq">FAQ</a>
           </div>
           <div class="footer-col">
             <span class="footer-h mono">resources</span>
             <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-            <a href="https://github.com/al2m4n/theygent" rel="noopener">GitHub</a>
-            <a href="https://github.com/al2m4n/theygent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
           </div>
         </nav>
       </div>

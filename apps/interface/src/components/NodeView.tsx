@@ -7,7 +7,7 @@
 
 import { kindForType } from "@theygent/ir-types";
 import { Handle, type NodeProps, Position } from "@xyflow/react";
-import type { TheygentRFNode } from "../adapter";
+import type { TheYgentRFNode } from "../adapter";
 import { NodeIcon, resolveIcon } from "../lib/icons";
 
 // Label colours are semantic (not on the inverted slate ramp), so each pairs a light + dark shade —
@@ -34,7 +34,7 @@ function handlePos(index: number, count: number): string {
   return `${((index + 1) / (count + 1)) * 100}%`;
 }
 
-export function TheygentNode({ data, selected }: NodeProps<TheygentRFNode>) {
+export function TheYgentNode({ data, selected }: NodeProps<TheYgentRFNode>) {
   const kind = kindForType(data.nodeType) ?? "activity";
   const style = KIND_STYLE[kind] ?? KIND_STYLE.activity;
   // Data handles sit on the node SIDES (round), control handles on TOP/BOTTOM (square), so the two

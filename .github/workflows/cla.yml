@@ -38,6 +38,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: signatures/cla.json
-          path-to-document: https://github.com/al2m4n/theygent/blob/main/CONTRIBUTOR_LICENSE_AGREEMENT.md
+          path-to-document: https://github.com/al2m4n/TheYgent/blob/main/CONTRIBUTOR_LICENSE_AGREEMENT.md
           branch: cla-signatures
           allowlist: al2m4n,dependabot[bot],github-actions[bot]
