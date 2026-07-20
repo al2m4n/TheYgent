@@ -166,7 +166,7 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 ### Webhook returns `invalid_signature` (401)
 
-**Cause.** The `X-Theygent-Signature` header didn't match. The signature must be the HMAC-SHA256 of the **exact raw request body**, keyed by the trigger's `config.secret`.
+**Cause.** The `X-TheYgent-Signature` header didn't match. The signature must be the HMAC-SHA256 of the **exact raw request body**, keyed by the trigger's `config.secret`.
 
 **Fix.** Sign the raw bytes you send (any reformatting of the JSON changes the signature). Both `sha256=<hex>` and a bare hex digest are accepted. Confirm you're using the right secret. See [Triggers & webhooks](../running/triggers.md).
 

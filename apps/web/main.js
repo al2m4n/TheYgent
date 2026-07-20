@@ -16,6 +16,13 @@
       var t = root.getAttribute("data-theme") || "dark";
       if (label) label.textContent = t;
       btn.setAttribute("aria-label", "Switch to " + (t === "dark" ? "light" : "dark") + " theme");
+      // The media-scoped theme-color pair follows the OS scheme; when the stored theme
+      // diverges from it, the browser toolbar would keep the wrong color — pin both metas
+      // to the active theme. With JS off the media pair still gives correct OS defaults.
+      var color = t === "dark" ? "#0b0e14" : "#eef1f6";
+      document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) {
+        m.setAttribute("content", color);
+      });
     }
     sync();
     btn.addEventListener("click", function () {

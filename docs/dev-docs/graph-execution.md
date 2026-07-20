@@ -137,7 +137,7 @@ Run-initiating endpoints (all in `app.py`; execution delegates to this layer):
 | `POST /graphs/runs` | An inline IR document |
 | `POST /agents/{agent_id}/runs` | A saved agent's pinned IR |
 | `POST /agents/{agent_id}/invoke` | Same, gated by a bearer token (`THEYGENT_INVOKE_TOKEN`; unset = deny) |
-| `POST /hooks/{trigger_id}` | Webhook fire, HMAC-verified (`X-Theygent-Signature: sha256=…`) |
+| `POST /hooks/{trigger_id}` | Webhook fire, HMAC-verified (`X-TheYgent-Signature: sha256=…`) |
 | `POST /agents/{agent_id}/durable-runs` | 202 `{run_id}` on the durable queue; 400 `durable_required` when the process is not in durable mode |
 | `POST /runs/{run_id}/resume` | Delivers input to a waiting `human` node (durable runs only) |
 

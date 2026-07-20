@@ -10,8 +10,9 @@ versioned per release to https://docs.theygent.ai/). The repo-wide rules in the 
   module paths or internal architecture beyond the user-visible plane split. Contributor
   material belongs in [docs/dev-docs](../dev-docs/README.md).
 - **These pages are published:** no competing product names, no internal plan references.
-  Brand casing is "TheYgent" in prose; lowercase `theygent` only in code blocks, URLs, and
-  env vars.
+  Brand casing is "TheYgent" in prose and UI copy — the GitHub repo is `al2m4n/TheYgent`
+  and the webhook header is `X-TheYgent-Signature`; lowercase `theygent` only in code
+  identifiers, env vars, and domains (`theygent.ai`).
 - **Honesty rules mirror the product:** never overclaim privacy ("everything runs where
   you point it, and you own every hop" — not "no data ever leaves your machine"); label
   unverified paths (e.g. vLLM as experimental); document limitations plainly.

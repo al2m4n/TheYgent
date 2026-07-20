@@ -80,8 +80,11 @@ if a task seems to require it, stop and flag it instead.
   ports: fail fast with a named, stable error code. No silent fallback or pass-through.
 - **Naming across the wire:** the control-plane API speaks `snake_case`; the inference
   plane's OpenAI-compatible and admin surfaces speak `camelCase`. Don't "fix" either.
-- **Brand casing:** "TheYgent" in prose and UI copy; lowercase `theygent` in code, URLs,
-  env vars, and identifiers.
+- **Brand casing:** the brand is "TheYgent" — in prose, UI copy, the GitHub repository
+  (`al2m4n/TheYgent`), and wire-visible names (the `X-TheYgent-Signature` header).
+  Lowercase `theygent` only where platform convention forces it: code identifiers,
+  package and module names, env vars (`THEYGENT_*`), domains (`theygent.ai`), and
+  Docker/Kubernetes names.
 - **Empty env means unset.** Every env read treats `""` like absence (compose/k8s pass
   `${VAR:-}` through); keep new env reads empty-safe.
 - Match the surrounding file's style; Ruff formats Python, Biome formats TS.

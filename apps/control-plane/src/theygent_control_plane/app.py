@@ -4016,7 +4016,7 @@ def create_app(
         signature = request.headers.get("x-theygent-signature")
         if not isinstance(secret, str) or not _verify_signature(secret, raw, signature):
             return _error(
-                "invalid or missing webhook signature (X-Theygent-Signature)",
+                "invalid or missing webhook signature (X-TheYgent-Signature)",
                 status=401,
                 code="invalid_signature",
             )

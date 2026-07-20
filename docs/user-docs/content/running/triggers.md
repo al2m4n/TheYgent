@@ -72,7 +72,7 @@ This returns `201` with the trigger, including its **id** (which you need for th
 
 ### 2. Sign and send the payload
 
-The caller POSTs the raw JSON payload to `POST /hooks/{trigger_id}` with header **`X-Theygent-Signature`** set to the **HMAC-SHA256** of the **raw request body**, keyed by the `config.secret`. Both `sha256=<hex>` (a common convention) and a bare `<hex>` digest are accepted, and the comparison is constant-time.
+The caller POSTs the raw JSON payload to `POST /hooks/{trigger_id}` with header **`X-TheYgent-Signature`** set to the **HMAC-SHA256** of the **raw request body**, keyed by the `config.secret`. Both `sha256=<hex>` (a common convention) and a bare `<hex>` digest are accepted, and the comparison is constant-time.
 
 ```bash
 SECRET='shared-signing-secret'
@@ -81,7 +81,7 @@ SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //
 
 curl -X POST http://localhost:8080/hooks/TRIGGER_ID \
   -H "Content-Type: application/json" \
-  -H "X-Theygent-Signature: sha256=$SIG" \
+  -H "X-TheYgent-Signature: sha256=$SIG" \
   -d "$BODY"
 ```
 

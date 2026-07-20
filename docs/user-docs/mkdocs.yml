@@ -2,12 +2,17 @@ site_name: TheYgent Docs
 site_description: >-
   User documentation for TheYgent — a local-first platform for building and
   running AI agents with a visual editor and your choice of inference engine.
-site_url: https://docs.theygent.ai/
+# The /latest/ suffix is deliberate: pages are served under mike's version prefixes
+# (/latest/, /dev/, /0.x/), which mkdocs cannot see — a bare site_url makes every page
+# emit a canonical (and sitemap entry) at a version-less URL that 404s. Anchoring
+# site_url at the stable alias points every version's canonical at /latest/, so search
+# rankings and AI citations never fragment across versions.
+site_url: https://docs.theygent.ai/latest/
 docs_dir: content
 strict: true
 
-repo_url: https://github.com/al2m4n/theygent
-repo_name: al2m4n/theygent
+repo_url: https://github.com/al2m4n/TheYgent
+repo_name: al2m4n/TheYgent
 edit_uri: edit/main/docs/user-docs/content/
 
 theme:

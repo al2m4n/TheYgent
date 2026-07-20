@@ -134,7 +134,7 @@ A trigger deploys a published, pinned agent behind an unattended entry point. Se
 | POST | `/triggers` | Create a trigger. Body `{agent_id, kind, version?|content_hash?, config, enabled?}`. Pin exactly one of `version`/`content_hash`. |
 | GET | `/triggers` | List triggers (webhook secrets redacted to `"***"`). |
 | GET / PATCH / DELETE | `/triggers/{id}` | Read / update (`enabled`, `config` only — kind and pin are immutable) / delete a trigger. |
-| POST | `/hooks/{id}` | Fire a `webhook` trigger. The raw JSON body is the run input; requires the `X-Theygent-Signature` header. Returns `202`. |
+| POST | `/hooks/{id}` | Fire a `webhook` trigger. The raw JSON body is the run input; requires the `X-TheYgent-Signature` header. Returns `202`. |
 
 Trigger `config` keys: `schedule` needs `config.cron` (a valid cron expression) and takes optional `config.input`; `webhook` needs `config.secret` (the inbound signing secret).
 
@@ -144,7 +144,7 @@ Trigger `config` keys: `schedule` needs `config.cron` (a valid cron expression) 
 BODY='{"question":"Where is my order?"}'
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "YOUR_WEBHOOK_SECRET" | awk '{print $2}')
 curl -X POST http://localhost:8080/hooks/TRIGGER_ID \
-  -H "X-Theygent-Signature: sha256=$SIG" \
+  -H "X-TheYgent-Signature: sha256=$SIG" \
   -H 'Content-Type: application/json' \
   -d "$BODY"
 ```
