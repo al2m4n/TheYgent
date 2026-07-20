@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/dev/concepts/versioning/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/dev/running/users/">
       
       
-        <link rel="prev" href="../runs-and-sessions/">
+        <link rel="prev" href="../triggers/">
       
       
-        <link rel="next" href="../../building/editor/">
+        <link rel="next" href="../observability/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Agent Versioning - TheYgent Docs</title>
+        <title>Users, Roles & Sign-in - TheYgent Docs</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#versioning" class="md-skip">
+        <a href="#users-roles-sign-in" class="md-skip">
           Skip to content
         </a>
       
@@ -115,7 +115,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Agent Versioning
+              Users, Roles & Sign-in
             
           </span>
         </div>
@@ -289,13 +289,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../concepts/" class="md-tabs__link">
           
   
   
@@ -423,11 +421,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../running/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -823,8 +823,6 @@
       
   
   
-    
-  
   
   
     
@@ -848,23 +846,20 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../concepts/" class="md-nav__link ">
               
   
   
@@ -882,13 +877,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -908,7 +903,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agents-and-graphs/" class="md-nav__link">
+      <a href="../../concepts/agents-and-graphs/" class="md-nav__link">
         
   
   
@@ -936,7 +931,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../nodes-ports-edges/" class="md-nav__link">
+      <a href="../../concepts/nodes-ports-edges/" class="md-nav__link">
         
   
   
@@ -964,7 +959,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../models-and-engines/" class="md-nav__link">
+      <a href="../../concepts/models-and-engines/" class="md-nav__link">
         
   
   
@@ -992,7 +987,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../runs-and-sessions/" class="md-nav__link">
+      <a href="../../concepts/runs-and-sessions/" class="md-nav__link">
         
   
   
@@ -1017,37 +1012,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Agent Versioning
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../concepts/versioning/" class="md-nav__link">
         
   
   
@@ -1063,109 +1031,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#immutable-versions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Immutable versions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#the-content-hash-meaning-not-layout" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        The content hash: meaning, not layout
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#what-creates-a-new-version" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What creates a new version
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="What creates a new version">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#publishing-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Publishing rules
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#pinning-and-resolving-a-version" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Pinning and resolving a version
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#composition-is-frozen-in" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Composition is frozen in
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#related-pages" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Related pages
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2241,6 +2106,8 @@
       
   
   
+    
+  
   
   
     
@@ -2266,20 +2133,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_10" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../running/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2297,13 +2167,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_10" id="__nav_10_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_10" id="__nav_10_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_10_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_10">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2323,7 +2193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/durable/" class="md-nav__link">
+      <a href="../durable/" class="md-nav__link">
         
   
   
@@ -2351,7 +2221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/human-in-the-loop/" class="md-nav__link">
+      <a href="../human-in-the-loop/" class="md-nav__link">
         
   
   
@@ -2379,7 +2249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/triggers/" class="md-nav__link">
+      <a href="../triggers/" class="md-nav__link">
         
   
   
@@ -2404,10 +2274,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../running/users/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Users, Roles & Sign-in
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -2423,6 +2320,187 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#first-run-create-the-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        First run: create the admin
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#signing-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signing in
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-three-roles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three roles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The three roles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#chat-sessions-are-per-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat sessions are per-account
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#managing-users-admin" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managing users (admin)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing users (admin)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-service
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#personal-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Personal API keys
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#single-sign-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Single sign-on
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Single sign-on">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-redirect-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The redirect URL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#worked-example-an-oidc-provider-google-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked example: an OIDC provider (Google-style)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plain-oauth2-example-github" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plain OAuth2 example: GitHub
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-gets-in-auto-provision-domains-and-pre-provisioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who gets in: auto-provision, domains, and pre-provisioning
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-pages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related pages
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2435,7 +2513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -2463,7 +2541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../running/bench/" class="md-nav__link">
+      <a href="../bench/" class="md-nav__link">
         
   
   
@@ -2768,10 +2846,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#immutable-versions" class="md-nav__link">
+  <a href="#first-run-create-the-admin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Immutable versions
+        First run: create the admin
       
     </span>
   </a>
@@ -2779,10 +2857,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-content-hash-meaning-not-layout" class="md-nav__link">
+  <a href="#signing-in" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The content hash: meaning, not layout
+        Signing in
       
     </span>
   </a>
@@ -2790,22 +2868,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#what-creates-a-new-version" class="md-nav__link">
+  <a href="#the-three-roles" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What creates a new version
+        The three roles
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="What creates a new version">
+    <nav class="md-nav" aria-label="The three roles">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#publishing-rules" class="md-nav__link">
+  <a href="#chat-sessions-are-per-account" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Publishing rules
+        Chat sessions are per-account
       
     </span>
   </a>
@@ -2818,10 +2896,38 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#pinning-and-resolving-a-version" class="md-nav__link">
+  <a href="#managing-users-admin" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Pinning and resolving a version
+        Managing users (admin)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Managing users (admin)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#self-service" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-service
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#personal-api-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Personal API keys
       
     </span>
   </a>
@@ -2829,13 +2935,63 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#composition-is-frozen-in" class="md-nav__link">
+  <a href="#single-sign-on" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Composition is frozen in
+        Single sign-on
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Single sign-on">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-redirect-url" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The redirect URL
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#worked-example-an-oidc-provider-google-style" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Worked example: an OIDC provider (Google-style)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#plain-oauth2-example-github" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Plain OAuth2 example: GitHub
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#who-gets-in-auto-provision-domains-and-pre-provisioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who gets in: auto-provision, domains, and pre-provisioning
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -2870,88 +3026,220 @@
   
 
 
-<h1 id="versioning">Versioning<a class="headerlink" href="#versioning" title="Permanent link">&para;</a></h1>
-<p>When you publish an agent, TheYgent stores it as an <strong>immutable, content-addressed version</strong>. "Content-addressed" means the version's identity is a fingerprint of what the agent <em>means</em> — its nodes, edges, models, tools, and configuration — and nothing else. Rearranging the canvas never creates a new version; changing what the agent does always does. This page explains that fingerprint, what counts as a change, and how versions are pinned and resolved.</p>
-<p>Versions are one of two tiers the editor works with: while you are still building, the graph autosaves as a mutable <strong>draft</strong> — no hash, no history, nothing pinnable. Publishing is the moment a draft's content graduates into everything below. See <a href="../../building/saving-agents/">Drafts &amp; publishing</a>.</p>
-<h2 id="immutable-versions">Immutable versions<a class="headerlink" href="#immutable-versions" title="Permanent link">&para;</a></h2>
-<p>A published agent has a stable id and a series of versions. Each version, once published, never changes — TheYgent will not overwrite it. When you want to change an agent, you publish a new version alongside the old ones; the earlier versions remain exactly as they were, so anything pinned to them keeps behaving identically.</p>
-<p>This immutability is what makes an agent safe to deploy. A <a href="../../running/triggers/">trigger</a>, a <a href="../../running/durable/">durable run</a>, or a parent agent that composes this one can pin a specific version and trust that it will never shift under them.</p>
-<p>While an agent exists, its history is append-only: there is no way to edit or remove an <em>individual</em> version. You can, however, delete the <strong>whole agent</strong> — from the Agents page or <code>DELETE /agents/{id}</code> — which removes it with all of its versions and triggers in one step; past runs and chats survive, keeping the agent id and content hash they ran against. See <a href="../../building/saving-agents/#exporting-and-deleting-agents">Exporting and deleting agents</a>. Immutability is per-version, never a lock on the agent's existence.</p>
-<h2 id="the-content-hash-meaning-not-layout">The content hash: meaning, not layout<a class="headerlink" href="#the-content-hash-meaning-not-layout" title="Permanent link">&para;</a></h2>
-<p>Every version carries a <code>contentHash</code> of the form <code>sha256:…</code>. It is computed by taking the full agent document, filling in every default, sorting the keys, stripping out the layout, and hashing the result. Two things are deliberately left out of the hash:</p>
+<h1 id="users-roles-sign-in">Users, roles &amp; sign-in<a class="headerlink" href="#users-roles-sign-in" title="Permanent link">&para;</a></h1>
+<p>TheYgent's control plane has an <strong>identity layer</strong>: every person gets an account with one of three roles, every call to the API carries a bearer token, and admins can wire up single sign-on through any OIDC or OAuth2 provider. This page covers the first-run wizard, what each role can do, managing accounts, SSO, and the personal API keys that let your own scripts and frontends call TheYgent.</p>
+<p>All examples target the control plane at <code>http://localhost:8080</code>.</p>
+<h2 id="first-run-create-the-admin">First run: create the admin<a class="headerlink" href="#first-run-create-the-admin" title="Permanent link">&para;</a></h2>
+<p>A fresh install has <strong>zero accounts, and the API is closed</strong> — every management endpoint returns <code>401</code> until the first account exists. The only surfaces that answer before setup are the sign-in machinery itself (<code>/auth/status</code>, <code>/auth/setup</code>, <code>/auth/login</code>, and the SSO browser redirects), the health probes (<code>/healthz</code>, <code>/readyz</code>), and the unattended entry points that carry their own credentials (<a href="../triggers/#webhooks">webhooks</a> with their HMAC signature, and <code>POST /agents/{id}/invoke</code> behind its own gate — see <a href="#personal-api-keys">API keys</a> below).</p>
+<p>The first time you open the interface at <code>http://localhost:5174</code>, it shows a <strong>first-run wizard</strong>: pick a username and password, and you land in the app signed in. The account it creates is always an <strong>admin</strong> — someone has to own the install.</p>
+<p>Under the hood the wizard makes one call:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/auth/setup<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;username&quot;: &quot;ada&quot;, &quot;password&quot;: &quot;correct-horse-battery&quot;, &quot;display_name&quot;: &quot;Ada&quot;}&#39;</span>
+</code></pre></div>
+<p>It returns <code>201</code> with <code>{"token": "tys_…", "user": {…}}</code> — you are already signed in. Once <strong>any</strong> account exists, setup is permanently closed: further calls return <code>409 setup_already_complete</code>.</p>
+<h2 id="signing-in">Signing in<a class="headerlink" href="#signing-in" title="Permanent link">&para;</a></h2>
+<p>Local accounts sign in with a username and password:</p>
 <ul>
-<li>the <code>contentHash</code> field itself, and</li>
-<li>the <strong><code>view</code> block</strong> — the canvas layout: node positions, zoom level, whether a node is collapsed, and any custom node icons.</li>
+<li><strong>Usernames are lowercase handles</strong> — letters and digits, with <code>.</code> <code>_</code> <code>-</code> allowed after the first character. Sign-in is case-insensitive (<code>Ada</code> and <code>ada</code> are the same account); the display name is free text.</li>
+<li><strong>Passwords are at least 8 characters</strong> and are stored only as a memory-hard hash — never recoverable, by anyone.</li>
 </ul>
-<pre class="mermaid"><code>graph TB
-  subgraph Doc["Your agent document"]
-    C["nodes · edges · models · tools · configuration&lt;br/&gt;(the meaning)"]
-    V["view: positions · zoom · collapse · icons&lt;br/&gt;(the layout)"]
-  end
-  C --&gt;|"hashed"| H["contentHash · sha256:…&lt;br/&gt;(the version's identity)"]
-  V -.-&gt;|"never hashed"| H</code></pre>
-<p>Because the layout is never hashed, everything you do to <em>arrange</em> the canvas leaves the version untouched:</p>
-<ul>
-<li>Dragging nodes to new positions.</li>
-<li>Zooming or panning.</li>
-<li>Collapsing or expanding a node.</li>
-<li>Changing a node's display icon.</li>
-</ul>
-<p>None of these mint a new version. Neither does reformatting the underlying document — key order and whitespace never matter, and omitting a field that has a default produces the same hash as writing that default out explicitly. Two agents that mean the same thing always have the same hash, and so are the same version.</p>
-<h2 id="what-creates-a-new-version">What creates a new version<a class="headerlink" href="#what-creates-a-new-version" title="Permanent link">&para;</a></h2>
-<p>Any change to what the agent <em>does</em> changes the hash, and you publish that as a new version. That includes:</p>
-<ul>
-<li>Editing a node's configuration — a prompt message, a temperature, a router's selection, a guardrail rule.</li>
-<li>Adding, removing, or rewiring a node or an edge.</li>
-<li>Changing which model an <code>llm</code> node uses, or the generation parameters stored on a model binding.</li>
-<li>Adding, renaming, or removing a port.</li>
-<li>Changing a pinned child agent in a <a href="../../building/nodes/orchestration/">subgraph, loop, or map</a> node.</li>
-</ul>
-<p>If the hash is different, it is a different version.</p>
-<h3 id="publishing-rules">Publishing rules<a class="headerlink" href="#publishing-rules" title="Permanent link">&para;</a></h3>
-<p>When you publish, the outcome depends on whether the content and the version label already exist:</p>
+<p><code>POST /auth/login</code> returns <code>{token, user}</code>. The token is an opaque <code>tys_…</code> bearer that you present on every subsequent call as <code>Authorization: Bearer tys_…</code>; the server stores only its hash. A wrong password and an unknown username get one indistinguishable answer — <code>401 invalid_credentials</code> — while a disabled account is its own honest <code>403 account_disabled</code>.</p>
+<div class="admonition note">
+<p class="admonition-title">Session lifetime</p>
+<p>A sign-in lasts <strong>168 hours (7 days)</strong> by default. Admins change this with the <code>auth.session_ttl_hours</code> platform setting on the Settings page; the new value applies to sessions minted after the change — existing sessions keep the expiry they were issued with. <strong>Sign out</strong> (in the profile menu) revokes the presented session immediately.</p>
+</div>
+<h2 id="the-three-roles">The three roles<a class="headerlink" href="#the-three-roles" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>You publish…</th>
-<th>Result</th>
+<th>What you can do</th>
+<th>viewer</th>
+<th>editor</th>
+<th>admin</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>The <strong>same content</strong> under an <strong>existing</strong> version label</td>
-<td>Idempotent — nothing new is stored; you get the version you already have.</td>
+<td>Chat with models and published agents; run published agents; your own chat sessions; read the agents list; inspect your runs and traces</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
 </tr>
 <tr>
-<td><strong>Different content</strong> under an <strong>existing</strong> version label</td>
-<td>Rejected (<code>version_conflict</code>) — a published version is immutable. Bump the version label.</td>
+<td>Manage your own profile: display name, theme, password, personal API keys</td>
+<td>✓</td>
+<td>✓</td>
+<td>✓</td>
 </tr>
 <tr>
-<td>A <strong>new</strong> version label with any content</td>
-<td>A new version is created.</td>
+<td>Build agents: the editor, drafts, publishing, inline test runs</td>
+<td>—</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Configure the building blocks: connections, MCP servers, RAG sources, triggers, the Bench</td>
+<td>—</td>
+<td>✓</td>
+<td>✓</td>
+</tr>
+<tr>
+<td>Own the install: platform settings, user management, sign-in providers, import/export</td>
+<td>—</td>
+<td>—</td>
+<td>✓</td>
 </tr>
 </tbody>
 </table>
-<p>The idempotent case matters in practice: re-publishing an agent you have not actually changed, or redeploying the same agent in a script, is a harmless no-op rather than an error. The rejection case is the immutability guard — you cannot quietly rewrite version <code>1.0</code> to mean something new; you publish <code>1.1</code> instead. See <a href="../../building/saving-agents/">Drafts &amp; publishing</a> for the publish flow in the editor.</p>
-<h2 id="pinning-and-resolving-a-version">Pinning and resolving a version<a class="headerlink" href="#pinning-and-resolving-a-version" title="Permanent link">&para;</a></h2>
-<p>Anything that runs a published agent can pin which version it means, in one of two ways: by its exact <code>content_hash</code>, or by its version label. If neither is pinned, TheYgent uses the <strong>latest</strong> version.</p>
-<p>The resolution order is always:</p>
+<p>Roles are ordered — an editor can do everything a viewer can, an admin everything an editor can. The floors are enforced <strong>server-side, per endpoint</strong>: a call below the floor returns <code>403 forbidden</code> no matter what any client shows. The interface's navigation is role-aware as a courtesy — <strong>Runs</strong> and the <strong>Configuration</strong> group appear from editor up, and the <strong>Settings</strong> entry is admin-only — but hiding is UX, not the enforcement.</p>
+<h3 id="chat-sessions-are-per-account">Chat sessions are per-account<a class="headerlink" href="#chat-sessions-are-per-account" title="Permanent link">&para;</a></h3>
+<p>Your conversations are yours. A viewer or editor sees only their <strong>own</strong> chat sessions (plus any ownerless sessions recorded before the identity layer existed); another user's session id answers <code>404</code>, exactly like a session that doesn't exist. Admins operate the install and can see and manage every session.</p>
+<h2 id="managing-users-admin">Managing users (admin)<a class="headerlink" href="#managing-users-admin" title="Permanent link">&para;</a></h2>
+<p>Admins manage accounts under <strong>Settings → Users</strong> in the interface, or over the API:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Endpoint</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>List</td>
+<td><code>GET /users</code></td>
+<td>The install's whole account list.</td>
+</tr>
+<tr>
+<td>Create</td>
+<td><code>POST /users</code></td>
+<td><code>username</code>, <code>role</code> (default <code>viewer</code>), optional <code>password</code>, <code>display_name</code>, <code>email</code>. A taken handle is <code>409 username_taken</code>.</td>
+</tr>
+<tr>
+<td>Edit</td>
+<td><code>PATCH /users/{id}</code></td>
+<td>Change <code>display_name</code>, <code>email</code>, <code>role</code>, or <code>disabled</code>.</td>
+</tr>
+<tr>
+<td>Reset password</td>
+<td><code>POST /users/{id}/password</code></td>
+<td>Sets a new password <strong>and revokes every live session</strong> of that account — the reset exists because the old credential can no longer be trusted.</td>
+</tr>
+<tr>
+<td>Delete</td>
+<td><code>DELETE /users/{id}</code></td>
+<td>Returns <code>204</code>. The account's sessions and API keys die with it; runs and chat history keep their ownership breadcrumb — history outlives the account.</td>
+</tr>
+</tbody>
+</table>
+<p>Two behaviors worth calling out:</p>
+<ul>
+<li><strong>Disabling is immediate.</strong> Setting <code>disabled: true</code> revokes every live session on the spot, and API keys owned by a disabled account stop resolving. A later sign-in attempt gets <code>403 account_disabled</code>.</li>
+<li><strong>Creating an account without a password</strong> makes an <strong>SSO-only</strong> account: the user cannot password-login and is expected to arrive through a sign-in provider. Give it an <code>email</code> and the first provider sign-in with a matching verified email claims it — see <a href="#who-gets-in-auto-provision-domains-and-pre-provisioning">pre-provisioning</a>.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">The last admin is protected</p>
+<p>The last active admin can never be demoted, disabled, or deleted — any attempt returns <code>409 last_admin</code>. Promote a second admin first. This is deliberate: a TheYgent install with no admin has no in-band way to recover itself.</p>
+</div>
+<h3 id="self-service">Self-service<a class="headerlink" href="#self-service" title="Permanent link">&para;</a></h3>
+<p>Every user, regardless of role, manages their own account from the <strong>profile menu</strong> at the bottom of the sidebar: display name, interface theme, password, API keys, and sign out. Changing your own password requires your current password and signs out every <em>other</em> session of your account (the one making the change survives). Over the API this is <code>GET/PATCH /auth/me</code>, <code>POST /auth/me/password</code>, and <code>POST /auth/logout</code>.</p>
+<h2 id="personal-api-keys">Personal API keys<a class="headerlink" href="#personal-api-keys" title="Permanent link">&para;</a></h2>
+<p>An API key is a long-lived programmatic bearer — the recommended way for <strong>your own frontends, scripts, and CI jobs</strong> to call the control plane. Any user can mint one from the profile menu (<strong>API keys → Create</strong>), or over the API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/auth/api-keys<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer tys_your-session-token&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;deploy-script&quot;}&#39;</span>
+</code></pre></div>
+<p>The <code>201</code> response contains the raw <code>tyk_…</code> token <strong>exactly once</strong> — it is stored hashed and can never be shown again. Afterwards, only the key's first characters identify it in the list.</p>
+<p>The rules that keep keys safe:</p>
+<ul>
+<li><strong>A key never widens.</strong> Its role is capped at your role when minted (requesting more is a <code>400</code>), <em>and</em> narrowed to your current role at use — demote an account and every key it owns instantly narrows with it, no rotation needed.</li>
+<li><strong>Revocation is immediate.</strong> <code>DELETE /auth/api-keys/{id}</code> (or the interface's Revoke button) kills the key on the spot.</li>
+</ul>
+<p>A key opens <strong>both</strong> the regular API surface and the unattended invoke endpoint. Calling a regular endpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>http://localhost:8080/agents<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer tyk_your-api-key&quot;</span>
+</code></pre></div>
+<p>Calling a published agent's <a href="../triggers/#token-invoke">unattended invoke endpoint</a>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/agents/agent.my-agent/invoke<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer tyk_your-api-key&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;input&quot;: &quot;summarize today&#39;</span><span class="se">\&#39;</span><span class="s1">&#39;s incidents&quot;}&#39;</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">What opens <code>/invoke</code></p>
+<p><code>POST /agents/{id}/invoke</code> accepts an API key <strong>or</strong> the per-deploy <code>THEYGENT_INVOKE_TOKEN</code> (see <a href="../triggers/#token-invoke">Triggers</a>). Interactive <code>tys_…</code> session tokens deliberately do <strong>not</strong> open it — it is the unattended surface. With neither credential configured nor any key presented, the endpoint stays closed (<code>401</code>).</p>
+</div>
+<h2 id="single-sign-on">Single sign-on<a class="headerlink" href="#single-sign-on" title="Permanent link">&para;</a></h2>
+<p>Admins configure sign-in providers under <strong>Settings → Sign-in</strong>. Each enabled provider becomes a button on the login screen; the whole flow is authorization code + PKCE, resolved server-side — the control plane exchanges the code and reads the provider's userinfo endpoint, then bounces the browser back to the interface with a fresh session token.</p>
+<p>A provider comes in two shapes:</p>
+<ul>
+<li><strong>OIDC</strong> — set <code>issuer_url</code> and the control plane discovers the endpoints (<code>/.well-known/openid-configuration</code>).</li>
+<li><strong>Plain OAuth2</strong> — for providers without a discovery document, set the three endpoints explicitly: <code>authorization_endpoint</code>, <code>token_endpoint</code>, <code>userinfo_endpoint</code>.</li>
+</ul>
+<p>Common to both: <code>client_id</code>, a <strong>client secret</strong> (write-only — encrypted at rest, never echoed back; sending a new one rotates it in place), <code>scopes</code> (default <code>openid profile email</code>), and the provisioning policy below.</p>
+<div class="admonition warning">
+<p class="admonition-title">Set a persistent secret key first</p>
+<p>The client secret is encrypted with <code>THEYGENT_SECRET_KEY</code>. If that variable is unset, the control plane falls back to an <strong>ephemeral key that does not survive a restart</strong> — so after the next restart the stored secret can no longer be decrypted and sign-in fails until you re-enter it. Set a stable <a href="../../reference/environment/"><code>THEYGENT_SECRET_KEY</code></a> <em>before</em> configuring a provider (generate one with <code>python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</code>).</p>
+</div>
+<h3 id="the-redirect-url">The redirect URL<a class="headerlink" href="#the-redirect-url" title="Permanent link">&para;</a></h3>
+<p>When you register the app with your provider, the redirect / callback URL to enter is:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>http://localhost:8080/auth/oidc/callback
+</code></pre></div>
+<p>— that is, <code>{control-plane}/auth/oidc/callback</code>. If your control plane is reached at a different address (a reverse proxy, a non-default bind), change it with the <code>auth.oidc_redirect_url</code> platform setting or pin it with the <code>THEYGENT_OIDC_REDIRECT_URL</code> <a href="../../reference/environment/">environment variable</a>.</p>
+<h3 id="worked-example-an-oidc-provider-google-style">Worked example: an OIDC provider (Google-style)<a class="headerlink" href="#worked-example-an-oidc-provider-google-style" title="Permanent link">&para;</a></h3>
 <ol>
-<li>a pinned content hash, then</li>
-<li>a pinned version label, then</li>
-<li>latest.</li>
+<li>In the provider's console, create an OAuth client, register the redirect URL above, and note the client id and secret.</li>
+<li>Create the provider (interface: <strong>Settings → Sign-in → Add provider</strong>; API below):</li>
 </ol>
-<p>"Latest" means the <strong>most recently published</strong> version — not the highest-numbered label. If you publish a fix to an older line <em>after</em> releasing a newer one, that fix is now the latest, because latest tracks publication order, not version numbering. For unattended runs, prefer an explicit pin so "latest" can never surprise you: triggers, in fact, <em>require</em> you to pin exactly one of a version or a content hash.</p>
-<p>A pin that no longer resolves — a mistyped hash or a version that does not exist — fails cleanly with a not-found error, never a crash or a silent fallback to something else.</p>
-<h2 id="composition-is-frozen-in">Composition is frozen in<a class="headerlink" href="#composition-is-frozen-in" title="Permanent link">&para;</a></h2>
-<p>When one agent composes another — through a <a href="../../building/nodes/orchestration/">subgraph, loop, or map</a> node — the child is referenced by id plus exactly one pin (a version or a content hash). That pin lives in the parent's configuration, so it becomes part of the parent's content hash. The consequence: the parent's version fully determines which child version runs. If the child later publishes a new version, the parent does not change and does not pick it up — you would publish a new parent version to adopt the newer child. Composition is immutable, all the way down.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8080/auth/providers<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Authorization: Bearer tys_your-admin-session&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="s1">    &quot;name&quot;: &quot;Google&quot;,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="s1">    &quot;slug&quot;: &quot;google&quot;,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="s1">    &quot;config&quot;: {</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="s1">      &quot;issuer_url&quot;: &quot;https://accounts.google.com&quot;,</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="s1">      &quot;client_id&quot;: &quot;1234567890-abc.apps.googleusercontent.com&quot;,</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="s1">      &quot;scopes&quot;: &quot;openid profile email&quot;,</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="s1">      &quot;auto_provision&quot;: true,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="s1">      &quot;default_role&quot;: &quot;viewer&quot;,</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="s1">      &quot;allowed_domains&quot;: [&quot;you@example.com&quot;]</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="s1">    },</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="s1">    &quot;client_secret&quot;: &quot;GOCSPX-your-client-secret&quot;</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>A <strong>Google</strong> button appears on the login screen. A half-configured provider (neither an <code>issuer_url</code> nor all three explicit endpoints) is rejected up front with <code>400 invalid_provider</code>, and a taken slug is <code>409 provider_exists</code>.</p>
+<h3 id="plain-oauth2-example-github">Plain OAuth2 example: GitHub<a class="headerlink" href="#plain-oauth2-example-github" title="Permanent link">&para;</a></h3>
+<p>GitHub has no OIDC discovery document, so configure the endpoints explicitly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">&quot;authorization_endpoint&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://github.com/login/oauth/authorize&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">&quot;token_endpoint&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://github.com/login/oauth/access_token&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">&quot;userinfo_endpoint&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;https://api.github.com/user&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">  </span><span class="nt">&quot;client_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;your-github-client-id&quot;</span><span class="p">,</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span><span class="nt">&quot;scopes&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;read:user user:email&quot;</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="p">}</span>
+</code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Plain-OAuth2 identity is what the provider returns</p>
+<p>Identity comes from the provider's userinfo response — GitHub sends <code>id</code> and <code>login</code> rather than OIDC's <code>sub</code>. If the account's email is not exposed there, the created account has no email: a domain allowlist will then <strong>deny</strong> the sign-in (that is the policy working as intended), and email-based pre-provisioning cannot match.</p>
+</div>
+<h3 id="who-gets-in-auto-provision-domains-and-pre-provisioning">Who gets in: auto-provision, domains, and pre-provisioning<a class="headerlink" href="#who-gets-in-auto-provision-domains-and-pre-provisioning" title="Permanent link">&para;</a></h3>
+<p>Three per-provider knobs decide what happens on a first sign-in:</p>
+<ul>
+<li><strong><code>auto_provision</code></strong> (default on) — create an account automatically for anyone the provider vouches for, at <strong><code>default_role</code></strong> (<code>viewer</code>, <code>editor</code>, or <code>admin</code>; default <code>viewer</code>). With auto-provision off, unknown users are turned away with an <code>account_not_provisioned</code> message.</li>
+<li><strong><code>allowed_domains</code></strong> — a sign-in allowlist. Each entry is either a <strong>full email</strong> (an exact-address allow) or a <strong>bare domain</strong> (a whole-organization allow). <code>["you@example.com"]</code> admits only that one address; <code>["example.com"]</code> admits everyone at <code>…@example.com</code>. A sign-in whose email is missing or matches nothing is refused (<code>domain_not_allowed</code>); no list means no restriction. For a personal install, list your own email so a domain-wide account can't sign in as you.</li>
+<li><strong>Pre-provisioning by email</strong> — create the account yourself first (<code>POST /users</code> with an <code>email</code> and <strong>no password</strong>), and the first provider sign-in with a matching verified email links to it, keeping the role you chose. Only password-<em>less</em> accounts can be claimed this way — an account with a password is never linkable through a provider merely asserting an email.</li>
+</ul>
+<p>After the first sign-in the provider identity is <strong>linked</strong> to the account: later sign-ins land on the same account even if the email changes, and a disabled account stays refused regardless of what the provider says. If the provider supplies a profile picture, it becomes the account's avatar (shown in the sidebar and profile) and refreshes on each sign-in; local password accounts show their initials instead.</p>
+<p>Deleting a provider removes the sign-in button and its stored secret; accounts created through it survive (they just need another way in — a password set by an admin, or another provider).</p>
 <h2 id="related-pages">Related pages<a class="headerlink" href="#related-pages" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../agents-and-graphs/">Agents and graphs</a> — what the agent document contains</li>
-<li><a href="../../building/saving-agents/">Drafts &amp; publishing</a> — the mutable draft tier and the publish flow</li>
-<li><a href="../runs-and-sessions/">Runs and sessions</a> — the runs that execute against a version</li>
-<li><a href="../../running/triggers/">Triggers</a> — deploying a pinned version behind a schedule, webhook, or token</li>
-<li><a href="../../building/nodes/orchestration/">Orchestration nodes</a> — composing pinned child agents</li>
+<li><a href="../triggers/">Triggers &amp; webhooks</a> — the unattended entry points API keys open.</li>
+<li><a href="../../reference/environment/">Environment variables</a> — <code>THEYGENT_OIDC_REDIRECT_URL</code>, <code>THEYGENT_INVOKE_TOKEN</code>.</li>
+<li><a href="../../import-export/">Import &amp; export</a> — admin-only, like everything that moves the whole install.</li>
+<li><a href="../../concepts/runs-and-sessions/">Runs &amp; sessions</a> — the history that outlives accounts.</li>
 </ul>
 
 
@@ -2990,7 +3278,7 @@
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../runs-and-sessions/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Runs &amp; Sessions">
+          <a href="../triggers/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Triggers &amp; Webhooks">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
@@ -3000,20 +3288,20 @@
                 Previous
               </span>
               <div class="md-ellipsis">
-                Runs & Sessions
+                Triggers & Webhooks
               </div>
             </div>
           </a>
         
         
           
-          <a href="../../building/editor/" class="md-footer__link md-footer__link--next" aria-label="Next: The Editor">
+          <a href="../observability/" class="md-footer__link md-footer__link--next" aria-label="Next: Observability">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                The Editor
+                Observability
               </div>
             </div>
             <div class="md-footer__button md-icon">
