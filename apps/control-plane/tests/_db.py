@@ -7,6 +7,7 @@ only; the production path always goes through the app + Alembic-managed schema.
 
 from __future__ import annotations
 
+import _auth
 import asyncpg
 
 
@@ -31,6 +32,12 @@ async def truncate(url: str) -> None:
         )
     finally:
         await conn.close()
+    # Wiping user_account kills any bearer the suite cached from an earlier sign-in — its
+    # session/user row is gone. Reset the cache here, at the single point that clears the
+    # auth tables, so the next authenticated client re-runs /auth/setup instead of
+    # presenting a dead token. Without this, the second test after any truncate 401s (the
+    # integration suite reuses one Postgres and re-truncates per test).
+    _auth.reset_cache()
 
 
 async def seed_run(

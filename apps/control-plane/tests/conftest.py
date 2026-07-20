@@ -78,8 +78,8 @@ def clean_db(request: pytest.FixtureRequest) -> Iterator[None]:
         yield
         return
     pg_url = request.getfixturevalue("pg_url")
+    # truncate() also clears _auth's cached bearer — it wipes user_account (see _db.truncate).
     asyncio.run(truncate(pg_url))
-    _auth.reset_cache()  # the truncate wiped user_account — the cached bearer died with it
     yield
 
 

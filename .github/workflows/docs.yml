@@ -59,33 +59,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Publish rolling dev docs (push to main)
-        if: github.event_name == 'push'
-        # Deploy the rolling "dev" version, then make sure the site root actually
-        # redirects somewhere — mike only writes the root index.html when a default
-        # version is set. Once a release exists we keep the root pinned to the
-        # stable "latest"; before the first release there is only "dev", so point
-        # the root there instead of leaving it a 404.
-        #
-        # Until the first release exists, alias latest → dev: every page's canonical,
-        # each sitemap, robots.txt, and llms.txt point into /latest/, so the alias must
-        # resolve from the very first publish. The first real release reassigns it.
-        # --alias-type=copy everywhere: mike's default symlink alias only survives the
-        # wrangler upload because wrangler stat()s (rather than lstat()s) entries — an
-        # accident of implementation its own symlink guard shows it does not intend.
-        run: |
-          uv run --project docs/user-docs mike deploy --push -F docs/user-docs/mkdocs.yml dev
-          if uv run --project docs/user-docs mike list -F docs/user-docs/mkdocs.yml | grep -qw latest; then
-            default=latest
-          else
-            uv run --project docs/user-docs mike alias --push --alias-type=copy -F docs/user-docs/mkdocs.yml dev latest
-            default=latest
-          fi
-          uv run --project docs/user-docs mike set-default --push -F docs/user-docs/mkdocs.yml "$default"
-
+      # Pushes to main no longer publish a rolling "dev" version — docs are versioned on
+      # releases only, so a push just re-materializes the domain-root files and re-deploys
+      # the existing published tree (below). The site root stays pinned to the stable
+      # "latest" alias, which the release step sets as the default version.
       - name: Publish versioned docs (release)
         if: github.event_name == 'release'
-        # --alias-type=copy: see the dev-publish step — /latest/ must be real files.
+        # --alias-type=copy: /latest/ must be real files, not a symlink — mike's default
+        # symlink alias only survives the wrangler upload by accident (wrangler stat()s
+        # rather than lstat()s entries), so materialize latest as copied files.
         run: |
           uv run --project docs/user-docs mike deploy --push --update-aliases --alias-type=copy \
             -F docs/user-docs/mkdocs.yml "${{ github.event.release.tag_name }}" latest
@@ -97,15 +79,6 @@ jobs:
         with:
           ref: gh-pages
           path: _site
-
-      - name: Attach built docs to the GitHub release
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          tar czf "theygent-docs-$TAG.tar.gz" -C "_site/$TAG" .
-          gh release upload "$TAG" "theygent-docs-$TAG.tar.gz" --clobber
 
       - name: Strip git metadata from the deploy tree
         run: rm -rf _site/.git
@@ -130,3 +103,24 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
           command: pages deploy _site --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true
+
+      # Last, and best-effort: the docs are already live on Cloudflare by this point, so a
+      # transient upload 5xx (GitHub's upload service occasionally returns 503) can never
+      # block publishing. Retries ride out the hiccup; a persistent failure still fails
+      # the job loudly, but the site is already deployed.
+      - name: Attach built docs to the GitHub release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tar czf "theygent-docs-$TAG.tar.gz" -C "_site/$TAG" .
+          for attempt in 1 2 3 4 5; do
+            if gh release upload "$TAG" "theygent-docs-$TAG.tar.gz" --clobber; then
+              exit 0
+            fi
+            echo "Upload attempt $attempt failed; retrying in $((attempt * 15))s..." >&2
+            sleep $((attempt * 15))
+          done
+          echo "::error::Could not attach docs asset to release $TAG after 5 attempts" >&2
+          exit 1
