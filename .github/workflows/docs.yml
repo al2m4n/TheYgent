@@ -68,10 +68,13 @@ jobs:
         # --alias-type=copy: /latest/ must be real files, not a symlink — mike's default
         # symlink alias only survives the wrangler upload by accident (wrangler stat()s
         # rather than lstat()s entries), so materialize latest as copied files.
+        # --template: the root redirect page is the URL search engines index for the
+        # domain, and mike's stock template declares no favicon — ours does.
         run: |
           uv run --project docs/user-docs mike deploy --push --update-aliases --alias-type=copy \
             -F docs/user-docs/mkdocs.yml "${{ github.event.release.tag_name }}" latest
           uv run --project docs/user-docs mike set-default --push \
+            -T docs/user-docs/root/redirect-index.html \
             -F docs/user-docs/mkdocs.yml latest
 
       - name: Check out the built version tree
@@ -90,9 +93,17 @@ jobs:
       # release cut from an older tag still ships the current root policy files.
       # 404.html at the deployment root makes Cloudflare Pages return real 404s
       # instead of SPA-falling-back to the mike redirect page with a 200.
+      # The icons must exist at the domain root: mike's version directories are the only
+      # other place they live, and a crawler resolving /favicon.ico for the domain gets a
+      # 404 — and a generic globe in results — without them. git show streams blobs
+      # verbatim, so the binary .ico and .png survive the copy.
+      # The list is enumerated, not hardcoded, so a file added to root/ ships without a
+      # matching edit here. redirect-index.html is the exception: it is mike's set-default
+      # template (consumed above), not a file the domain root serves.
       - name: Add domain-root SEO files to the deploy tree
         run: |
-          for f in robots.txt llms.txt 404.html; do
+          git ls-tree --name-only "origin/main:docs/user-docs/root" | while read -r f; do
+            [ "$f" = "redirect-index.html" ] && continue
             git show "origin/main:docs/user-docs/root/$f" > "_site/$f"
           done
 
