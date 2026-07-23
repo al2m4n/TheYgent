@@ -85,8 +85,12 @@ Once a session exists, a **"session \<shortid\>"** link at the top right of New 
 | **Send** / **Stop generating** | always | Sends the message; aborts the in-flight reply while streaming |
 | **Attach image** / **Capture from camera** | vision targets | Stages an image chip above the input — see [vision and images](vision-and-images.md) |
 | **Record from microphone** / **Attach audio file** | transcription targets and voice agents | Stages an audio chip (with an inline player); for pure transcription targets the text input is hidden and audio is required — see [voice](voice.md) |
+| **Attach file** | agents whose input boundary is `video` or `file` | Stages the file and sends it as an artifact reference |
+| JSON editor | agents whose input boundary is `json` | Replaces the prose box; the payload must parse before Send is enabled |
 
 Staged attachments are removable chips above the input; nothing is sent until you press Send.
+
+What the composer offers for an **agent** is read from its input node's `modality`, and a target that needs an attachment keeps **Send** disabled until you stage one — so a vision agent can't be sent a bare sentence its graph has no image for. The same rule drives the canvas [Test panel](../building/editor.md#testing-on-the-canvas) and the Agents page's [Run dialog](../running/bench.md#benching-an-agent); see [what the modality changes](../building/nodes/input-output.md#what-the-modality-changes). Reopening a stored conversation re-reads the boundary from the version it was recorded against, so a voice session comes back with its microphone.
 
 ## Related pages
 

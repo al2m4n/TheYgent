@@ -103,11 +103,11 @@ function toMetricRecord(metrics: BenchMetrics): Record<string, number> {
 }
 
 function attachmentNotes(attachments: Attachment[]): string[] {
-  return attachments.map((a) =>
-    a.kind === "image"
-      ? `image: ${a.name ?? "attached"}`
-      : `audio: ${a.name ?? "attached"}${a.durationSec ? ` (${a.durationSec.toFixed(1)}s)` : ""}`,
-  );
+  return attachments.map((a) => {
+    if (a.kind === "image") return `image: ${a.name ?? "attached"}`;
+    if (a.kind === "file") return `file: ${a.name ?? "attached"}`;
+    return `audio: ${a.name ?? "attached"}${a.durationSec ? ` (${a.durationSec.toFixed(1)}s)` : ""}`;
+  });
 }
 
 export function useInferenceChat(opts: InferenceChatOptions): ChatController {

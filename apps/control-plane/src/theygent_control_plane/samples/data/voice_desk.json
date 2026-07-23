@@ -28,7 +28,7 @@
     },
     "tts": {
       "label": "Text-to-speech model",
-      "description": "A voice model that reads the answer back — pick a local one to keep audio on this machine.",
+      "description": "A voice model that reads the answer back — pick a local one to keep audio on this machine. The engine's own default voice is used; set `voice` on the binding only to a name that engine actually has (voice vocabularies are engine-specific).",
       "keys": [
         "mouth"
       ],
@@ -64,9 +64,7 @@
       "mouth": {
         "binding": "mlx",
         "model": "your-tts-model",
-        "params": {
-          "voice": "alloy"
-        }
+        "params": {}
       }
     },
     "tools": {},

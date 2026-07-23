@@ -59,7 +59,7 @@ If you are building the agent yourself, these two [media nodes](../building/node
 | `transcribe` | `model`, `params` (`language`, `prompt`, …) | Audio in → text out. `model` is a logical id bound to a speech-to-text model. |
 | `speak` | `model`, `params` (`voice`, `format`, `speed`) | Text in → an audio artifact reference out. |
 
-The `speak` node defaults `voice` to `alloy` and `format` to `mp3` when its params omit them; `format` maps to the wire's `response_format`. Because voice names are engine-specific, set `voice` to one your text-to-speech engine actually offers rather than relying on the default.
+The `speak` node defaults `format` to `mp3` when its params omit it; `format` maps to the wire's `response_format`. **`voice` has no default** — omit it and none is sent, so the engine speaks in its own. Because voice names are engine-specific, name one only when your text-to-speech engine actually offers it; see [the speak node](../building/nodes/media.md#speak-text-to-speech) for what an unknown voice looks like when it fails.
 
 ## What models you need
 
@@ -82,7 +82,7 @@ Direct voice **model** chats create no artifacts: a transcript is plain text, an
 
 ## Continuing a voice session
 
-Reopen a voice conversation from **Chats** and the composer keeps talking to the same voice target through the direct data-plane transport, so you can pick up where you left off. See [runs and sessions](../concepts/runs-and-sessions.md) for how sessions store and replay a conversation.
+Reopen a voice conversation from **Chats** and the composer keeps talking to the same voice target, so you can pick up where you left off — a voice **model** through the direct data-plane transport it was recorded on, and a voice **agent** by re-reading the boundary from the version the conversation started on, so the microphone comes back rather than a text box. If that version has since been deleted, the conversation continues on the agent's latest. See [runs and sessions](../concepts/runs-and-sessions.md) for how sessions store and replay a conversation.
 
 ## Related pages
 

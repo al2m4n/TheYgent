@@ -23,6 +23,8 @@ The node's incoming value is *not* passed straight through. When you resume the 
 | `onTimeout` | enum `fail` \| `default` | `fail` | On timeout: `fail` fails the run; `default` binds `default` and continues. |
 | `default` | any | `null` | The value used when `onTimeout` is `default` and the timeout elapses. |
 
+The inspector edits `inputSchema` as an **awaited fields** list — a row per field with a name and a **req** checkbox — rather than hand-written JSON Schema, since in practice this node declares which keys the resuming person must send. A field left untyped contributes its requiredness only, which is exactly the `{"required": ["decision"]}` shape a decision gate wants.
+
 ## Behavior
 
 - **The run pauses as `waiting`.** When the walker reaches a `human` node, the run's status becomes `waiting` and its `awaiting_node` field records the node id. A waiting run is excluded from the crash-recovery sweep, so it can stay paused across restarts.

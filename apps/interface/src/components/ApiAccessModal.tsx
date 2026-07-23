@@ -4,9 +4,11 @@
 // any triggers already deployed for the agent. The dialog only READS — it assembles URLs from the
 // agent id and `controlPlaneUrl()` client-side; there is no backend surface behind it.
 //
-// The example request body is derived from the published IR: a graph that drills `$in.<port>.<field>`
-// on a node fed directly by the input boundary takes an OBJECT input with those fields (the
-// port-first `$in` grammar makes this unambiguous); anything else gets a plain-string example.
+// The example request body is derived from the published IR: a non-textual input boundary fixes
+// the payload by its modality (an artifact reference, or an inline image); otherwise a graph that
+// drills `$in.<port>.<field>` on a node fed directly by the input boundary takes an OBJECT input
+// with those fields (the port-first `$in` grammar makes this unambiguous), and anything else gets
+// a plain-string example.
 
 import { useQuery } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
@@ -14,6 +16,7 @@ import { Check, Copy } from "lucide-react";
 import { useEffect, useState } from "react";
 import { type AgentSummary, type TriggerRecord, api, controlPlaneUrl } from "../lib/api";
 import { isDurableOnly } from "../lib/durable";
+import { boundaryOf } from "../lib/modality";
 import { Modal, Spinner } from "./ui";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -32,6 +35,16 @@ export function deriveExampleInput(ir: IRDocument): string | Record<string, stri
   const nodes = ir.nodes ?? [];
   const inputNode = nodes.find((n) => n.type === "input");
   if (!inputNode) return "Hello!";
+  // A non-textual boundary's payload is fixed by its modality, not by what the graph drills:
+  // binary payloads ride as an artifact reference, an image inline. Documenting `"Hello!"` for a
+  // voice agent prints a curl that cannot work.
+  const modality = boundaryOf(ir).input;
+  if (modality === "audio" || modality === "video" || modality === "file") {
+    return { ref: "art_<id from POST /artifacts>", contentType: MEDIA_TYPE[modality] };
+  }
+  if (modality === "image") {
+    return { image: "data:image/png;base64,<…> or an https URL", text: "<your question>" };
+  }
   const fields = new Set<string>();
   for (const edge of ir.edges ?? []) {
     if (edge.source !== inputNode.id) continue;
@@ -47,6 +60,13 @@ export function deriveExampleInput(ir: IRDocument): string | Record<string, stri
   if (fields.size === 0) return "Hello!";
   return Object.fromEntries([...fields].map((f) => [f, `<${f}>`]));
 }
+
+/** The content type a documented artifact reference carries, per binary boundary. */
+const MEDIA_TYPE: Record<string, string> = {
+  audio: "audio/wav",
+  video: "video/mp4",
+  file: "application/octet-stream",
+};
 
 function runBody(input: string | Record<string, string>): string {
   return JSON.stringify({ input, stream: false });
