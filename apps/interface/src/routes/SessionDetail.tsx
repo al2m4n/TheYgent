@@ -5,7 +5,12 @@
 // session (a transcription/speech model) continues through the direct data-plane transport,
 // same as it was recorded — audio never transits the control plane. A session whose target is
 // unknown (recorded before targets were stored) stays readable, just not continuable.
+//
+// An AGENT session re-derives its I/O boundary from the recorded version's IR, so a voice or
+// vision conversation reopens with the same composer it was started with — continuing one must
+// not silently hand a bare string to a media boundary.
 
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { ChevronLeft } from "lucide-react";
 import { useState } from "react";
@@ -21,6 +26,7 @@ import { Button } from "../components/ui/button";
 import { api } from "../lib/api";
 import { toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
+import { boundaryOf } from "../lib/modality";
 import { notify } from "../lib/notify";
 import type { SessionDetail as SessionDetailWire } from "../lib/runtypes";
 import { useSession } from "../queries";
@@ -36,6 +42,9 @@ function targetOf(metadata: Record<string, unknown> | null): RunChatTarget | nul
       kind: "agent",
       agentId: metadata.agent_id,
       agentName: typeof metadata.agent_name === "string" ? metadata.agent_name : undefined,
+      // Sessions recorded before the version was stored continue on latest — the only honest
+      // fallback, since nothing else records what they ran.
+      version: typeof metadata.agent_version === "string" ? metadata.agent_version : undefined,
     };
   }
   // A transcription/speech session continues through the data-plane transport, not the text
@@ -64,10 +73,53 @@ function SessionChat({ detail }: { detail: SessionDetailWire }) {
     content: m.content,
     runId: m.run_id ?? undefined,
   }));
-  const runChat = useRunChat(audio ? null : targetOf(meta), {
-    sessionId: detail.id,
-    initialMessages,
+  const target = audio ? null : targetOf(meta);
+  const agentId = target?.kind === "agent" ? target.agentId : "";
+  const pinned = target?.kind === "agent" && target.version != null ? String(target.version) : "";
+  // An agent target's composer and run payload are properties of its BOUNDARY, so the version's IR
+  // has to be read back before the conversation can continue. A session recorded before the version
+  // was stored resolves the agent's latest — the only honest fallback, and the same version the
+  // continued run will execute.
+  const agentVersion = useQuery({
+    queryKey: ["agentver", agentId, pinned || "latest"],
+    queryFn: async () => {
+      if (pinned) {
+        try {
+          return await api.getAgentVersion(agentId, pinned);
+        } catch {
+          // The pinned version was deleted since this conversation was recorded. Continuing on
+          // latest is the honest fallback — refusing outright would strand a readable session
+          // that the agent can still answer.
+        }
+      }
+      const latest = (await api.getAgent(agentId)).versions[0]?.version;
+      return latest ? api.getAgentVersion(agentId, latest) : null;
+    },
+    enabled: Boolean(agentId),
   });
+  // Until it resolves we do not KNOW the boundary; offering the text composer would let a voice
+  // session's next turn go out as a bare string. A failed read is the same state, not a text agent.
+  const boundaryUnknown = Boolean(agentId) && (agentVersion.isPending || agentVersion.isError);
+  // Whatever version actually resolved is what the continued run must execute — a pin that fell
+  // back to latest must not keep sending the id that 404'd.
+  const resolvedVersion = agentVersion.data?.version;
+  const runChat = useRunChat(
+    boundaryUnknown || !target
+      ? null
+      : target.kind === "agent" && resolvedVersion
+        ? { ...target, version: resolvedVersion }
+        : target,
+    {
+      sessionId: detail.id,
+      initialMessages,
+      boundary: boundaryOf(agentVersion.data?.ir),
+      disabledNote: boundaryUnknown
+        ? agentVersion.isError
+          ? "This agent's version could not be read, so its input boundary is unknown."
+          : "Reading this agent's input boundary…"
+        : undefined,
+    },
+  );
   const voiceChat = useInferenceChat({
     logicalId: voiceModel,
     modality: (audio && typeof meta?.modality === "string"

@@ -77,6 +77,16 @@ Trying to cross channels is rejected with a toast: *cannot connect a `<role>` ha
 
 Wiring a tool node's violet `use` handle into an `llm`'s `tools` port does more than draw a line: it registers that tool as a callable capability, and the tool node's id becomes the function name the model sees. See [tools](nodes/tools.md).
 
+#### Adding and editing handles
+
+The handles a node starts with come from its type, but they are yours to change — that is how a node takes several inputs, or how a router grows one branch per outcome. Select the node and open **Ports** in the inspector:
+
+- **+ data**, **+ control** and (on an `llm`) **+ tool** add a handle to that side. New handles get a fresh id you then rename.
+- Each row lets you **rename** the handle — every edge already on it is rewired, so wiring survives the rename — **delete** it, mark an in-port **required**, or flag an out-port as the **error branch** (where a step's failures route).
+- The panel opens automatically for a router, and for any node whose handles already differ from its type's defaults — those were authored deliberately, so they are worth seeing.
+
+A node that reads several inputs gives each one its own named in-port and addresses them as `$in.<port>`; see [referencing inputs](input-references.md).
+
 ### Moving, deleting, duplicating
 
 - **Left-drag on empty canvas** draws a box (marquee) select; dragging any selected node moves the whole selection together.
@@ -97,9 +107,12 @@ What the inspector shows depends on your selection.
 The header shows the node's kind badge, its type, and its id, with a per-node **Wizard / Code** toggle:
 
 - **Wizard** is the form. A combined **Label + icon** row comes first (the label placeholder is the node id), then one field per config key. Field labels are humanized from the camelCase keys — `maxToolIterations` becomes "max tool iterations". Required keys get a `*`. Enums render as dropdowns, nullable strings and numbers as inputs, and objects or arrays as a guarded JSON box that shows a parse error inline instead of silently dropping bad input.
-- **Code** is that one node's exact JSON in an editor — the escape hatch for anything the form doesn't surface. This is how you add extra `router` out-ports, pin a `contentHash`, or set advanced HTTP-tool fields. Invalid JSON shows *✗ invalid — not applied* and is never committed. Renaming the node id in the JSON keeps it selected.
+- **Code** is that one node's exact JSON in an editor — the escape hatch for anything the form doesn't surface. This is how you pin a child agent by `contentHash` instead of by version. Invalid JSON shows *✗ invalid — not applied* and is never committed. Renaming the node id in the JSON keeps it selected.
 
-Several node types get purpose-built panels instead of the generic form — the `llm` model and message editors, the tool **Kind** picker, the guardrail **Check** picker, the pinned-body pickers for `subgraph`/`loop`/`map`, and the transcribe/speak parameter forms. Each is documented on that node's [reference page](nodes/index.md).
+Several node types get purpose-built panels instead of the generic form — the `llm` model and message editors, the tool **Kind** picker, the guardrail **Check** picker, the pinned-body pickers for `subgraph`/`loop`/`map`, the transcribe/speak/imagine parameter forms, and the **input fields** builder on the `input` and `human` nodes. Each is documented on that node's [reference page](nodes/index.md).
+
+!!! tip "Everything the shipped samples use is buildable in the Wizard"
+    All twelve [sample agents](../samples/index.md) — every node, every config field, every named port and every edge — can be built from the forms and the canvas alone. The Code view is an escape hatch, not a requirement. The one exception is pinning a child agent by content hash rather than by version, which no sample uses.
 
 !!! warning "Durable-only nodes"
     Adding a `human`, `subgraph`, `loop`, or `map` node shows a banner: these run only on the durable runtime. Publish the agent, then use **Run durably** (which needs the server's durable mode) or deploy it behind a trigger. Neither the in-editor Test panel nor the plain interactive **Run** path can execute them. See [durable runs](../running/durable.md).
@@ -194,9 +207,9 @@ The code view runs the same structural graph checks as the visual canvas, so the
 
 You don't have to publish — or even finish — an agent to try it. The toolbar's **Test** button docks a test console under the canvas that runs the document **exactly as it sits on the canvas**, draft or not:
 
-1. Type an input (a **Text / JSON** selector handles agents that take an object input) and click **Run** — or press ++enter++ in the input field.
+1. Give it an input and click **Run** — or press ++enter++ in the input field. The control **follows your input node's `modality`**: a text box for `text`, a validated JSON editor for `json`, a microphone and file attach for `audio`, image attach plus camera for `image`, a file picker for `video`/`file`. Retype the modality on the input node and the control changes immediately — no publish, no round trip. A **JSON** option stays in the mode dropdown whatever the boundary declares, for the multi-input graphs no single modality describes. See [what the modality changes](nodes/input-output.md#what-the-modality-changes).
 2. **Watch the graph execute.** As each node runs it pulses on the canvas, then keeps its outcome: a green ring for success, red for an error, dimmed for a branch that was skipped. The answer streams into the panel as it is generated, with a model's thinking shown separately.
-3. **Inspect the details.** Once a run exists, the panel grows two tabs — **Output** (the streamed answer) and **Trace**, an embedded run waterfall showing every node's timing; hovering a waterfall row flashes that node on the canvas. The run id next to the tabs links to the full run page.
+3. **Inspect the details.** Once a run exists, the panel grows two tabs — **Output** (the streamed answer) and **Trace**, an embedded run waterfall showing every node's timing; hovering a waterfall row flashes that node on the canvas. The run id next to the tabs links to the full run page. An `audio` or `image` answer plays or shows in the panel rather than printing its artifact reference.
 4. **Stop** aborts a run mid-stream; closing the panel does too.
 
 A few rules, all mirrored from the server:

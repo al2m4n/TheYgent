@@ -266,6 +266,52 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
     expect(msgsOf(next)[1].content).toBe("$in");
   });
 
+  // A published vision agent comes back from the registry with the WIRE spelling `imageUrl` (the
+  // IR dumps by alias). Reading only `image_url` showed the author an empty, apparently-unset url
+  // on every saved vision agent — and typing into it would overwrite whatever was really there.
+  it("vision messages: an image part loads under the wire spelling and edits in place", () => {
+    const ir = sampleGraph();
+    const llm = ir.nodes?.find((n) => n.id === "n_llm");
+    if (llm) {
+      (llm.config as Record<string, unknown>).messages = [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "Criteria: $in.in.criteria" },
+            { type: "image_url", imageUrl: { url: "$in.in.image_url", detail: "high" } },
+          ],
+        },
+      ];
+    }
+    let next: IRDocument | null = null;
+    renderWithClient(
+      <Inspector
+        ir={ir}
+        selection={{ kind: "node", id: "n_llm" }}
+        onChange={(x) => {
+          next = x;
+        }}
+        onSelect={() => {}}
+      />,
+    );
+
+    // The stored url is VISIBLE, not an empty box.
+    const url = screen.getByPlaceholderText("https://… · data:… · $in.image") as HTMLInputElement;
+    expect(url.value).toBe("$in.in.image_url");
+
+    fireEvent.change(url, { target: { value: "https://example.test/a.png" } });
+    const parts = (
+      (next as unknown as IRDocument)?.nodes?.find((n) => n.id === "n_llm")?.config as Record<
+        string,
+        unknown
+      >
+    ).messages as { content: { type: string; imageUrl?: { url: string; detail?: string } }[] }[];
+    const image = parts[0].content.find((p) => p.type === "image_url");
+    expect(image?.imageUrl?.url).toBe("https://example.test/a.png");
+    // `detail` survives an edit that only touched the url.
+    expect(image?.imageUrl?.detail).toBe("high");
+  });
+
   it("node Code view: shows this node's JSON and round-trips with the wizard", () => {
     // A controlled harness (ir fed back via onChange) so a Code edit re-seeds the wizard, as it does
     // in the real editor. CodeMirror is a contenteditable — drive it through the real EditorView so
@@ -340,6 +386,37 @@ describe("Inspector (schema-driven config editing + delete + edges)", () => {
     );
     expect(screen.getByText("Model bindings")).toBeInTheDocument();
     expect(screen.getByText("default")).toBeInTheDocument();
+  });
+
+  // An enum config field's blank option means "use the schema default", which for an input
+  // boundary is `text`. It must CLEAR the key: writing null makes the graph invalid (the backend's
+  // Literal is not nullable) and leaving `key: undefined` still reads as present to the validator.
+  it("clearing an enum config field deletes the key so the schema default applies", () => {
+    const ir = sampleGraph();
+    const input = ir.nodes?.find((n) => n.id === "n_in");
+    if (input) input.config = { modality: "audio" };
+    let next: IRDocument | null = null;
+    renderWithClient(
+      <Inspector
+        ir={ir}
+        selection={{ kind: "node", id: "n_in" }}
+        onChange={(x) => {
+          next = x;
+        }}
+        onSelect={() => {}}
+      />,
+    );
+
+    const select = screen.getByRole("combobox", { name: /modality/i }) as HTMLSelectElement;
+    expect(select.value).toBe("audio");
+    // The blank option names the default it restores, so "unset" is not a mystery.
+    expect(screen.getByRole("option", { name: "— default (text)" })).toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: "" } });
+    const cleared = (next as unknown as IRDocument)?.nodes?.find((n) => n.id === "n_in");
+    const config = cleared?.config as Record<string, unknown>;
+    expect("modality" in config).toBe(false);
+    expect(config.modality).toBeUndefined();
   });
 
   it("shows the graph's derived tool registry (read-only) when nothing is selected", () => {

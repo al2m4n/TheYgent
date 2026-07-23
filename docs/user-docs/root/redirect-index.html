@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!-- mike's root redirect page, passed to `mike set-default --template`. This is the URL
+     search engines index for docs.theygent.ai, so unlike mike's stock template it must
+     declare the favicon: a redirect stub with no <link rel="icon"> gets a generic globe
+     in results. The only value mike substitutes is the href placeholder below — it
+     expands to the default version plus a trailing slash ("latest/"), so never add a
+     second slash after it. The noscript refresh is what a crawler without JS follows;
+     both it and the script must survive any edit here. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>TheYgent Docs</title>
+    <link rel="canonical" href="https://docs.theygent.ai/{{href}}" />
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <noscript>
+      <meta http-equiv="refresh" content="0; url={{href}}" />
+    </noscript>
+    <script>
+      window.location.replace("{{href}}" + window.location.search + window.location.hash);
+    </script>
+  </head>
+  <body>
+    Redirecting to <a href="{{href}}">TheYgent documentation</a>...
+  </body>
+</html>

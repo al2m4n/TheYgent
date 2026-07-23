@@ -1,4 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 36 326 356" role="img" aria-label="TheYgent">
+<!-- The viewBox must stay SQUARE (356 x 356 around the mark): search engines reject a
+     non-square favicon and fall back to a generic globe in results. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 36 356 356" role="img" aria-label="TheYgent">
   <defs>
     <linearGradient id="ty-light" gradientUnits="userSpaceOnUse" x1="191" y1="46" x2="191" y2="380">
       <stop offset="0" stop-color="#05081f"></stop>

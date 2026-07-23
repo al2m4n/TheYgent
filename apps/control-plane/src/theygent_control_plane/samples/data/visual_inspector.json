@@ -1,7 +1,7 @@
 {
   "id": "visual-inspector",
   "title": "Visual inspector",
-  "description": "Vision inside a pipeline, not a chat window: a local vision model inspects an image against your acceptance criteria, emits a structured pass/fail verdict, and a router sends the run down the matching branch — the skeleton of a visual QC line.",
+  "description": "Vision inside a pipeline, not a chat window: a local vision model inspects an image against your acceptance criteria, emits a structured pass/fail verdict, and a router sends the run down the matching branch — the skeleton of a visual QC line. The image URL is fetched by the inference plane itself, so it must be one that host can reach (a data: URI works too).",
   "capabilities": [
     "vision in a pipeline",
     "structured verdict",
@@ -10,8 +10,8 @@
   ],
   "durable": false,
   "input_example": {
-    "image_url": "https://upload.wikimedia.org/wikipedia/commons/f/f9/STOP_sign.jpg",
-    "criteria": "The sign must be red, octagonal, and clearly readable."
+    "image_url": "https://theygent.ai/assets/og-image.png",
+    "criteria": "The image must be a dark banner showing the TheYgent wordmark, legible and not cropped."
   },
   "model_slots": {
     "vision": {

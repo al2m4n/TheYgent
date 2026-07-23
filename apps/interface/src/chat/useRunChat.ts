@@ -7,6 +7,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, streamRun } from "../lib/api";
+import {
+  type Boundary,
+  TEXT_BOUNDARY,
+  attachmentKindFor,
+  buildRunInput,
+  classifyRunOutput,
+  composerCapsFor,
+} from "../lib/modality";
 import type { DeltaFrame, ReasoningFrame, RunFrame } from "../lib/runtypes";
 import { newSessionId, openSession, recordTurn } from "./session";
 import type { Attachment, ChatController, ChatMessage, ComposerCaps } from "./types";
@@ -15,6 +23,18 @@ import { messageId } from "./types";
 export type RunChatTarget =
   | { kind: "model"; model: string }
   | { kind: "agent"; agentId: string; agentName?: string; version?: number | string };
+
+/** Placeholder answer labels for a session-recorded media turn (the bytes never persist). */
+const MEDIA_LABEL = { image: "🖼 image", audio: "🔊 audio" } as const;
+
+/** How a client-recorded turn describes what the user sent, when it wasn't plain text. */
+function userTurnLabel(input: string, text: string): string {
+  if (input === "audio") return "🎤 voice message";
+  if (input === "image") return text || "🖼 image";
+  if (input === "video") return text || "🎬 video";
+  if (input === "file") return text || "📎 file";
+  return text;
+}
 
 export interface RunChatOptions {
   /** Continue an existing session (its id is reused verbatim; no new row is created). */
@@ -27,25 +47,12 @@ export interface RunChatOptions {
   /** Why the composer is unavailable when `target` is null (a page-specific explanation). */
   disabledNote?: string;
   /**
-   * The agent's input boundary is audio: the composer takes a recorded/uploaded clip, which is
-   * uploaded as an artifact and passed as the run input {ref, contentType} instead of text.
+   * The agent's declared I/O boundary, from `lib/modality.ts`. It decides what the composer offers
+   * and what shape the run body's `input` takes; absent means the plain text boundary. Every
+   * surface derives it the same way, so a voice agent behaves identically in New Chat, in the
+   * per-agent Run modal, and when a stored session is reopened.
    */
-  audioInput?: boolean;
-  /**
-   * The agent's output boundary is audio: run.output is an artifact reference to the spoken
-   * answer — download it and attach a playable bubble (the llm's text still streams as content).
-   */
-  audioOutput?: boolean;
-  /**
-   * The agent's input boundary is image: the composer takes an image (upload/camera) plus a
-   * question, sent as {image: <data URI>, text} the vlm llm node drills into an image_url part.
-   */
-  imageInput?: boolean;
-  /**
-   * The agent's output boundary is image: run.output is an artifact reference to a generated image
-   * — download it and attach an image bubble (symmetric to audioOutput).
-   */
-  imageOutput?: boolean;
+  boundary?: Boundary;
 }
 
 export function useRunChat(
@@ -68,12 +75,18 @@ export function useRunChat(
   // stop, never as a failure.
   const stoppedRef = useRef(false);
 
+  // Object URLs minted for downloaded media replies — each pins its blob until revoked, so a long
+  // voice conversation would leak steadily without this.
+  const objectUrlsRef = useRef<string[]>([]);
+
   // Leaving the surface mid-stream must abort the request — the server cancels the run on
   // disconnect; an orphaned reader would keep a local engine generating with no Stop control left.
   useEffect(
     () => () => {
       stoppedRef.current = true;
       abortRef.current?.();
+      for (const url of objectUrlsRef.current) URL.revokeObjectURL(url);
+      objectUrlsRef.current = [];
     },
     [],
   );
@@ -89,7 +102,14 @@ export function useRunChat(
     const meta =
       t.kind === "model"
         ? { kind: "chat" as const, model: t.model }
-        : { kind: "bench.agent" as const, agent_id: t.agentId, agent_name: t.agentName };
+        : {
+            kind: "bench.agent" as const,
+            agent_id: t.agentId,
+            agent_name: t.agentName,
+            // Recorded so reopening the session runs the SAME version — and therefore re-derives
+            // the same I/O boundary — instead of silently continuing on latest.
+            agent_version: t.version != null ? String(t.version) : undefined,
+          };
     const id = await openSession(meta, newSessionId());
     sessionRef.current = id;
     setSessionId(id);
@@ -101,23 +121,22 @@ export function useRunChat(
     async (text: string, attachments: Attachment[]) => {
       const t = targetRef.current;
       if (!t) return;
-      const { audioInput, audioOutput, imageInput, imageOutput } = optsRef.current;
-      // A media agent's turns carry non-text values (audio/image refs, a base64 image) — letting
-      // the SERVER append them would store an ugly blob as the session turn and replay it to the
-      // llm. So a media agent's runs are session-less; we record a READABLE turn (a label + the
-      // answer text) ourselves after the run.
-      const isMedia = Boolean(audioInput || audioOutput || imageInput || imageOutput);
+      const boundary = optsRef.current.boundary ?? TEXT_BOUNDARY;
+      // A non-textual turn carries values the session cannot usefully store — an artifact ref, a
+      // base64 image. Letting the SERVER append them would journal a blob as the turn and replay it
+      // to the llm, so those runs go session-less and we record a READABLE turn (a label + the
+      // answer) ourselves afterwards. A `json` boundary stays on the server path: its turns are
+      // legible text, and it keeps the conversation memory a chat needs.
+      const mediaIn = boundary.input !== "text" && boundary.input !== "json";
+      const isMedia = mediaIn || boundary.mediaOut;
       setError(null);
       setBusy(true);
       stoppedRef.current = false;
-      // A media agent's user turn shows the clip/image it sent (plus any typed question).
-      const audioIn = audioInput ? attachments.find((a) => a.kind === "audio") : undefined;
-      const imageIn = imageInput ? attachments.find((a) => a.kind === "image") : undefined;
       const userMsg: ChatMessage = {
         id: messageId(),
         role: "user",
         content: text,
-        attachments: audioIn ? [audioIn] : imageIn ? [imageIn] : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
       };
       const assistantId = messageId();
       setMessages((cur) => [
@@ -127,19 +146,22 @@ export function useRunChat(
       ]);
 
       try {
+        // The run body's `input` is shaped by the boundary's declared modality — one builder for
+        // every surface (see lib/modality.ts). A payload that can't be built (no clip staged,
+        // malformed JSON) fails HERE, in the tab, instead of reaching the graph as a look-alike
+        // string that only errors mid-run.
+        const built = await buildRunInput(
+          boundary.input,
+          { text, attachments },
+          api.uploadArtifact,
+        );
+        if (!built.ok) {
+          patchMessage(assistantId, { streaming: false, error: built.error });
+          setBusy(false);
+          return;
+        }
         const sess = await ensureSession();
         const path = t.kind === "model" ? "/runs" : `/agents/${encodeURIComponent(t.agentId)}/runs`;
-        // Media-in agents shape the run input from the attachment:
-        //  - audio: upload the clip → pass the artifact reference (the walker fetches+transcribes);
-        //  - image: pass {image: <data URI>, text} — the vlm llm node drills $in.in.image /
-        //    $in.in.text into an image_url content part + the question.
-        let agentInput: unknown = text;
-        if (audioIn?.blob) {
-          const ref = await api.uploadArtifact(audioIn.blob);
-          agentInput = { ref: ref.ref, contentType: ref.contentType };
-        } else if (imageIn) {
-          agentInput = { image: imageIn.url, text };
-        }
         const body =
           t.kind === "model"
             ? {
@@ -151,7 +173,7 @@ export function useRunChat(
                 session_id: sess,
               }
             : {
-                input: agentInput,
+                input: built.value,
                 stream: true,
                 // Media agent: session-less run (see above); text agent: server-appended turns.
                 session_id: isMedia ? null : sess,
@@ -193,51 +215,50 @@ export function useRunChat(
           if (stoppedRef.current) stopped = true;
           else throw e;
         }
-        // Media-output agent: run.output is an artifact reference to the produced media (spoken
-        // answer or generated image). Fetch the bytes and attach a playable/viewable bubble.
+        // What the run actually returned is decided from the PERSISTED output, not from the
+        // declared modality: a graph ends on whichever boundary fired, so a voice agent whose
+        // transcription failed hands back prose on its error branch and must render as prose.
+        // Reading the run row also covers the text case where the answer comes from a
+        // non-streaming node (the output node's value, not the llm's deltas).
         let mediaNote: string | undefined;
-        if ((audioOutput || imageOutput) && !failed && !stopped && runId) {
-          const mediaKind = imageOutput ? "image" : "audio";
+        let mediaKind: "image" | "audio" = "audio";
+        if (!failed && !stopped && runId && (boundary.mediaOut || !content)) {
           try {
             const run = await api.getRun(runId);
-            const ref = run.output ? (JSON.parse(run.output) as { ref?: string }) : null;
-            if (ref?.ref) {
-              const blob = await api.downloadArtifact(ref.ref);
+            const resolved = classifyRunOutput(run.output, boundary);
+            // A FAILED run can still have persisted an answer — show both, exactly as before the
+            // boundary refactor. Recording the failure must not discard what the graph produced.
+            if (run.status === "failed") failed = run.error ?? "run failed";
+            if (resolved.kind === "artifact") {
+              const blob = await api.downloadArtifact(resolved.ref);
+              mediaKind = attachmentKindFor(blob.type, boundary);
+              const url = URL.createObjectURL(blob);
+              objectUrlsRef.current.push(url);
               patchMessage(assistantId, {
-                attachments: [
-                  { kind: mediaKind, url: URL.createObjectURL(blob), blob, name: "reply" },
-                ],
+                attachments: [{ kind: mediaKind, url, blob, name: "reply" }],
               });
-            } else if (run.status === "failed") {
-              failed = run.error ?? "run failed";
-            } else {
-              // Completed but carried no artifact reference — say so instead of a blank bubble.
-              mediaNote = imageOutput
+            } else if (resolved.kind === "empty") {
+              // Completed but carried nothing — say so instead of a blank bubble.
+              if (boundary.mediaOut && !failed) {
+                mediaNote = boundary.output.has("image")
+                  ? "The agent produced no image for this turn."
+                  : "The agent produced no playable audio for this turn.";
+              }
+            } else if (!content) {
+              content = resolved.text;
+              patchMessage(assistantId, { content });
+            }
+          } catch {
+            // The stream already ended; a failed lookup leaves the honest note below.
+            if (boundary.mediaOut && !content) {
+              mediaNote = boundary.output.has("image")
                 ? "The agent produced no image for this turn."
                 : "The agent produced no playable audio for this turn.";
             }
-          } catch {
-            mediaNote = imageOutput
-              ? "The agent produced no image for this turn."
-              : "The agent produced no playable audio for this turn.";
-          }
-        } else if (!failed && !stopped && !content && runId) {
-          // A text graph whose answer comes from a non-streaming node (the output node's value,
-          // not the llm's deltas) ends the stream with no visible content — the run row has it.
-          try {
-            const run = await api.getRun(runId);
-            if (run.output) {
-              content = run.output;
-              patchMessage(assistantId, { content });
-            }
-            if (run.status === "failed") failed = run.error ?? "run failed";
-          } catch {
-            // The stream already ended; a failed lookup just leaves the honest empty-note below.
           }
         }
         // A media-output agent legitimately streams no text (its answer is the produced clip/image),
         // so the empty-content note applies only to text agents.
-        const mediaOutput = Boolean(audioOutput || imageOutput);
         patchMessage(assistantId, {
           streaming: false,
           error:
@@ -245,7 +266,7 @@ export function useRunChat(
             mediaNote ??
             (stopped
               ? "stopped"
-              : !content && !mediaOutput
+              : !content && !boundary.mediaOut
                 ? "The run finished without visible content — a reasoning model may have spent the whole token budget thinking."
                 : undefined),
         });
@@ -255,10 +276,9 @@ export function useRunChat(
         // still shows the exchange.
         // Only a real media result records a turn — a mediaNote means nothing playable/viewable
         // was produced, so the placeholder must not masquerade as a successful exchange.
-        const answerLabel = content || (imageOutput ? "🖼 image" : audioOutput ? "🔊 audio" : "");
+        const answerLabel = content || (boundary.mediaOut ? MEDIA_LABEL[mediaKind] : "");
         if (isMedia && sess && !failed && !stopped && !mediaNote && answerLabel) {
-          const userLabel = audioInput ? "🎤 voice message" : imageInput ? text || "🖼 image" : text;
-          await recordTurn(sess, userLabel, answerLabel);
+          await recordTurn(sess, userTurnLabel(boundary.input, text), answerLabel);
           queryClient.invalidateQueries({ queryKey: ["session", sess] });
         }
         // Refresh what lists/details show.
@@ -282,24 +302,16 @@ export function useRunChat(
     abortRef.current?.();
   }, []);
 
-  const composer = useMemo<ComposerCaps>(() => {
-    // An audio-input agent takes a recorded/uploaded clip in place of text (like the STT bench).
-    if (opts.audioInput) {
-      return { audio: true, audioRequired: true, textDisabled: true };
-    }
-    // A vision agent takes an image (upload/camera) AND a question — text stays enabled.
-    if (opts.imageInput) {
-      return { images: true, placeholder: "Attach an image and ask about it…" };
-    }
-    // An image-generation agent (text prompt in → image out) prompts for a description.
-    if (opts.imageOutput) {
-      return { placeholder: "Describe an image to generate…" };
-    }
-    return {
-      placeholder:
-        opts.placeholder ?? (target?.kind === "agent" ? "Message the agent…" : "Send a message…"),
-    };
-  }, [opts.audioInput, opts.imageInput, opts.imageOutput, opts.placeholder, target?.kind]);
+  // What the composer offers comes from the boundary alone — the one mapping in lib/modality.ts,
+  // so this surface can never drift from the agent Run modal or the canvas Test panel.
+  const composer = useMemo<ComposerCaps>(
+    () =>
+      composerCapsFor(
+        opts.boundary ?? TEXT_BOUNDARY,
+        opts.placeholder ?? (target?.kind === "agent" ? "Message the agent…" : undefined),
+      ),
+    [opts.boundary, opts.placeholder, target?.kind],
+  );
 
   return {
     messages,

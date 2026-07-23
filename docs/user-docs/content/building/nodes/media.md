@@ -66,14 +66,18 @@ Turns text into an audio artifact.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `model` | string | — (required) | A logical model id with the `audio.speech` modality. |
-| `params` | JSON object | `{}` | Voice controls: `voice`, `speed`, `format` (`mp3` \| `wav` \| `opus` \| `flac` \| `aac` \| `pcm`). |
+| `params` | JSON object | `{}` | Voice controls: `voice` (omitted → the engine's own default), `speed`, `format` (`mp3` \| `wav` \| `opus` \| `flac` \| `aac` \| `pcm`). |
 
 ### Behavior
 
-The node calls the inference speech endpoint, stores the returned audio as a new artifact, and emits the reference on `audio`. On the wire, the node's `format` key becomes the request's `response_format`, and it sets the artifact's MIME type. When `params` omits them, the node defaults `voice` to `alloy` and `format` to `mp3`.
+The node calls the inference speech endpoint, stores the returned audio as a new artifact, and emits the reference on `audio`. On the wire, the node's `format` key becomes the request's `response_format`, and it sets the artifact's MIME type. When `params` omits it, `format` defaults to `mp3`.
 
-!!! tip "Set a voice your engine actually has"
-    `alloy` is a common hosted-API voice name and may not exist on a local TTS engine, which uses its own voice names. Set `voice` in `params` to one your engine supports rather than relying on the default.
+!!! tip "Only set a voice your engine actually has"
+    **`voice` has no default** — when you leave it out, no voice is sent and the engine synthesizes with its own. That is deliberate: voice vocabularies are engine-specific, so a name from one engine is not a voice on another. A hosted-API name like `alloy`, for instance, does not exist on a local kokoro build.
+
+    Getting this wrong is worth recognising, because the symptom does not look like a bad parameter: a speech server asked for a voice it does not have accepts the request, answers `200`, and then aborts the response body with no message. The run reports *the speech engine aborted mid-synthesis* and names the voice it asked for. If **every** input fails, it is the voice (or an unloadable model), not the text.
+
+    The trade-off runs the other way for a **hosted** TTS API, where `voice` is a required request field: leave it out and the provider rejects the call with its own error, relayed verbatim. Name a voice that provider offers when you point a `speak` node at one. TheYgent does not guess on your behalf in either direction — a guess is what breaks the local case silently.
 
 ---
 
