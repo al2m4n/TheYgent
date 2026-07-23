@@ -1010,7 +1010,12 @@ async def execute_speak(
     ``format`` param maps to the data plane's ``response_format``."""
     if artifacts is None:
         return ActivityOutcome(ok=False, value="speak: no artifact store configured")
-    voice = str(params.get("voice", "alloy"))
+    # No default voice: voice vocabularies are engine-specific, so naming one the graph did not
+    # ask for picks a voice the engine may not have — and a speech server asked for an unknown
+    # voice aborts its already-200 chunked body with no message. Omitted → the engine's own
+    # default, which is what the inference plane documents for a voice-less request.
+    raw_voice = params.get("voice")
+    voice = str(raw_voice) if raw_voice not in (None, "") else None
     fmt = str(params.get("format", "mp3"))
     gw_params = {k: v for k, v in params.items() if k not in ("voice", "format")}
     gw_params["response_format"] = fmt

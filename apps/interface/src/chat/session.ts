@@ -10,7 +10,9 @@ import { api } from "../lib/api";
 
 export type SessionKind = "chat" | "bench.model" | "bench.agent";
 
-/** Stored opaquely on the session (JSONB); read back to re-open a session with the same target. */
+/** Stored opaquely on the session (JSONB); read back to re-open a session with the same target.
+ *  The server never reads these keys — it persists the object verbatim — but the shape is
+ *  persisted, so adding a key is a deliberate extension, not a free-for-all. */
 export interface SessionMeta {
   kind: SessionKind;
   /** Logical model id (kind chat / bench.model). */
@@ -18,6 +20,11 @@ export interface SessionMeta {
   modality?: string;
   agent_id?: string;
   agent_name?: string;
+  /** The agent version this conversation started on. Continuing a session must run the SAME
+   *  version it was recorded against — its I/O boundary (and therefore the composer and the run
+   *  payload) is a property of that version, not of whatever "latest" has become. Sessions
+   *  recorded before this key existed fall back to latest. */
+  agent_version?: string;
   title?: string;
   [key: string]: unknown;
 }

@@ -62,7 +62,7 @@ All of a model bench's raw traffic — `/v1/chat/completions`, `/v1/embeddings`,
 
 Open the Agents page (the grid of your [published agents](../building/saving-agents.md)) and press **Run** on an agent card — disabled until the agent has at least one published version. The agent bench modal opens. (The **Bench** button appears on *model* rows in [Registries](../models/index.md); an agent card uses **Run**.)
 
-Pick a **Version** (it defaults to and follows the latest until you pin one), then enter an **Input** in **Text** or **JSON** mode — JSON is parsed loudly, so a malformed object tells you rather than failing silently. A multi-input agent takes an object you address with `$in.in.<field>` (see [referencing inputs](../building/input-references.md)).
+Pick a **Version** (it defaults to and follows the latest until you pin one), then give it an **Input**. The control follows the pinned version's input-node `modality` — a text box, a validated JSON editor, a microphone, an image attach, or a file picker — exactly as on the canvas and in chat; see [what the modality changes](../building/nodes/input-output.md#what-the-modality-changes). JSON is parsed loudly, so a malformed object tells you rather than failing silently, and a modality that needs an attachment keeps **Run** disabled until you stage one. A **JSON** option stays in the mode dropdown regardless, for the multi-input agents you address with `$in.in.<field>` (see [referencing inputs](../building/input-references.md)).
 
 ### Run vs Run durably
 
@@ -78,15 +78,15 @@ Agents that contain `human`, `subgraph`, `loop`, or `map` nodes are **durable-on
 
 ### Reading an agent bench result
 
-Once the stream ends, the canonical output is re-read from the persisted run row (a graph that ends at a tool or router emits no tokens — the stored output is what counts). The answer renders like a chat reply: a collapsible thinking block above a markdown bubble. A **Stop** button aborts a streaming run mid-flight, and leaving the modal aborts it too.
+Once the stream ends, the canonical output is re-read from the persisted run row (a graph that ends at a tool or router emits no tokens — the stored output is what counts). The answer renders like a chat reply: a collapsible thinking block above a markdown bubble — or, for an `audio` or `image` output boundary, a player or the image itself rather than the artifact reference behind it. A **Stop** button aborts a streaming run mid-flight, and leaving the modal aborts it too.
 
 Below the answer is the live [run waterfall](observability.md) alongside a read-only mini canvas of the pinned graph — hovering a node row in the waterfall flashes the matching node on the canvas, so you can see where the time went at a glance. If a durable run pauses at a human gate it shows a resume panel right there; the run buttons stay usable and the paused run remains visible under [Runs](index.md).
 
-For agents that aren't durable-only, a **Chat** section lets you hold a real conversation with the agent — turns share session memory and record as a session under Recents, just like [chat](../chat/index.md).
+For agents that aren't durable-only, a **Chat** section lets you hold a real conversation with the agent — turns share session memory and record as a session under Recents, just like [chat](../chat/index.md). It reads the same boundary, so a voice agent gets the microphone composer here too.
 
 ### Applying a preset to an agent
 
-If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. The preset is modality-matched, so a chat preset can't land on a text-to-speech binding, and the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
+If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. Each preset's modality is shown beside its name so you can tell which binding it belongs on; the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
 
 ## Testing an MCP tool
 

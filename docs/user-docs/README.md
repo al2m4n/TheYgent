@@ -24,8 +24,13 @@ mike maintains the version tree (one subdirectory per version + a version picker
 header) on the `gh-pages` branch; the workflow then deploys that whole tree to Cloudflare
 Pages with wrangler.
 
-Domain-root files (`robots.txt`, `llms.txt`) live in `root/` here — mike owns the
-`gh-pages` root, so the workflow copies them into the deploy tree on every publish.
+Domain-root files (`robots.txt`, `llms.txt`, `404.html`, and the favicons) live in `root/`
+here — mike owns the `gh-pages` root, so the workflow copies everything in that directory
+into the deploy tree on every publish. Two entries there are not plain copies:
+`redirect-index.html` is mike's `set-default` template (it renders the root redirect page,
+and is skipped by the copy loop), and the favicons must stay at the domain root because a
+crawler resolving `/favicon.ico` never looks inside mike's version directories — without
+them the docs get a generic globe in search results instead of the logo.
 `site_url` in `mkdocs.yml` deliberately ends in `/latest/`: pages are served under mike's
 version prefixes, and anchoring the URL at the stable alias makes every version's
 canonical link and sitemap point at `/latest/`, so search rankings and AI citations never

@@ -4,20 +4,35 @@
 // canvas (each node pulses while its step runs, then wears its outcome), the output streams into
 // the panel, and the Trace tab holds the same waterfall every other run surface uses — hovering a
 // row flashes the node it came from.
+//
+// The input control follows the LIVE canvas document: retyping the input node's modality swaps the
+// control immediately, with no publish and no API call, because the boundary is derived from the
+// `ir` prop through the same `lib/modality.ts` seam the chat and bench surfaces use. A draft graph
+// can upload artifacts too — POST /artifacts is agent-agnostic — so an audio boundary is testable
+// before the agent exists.
 
 import { useQueryClient } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { ExternalLink, Play, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Markdown } from "../chat/Markdown";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ThinkingBlock } from "../chat/ThinkingBlock";
 import { api, streamGet, streamRun } from "../lib/api";
+import { toneOf } from "../lib/categories";
 import { isDurableOnly } from "../lib/durable";
 import { shortId } from "../lib/format";
+import { boundaryOf, buildRunInput, modalityLabel } from "../lib/modality";
 import type { DeltaFrame, ReasoningFrame, RunFrame, Span } from "../lib/runtypes";
 import { keys } from "../queries";
-import { parseTyped } from "./ResumePanel";
-import { Button, ErrorBanner, Input, Select } from "./ui";
+import { MediaResult } from "./MediaResult";
+import {
+  RunInputField,
+  type RunInputState,
+  effectiveDraft,
+  effectiveModality,
+  emptyRunInput,
+  runInputError,
+} from "./RunInputField";
+import { Button, ErrorBanner } from "./ui";
 import { Bubble, BubbleContent } from "./ui/bubble";
 import { RunWaterfall } from "./waterfall";
 
@@ -59,16 +74,21 @@ export function TestPanel({
   onHoverNode,
 }: Props) {
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
-  const [input, setInput] = useState("");
-  // A graph that drills `$in.in.<field>` takes an OBJECT input: JSON mode parses client-side
-  // (loudly) so an unparsable payload never leaves the tab as a look-alike string.
-  const [inputMode, setInputMode] = useState<"text" | "json">("text");
   const [tab, setTab] = useState<"output" | "trace">("output");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const queryClient = useQueryClient();
 
-  const typedInput = parseTyped(inputMode, input);
+  // Derived from the canvas document itself, so it re-derives as the author edits the input node —
+  // no fetch, no publish. `RunInputField` keeps a raw-JSON escape hatch for the multi-input graphs
+  // whose payload no single modality describes.
+  // Memoized on the document identity: `boundaryOf` allocates a fresh Set, and this value is a
+  // dependency of the artifact renderer below — recomputing it on every render (a resize drag
+  // fires one per pointer move) would churn everything keyed on it.
+  const boundary = useMemo(() => boundaryOf(ir), [ir]);
+  const boundaryBadge = modalityLabel(boundary);
+  const [runInput, setRunInput] = useState<RunInputState>(() => emptyRunInput(boundary));
+  const inputError = runInputError(boundary, runInput);
   const durableOnly = isDurableOnly(ir);
 
   // Read-latest ref so a run always executes the CURRENT canvas document, not the one from the
@@ -137,7 +157,7 @@ export function TestPanel({
   }
 
   async function run() {
-    if (!typedInput.ok || running || errorCount > 0 || durableOnly || codeInvalid) return;
+    if (inputError || running || errorCount > 0 || durableOnly || codeInvalid) return;
     setRunning(true);
     setResult(null);
     onRunState({});
@@ -147,9 +167,21 @@ export function TestPanel({
     // Hoisted so a mid-stream transport failure still keeps the run link + Trace tab usable.
     let runId = "";
     try {
+      // Same builder as every other run surface: a staged clip uploads and rides as
+      // {ref, contentType}, an image goes inline as {image, text}, a JSON boundary sends the
+      // parsed object — so a graph tested here behaves identically once it is published.
+      const built = await buildRunInput(
+        effectiveModality(boundary, runInput),
+        effectiveDraft(boundary, runInput),
+        api.uploadArtifact,
+      );
+      if (!built.ok) {
+        setResult({ runId: "", error: built.error });
+        return;
+      }
       const handle = await streamRun("/graphs/runs", {
         ir: irRef.current,
-        input: typedInput.value,
+        input: built.value,
         stream: true,
       });
       abortRef.current = handle.abort;
@@ -226,8 +258,14 @@ export function TestPanel({
     } catch (e) {
       // A pre-stream 400 (invalid_ir & friends) arrives before any run exists; a mid-stream
       // transport failure arrives after — keep whatever runId exists so the run link/Trace
-      // tab still point at the honest server-side record.
-      setResult({ runId, error: e instanceof Error ? e.message : String(e) });
+      // tab still point at the honest server-side record, and keep whatever the model already
+      // streamed (it says how far the graph got).
+      setResult((prev) => ({
+        runId,
+        output: prev?.output,
+        reasoning: prev?.reasoning,
+        error: e instanceof Error ? e.message : String(e),
+      }));
     } finally {
       if (runId) queryClient.invalidateQueries({ queryKey: keys.trace(runId) });
       abortRef.current = null;
@@ -236,14 +274,17 @@ export function TestPanel({
     }
   }
 
-  const runDisabled = running || !typedInput.ok || errorCount > 0 || durableOnly || codeInvalid;
+  const runDisabled =
+    running || Boolean(inputError) || errorCount > 0 || durableOnly || codeInvalid;
   const runTitle = durableOnly
     ? "This graph contains durable-only nodes (human/subgraph/loop/map) — publish it and use Run durably"
     : codeInvalid
       ? "Fix the invalid JSON in the code view before running"
       : errorCount > 0
         ? `Fix ${errorCount} validation error${errorCount === 1 ? "" : "s"} before running`
-        : "Run the current canvas graph (input → output), streaming (Enter)";
+        : inputError
+          ? inputError
+          : "Run the current canvas graph (input → output), streaming (Enter)";
 
   return (
     <section
@@ -257,28 +298,23 @@ export function TestPanel({
         <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
           <Play size={13} aria-hidden /> Test
         </span>
-        <Select
-          value={inputMode}
-          onChange={(e) => setInputMode(e.target.value as "text" | "json")}
-          className="w-20"
-          aria-label="Input mode"
-        >
-          <option value="text">Text</option>
-          <option value="json">JSON</option>
-        </Select>
-        <Input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder={inputMode === "json" ? '{"field": "value"}' : "Test input…"}
-          className="w-64 flex-1"
-          aria-label="Test input"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing && !runDisabled) {
-              e.preventDefault();
-              void run();
-            }
-          }}
-        />
+        {boundaryBadge && (
+          <span className={`rounded px-1.5 py-0.5 text-[11px] ${toneOf("violet").badge}`}>
+            {boundaryBadge}
+          </span>
+        )}
+        <div className="min-w-64 flex-1">
+          <RunInputField
+            boundary={boundary}
+            state={runInput}
+            onChange={setRunInput}
+            onSubmit={() => {
+              if (!runDisabled) void run();
+            }}
+            disabled={running}
+            compact
+          />
+        </div>
         <Button
           variant="primary"
           onClick={() => void run()}
@@ -332,7 +368,7 @@ export function TestPanel({
 
       {/* body */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {!typedInput.ok && <p className="mb-2 text-xs text-amber-400">{typedInput.error}</p>}
+        {inputError && <p className="mb-2 text-xs text-amber-400">{inputError}</p>}
         {durableOnly && (
           <p className="text-sm text-slate-500">
             This graph contains durable-only nodes (human / subgraph / loop / map) — publish it and
@@ -364,10 +400,13 @@ export function TestPanel({
             {result?.output && (
               <Bubble variant="secondary" className="max-w-full">
                 <BubbleContent>
-                  <Markdown text={result.output} />
-                  {result.streaming && (
-                    <span className="animate-pulse text-muted-foreground">▍</span>
-                  )}
+                  {/* An audio/image boundary returns an artifact reference — play or show it
+                      rather than printing the reference JSON as prose. */}
+                  <MediaResult
+                    output={result.output}
+                    boundary={boundary}
+                    streaming={result.streaming}
+                  />
                 </BubbleContent>
               </Bubble>
             )}

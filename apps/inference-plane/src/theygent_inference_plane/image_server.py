@@ -72,6 +72,38 @@ def _parse_size(size: str | None) -> tuple[int, int]:
         return 512, 512
 
 
+#: Lines the image CLIs print while booting the GPU backend. They dominate the output by volume,
+#: so a blind tail of stderr reports a successful Metal init as the reason a render failed.
+_NOISE_PREFIXES = (
+    "ggml_",
+    "ggml-",
+    "load_",
+    "loading ",
+    "system_info",
+    "Option:",
+    "    ",
+)
+
+
+def _failure_reason(output: bytes) -> str:
+    """The actionable part of a failed render's output.
+
+    A diffusion CLI writes hundreds of device-capability lines before the one that says what went
+    wrong (``[ERROR] … get sd version from file failed``). Prefer the explicit error lines; fall
+    back to the last non-boilerplate lines, and only then to a raw tail — so the caller is never
+    handed a GPU feature list as an explanation.
+    """
+    text = output.decode("utf-8", "replace").strip()
+    if not text:
+        return "no output"
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    flagged = [ln for ln in lines if "error" in ln.lower() or "fail" in ln.lower()]
+    if flagged:
+        return " | ".join(flagged[-3:])[:600]
+    meaningful = [ln for ln in lines if not ln.startswith(_NOISE_PREFIXES)]
+    return " | ".join((meaningful or lines)[-3:])[:600]
+
+
 def _build_command(
     engine: str, binary: str, model: str, prompt: str, out: str, req: dict
 ) -> list[str]:
@@ -197,8 +229,10 @@ class _Handler(BaseHTTPRequestHandler):
                         f"{self.engine} timed out after {_GENERATION_TIMEOUT_SEC}s"
                     ) from exc
             if proc.returncode != 0 or not os.path.exists(out):
-                tail = (proc.stderr or proc.stdout).decode("utf-8", "replace")[-800:]
-                raise _GenerationError(f"{self.engine} failed to generate: {tail}")
+                combined = (proc.stderr or b"") + b"\n" + (proc.stdout or b"")
+                raise _GenerationError(
+                    f"{self.engine} failed to generate: {_failure_reason(combined)}"
+                )
             with open(out, "rb") as f:
                 return base64.b64encode(f.read()).decode()
 

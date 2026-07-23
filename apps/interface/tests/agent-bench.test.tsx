@@ -33,6 +33,9 @@ vi.mock("../src/lib/api", () => ({
     getAgentVersion: vi.fn(async () => ({ ir: { id: "agent.docker", models: {} } })),
     resumeRun: vi.fn(async () => ({ runId: "run_dur_1", status: "resuming" })),
     listPresets: vi.fn(async () => []),
+    uploadArtifact: vi.fn(async () => ({ ref: "art_bench1", contentType: "audio/webm", bytes: 3 })),
+    downloadArtifact: vi.fn(async () => new Blob(["x"], { type: "image/png" })),
+    createSession: vi.fn(async (b: { id: string }) => ({ id: b.id })),
   },
 }));
 
@@ -190,5 +193,127 @@ describe("AgentBench version pin", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(api.resumeRun).toHaveBeenCalledWith("run_dur_1", "approved!"));
+  });
+});
+
+// The bench must respect the pinned version's I/O boundary in BOTH halves — the single-shot Run
+// and the in-modal chat — using the same derivation New Chat and the canvas Test panel use.
+describe("AgentBench input boundary", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  /** Point the version fetch at an IR whose boundaries declare the given modalities. */
+  function pinBoundary(input?: string, output?: string) {
+    (api.getAgentVersion as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ir: {
+        id: "agent.docker",
+        models: {},
+        nodes: [
+          { id: "n_in", type: "input", kind: "boundary", config: input ? { modality: input } : {} },
+          {
+            id: "n_out",
+            type: "output",
+            kind: "boundary",
+            config: output ? { modality: output } : {},
+          },
+        ],
+        edges: [],
+      },
+    });
+  }
+
+  it("offers the mic and refuses a run until a clip is staged, then sends the artifact ref", async () => {
+    pinBoundary("audio", "audio");
+    withQuery(<AgentBench agent={agent} />);
+
+    // Two mics render for a voice agent: the single-shot Run control and the chat composer below
+    // it. The first is the Run control (the chat fold is rendered after it).
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Record from microphone" }).length,
+      ).toBeGreaterThan(0),
+    );
+    expect((screen.getByRole("button", { name: "Run" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/this graph's input boundary is audio/i)).toBeTruthy();
+
+    const file = new File(["abc"], "note.webm", { type: "audio/webm" });
+    // The bench renders BOTH halves for a voice agent — the single-shot Run control (first in DOM
+    // order) and the chat composer below it. This exercises the Run half.
+    await userEvent.upload(screen.getAllByLabelText<HTMLInputElement>("Audio file")[0], file);
+    await runButtonReady();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(api.uploadArtifact).toHaveBeenCalledWith(file));
+    expect(streamRun).toHaveBeenCalledWith("/agents/agent.docker/runs", {
+      input: { ref: "art_bench1", contentType: "audio/webm" },
+      stream: true,
+      version: "0.1.2",
+    });
+  });
+
+  it("opens in JSON for a json boundary without touching the mode toggle", async () => {
+    pinBoundary("json");
+    withQuery(<AgentBench agent={agent} />);
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("combobox", { name: "Input mode" }) as HTMLSelectElement).value,
+      ).toBe("json"),
+    );
+    // Both halves show a JSON box for a json boundary; the first is the single-shot Run control.
+    const box = screen.getAllByPlaceholderText('{"field": "value"}')[0];
+    fireEvent.change(box, { target: { value: '{"code":"DE"}' } });
+    await runButtonReady();
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() =>
+      expect(streamRun).toHaveBeenCalledWith("/agents/agent.docker/runs", {
+        input: { code: "DE" },
+        stream: true,
+        version: "0.1.2",
+      }),
+    );
+  });
+
+  it("shows a generated image instead of the artifact-reference JSON", async () => {
+    pinBoundary("text", "image");
+    // An image agent streams no text at all: its answer is the artifact the run row carries.
+    (streamRun as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      events: (async function* () {
+        yield { event: "run", data: JSON.stringify({ runId: "run_x", status: "streaming" }) };
+        yield { event: "run", data: JSON.stringify({ runId: "run_x", status: "completed" }) };
+        yield { event: "message", data: "[DONE]" };
+      })(),
+      abort: vi.fn(),
+    });
+    (api.getRun as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: "run_x",
+      status: "completed",
+      output: JSON.stringify({ ref: "art_pic", contentType: "image/png" }),
+      error: null,
+    });
+    const { container } = withQuery(<AgentBench agent={agent} />);
+    await runButtonReady();
+    fireEvent.change(screen.getByPlaceholderText("Run input…"), { target: { value: "a cat" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(api.downloadArtifact).toHaveBeenCalledWith("art_pic"));
+    await waitFor(() => expect(container.querySelector("img")).not.toBeNull());
+    // The raw reference is never shown as prose.
+    expect(screen.queryByText(/art_pic/)).toBeNull();
+  });
+
+  it("gives the in-modal chat the same boundary — a voice agent gets the mic there too", async () => {
+    pinBoundary("audio", "audio");
+    withQuery(<AgentBench agent={agent} />);
+    // Two mics: the single-shot Run control and the chat composer beneath it.
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Record from microphone" })).toHaveLength(2),
+    );
+  });
+
+  it("shows the plain text box for an agent whose input node declares no modality", async () => {
+    pinBoundary();
+    withQuery(<AgentBench agent={agent} />);
+    await runButtonReady();
+    expect(screen.getByPlaceholderText("Run input…")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Record from microphone" })).toBeNull();
   });
 });

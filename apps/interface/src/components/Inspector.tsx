@@ -110,8 +110,15 @@ function NodePanel({
   const required = new Set<string>((spec?.configSchema?.required as string[]) ?? []);
   const config = (node.config ?? {}) as Record<string, unknown>;
 
+  // `undefined` means "clear this field", which for a schema-defaulted key (input/output
+  // `modality`, …) restores the default the backend already applies to an absent key. It must
+  // DELETE the key: leaving `key: undefined` in the object still reads as present to ajv, and
+  // writing `null` makes the graph invalid — a non-nullable Literal rejects it.
   const setConfigKey = (key: string, value: unknown) => {
-    onChange(updateNodeConfig(ir, node.id, { ...config, [key]: value }));
+    const next = { ...config };
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+    onChange(updateNodeConfig(ir, node.id, next));
   };
 
   // Commit a whole-node JSON edit (the Code view): replace this node in place, and follow an id
@@ -231,7 +238,9 @@ function NodePanel({
                 );
               }
               // The media model nodes (transcribe/speak/imagine) get the same picker (narrowed to
-              // their modality) and a real params form in place of the raw JSON box.
+              // their modality) and a real params form in place of the raw JSON box. Their knobs
+              // (voice, format, size, …) live on the NODE's `params` below — which the walker
+              // merges over the binding's, so the node form is the one that decides.
               if (MEDIA_MODEL_TYPES[node.type] && key === "model") {
                 return (
                   <ModelPicker
@@ -369,6 +378,32 @@ function NodePanel({
                     key={`${node.id}:${key}`}
                     value={config.expr as string | undefined}
                     onChange={(v) => setConfigKey("expr", v)}
+                  />
+                );
+              }
+              // A payload schema is a FIELD LIST, not a JSON document to hand-write: these are the
+              // fields a caller sends and a graph then drills with `$in.in.<name>`. The generic
+              // object fallback would put a JSON Schema behind a raw textarea — the one place a
+              // no-code builder most obviously stops being no-code.
+              if (node.type === "input" && key === "schema") {
+                return (
+                  <SchemaFieldsField
+                    key={`${node.id}:${key}`}
+                    label="input fields"
+                    value={config.schema}
+                    onChange={(v) => setConfigKey("schema", v)}
+                    hint="Declarative: it documents the payload and maps a trigger's source onto it. Nodes read a field with $in.in.<name>."
+                  />
+                );
+              }
+              if (node.type === "human" && key === "inputSchema") {
+                return (
+                  <SchemaFieldsField
+                    key={`${node.id}:${key}`}
+                    label="awaited fields"
+                    value={config.inputSchema}
+                    onChange={(v) => setConfigKey("inputSchema", v)}
+                    hint="What the person resuming this run must send, e.g. a `decision` field a router then branches on."
                   />
                 );
               }
@@ -853,6 +888,26 @@ function PortRow({
  * an out-port name is a router branch (`select` resolves to one) and each named handle is an edge
  * endpoint; an in-port name is a `$in.<port>` key (multi-input, so one node composes several
  * upstreams). This is what makes a router or a multi-input node buildable without the Code view. */
+/** Node types that can CALL tools — derived from the registry (a type whose default ports declare a
+ *  `tool` in-port), never hardcoded, so a new caller type added in packages/ir gets the affordance
+ *  after a regenerate. Today that is `llm`; the button exists so a deleted tools handle can be put
+ *  back without dropping into the code view. */
+const TOOL_CALLERS = new Set(
+  Object.keys(NODE_TYPES).filter((type) =>
+    (NODE_TYPES[type]?.ports?.in ?? []).some((p) => p.role === "tool"),
+  ),
+);
+
+/** Do this node's ports differ from what its type declares by default? A deviation means an author
+ *  added, renamed or retyped a handle — the ports panel is then the panel they want open. */
+function hasCustomPorts(node: IRNode): boolean {
+  const spec = NODE_TYPES[node.type]?.ports;
+  if (!spec) return false;
+  const shape = (list: readonly { id: string; type?: string; role?: string }[] | undefined) =>
+    (list ?? []).map((p) => `${p.id}:${p.type ?? "any"}:${p.role ?? "data"}`).join(",");
+  return shape(node.ports?.in) !== shape(spec.in) || shape(node.ports?.out) !== shape(spec.out);
+}
+
 function PortsSection({
   ir,
   node,
@@ -862,11 +917,13 @@ function PortsSection({
   node: IRNode;
   onChange: (ir: IRDocument) => void;
 }) {
-  // Expanded by default for a router (its branches ARE its out-ports — the reason to open this), else
-  // collapsed to stay out of the way on nodes whose ports rarely change.
-  const [open, setOpen] = useState(node.type === "router");
   const ins = (node.ports?.in ?? []) as IRPort[];
   const outs = (node.ports?.out ?? []) as IRPort[];
+  // Expanded by default for a router (its branches ARE its out-ports — the reason to open this) and
+  // for any node whose ports already DIFFER from its type's registry default: those handles were
+  // deliberately authored (a multi-input llm, a wired error branch), so the one place to see and
+  // edit them should not be hidden behind a chevron. Otherwise collapsed, to stay out of the way.
+  const [open, setOpen] = useState(node.type === "router" || hasCustomPorts(node));
 
   const renderList = (side: PortSide, ports: IRPort[]) => {
     const ids = ports.map((p) => p.id);
@@ -892,6 +949,24 @@ function PortsSection({
             >
               <Plus size={11} aria-hidden /> control
             </button>
+            {/* A tool handle is what makes a tool node a CAPABILITY the model may call, rather than
+                a step in the flow. Only an in-port can receive one (the llm is the caller), and
+                only on a node type that can call tools — offering it elsewhere would invite an
+                edge the canvas will refuse to connect. */}
+            {side === "in" && TOOL_CALLERS.has(node.type) && (
+              <button
+                type="button"
+                onClick={() =>
+                  onChange(
+                    addPort(ir, node.id, side, { id: "tools", role: "tool", required: false }),
+                  )
+                }
+                title="A tool handle — wire tool nodes here to offer them to the model as callable capabilities"
+                className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-blue-600 hover:bg-[var(--c-hover)] dark:text-blue-400"
+              >
+                <Plus size={11} aria-hidden /> tool
+              </button>
+            )}
           </div>
         </div>
         {ports.length === 0 ? (
@@ -1086,17 +1161,28 @@ function ConfigField({
   const label = required ? `${pretty} *` : pretty;
 
   // A Literal field (modality, policy, source, …) is a JSON-Schema `enum` — render a dropdown so the
-  // editor offers the exact valid values.
+  // editor offers the exact valid values. The blank option CLEARS the key (restoring the schema
+  // default the backend applies to an absent field, e.g. an input boundary's `text`) rather than
+  // writing null, which a non-nullable Literal rejects. It stays offered after a pick, so a field
+  // can be returned to its default without dropping into the code view.
   const enumValues = Array.isArray(schema?.enum) ? (schema.enum as unknown[]) : null;
   if (enumValues) {
+    const fallback = schema?.default;
+    // A REQUIRED field has no default to fall back to — clearing it would only make the graph
+    // invalid, so the blank option is offered only while it is already unset.
+    const clearable = !required || value === undefined || value === null;
     return (
       <Field label={label}>
         <Select
           className="!text-xs"
           value={value === null || value === undefined ? "" : String(value)}
-          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+          onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
         >
-          {(value === undefined || value === null) && <option value="">—</option>}
+          {clearable && (
+            <option value="">
+              {fallback === undefined ? "—" : `— default (${String(fallback)})`}
+            </option>
+          )}
           {enumValues.map((v) => (
             <option key={String(v)} value={String(v)}>
               {String(v)}
@@ -1137,6 +1223,210 @@ function ConfigField({
   }
   // arrays / objects / refs (e.g. llm `messages`) — a guarded JSON editor.
   return <JsonField label={label} value={value} onChange={onChange} />;
+}
+
+/** The JSON-Schema types a payload field can declare. `""` = untyped (the field is named and its
+ *  requiredness matters, but its shape is left open — the `{"required": [...]}` shape a human gate
+ *  usually wants). */
+const SCHEMA_FIELD_TYPES = ["", "string", "number", "integer", "boolean", "object", "array"];
+
+interface SchemaFieldRow {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+/** Read an object-shaped JSON Schema as a flat field list, or null when it says something this form
+ *  cannot express (an array payload, a nested object, `oneOf`, …) — those keep the JSON editor. */
+export function schemaToRows(value: unknown): SchemaFieldRow[] | null {
+  if (value === null || value === undefined) return [];
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const schema = value as Record<string, unknown>;
+  const known = new Set(["type", "properties", "required", "title", "description"]);
+  if (Object.keys(schema).some((k) => !known.has(k))) return null;
+  if (schema.type !== undefined && schema.type !== "object") return null;
+  const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  if (typeof properties !== "object" || Array.isArray(properties)) return null;
+  const required = Array.isArray(schema.required) ? (schema.required as unknown[]) : [];
+  if (required.some((r) => typeof r !== "string")) return null;
+
+  const rows: SchemaFieldRow[] = [];
+  for (const [name, raw] of Object.entries(properties)) {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const field = raw as Record<string, unknown>;
+    // Only the two knobs this form shows; anything richer (enum, nested properties, format) must
+    // keep the JSON editor rather than be silently flattened away.
+    if (Object.keys(field).some((k) => k !== "type" && k !== "description")) return null;
+    if (field.type !== undefined && typeof field.type !== "string") return null;
+    rows.push({
+      name,
+      type: (field.type as string) ?? "",
+      required: required.includes(name),
+      description: (field.description as string) ?? "",
+    });
+  }
+  // A name that is required but undeclared (the `{"required": ["decision"]}` shape) is still a
+  // field the caller must send — show it, untyped.
+  for (const name of required as string[]) {
+    if (!rows.some((r) => r.name === name)) {
+      rows.push({ name, type: "", required: true, description: "" });
+    }
+  }
+  return rows;
+}
+
+/** Rebuild the schema from the rows. `hadType` preserves whether the original declared `type`, so
+ *  editing a bare `{"required": [...]}` does not silently promote it to a full object schema. */
+export function rowsToSchema(rows: SchemaFieldRow[], hadType: boolean): unknown {
+  const named = rows.filter((r) => r.name.trim() !== "");
+  const properties: Record<string, unknown> = {};
+  for (const r of named) {
+    // An untyped row contributes its requiredness only — writing `{}` would claim a shape it does
+    // not have.
+    if (!r.type && !r.description) continue;
+    const field: Record<string, unknown> = {};
+    if (r.type) field.type = r.type;
+    if (r.description) field.description = r.description;
+    properties[r.name] = field;
+  }
+  const required = named.filter((r) => r.required).map((r) => r.name);
+  const out: Record<string, unknown> = {};
+  if (hadType || Object.keys(properties).length > 0) out.type = "object";
+  if (Object.keys(properties).length > 0) out.properties = properties;
+  if (required.length > 0) out.required = required;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** The payload an agent expects, as a field list rather than hand-written JSON Schema — the shape
+ *  every multi-input sample declares (`{type: object, properties, required}`), which a caller then
+ *  addresses field-by-field with `$in.in.<name>`. Anything this form cannot represent falls back to
+ *  the guarded JSON editor, and the author can switch to it deliberately at any time. */
+function SchemaFieldsField({
+  label,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  hint: string;
+}) {
+  const rows = schemaToRows(value);
+  const [raw, setRaw] = useState(rows === null);
+  const hadType =
+    value !== null && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>).type !== undefined
+      : false;
+
+  if (raw || rows === null) {
+    return (
+      <div className="space-y-1">
+        <JsonField label={label} value={value} onChange={onChange} />
+        {rows === null ? (
+          <p className="text-[10px] text-slate-600">
+            This schema says more than a field list can (an array payload, a nested shape) — it
+            stays JSON.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setRaw(false)}
+            className="text-[10px] text-blue-600 hover:underline dark:text-blue-400"
+          >
+            Back to fields
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  const write = (next: SchemaFieldRow[]) => onChange(rowsToSchema(next, hadType));
+  const patch = (i: number, p: Partial<SchemaFieldRow>) =>
+    write(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
+
+  return (
+    <Field label={label}>
+      <div className="space-y-1.5">
+        {rows.length === 0 && (
+          <p className="text-[11px] text-slate-600">
+            No fields — the whole run input arrives as one value.
+          </p>
+        )}
+        {rows.map((r, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional; a name is editable
+          <div key={i} className="flex items-center gap-1.5">
+            <Input
+              value={r.name}
+              placeholder="field"
+              aria-label={`Field ${i + 1} name`}
+              className="flex-1"
+              onChange={(e) => patch(i, { name: e.target.value })}
+            />
+            <Select
+              value={r.type}
+              aria-label={`Field ${i + 1} type`}
+              className="!text-xs w-24"
+              onChange={(e) => patch(i, { type: e.target.value })}
+            >
+              {SCHEMA_FIELD_TYPES.map((t) => (
+                <option key={t || "any"} value={t}>
+                  {t || "any"}
+                </option>
+              ))}
+            </Select>
+            <label className="flex items-center gap-1 text-[10px] text-slate-400">
+              <Checkbox
+                checked={r.required}
+                aria-label={`Field ${i + 1} required`}
+                onCheckedChange={(next) => patch(i, { required: next === true })}
+              />
+              req
+            </label>
+            <button
+              type="button"
+              onClick={() => write(rows.filter((_, j) => j !== i))}
+              aria-label={`Remove field ${r.name || i + 1}`}
+              className="flex h-5 w-5 items-center justify-center rounded text-slate-500 hover:bg-[var(--c-hover)] hover:text-red-400"
+            >
+              <X size={12} aria-hidden />
+            </button>
+          </div>
+        ))}
+        {rows.map((r, i) => (
+          <Input
+            // biome-ignore lint/suspicious/noArrayIndexKey: paired with the row above by position
+            key={`d${i}`}
+            value={r.description}
+            placeholder={`${r.name || "field"} — description the caller sees (optional)`}
+            aria-label={`Field ${i + 1} description`}
+            className="!text-[11px]"
+            onChange={(e) => patch(i, { description: e.target.value })}
+          />
+        ))}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              write([...rows, { name: "", type: "string", required: true, description: "" }])
+            }
+            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline dark:text-blue-400"
+          >
+            <Plus size={12} aria-hidden /> field
+          </button>
+          <button
+            type="button"
+            onClick={() => setRaw(true)}
+            className="ml-auto text-[10px] text-slate-500 hover:text-slate-300"
+          >
+            JSON
+          </button>
+        </div>
+        <span className="text-[10px] text-slate-600">{hint}</span>
+      </div>
+    </Field>
+  );
 }
 
 function JsonField({
@@ -1580,7 +1870,7 @@ function MessageRow({
               onClick={() =>
                 onContent([
                   { type: "text", text: (content as string) || "$in" },
-                  { type: "image_url", image_url: { url: "$in" } },
+                  { type: "image_url", imageUrl: { url: "$in" } },
                 ])
               }
               className="inline-flex items-center gap-1 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
@@ -1600,6 +1890,21 @@ function MessageRow({
       )}
     </div>
   );
+}
+
+/** An image content part's url payload, under EITHER spelling.
+ *
+ * `_ImageContentPart.image_url` carries the camelCase wire alias `imageUrl`, and the registry dumps
+ * by alias — so a published agent loaded back into the editor spells it `imageUrl`, while a part
+ * this editor wrote before that was understood spells it `image_url`. Both are valid input to the
+ * server (the IR model populates by name too); reading both is what stops a saved vision agent from
+ * re-opening with an empty, apparently-unset image url.
+ */
+function imageUrlOf(part: {
+  imageUrl?: { url?: string; detail?: string };
+  image_url?: { url?: string; detail?: string };
+}): { url?: string; detail?: string } | undefined {
+  return part.imageUrl ?? part.image_url;
 }
 
 /** A multimodal message's `content`: an ordered list of `text` and `image_url` parts. Text parts get
@@ -1672,12 +1977,13 @@ function RichContentEditor({
             </div>
             {p?.type === "image_url" ? (
               <Input
-                value={(p.image_url?.url as string) ?? ""}
+                value={imageUrlOf(p)?.url ?? ""}
                 placeholder="https://… · data:… · $in.image"
                 onChange={(e) =>
                   setPart(i, {
                     type: "image_url",
-                    image_url: { ...p.image_url, url: e.target.value },
+                    // `detail` (when present) is preserved — only the url is being edited.
+                    imageUrl: { ...imageUrlOf(p), url: e.target.value },
                   })
                 }
               />
@@ -1703,7 +2009,7 @@ function RichContentEditor({
         </button>
         <button
           type="button"
-          onClick={() => addPart({ type: "image_url", image_url: { url: "$in" } })}
+          onClick={() => addPart({ type: "image_url", imageUrl: { url: "$in" } })}
           className="inline-flex items-center gap-1 text-[11px] text-violet-600 hover:underline dark:text-violet-400"
         >
           <Plus size={12} aria-hidden /> image
@@ -2786,8 +3092,27 @@ function GuardrailPanel({
         </>
       )}
 
+      {/* `onBlock` is a free-form payload, but in practice it is a refusal MESSAGE — so that key
+          gets a real field and the rest keeps the JSON box beside it. Writing the message must not
+          drop any other key the author already put there. */}
+      <Field label="refusal message (returned on the block port)">
+        <Input
+          value={typeof onBlock.message === "string" ? onBlock.message : ""}
+          placeholder="e.g. That request was blocked before it reached a model."
+          onChange={(e) =>
+            onChange(
+              updateNodeConfig(ir, node.id, {
+                ...config,
+                onBlock: e.target.value
+                  ? { ...onBlock, message: e.target.value }
+                  : omitKey(onBlock, "message"),
+              }),
+            )
+          }
+        />
+      </Field>
       <JsonField
-        label="onBlock (payload returned when the check blocks)"
+        label="onBlock (the whole payload, for anything beyond a message)"
         value={config.onBlock}
         onChange={(v) =>
           onChange(
@@ -2806,6 +3131,14 @@ function GuardrailPanel({
       </p>
     </>
   );
+}
+
+/** A copy of `obj` without `key` — clearing a field must remove it, not leave an empty string that
+ *  reads as a deliberate blank. */
+function omitKey(obj: Record<string, unknown>, key: string): Record<string, unknown> {
+  const next = { ...obj };
+  delete next[key];
+  return next;
 }
 
 /** The structured spec fields for a rule check, keyed by the rule kind — the exact knobs the runtime

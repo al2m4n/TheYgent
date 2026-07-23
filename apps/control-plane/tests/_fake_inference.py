@@ -108,6 +108,9 @@ def _build_app(
         body = await request.json()
         captured["audio_hit"] = True
         captured["audio_model"] = body.get("model")
+        # Recorded so a test can assert whether a voice was sent AT ALL: naming one the graph did
+        # not ask for picks a voice the engine may not have.
+        captured["speech_body"] = body
         return Response(content=b"FAKE_AUDIO_BYTES", media_type="audio/mpeg")
 
     # The embeddings data-plane endpoint (the control-plane's rag ingest/query calls THIS —

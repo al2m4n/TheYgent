@@ -24,15 +24,10 @@ import { NativeSelect, NativeSelectOption } from "../components/ui/native-select
 import { api } from "../lib/api";
 import { toneOf } from "../lib/categories";
 import { shortId } from "../lib/format";
+import { boundaryOf, modalityLabel } from "../lib/modality";
 import { useModels } from "../queries";
 
 type TargetKind = "model" | "agent";
-
-// A boundary node in an agent's IR — we only read its declared payload modality.
-interface AgentBoundaryNode {
-  type: string;
-  config?: { modality?: string };
-}
 
 const VOICE_MODALITIES = new Set<string>(["audio.transcription", "audio.speech"]);
 
@@ -78,20 +73,24 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the pin only when the agent changes
   useEffect(() => setPickedVersion(null), [agent?.id]);
 
-  // Read the picked version's boundary modalities from its IR — an audio input/output agent gets
-  // the voice composer and a spoken-reply bubble instead of text (the run path is the same).
+  // Read the picked version's boundary from its IR — an audio/image/json boundary gets the matching
+  // composer and payload shape (the run path is the same). Same query key as the bench and the
+  // session-continuation surface, so all three share one cache entry.
   const agentVersion = useQuery({
     queryKey: ["agentver", agent?.id, version],
     queryFn: () => api.getAgentVersion(agent?.id ?? "", version),
     enabled: kind === "agent" && Boolean(agent?.id && version),
   });
-  const agentNodes = (agentVersion.data?.ir as { nodes?: AgentBoundaryNode[] } | undefined)?.nodes;
-  const boundaryModality = (nodeType: string) =>
-    agentNodes?.find((n) => n.type === nodeType)?.config?.modality ?? "text";
-  const agentAudioIn = kind === "agent" && boundaryModality("input") === "audio";
-  const agentAudioOut = kind === "agent" && boundaryModality("output") === "audio";
-  const agentImageIn = kind === "agent" && boundaryModality("input") === "image";
-  const agentImageOut = kind === "agent" && boundaryModality("output") === "image";
+  const boundary = boundaryOf(kind === "agent" ? agentVersion.data?.ir : undefined);
+  const boundaryBadge = kind === "agent" ? modalityLabel(boundary) : null;
+  // Until the version IR resolves we do not KNOW the boundary — offering the text composer would
+  // let a voice agent's first turn go out as a bare string. Hold the composer instead of guessing.
+  // A FAILED fetch is the same state, not a text agent: "we could not read it" must never read as
+  // "it takes text", or the composer and the run body are both silently wrong.
+  const boundaryUnknown =
+    kind === "agent" &&
+    Boolean(agent?.id && version) &&
+    (agentVersion.isPending || agentVersion.isError);
 
   // The registered modality decides a model's transport. Voice and VISION models talk straight to
   // the inference data plane (like the bench): a voice model has no run path, and a vision model
@@ -109,19 +108,20 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
       ? model && !useDirect && !isEmbeddings
         ? { kind: "model", model }
         : null
-      : agent
+      : agent && !boundaryUnknown
         ? { kind: "agent", agentId: agent.id, agentName: agent.name, version: version || undefined }
         : null;
 
   const runChat = useRunChat(runTarget, {
     placeholder: kind === "agent" ? "Message the agent…" : "Send a message…",
-    audioInput: agentAudioIn,
-    audioOutput: agentAudioOut,
-    imageInput: agentImageIn,
-    imageOutput: agentImageOut,
+    boundary,
     disabledNote:
       kind === "agent"
-        ? "No published agents yet — build one on the canvas first."
+        ? boundaryUnknown
+          ? agentVersion.isError
+            ? "This agent's version could not be read, so its input boundary is unknown — the error is above."
+            : "Reading this agent's input boundary…"
+          : "No published agents yet — build one on the canvas first."
         : isEmbeddings
           ? "Embeddings models don't chat — bench them from Registries."
           : "No models registered yet — install one under Registries first.",
@@ -216,19 +216,9 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
             title={started ? "The version is pinned once the conversation starts" : undefined}
           />
         )}
-        {kind === "agent" && (agentAudioIn || agentAudioOut) && (
+        {boundaryBadge && (
           <Badge variant="secondary" className={toneOf("violet").badge}>
-            {agentAudioIn && agentAudioOut ? "voice" : "audio"}
-          </Badge>
-        )}
-        {kind === "agent" && agentImageIn && (
-          <Badge variant="secondary" className={toneOf("violet").badge}>
-            vision
-          </Badge>
-        )}
-        {kind === "agent" && agentImageOut && (
-          <Badge variant="secondary" className={toneOf("violet").badge}>
-            image
+            {boundaryBadge}
           </Badge>
         )}
         {started && (
@@ -249,6 +239,9 @@ function ChatSurface({ onNewChat }: { onNewChat: () => void }) {
       </div>
       {models.error && kind === "model" && <ErrorBanner error={models.error} />}
       {agents.error && kind === "agent" && <ErrorBanner error={agents.error} />}
+      {/* A failed version fetch must not read as "an ordinary text agent" — the composer would be
+          wrong and the run body with it. */}
+      {agentVersion.error && kind === "agent" && <ErrorBanner error={agentVersion.error} />}
       <Card className="flex min-h-0 flex-1 flex-col overflow-visible">
         <CardContent className="flex min-h-0 flex-1 flex-col py-4">
           <ChatView controller={chat} listClassName="min-h-24 flex-1" emptyHint={null} />

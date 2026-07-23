@@ -110,6 +110,24 @@ def test_speak_text_to_audio_reference(client: TestClient, fake_inference: FakeI
     assert ref["contentType"] == "audio/mpeg"
     assert "FAKE_AUDIO_BYTES" not in out["output"]  # bytes are NOT in the run output
     assert fake_inference.captured["audio_hit"] is True
+    # No voice was named in the graph, so NONE is sent: voice vocabularies are engine-specific
+    # (a local kokoro build has no `alloy`), and a speech server asked for a voice it does not
+    # have aborts its already-200 chunked body with no message. The engine's own default applies.
+    assert "voice" not in fake_inference.captured["speech_body"]
+
+
+def test_speak_passes_a_named_voice_through(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # A voice the graph DOES name rides to the engine verbatim — the omission above is a default,
+    # not a filter.
+    ir = _audio_agent("speak", in_handle="text", out_handle="audio")
+    for node in ir["nodes"]:
+        if node["type"] == "speak":
+            node["config"]["params"] = {"voice": "af_heart"}
+    out = _run(client, ir, "hello there")
+    assert out["status"] == "completed"
+    assert fake_inference.captured["speech_body"]["voice"] == "af_heart"
 
 
 def test_transcribe_missing_ref_binds_err(client: TestClient) -> None:
