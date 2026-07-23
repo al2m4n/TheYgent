@@ -24,6 +24,22 @@ function AttachmentView({ attachment }: { attachment: Attachment }) {
       />
     );
   }
+  if (attachment.kind === "file") {
+    // A video renders inline; any other file gets a download link — the bytes are already local,
+    // so there is nothing to fetch.
+    return attachment.mediaType?.startsWith("video/") ? (
+      // biome-ignore lint/a11y/useMediaCaption: user-supplied clip, no caption source
+      <video controls src={attachment.url} className="max-h-48 max-w-full rounded-xl border" />
+    ) : (
+      <a
+        href={attachment.url}
+        download={attachment.name ?? "attachment"}
+        className="text-xs underline underline-offset-2"
+      >
+        {attachment.name ?? "attached file"}
+      </a>
+    );
+  }
   return (
     <div className="flex flex-col gap-0.5">
       {/* biome-ignore lint/a11y/useMediaCaption: user-recorded / synthesized audio, no caption source */}

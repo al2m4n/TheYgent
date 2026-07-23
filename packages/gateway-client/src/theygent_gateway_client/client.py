@@ -24,7 +24,7 @@ import base64
 from collections.abc import Mapping
 from typing import Any
 
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 # OpenAI request fields that are routing/identity, not generation params. The caller
@@ -238,16 +238,27 @@ class GatewayClient:
         *,
         model: str,
         text: str,
-        voice: str = "alloy",
+        voice: str | None = None,
         params: Mapping[str, Any] | None = None,
         extra_headers: Mapping[str, str] | None = None,
     ) -> bytes:
         """Text-to-speech → audio bytes. ``model`` is a logical id; ``response_format`` /
-        ``speed`` ride in ``params``. Returns the whole audio body (the binary response content)."""
+        ``speed`` ride in ``params``. Returns the whole audio body (the binary response content).
+
+        ``voice`` is OMITTED from the request when the caller names none — never defaulted here.
+        Voice vocabularies are engine-specific (a local kokoro build has no ``alloy``), and a
+        speech server asked for a voice it does not have aborts its already-200 chunked response
+        with no message. The inference plane synthesizes with the model's own default when no
+        voice is named."""
+        # `voice` is a REQUIRED keyword on the SDK call, so "no voice" is expressed with the SDK's
+        # own omit sentinel (which drops the key from the request body) — not by leaving the
+        # argument out, which would be a TypeError. Typed loosely because the sentinel is
+        # deliberately outside the parameter's declared union.
+        voice_arg: Any = voice if voice is not None else omit
         response = await self._client.audio.speech.create(
             model=model,
             input=text,
-            voice=voice,  # type: ignore[arg-type]
+            voice=voice_arg,
             extra_headers=dict(extra_headers) if extra_headers else None,
             **_clean_params(params),
         )

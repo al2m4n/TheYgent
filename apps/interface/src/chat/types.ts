@@ -25,7 +25,19 @@ export interface AudioAttachment {
   durationSec?: number;
 }
 
-export type Attachment = ImageAttachment | AudioAttachment;
+export interface FileAttachment {
+  /** Any other binary payload a boundary declares (`file`, `video`) — one kind, not one per
+   *  modality: they all ride the run as the same `{ref, contentType}` artifact reference. */
+  kind: "file";
+  /** Object URL, for the inline `<video>` preview and the download link. */
+  url: string;
+  blob: Blob;
+  name?: string;
+  /** The blob's media type, kept so a chip can show a player for `video/*` and an icon otherwise. */
+  mediaType?: string;
+}
+
+export type Attachment = ImageAttachment | AudioAttachment | FileAttachment;
 
 export interface ChatMessage {
   id: string;
@@ -44,16 +56,33 @@ export interface ChatMessage {
   runId?: string;
 }
 
-/** What the composer offers for the current target (modality-driven, not hardcoded per page). */
+/** What the composer offers for the current target (modality-driven, not hardcoded per page).
+ *  Built in one place — `lib/modality.ts` for graph boundaries, `useInferenceChat` for direct
+ *  model targets — so no surface decides its own affordances. */
 export interface ComposerCaps {
   /** Image attach (upload / camera) — on when the model advertises vision. */
   images?: boolean;
+  /** Sending requires an image (the graph drills `$in.in.image`; text alone would break it). */
+  imagesRequired?: boolean;
   /** Audio attach (upload / microphone) — on for transcription targets. */
   audio?: boolean;
   /** Sending requires an audio attachment (transcription: the audio IS the message). */
   audioRequired?: boolean;
+  /** Generic file attach — a `file`/`video` input boundary, uploaded as an artifact reference. */
+  files?: boolean;
+  /** Sending requires that file. */
+  filesRequired?: boolean;
+  /** `accept` for the file picker (`video/*`, …); absent means any file. */
+  fileAccept?: string;
+  /** The message IS a JSON payload: the prose box becomes a validated JSON editor. Sending is
+   *  gated on it parsing; an empty box is un-sendable here like any empty chat turn (the
+   *  single-shot run surfaces differ deliberately — there, an empty JSON box means "no input"). */
+  json?: boolean;
   /** Hide the text input entirely (transcription: there is nothing to type). */
   textDisabled?: boolean;
+  /** Cap staged attachments — the boundary takes one payload, so a second must be refused at the
+   *  composer rather than silently dropped when the body is built. */
+  maxAttachments?: number;
   placeholder?: string;
 }
 

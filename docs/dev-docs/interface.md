@@ -134,9 +134,18 @@ Publish is the promotion boundary: it validates, POSTs to the agent registry (`P
 Four cooperating surfaces around the one `IRDocument`:
 
 - **Palette** — derived from the generated registry, grouped by kind (boundary/activity/orchestration), drag (`application/theygent-node-type`) or click-to-add.
-- **Inspector** — per-node **Wizard** (schema-driven fields from each type's `configSchema`) ⇄ per-node **Code** (raw JSON), at full parity: port/handle editing, LLM messages (including vision content parts), tools and model params, the unified Tool node (builtin/REST/MCP), guardrail rule-vs-model checks, edge channel/condition, triggers on the input node, and a graph-level panel.
+- **Inspector** — per-node **Wizard** (schema-driven fields from each type's `configSchema`) ⇄ per-node **Code** (raw JSON), at full parity: port/handle editing, LLM messages (including vision content parts), tools and model params, the unified Tool node (builtin/REST/MCP), guardrail rule-vs-model checks, edge channel/condition, triggers on the input node, and a graph-level panel. The parity bar is the shipped sample set: every node, config field, port and edge across the twelve samples is reachable from the forms and the canvas, with `contentHash` pinning the one deliberate Code-only exception. A generic `configSchema` object falls back to a guarded JSON box, so a key that deserves a real form needs a per-key case in the dispatch — `input.schema` and `human.inputSchema` (the field-list builder, `schemaToRows`/`rowsToSchema`) and `guardrail.onBlock`'s message are the current ones.
 - **Code view** — the whole document as JSON in CodeMirror, linted by `lib/ir-validate.ts` against the generated schema; invalid JSON gates Publish, Run, and the mode switch.
-- **Test panel** — streams the *current* document through `POST /graphs/runs` (inline IR — zero new backend), attaches the run's trace stream from the first frame, mirrors span open/close onto the canvas as node lighting, and reconciles from the persisted trace at the end. Durable-only graphs (human/subgraph/loop/map) are gated with an explanation.
+- **Test panel** — streams the *current* document through `POST /graphs/runs` (inline IR — zero new backend), attaches the run's trace stream from the first frame, mirrors span open/close onto the canvas as node lighting, and reconciles from the persisted trace at the end. Durable-only graphs (human/subgraph/loop/map) are gated with an explanation. Its input control is the shared `RunInputField`, derived from the LIVE canvas document — retyping the input node's modality swaps the control with no fetch and no publish.
+
+## The I/O boundary seam
+
+`src/lib/modality.ts` is the one answer to "what payload does this graph take, and what does it hand back". Every surface that runs an agent reads it — New Chat, a reopened session, the per-agent Run modal, the canvas Test panel, and the API dialog's example body — so a voice or vision agent cannot behave differently depending on where it is exercised.
+
+- `boundaryOf(ir)` derives `{input, output, mediaOut}`. Absent, `null`, and out-of-enum values all read as `text` (the IR's own Pydantic default), so a graph authored before the field existed needs no migration. The valid values come from the generated node-type registry's config schema, with a test pinning the hand-written literal unions to it.
+- `composerCapsFor(boundary)` is the single mapping from a modality to affordances; `buildRunInput(modality, draft, upload)` is the single mapping to a run body. Binary payloads (`audio`/`video`/`file`) upload once and ride as `{ref, contentType}`; an `image` goes inline as a data URI, because the llm node string-templates the value into an `image_url` part without fetching. `checkRunInput` gates the Send/Run button on the same rules, so a missing clip is refused in the tab rather than mid-run.
+- `output` is a **set**, not a scalar — a graph routinely ends on several boundaries with different shapes (a spoken answer plus text error branches). What to render is therefore decided by `classifyRunOutput` from the persisted bytes, never from the declaration: a voice agent whose transcription failed hands back prose and renders as prose.
+- Two components consume it: `Composer` (chat-shaped) and `RunInputField` (single-shot, for the bench modal and Test panel), plus `MediaResult` for a single-shot artifact answer. Both input controls keep a raw-JSON escape hatch for the multi-input graphs no single modality describes.
 
 ## Unified chat
 
@@ -145,6 +154,8 @@ Four cooperating surfaces around the one `IRDocument`:
 - **Thinking** — `ThinkParser` splits one leading `<think>` block from the streamed answer into a collapsible reasoning block; anything after visible answer text is treated as literal.
 - **Vision** — image attachments (upload or camera capture) become `image_url` content parts on the chat message.
 - **Voice** — mic capture via `MediaRecorder`; audio bytes move through control-plane `/artifacts` refs for agent runs, and the speak node's output ref is downloaded into a playable bubble.
+
+`useRunChat` takes the agent's `boundary` (see [the I/O boundary seam](#the-io-boundary-seam)) rather than per-media booleans, so what the composer offers and what the run body carries come from the same derivation the other run surfaces use. A reopened session re-reads the boundary from the version it was recorded against — `SessionMeta.agent_version` — instead of assuming text.
 
 ## The bench
 

@@ -18,6 +18,7 @@ import pytest
 from _fake_upstream import FakeUpstreamLauncher
 from fastapi.testclient import TestClient
 from theygent_inference_plane.app import create_app
+from theygent_inference_plane.image_server import _failure_reason
 from theygent_inference_plane.launcher import (
     EngineUnavailableError,
     LlamaCppLauncher,
@@ -308,3 +309,36 @@ def test_mlx_vlm_command_passes_model() -> None:
     cmd = launcher._build_command(_binding("mlx", "vision"), 9003)
     assert cmd[cmd.index("--model") + 1] == "m"
     assert cmd[cmd.index("--port") + 1] == "9003"
+
+
+# ── image-generation failure reporting ─────────────────────────────────────────
+# A diffusion CLI writes hundreds of GPU-capability lines before the one that says what actually
+# went wrong. Reporting a blind tail of that hands the caller a Metal feature list as the reason
+# the render failed — the exact failure a user hit with a diffusion-transformer GGUF that
+# stable-diffusion.cpp cannot load standalone.
+
+
+def test_failure_reason_prefers_the_error_line_over_gpu_boot_noise() -> None:
+    output = b"""ggml_metal_device_init: GPU name:   MTL0 (Apple M3 Pro)
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 30150.67 MB
+[ERROR] stable-diffusion.cpp:748  - get sd version from file failed: '/models/x.gguf'
+"""
+    reason = _failure_reason(output)
+    assert "get sd version from file failed" in reason
+    assert "recommendedMaxWorkingSetSize" not in reason
+
+
+def test_failure_reason_falls_back_to_the_last_meaningful_lines() -> None:
+    output = b"ggml_metal_library_init: loaded\nout of memory allocating latents\n"
+    assert _failure_reason(output) == "out of memory allocating latents"
+
+
+def test_failure_reason_never_returns_empty() -> None:
+    assert _failure_reason(b"") == "no output"
+    assert _failure_reason(b"   \n \n") == "no output"
+
+
+def test_failure_reason_is_bounded() -> None:
+    # A CLI that dumps a megabyte of stack must not become the HTTP error body.
+    assert len(_failure_reason(b"error: " + b"x" * 100_000)) <= 600

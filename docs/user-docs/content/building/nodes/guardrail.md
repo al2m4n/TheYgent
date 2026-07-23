@@ -26,6 +26,8 @@ Exactly one of `pass` / `block` activates per run; the other branch's edges are 
 | `check` | object (required) | `null` | The check to run. Must be set — an unconfigured guardrail is a validation error. Its shape depends on the check type (below). |
 | `onBlock` | object | `{}` | The payload sent out the `block` port when the check fails. Leave it empty to pass the original input through instead. |
 
+The inspector gives `onBlock`'s usual shape — a refusal `message` — its own field, with the whole-payload JSON box beside it for anything richer. Typing a message never disturbs other keys already in the payload.
+
 ### Rule checks (`check.type: "rule"`)
 
 `check.rule` has a `kind` and a `spec`:

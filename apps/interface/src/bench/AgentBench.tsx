@@ -4,19 +4,31 @@
 // flashes, via the span.name == node.id join). Degrades to output-only if observability is absent.
 // The tune→ship loop: apply a saved preset's LITERAL params to a binding and save a new version
 // through the registry (the server hashes; the preset name never enters the IR).
+//
+// Both halves — the single-shot Run and the Chat fold — read the pinned version's I/O boundary from
+// `lib/modality.ts`, so a voice or vision agent gets the same controls and the same run payload
+// here as in New Chat and on the canvas.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
 import { ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Selection } from "../adapter";
 import { ChatView } from "../chat/ChatView";
-import { Markdown } from "../chat/Markdown";
 import { ThinkingBlock } from "../chat/ThinkingBlock";
 import { useRunChat } from "../chat/useRunChat";
 import { GraphCanvas } from "../components/GraphCanvas";
-import { ResumePanel, parseTyped } from "../components/ResumePanel";
-import { Button, Card, ErrorBanner, Field, Input, NoteBanner, Select } from "../components/ui";
+import { MediaResult } from "../components/MediaResult";
+import { ResumePanel } from "../components/ResumePanel";
+import {
+  RunInputField,
+  type RunInputState,
+  effectiveDraft,
+  effectiveModality,
+  emptyRunInput,
+  runInputError,
+} from "../components/RunInputField";
+import { Button, Card, ErrorBanner, Field, NoteBanner, Select } from "../components/ui";
 import { Bubble, BubbleContent } from "../components/ui/bubble";
 import {
   DropdownMenu,
@@ -26,8 +38,10 @@ import {
 } from "../components/ui/dropdown-menu";
 import { RunWaterfall } from "../components/waterfall";
 import { type AgentDetail, ApiError, api, streamRun } from "../lib/api";
+import { toneOf } from "../lib/categories";
 import { isDurableOnly } from "../lib/durable";
 import { shortId } from "../lib/format";
+import { type Boundary, boundaryOf, buildRunInput, modalityLabel } from "../lib/modality";
 import type { DeltaFrame, ReasoningFrame, RunFrame } from "../lib/runtypes";
 import { keys, useRun } from "../queries";
 import { applyPresetToBinding } from "./preset";
@@ -46,10 +60,6 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     queryFn: () => api.getAgentVersion(agent.id, version),
     enabled: Boolean(version),
   });
-  const [input, setInput] = useState("");
-  // An agent whose graph drills `$in.in.<field>` takes an OBJECT input: JSON mode parses the text
-  // client-side (loudly — an unparsable payload never leaves the tab as a look-alike string).
-  const [inputMode, setInputMode] = useState<"text" | "json">("text");
   const [result, setResult] = useState<{
     runId: string;
     output?: string;
@@ -76,6 +86,14 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   // below and leaves the buttons usable (the server re-checks everything anyway), rather than
   // sticking them disabled with no feedback.
   const irLoading = Boolean(version) && stored.isPending;
+  // What this agent takes and returns. The input control, the run payload and the answer rendering
+  // all come off this one value — the same derivation New Chat and the canvas Test panel use.
+  // Memoized on the pinned IR: `boundaryOf` allocates a fresh Set, and this value feeds the
+  // artifact renderer and the chat fold — a durable poll or a waterfall hover must not churn them.
+  const boundary = useMemo(() => boundaryOf(ir), [ir]);
+  const boundaryBadge = ir ? modalityLabel(boundary) : null;
+  const [runInput, setRunInput] = useState<RunInputState>(() => emptyRunInput(boundary));
+  const inputError = runInputError(boundary, runInput);
 
   // Poll the durable run (the endpoint returns a run id, not a terminal result). A `waiting` run
   // is paused at a human node — the resume panel below delivers the awaited input.
@@ -83,8 +101,6 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   const durableRun = durablePoll.data;
   const durableTerminal = durableRun?.status === "completed" || durableRun?.status === "failed";
   const durableWaiting = durableRun?.status === "waiting";
-
-  const typedInput = parseTyped(inputMode, input);
 
   // Leaving the modal mid-stream must abort the request — the server cancels the run on
   // disconnect; an orphaned reader would keep a local engine generating with no Stop control left.
@@ -99,7 +115,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   );
 
   async function run(durable: boolean) {
-    if (!typedInput.ok) return;
+    if (inputError) return;
     setRunning(true);
     setResult(null);
     setDurableRunId(null);
@@ -107,9 +123,20 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
     setHighlight(null);
     stoppedRef.current = false;
     try {
+      // The boundary decides the payload — a recorded clip uploads and rides as {ref, contentType},
+      // an image goes inline as {image, text}, a JSON boundary sends the parsed object.
+      const built = await buildRunInput(
+        effectiveModality(boundary, runInput),
+        effectiveDraft(boundary, runInput),
+        api.uploadArtifact,
+      );
+      if (!built.ok) {
+        setResult({ runId: "", error: built.error });
+        return;
+      }
       if (durable) {
         const { run_id } = await api.runAgentDurable(agent.id, {
-          input: typedInput.value,
+          input: built.value,
           version,
         });
         setDurableRunId(run_id);
@@ -119,7 +146,7 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
         // live through the same thinking-block + markdown presentation instead of a silent wait
         // for the terminal payload.
         const handle = await streamRun(`/agents/${encodeURIComponent(agent.id)}/runs`, {
-          input: typedInput.value,
+          input: built.value,
           stream: true,
           version,
         });
@@ -226,12 +253,17 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
   // server-side, visible under Runs).
   const busy = running || (Boolean(durableRunId) && !durableTerminal && !durableWaiting);
   const inProgress = view?.status && view.status !== "completed" && view.status !== "failed";
-  const runDisabled = busy || irLoading || !typedInput.ok;
+  const runDisabled = busy || irLoading || Boolean(inputError);
 
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <span className="text-sm font-medium text-slate-200">{agent.name}</span>
+        {boundaryBadge && (
+          <span className={`rounded px-1.5 py-0.5 text-[11px] ${toneOf("violet").badge}`}>
+            {boundaryBadge}
+          </span>
+        )}
         <Field label="Version">
           <Select
             value={version}
@@ -250,33 +282,19 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       </div>
 
       <Field label="Input">
-        <div className="flex items-start gap-2">
-          <Select
-            value={inputMode}
-            onChange={(e) => setInputMode(e.target.value as "text" | "json")}
-            className="w-24"
-            aria-label="Input mode"
-          >
-            <option value="text">Text</option>
-            <option value="json">JSON</option>
-          </Select>
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={inputMode === "json" ? '{"field": "value"}' : "Run input…"}
-            className="flex-1"
-            onKeyDown={(e) => {
-              // Enter runs, exactly like the chat composer sends. A durable-only agent's only
-              // path is durable; anything else takes the normal streaming run.
-              if (e.key === "Enter" && !e.nativeEvent.isComposing && !runDisabled) {
-                e.preventDefault();
-                void run(durableOnly);
-              }
-            }}
-          />
-        </div>
+        <RunInputField
+          boundary={boundary}
+          state={runInput}
+          onChange={setRunInput}
+          // Enter runs, exactly like the chat composer sends. A durable-only agent's only path is
+          // durable; anything else takes the normal streaming run.
+          onSubmit={() => {
+            if (!runDisabled) void run(durableOnly);
+          }}
+          disabled={busy}
+        />
       </Field>
-      {!typedInput.ok && <p className="text-xs text-amber-400">{typedInput.error}</p>}
+      {inputError && <p className="text-xs text-amber-400">{inputError}</p>}
       <div className="flex items-center gap-2">
         {durableOnly ? (
           // Durable-only agents can't run any other way — a single button, no choice.
@@ -336,8 +354,9 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       {view?.output && (
         <Bubble variant="secondary" className="max-w-full">
           <BubbleContent className="max-h-64 overflow-y-auto">
-            <Markdown text={view.output} />
-            {view.streaming && <span className="animate-pulse text-muted-foreground">▍</span>}
+            {/* An audio/image agent's output is an artifact reference — play or show it, don't
+                print the reference JSON as prose. */}
+            <MediaResult output={view.output} boundary={boundary} streaming={view.streaming} />
           </BubbleContent>
         </Bubble>
       )}
@@ -373,7 +392,15 @@ export function AgentBench({ agent }: { agent: AgentDetail }) {
       {!durableOnly && !irLoading && (
         <div className="space-y-2 border-t border-slate-800 pt-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Chat</p>
-          <AgentChat agentId={agent.id} agentName={agent.name} version={version} />
+          {/* Keyed by version: the pin is the point of the bench, so switching it must start a
+              fresh session rather than mix two versions' turns into one recorded conversation. */}
+          <AgentChat
+            key={version}
+            agentId={agent.id}
+            agentName={agent.name}
+            version={version}
+            boundary={boundary}
+          />
         </div>
       )}
 
@@ -386,14 +413,16 @@ function AgentChat({
   agentId,
   agentName,
   version,
+  boundary,
 }: {
   agentId: string;
   agentName: string;
   version: string;
+  boundary: Boundary;
 }) {
   const chat = useRunChat(
     { kind: "agent", agentId, agentName, version },
-    { placeholder: "Message the agent…" },
+    { placeholder: "Message the agent…", boundary },
   );
   return (
     <ChatView
@@ -460,7 +489,8 @@ function RunMenu({
 }
 
 // Apply a saved preset's LITERAL params to one of this agent's bindings, then save a new version
-// through the registry. Modality is matched so a chat preset can't land on a TTS binding.
+// through the registry. A preset's modality is shown beside its name so the author can see which
+// binding it belongs on; it is not enforced — the server validates the resulting params.
 function ApplyPreset({ agentId, ir }: { agentId: string; ir: IRDocument }) {
   const presets = useQuery({ queryKey: ["presets"], queryFn: () => api.listPresets() });
   const bindings = Object.keys(ir.models ?? {});

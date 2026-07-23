@@ -43,6 +43,18 @@ def merge_params(binding_params: dict[str, Any], request: dict[str, Any]) -> dic
     return merged
 
 
+def _voice_hint(params: dict[str, Any]) -> str:
+    """Name the voice a failed synthesis actually asked for.
+
+    Voice vocabularies are engine-specific — an OpenAI-style name like ``alloy`` is not a voice a
+    local kokoro build has, and asking for one makes the server abort its already-200 chunked
+    response with no message. Quoting the requested voice turns "some inputs trip an engine's text
+    processing" into the one thing the caller can act on.
+    """
+    voice = params.get("voice")
+    return f"voice ({voice!r} was requested)" if voice else "voice (none was requested)"
+
+
 class UpstreamHttpError(RuntimeError):
     """An upstream HTTP error from a direct (non-dispatch-layer) call. Carries ``status_code`` +
     ``message`` in the same duck-typed shape the endpoint error mapping already reads, so a direct
@@ -169,15 +181,16 @@ class Gateway:
         except httpx.HTTPError as exc:
             raise UpstreamHttpError(
                 502,
-                "the speech engine aborted mid-synthesis — some inputs trip an engine's text "
-                f"processing; try rephrasing (the engine log has the cause). Transport: {exc}",
+                "the speech engine aborted mid-synthesis — the two usual causes are an unknown "
+                f"{_voice_hint(params)} and an input its text processing can't handle; the engine "
+                f"log names which. Transport: {exc}",
             ) from exc
         if not audio:
             raise UpstreamHttpError(
                 502,
-                "the speech engine produced no audio for this input — try rephrasing (some "
-                "inputs trip an engine's text processing); if every input fails, the engine log "
-                "names the cause (an unloadable model or an unknown voice)",
+                f"the speech engine produced no audio — the two usual causes are an unknown "
+                f"{_voice_hint(params)} and an input its text processing can't handle. If EVERY "
+                "input fails, it is the voice or an unloadable model, not the text",
             )
         return audio
 

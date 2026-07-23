@@ -28,7 +28,27 @@ An input node has no in-ports.
 | `modality` | enum | `text` | The expected shape of the input: `text`, `audio`, `image`, `video`, `json`, or `file`. |
 | `schema` | JSON Schema | `null` | An optional description of the input's structure. |
 
-Both fields are **declarative**. They document what the agent expects and help the editor and triggers map an incoming payload — they are not enforced at run time. The value on `out` is exactly what was passed in.
+The inspector edits `schema` as an **input fields** list — one row per field with a name, a type, a **req** checkbox and an optional description — rather than hand-written JSON Schema. Those names are exactly what a caller sends and what the graph reads with `$in.in.<name>`. A schema that says more than a field list can (an array payload, a nested object) keeps the JSON editor, and a **JSON** link switches to it deliberately at any time.
+
+Both fields are **declarative** at run time: the value on `out` is exactly what was passed in, whatever the modality says. What `modality` *does* drive is every place you run the agent from — see [What the modality changes](#what-the-modality-changes) below — and how a trigger maps its incoming payload.
+
+Leaving `modality` unset is the same as `text`; that is the default the graph is validated with. In the editor, the modality dropdown's blank option (`— default (text)`) clears the field back to that default.
+
+### What the modality changes {: #what-the-modality-changes }
+
+Every surface that runs an agent reads the input node's modality and offers the matching control — the canvas **Test** panel, the **Run** dialog on the Agents page, **New Chat**, and a reopened session all behave identically:
+
+| `modality` | What you get | What the run receives |
+|---|---|---|
+| `text` | A text box | the string |
+| `json` | A validated JSON editor (malformed JSON is refused before the run starts) | the parsed object |
+| `image` | Image attach + camera, plus an optional question | `{"image": "<data URI>", "text": "…"}` |
+| `audio` | Microphone record + audio file attach | `{"ref": "art_…", "contentType": "audio/wav"}` |
+| `video`, `file` | A file picker | `{"ref": "art_…", "contentType": "…"}` |
+
+Non-text payloads that are not images ride as an **artifact reference**: the bytes are uploaded once and the run carries only the handle, so multi-megabyte blobs are never journaled through a run's steps. An image is the exception — it goes inline as a data URI, because the [llm](llm.md) node substitutes the value straight into an `image_url` content part without fetching anything.
+
+Every one of those surfaces also keeps a **JSON** escape hatch in its input-mode dropdown, whatever the boundary declares: a multi-input agent whose payload no single modality describes can always be exercised by hand.
 
 ### Behavior notes
 
@@ -86,7 +106,9 @@ An output node has no out-ports.
 | `modality` | enum | `text` | The shape of the result: `text`, `audio`, `image`, or `json`. |
 | `schema` | JSON Schema | `null` | An optional description of the output's structure. |
 
-For an `audio` or `image` result the value is a **reference** to a produced artifact, not the raw bytes — see [Audio & images](media.md).
+For an `audio` or `image` result the value is a **reference** to a produced artifact, not the raw bytes — see [Audio & images](media.md). Every run surface reads that reference back and plays or shows the result instead of printing the handle.
+
+A graph may declare several output nodes with **different** modalities — a spoken answer plus a text error branch is the usual shape. What a given run returns is therefore decided from the value it actually produced, not from what the boundary declared: a voice agent whose transcription failed hands back prose on its error branch, and that renders as prose.
 
 ### Behavior notes
 
