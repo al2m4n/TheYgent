@@ -28,12 +28,18 @@ from theygent_control_plane.secrets import SecretStore
 
 
 @pytest.fixture
-def client(fake_inference, pg_url: str) -> TestClient:  # type: ignore[no-untyped-def]
+def secret_key() -> str:
     # A fixed Fernet key so secrets stay decryptable across app instances in a single test (a
     # "restart" reuses the same key — the production posture; the ephemeral default is dev-only).
-    key = Fernet.generate_key().decode()
+    # Exposed as its own fixture so a test can open a SecretStore on the app's own key and decrypt
+    # what the app wrote — the only way to prove a rotation actually replaced the material.
+    return Fernet.generate_key().decode()
+
+
+@pytest.fixture
+def client(fake_inference, pg_url: str, secret_key: str) -> TestClient:  # type: ignore[no-untyped-def]
     app = create_app(
-        inference_base_url=fake_inference.v1_url, database_url=pg_url, secret_key=[key]
+        inference_base_url=fake_inference.v1_url, database_url=pg_url, secret_key=[secret_key]
     )
     with TestClient(app) as test_client:
         yield test_client
@@ -46,6 +52,17 @@ async def _secret_rows(pg_url: str) -> list[dict[str, object]]:
         return [dict(r) for r in rows]
     finally:
         await conn.close()
+
+
+async def _resolve_secret(pg_url: str, key: str, secret_ref: str) -> str | None:
+    """Decrypt what the app stored, using the app's own Fernet key (the ``secret_key`` fixture)."""
+    engine = db.create_engine(pg_url)
+    try:
+        sm = db.create_sessionmaker(engine)
+        async with sm() as session:
+            return await SecretStore.from_keys([key]).resolve(session, secret_ref)
+    finally:
+        await engine.dispose()
 
 
 async def _connection_secret_ref(pg_url: str, connection_id: str) -> str | None:
@@ -112,27 +129,32 @@ def test_list_and_get_connection_redact_secret(client: TestClient) -> None:
     assert one.json()["hasSecret"] is True
 
 
-def test_rotate_secret_keeps_same_secret_ref(client: TestClient, pg_url: str) -> None:
+def test_rotate_secret_keeps_same_secret_ref(
+    client: TestClient, pg_url: str, secret_key: str
+) -> None:
+    original, rotated = "rotate-me-original-value", "rotate-me-rotated-value"
     cid = client.post(
         "/connections",
-        json={"name": "c", "kind": "http_auth", "config": {}, "secret": "v1"},
+        json={"name": "c", "kind": "http_auth", "config": {}, "secret": original},
     ).json()["id"]
     ref_before = asyncio.run(_connection_secret_ref(pg_url, cid))
     assert ref_before is not None
 
     # PATCH rotates the credential. The secret_ref MUST NOT change — that is what keeps an IR
     # referencing this connection (and therefore every agent's contentHash) stable across rotation.
-    patched = client.patch(f"/connections/{cid}", json={"secret": "v2"})
+    patched = client.patch(f"/connections/{cid}", json={"secret": rotated})
     assert patched.status_code == 200
     assert patched.json()["hasSecret"] is True
     ref_after = asyncio.run(_connection_secret_ref(pg_url, cid))
     assert ref_after == ref_before
+    assert asyncio.run(_resolve_secret(pg_url, secret_key, ref_before)) == rotated
 
-    # Still exactly one secret row (rotated in place, not duplicated); v1/v2 not in plaintext.
+    # Still exactly one secret row (rotated in place, not duplicated); neither value is at rest
+    # in plaintext.
     rows = asyncio.run(_secret_rows(pg_url))
     assert len(rows) == 1
-    assert "v1" not in str(rows[0]["ciphertext"])
-    assert "v2" not in str(rows[0]["ciphertext"])
+    assert original not in str(rows[0]["ciphertext"])
+    assert rotated not in str(rows[0]["ciphertext"])
 
 
 def test_patch_non_secret_config(client: TestClient) -> None:
