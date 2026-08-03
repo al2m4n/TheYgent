@@ -68,6 +68,12 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix.** Install the named binary, or point the matching [binary-override variable](environment.md#engine-binary-overrides) (e.g. `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_SDCPP_BIN`) at your build, then restart the inference plane. The service stays generally "ready" as long as any one engine works, so a single missing slot doesn't take everything down.
 
+### `incomplete_weights` (422 on install or registration, 503 on use)
+
+**Cause.** The weights are only part of a model. Text-to-image repositories often publish the **denoiser** by itself, without the VAE and text encoder it needs to render — the file is the right size and the right format, but nothing can generate an image from it alone. The same code also catches a language model registered under a `images.generation` modality.
+
+**Fix.** Install a complete text-to-image checkpoint: one file that bundles the denoiser, the VAE, and the text encoder. The message names which parts are absent. See [Incomplete image models](../models/index.md#incomplete-image-models).
+
 ### `no_capacity` (503)
 
 **Cause.** Every resident engine slot is full and busy — the inference plane keeps at most `THEYGENT_MAX_RESIDENT` engines loaded (default 2), and none could be evicted because they're all handling requests.

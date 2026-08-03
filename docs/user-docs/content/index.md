@@ -24,6 +24,16 @@ There is no vendor in the middle: TheYgent never proxies your prompts, payloads,
 - **Observe everything** — every run gets a zoomable span waterfall with per-node inputs, outputs, and timing, plus optional OTLP export. See [observability](running/observability.md).
 - **Benchmark** — test any model or agent from the Bench: per-turn latency and token metrics, saved results, side-by-side comparisons. See [the Bench](running/bench.md).
 
+## Watch it run
+
+Three screen recordings of the real product, if you would rather see it than read it first:
+
+| Video | What it covers |
+|---|---|
+| [Self-Hosted AI Agent Orchestration](https://www.youtube.com/watch?v=3LE_VrIbe0I) (23:52) | The whole platform end to end — clone, start the services, install a model, build and run an agent. Also on [Getting started](getting-started/index.md). |
+| [Voice In, Voice Out](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54) | A voice agent: speech-to-text, a model, and text-to-speech on the canvas. Also on [Voice](chat/voice.md). |
+| [Run Local + Remote Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01) | One graph routing between a local model and a hosted API. Also on [Remote models](models/remote.md). |
+
 ## How it fits together
 
 TheYgent runs as three local services, brought up together with `make up`:

@@ -30,6 +30,7 @@ from theygent_inference_plane.catalog import (
     CatalogQuery,
     HuggingFaceProvider,
     Sort,
+    UninstallableVariant,
 )
 from theygent_inference_plane.clock import Clock
 from theygent_inference_plane.credentials import (
@@ -53,6 +54,7 @@ from theygent_inference_plane.launcher import (
     MlxVlmLauncher,
     WhisperCppLauncher,
     _hf_hub_dir,
+    locate_image_model,
 )
 from theygent_inference_plane.manager import (
     EngineManager,
@@ -60,7 +62,7 @@ from theygent_inference_plane.manager import (
     NotManagedError,
     Upstream,
 )
-from theygent_inference_plane.registry import Registry, UnknownLogicalId
+from theygent_inference_plane.registry import Binding, Registry, UnknownLogicalId
 from theygent_inference_plane.settings import (
     MAX_RESIDENT_DEFAULT,
     MAX_RESIDENT_ENV_VAR,
@@ -71,6 +73,7 @@ from theygent_inference_plane.settings import (
 )
 from theygent_inference_plane.transfer import ImportBundle, apply_import, build_export
 from theygent_inference_plane.vllm_engine import VllmLauncher
+from theygent_inference_plane.weights import IncompleteWeights
 
 _REAP_INTERVAL_SEC = 30.0
 
@@ -144,10 +147,39 @@ def _openai_error(message: str, *, status: int, type_: str, code: str) -> JSONRe
     )
 
 
+_UNSERVABLE = (EngineUnavailableError, IncompleteWeights)
+
+
 def _engine_unavailable(exc: Exception) -> JSONResponse:
-    # The model is registered but its engine isn't installed/ready on this host
-    # (e.g. an `mlx` model on a box without mlx-lm, or `vllm` without CUDA).
-    return _openai_error(str(exc), status=503, type_="server_error", code="engine_unavailable")
+    # The model is registered but cannot be spawned here: its engine isn't installed/ready on this
+    # host (an `mlx` model on a box without mlx-lm, `vllm` without CUDA), or its weights are only
+    # part of a model. Both are 503 — the request was fine, this host cannot serve it.
+    code = "incomplete_weights" if isinstance(exc, IncompleteWeights) else "engine_unavailable"
+    return _openai_error(str(exc), status=503, type_="server_error", code=code)
+
+
+def _image_weights_defect(binding: Binding) -> str | None:
+    """Why a registration cannot ever render, checked before it is stored.
+
+    The launch path raises the same refusal, but only when someone first asks for an image —
+    which for a scheduled or triggered agent is long after the person who chose the model has
+    stopped watching. The weights are already on disk at registration time, so the answer is
+    available then, and a registry that only holds servable bindings is worth the one file read.
+
+    Narrow on purpose: absent or ambiguous weights stay the launch path's business (a binding may
+    legitimately be registered against a path that is still downloading), so only a file that IS
+    readable and IS provably a fragment is refused here."""
+    if not isinstance(binding, ManagedBinding) or binding.binding != "llamacpp":
+        return None
+    if binding.modality != "images.generation":
+        return None
+    try:
+        locate_image_model(binding, "sdcpp")
+    except IncompleteWeights as exc:
+        return str(exc)
+    except RuntimeError:
+        return None
+    return None
 
 
 async def _guarded_sse(lines: Any, model: str, close: Any = None):
@@ -360,6 +392,10 @@ def create_app(
                 type_="invalid_request_error",
                 code="invalid_binding",
             )
+        if defect := _image_weights_defect(binding):
+            return _openai_error(
+                defect, status=422, type_="invalid_request_error", code="incomplete_weights"
+            )
         registry.put(logical_id, binding)
         # A manual registration severs catalog provenance: the binding no longer points at
         # the sidecar's recorded install, and a stale record would make /admin/export pair
@@ -422,7 +458,7 @@ def create_app(
         if isinstance(binding, ManagedBinding):
             try:
                 caps = await manager.capabilities(logical_id)
-            except EngineUnavailableError as exc:
+            except _UNSERVABLE as exc:
                 return _engine_unavailable(exc)
         else:
             # Reachable upstreams aren't probed locally; advertise the DECLARED task (the only
@@ -443,7 +479,7 @@ def create_app(
         if isinstance(binding, ManagedBinding):
             try:
                 await manager.warm(logical_id)
-            except EngineUnavailableError as exc:
+            except _UNSERVABLE as exc:
                 return _engine_unavailable(exc)
             except NoCapacityError as exc:
                 return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")
@@ -691,6 +727,11 @@ def create_app(
             plan = await asyncio.to_thread(
                 catalog.install_plan, repo, engine, variant_id, logical_id
             )
+        except UninstallableVariant as exc:
+            # Not a provider failure — the chosen file is not a model, so retrying cannot help.
+            return _openai_error(
+                str(exc), status=422, type_="invalid_request_error", code="incomplete_weights"
+            )
         except CatalogError as exc:
             return _openai_error(str(exc), status=502, type_="server_error", code="catalog_error")
         job = downloads.start(plan)
@@ -832,7 +873,7 @@ def create_app(
         # 200 followed by a broken stream.
         try:
             await manager.warm(req.model)
-        except EngineUnavailableError as exc:
+        except _UNSERVABLE as exc:
             return _engine_unavailable(exc)
         except NoCapacityError as exc:
             return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")
@@ -946,7 +987,7 @@ def create_app(
                 type_="invalid_request_error",
                 code="model_not_found",
             )
-        if isinstance(exc, EngineUnavailableError):
+        if isinstance(exc, _UNSERVABLE):
             return _engine_unavailable(exc)
         if isinstance(exc, NoCapacityError):
             return _openai_error(str(exc), status=503, type_="server_error", code="no_capacity")

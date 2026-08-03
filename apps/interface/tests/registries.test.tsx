@@ -239,6 +239,48 @@ describe("Browse — the hub browser", () => {
     expect(screen.getByText("Reasoner")).toBeInTheDocument();
   });
 
+  it("blocks a variant the plane flagged as an incomplete model", async () => {
+    // A text-to-image repo that publishes the denoiser alone: the files look installable (right
+    // extension, right size), so the only thing standing between the user and a wasted
+    // multi-gigabyte download is the plane's reason — the row must act on it, not just show it.
+    const detail = {
+      ...DETAIL,
+      variants: [
+        {
+          ...DETAIL.variants[0],
+          quality: "balanced",
+          recommended: false,
+          unusableReason: "krea.gguf holds a diffusion model's denoiser only",
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/catalog/models") return jsonResponse(LIST);
+      if (path.startsWith("/admin/catalog/models/")) return jsonResponse(detail);
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderBrowse();
+
+    await screen.findByText("Qwen2.5-7B-Instruct-GGUF");
+    fireEvent.click(screen.getByRole("button", { name: /Qwen2\.5-7B-Instruct-GGUF/ }));
+    await screen.findByText("Q4_K_M");
+
+    // The fit badge and the quality hint both give way — a file that cannot run is not "fits".
+    expect(screen.getByText("incomplete")).toBeInTheDocument();
+    expect(screen.queryByText("fits")).not.toBeInTheDocument();
+    expect(screen.queryByText("balanced")).not.toBeInTheDocument();
+    expect(screen.getByText("not a complete model")).toBeInTheDocument();
+
+    // Install is refused here rather than at the download, and the reason is one hover away.
+    const install = screen.getByRole("button", { name: "Install" });
+    expect(install).toBeDisabled();
+    expect(install).toHaveAttribute("title", "krea.gguf holds a diffusion model's denoiser only");
+    fireEvent.click(install);
+    expect(screen.queryByText("Install model")).not.toBeInTheDocument();
+  });
+
   it("engine chips: clicking one (from all-on) turns it off and narrows to the other", async () => {
     const urls: string[] = [];
     const fetchMock = vi.fn(async (url: string) => {

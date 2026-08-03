@@ -22,6 +22,7 @@ from theygent_inference_plane.catalog import (
     CatalogQuery,
     HuggingFaceProvider,
     InstallPlan,
+    UninstallableVariant,
     fit_for,
 )
 from theygent_inference_plane.downloader import Downloader
@@ -832,3 +833,122 @@ def test_capabilities_ride_the_wire_camelcase() -> None:
     assert dumped["reasoning"] is True
     assert dumped["toolCalling"] is True
     assert "maxContext" in dumped and "vision" in dumped
+
+
+def _krea_denoiser() -> FakeModelInfo:
+    return FakeModelInfo(
+        id="vantagewithai/Krea-2-Turbo-GGUF",
+        downloads=900,
+        pipeline_tag="text-to-image",
+        tags=["gguf", "text-to-image"],
+        siblings=[
+            FakeSibling("krea2_turbo-Q2_K.gguf", 5 * GB),
+            FakeSibling("krea2_turbo-Q8_0.gguf", 12 * GB),
+            FakeSibling("README.md", 2000),
+        ],
+        gguf={"architecture": "qwen_image"},
+    )
+
+
+def _complete_sd_checkpoint() -> FakeModelInfo:
+    # A whole checkpoint predates the component convention and carries no architecture at all.
+    return FakeModelInfo(
+        id="second-state/stable-diffusion-v1-5-GGUF",
+        downloads=4000,
+        pipeline_tag="text-to-image",
+        tags=["gguf", "text-to-image"],
+        siblings=[FakeSibling("sd-v1-5-Q4_0.gguf", 2 * GB)],
+        gguf={},
+    )
+
+
+def test_get_flags_every_quant_of_a_denoiser_repo() -> None:
+    api = FakeHfApi(by_repo={"vantagewithai/Krea-2-Turbo-GGUF": _krea_denoiser()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=64 * GB)
+    entry = p.get("vantagewithai/Krea-2-Turbo-GGUF", CatalogQuery(engines=["llamacpp"]))
+
+    assert len(entry.variants) == 2
+    for variant in entry.variants:
+        assert variant.unusable_reason is not None
+        assert "qwen_image" in variant.unusable_reason
+        # Quantizing a denoiser harder does not make it a model — none of them is a suggestion.
+        assert variant.recommended is False
+
+
+def test_get_leaves_a_complete_image_checkpoint_installable() -> None:
+    api = FakeHfApi(by_repo={"second-state/stable-diffusion-v1-5-GGUF": _complete_sd_checkpoint()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=64 * GB)
+    entry = p.get("second-state/stable-diffusion-v1-5-GGUF", CatalogQuery(engines=["llamacpp"]))
+
+    assert [v.unusable_reason for v in entry.variants] == [None]
+    assert entry.variants[0].recommended is True
+
+
+def test_the_flag_rides_the_wire_camelcase() -> None:
+    api = FakeHfApi(by_repo={"vantagewithai/Krea-2-Turbo-GGUF": _krea_denoiser()})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=64 * GB)
+    entry = p.get("vantagewithai/Krea-2-Turbo-GGUF", CatalogQuery(engines=["llamacpp"]))
+    assert entry.model_dump(by_alias=True)["variants"][0]["unusableReason"] is not None
+
+
+def test_install_plan_refuses_a_denoiser_repo() -> None:
+    api = FakeHfApi(by_repo={"vantagewithai/Krea-2-Turbo-GGUF": _krea_denoiser()})
+    p = HuggingFaceProvider(hf_api=api)
+    with pytest.raises(UninstallableVariant, match="denoiser"):
+        p.install_plan(
+            "vantagewithai/Krea-2-Turbo-GGUF", "llamacpp", "krea2_turbo-Q2_K.gguf", "painter"
+        )
+
+
+def test_install_plan_allows_a_complete_image_checkpoint() -> None:
+    api = FakeHfApi(by_repo={"second-state/stable-diffusion-v1-5-GGUF": _complete_sd_checkpoint()})
+    p = HuggingFaceProvider(hf_api=api)
+    plan = p.install_plan(
+        "second-state/stable-diffusion-v1-5-GGUF", "llamacpp", "sd-v1-5-Q4_0.gguf", "painter"
+    )
+    assert plan.modality == "images.generation"
+    assert plan.filename == "sd-v1-5-Q4_0.gguf"
+
+
+def test_the_architecture_only_speaks_for_image_repos() -> None:
+    # The names are read as diffusion architectures only inside a text-to-image repo, so a text
+    # model can never be refused by a collision with one of them.
+    chat_repo = FakeModelInfo(
+        id="someone/wan-7B-GGUF",
+        pipeline_tag="text-generation",
+        tags=["gguf"],
+        siblings=[FakeSibling("wan-7b-Q4_K_M.gguf", 4 * GB)],
+        gguf={"architecture": "wan"},
+    )
+    api = FakeHfApi(by_repo={"someone/wan-7B-GGUF": chat_repo})
+    p = HuggingFaceProvider(hf_api=api, ram_bytes=64 * GB)
+
+    entry = p.get("someone/wan-7B-GGUF", CatalogQuery(engines=["llamacpp"]))
+    assert entry.variants[0].unusable_reason is None
+    assert p.install_plan("someone/wan-7B-GGUF", "llamacpp", "wan-7b-Q4_K_M.gguf", "w").filename
+
+
+def test_install_route_refuses_a_denoiser_with_incomplete_weights(tmp_path: Path) -> None:
+    catalog = HuggingFaceProvider(
+        hf_api=FakeHfApi(by_repo={"vantagewithai/Krea-2-Turbo-GGUF": _krea_denoiser()})
+    )
+    app = create_app(
+        launcher=FakeUpstreamLauncher(),
+        enable_reaper=False,
+        catalog_provider=catalog,
+        model_dir=tmp_path,
+    )
+    with TestClient(app) as c:
+        r = c.post(
+            "/admin/catalog/install",
+            json={
+                "repo": "vantagewithai/Krea-2-Turbo-GGUF",
+                "engine": "llamacpp",
+                "variantId": "krea2_turbo-Q2_K.gguf",
+                "logicalId": "painter",
+            },
+        )
+    # A 422 about the choice, not a 502 about the Hub — retrying this cannot ever work.
+    assert r.status_code == 422
+    assert r.json()["error"]["code"] == "incomplete_weights"
+    assert "separate downloads" in r.json()["error"]["message"]

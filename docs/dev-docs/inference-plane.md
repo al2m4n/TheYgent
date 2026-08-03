@@ -39,6 +39,7 @@ These are the invariants a change must not break:
 | `capabilities.py` | Pure, network-free capability detectors (reasoning/tool/vision/context) shared by the live probe and the catalog |
 | `binary.py` | `resolve_engine_command`: env var → `PATH` → `python -m` → not-found, resolved once at construction |
 | `image_server.py` | Bundled stdlib-only OpenAI images wrapper around one-shot CLI diffusion generators, serialized behind a lock |
+| `weights.py` | Stdlib GGUF header reader: is a local diffusion file a whole checkpoint or one component of one; the `IncompleteWeights` refusal and the architecture predicate the catalog spends before a download |
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
 | `tool_parse.py` | Normalizes MLX's textual tool-call output into structured OpenAI `tool_calls`; gated, false-positive-safe, designed to be deleted |
@@ -51,7 +52,7 @@ Registration wire types (`ManagedBinding`, `ReachableBinding`, `Capabilities`, `
 
 ### Data plane `/v1/*` — OpenAI-compatible, logical ids only
 
-This is the frozen cross-plane contract. Request models use `extra="allow"` so unknown generation parameters ride through to the engine. Errors are always the OpenAI shape `{"error": {message, type, code}}` with stable machine-readable codes (`model_not_found`, `engine_unavailable`, `no_capacity`, `credential_error`, `upstream_error`, `modality_not_supported`).
+This is the frozen cross-plane contract. Request models use `extra="allow"` so unknown generation parameters ride through to the engine. Errors are always the OpenAI shape `{"error": {message, type, code}}` with stable machine-readable codes (`model_not_found`, `engine_unavailable`, `no_capacity`, `credential_error`, `upstream_error`, `modality_not_supported`, `incomplete_weights`).
 
 | Endpoint | Notes |
 |---|---|
@@ -125,7 +126,14 @@ The `CatalogProvider` protocol (`list`/`get`/`install_plan`) normalizes discover
 - lists per engine library (MLX-format repos for `mlx`, GGUF for `llamacpp`; vLLM is deliberately absent until proven), filtered to engines whose launchers are actually ready — the catalog never surfaces a model that can't run here;
 - maps the repo's `pipeline_tag` to a modality (e.g. `image-text-to-text` → `vision`, `text-to-speech` → `audio.speech`), because modality is a property of the *model*, not the engine — this is what makes the manager spawn the right server for an installed model with no user input;
 - computes conservative RAM fit badges (`fits`/`tight`/`too-large`) sized against available memory — on Apple Silicon, unified memory RAM *is* the budget;
-- surfaces browse-time capability hints (reasoning, tool calling, vision, max context) using the *same* pure detectors in `capabilities.py` as the post-install live probe, so a hint and a probe can never disagree by construction.
+- surfaces browse-time capability hints (reasoning, tool calling, vision, max context) using the *same* pure detectors in `capabilities.py` as the post-install live probe, so a hint and a probe can never disagree by construction;
+- refuses text-to-image variants that are one **component** of a model rather than a model (`CatalogVariant.unusableReason`, `UninstallableVariant` → `422 incomplete_weights`), so a denoiser published without its VAE and text encoder is never downloaded.
+
+### Complete diffusion checkpoints
+
+Image generation is the one modality where a correctly-formatted, correctly-tagged, multi-gigabyte weights file is routinely **not a model**: the text-to-image ecosystem publishes denoisers, VAEs, and text encoders as separate repositories, and `sd-cli` loads exactly one self-contained checkpoint. Handed a component it fails with `get sd version from file failed` — a version-detection message that names none of the missing parts.
+
+`weights.py` decides this from the GGUF header alone, on one rule: every single-file checkpoint `sd-cli` can load stores its VAE under `first_stage_model.`, and no component conversion does. Three layers act on it, outermost first — the catalog refuses the install (HF reports a GGUF `architecture` for component conversions and none for a whole checkpoint, so this costs no download), `PUT /admin/models/{id}` refuses the registration, and `locate_image_model` refuses the launch for bindings that predate the guard. Every layer fails **open** on anything it cannot classify: an unreadable, truncated, or unknown-version file reaches the engine exactly as before, so the guard can only add precision, never block weights that would have worked.
 
 Downloads run in-plane and in the background, with progress observed as bytes-on-disk against the plan's total, cancellation, and automatic registration on completion (`binding=<engine>`, `source=local-path`). Gated repos authenticate with the reserved `HF_TOKEN` credential (store first, then env).
 

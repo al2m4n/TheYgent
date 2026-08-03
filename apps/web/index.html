@@ -114,6 +114,45 @@
             "sameAs": ["https://github.com/al2m4n/TheYgent", "https://docs.theygent.ai/"]
           },
           {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/#video-platform",
+            "name": "Self-Hosted AI Agent Orchestration | Own Every Hop | TheYgent",
+            "description": "A full walkthrough of TheYgent on one machine: clone the repository, bring the three local services up, install a model from the catalog, then build, run, and trace an agent on the visual canvas.",
+            "uploadDate": "2026-07-31T08:15:52-07:00",
+            "duration": "PT23M52S",
+            "thumbnailUrl": "https://i.ytimg.com/vi/3LE_VrIbe0I/maxresdefault.jpg",
+            "embedUrl": "https://www.youtube.com/embed/3LE_VrIbe0I",
+            "contentUrl": "https://www.youtube.com/watch?v=3LE_VrIbe0I",
+            "publisher": { "@id": "https://theygent.ai/#organization" },
+            "isPartOf": { "@id": "https://theygent.ai/#website" }
+          },
+          {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/#video-voice",
+            "name": "Voice In, Voice Out: A No-Code AI Agent Pipeline | TheYgent",
+            "description": "Building a voice agent on the canvas: speech-to-text transcribes the recording, a language model answers, and text-to-speech reads the answer back — a spoken conversation with an agent, served by local engines.",
+            "uploadDate": "2026-08-03T10:45:15-07:00",
+            "duration": "PT5M54S",
+            "thumbnailUrl": "https://i.ytimg.com/vi/leoPQLaWMeU/maxresdefault.jpg",
+            "embedUrl": "https://www.youtube.com/embed/leoPQLaWMeU",
+            "contentUrl": "https://www.youtube.com/watch?v=leoPQLaWMeU",
+            "publisher": { "@id": "https://theygent.ai/#organization" },
+            "isPartOf": { "@id": "https://theygent.ai/#website" }
+          },
+          {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/#video-hybrid",
+            "name": "Run Local + Remote AI Models in One Agent | No-Code | TheYgent",
+            "description": "One agent, two models: a local model triages every request and answers the easy work, while a router sends the hard question to a hosted API. Each branch calls its own model directly, with no proxy in the middle.",
+            "uploadDate": "2026-08-03T09:59:31-07:00",
+            "duration": "PT7M1S",
+            "thumbnailUrl": "https://i.ytimg.com/vi/eHIHABKbwVg/maxresdefault.jpg",
+            "embedUrl": "https://www.youtube.com/embed/eHIHABKbwVg",
+            "contentUrl": "https://www.youtube.com/watch?v=eHIHABKbwVg",
+            "publisher": { "@id": "https://theygent.ai/#organization" },
+            "isPartOf": { "@id": "https://theygent.ai/#website" }
+          },
+          {
             "@type": "FAQPage",
             "@id": "https://theygent.ai/#faq",
             "mainEntity": [
@@ -255,6 +294,7 @@
           <a href="#multi-engine">Engines</a>
           <a href="#capabilities">Capabilities</a>
           <a href="#production">Production</a>
+          <a href="#watch">Watch</a>
           <a href="#faq">FAQ</a>
           <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
         </nav>
@@ -288,6 +328,7 @@
         <a href="#multi-engine">Engines</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#production">Production</a>
+        <a href="#watch">Watch</a>
         <a href="#faq">FAQ</a>
         <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
         <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
@@ -814,6 +855,95 @@
                 <span class="dur"><i class="dia dia-green"></i>Replayable</span>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── WALKTHROUGHS ─────────────────────
+           Facades, not embeds: each card is a plain link to YouTube until someone clicks it,
+           so a visit costs zero third-party requests and the section works with JS off.
+           main.js swaps the clicked thumbnail for a youtube-nocookie player in place. -->
+      <section class="section vids" id="watch" aria-labelledby="vids-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Walkthroughs</p>
+          <h2 id="vids-h">See It <span class="ramp-text">Actually Running.</span></h2>
+          <p class="section-lede">
+            Screen recordings of the real thing on one machine — the whole platform end to end, a voice pipeline,
+            and a single agent driving a local model and a hosted API in the same run.
+          </p>
+
+          <div class="card-grid vid-grid">
+            <article class="vid cut-card reveal">
+              <a
+                class="vid-thumb"
+                href="https://www.youtube.com/watch?v=3LE_VrIbe0I"
+                data-video="3LE_VrIbe0I"
+                data-title="Self-Hosted AI Agent Orchestration | Own Every Hop | TheYgent"
+                rel="noopener"
+                aria-label="Play: Self-Hosted AI Agent Orchestration — 23 minutes 52 seconds"
+              >
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">23:52</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-accent"></i>the platform</span>
+                <h3>
+                  <a href="https://www.youtube.com/watch?v=3LE_VrIbe0I" rel="noopener">Self-Hosted AI Agent Orchestration</a>
+                </h3>
+                <p>Clone the repo, bring the stack up, install a model, then build, run, and trace an agent — the full tour.</p>
+              </div>
+            </article>
+
+            <article class="vid cut-card reveal">
+              <a
+                class="vid-thumb"
+                href="https://www.youtube.com/watch?v=leoPQLaWMeU"
+                data-video="leoPQLaWMeU"
+                data-title="Voice In, Voice Out: A No-Code AI Agent Pipeline | TheYgent"
+                rel="noopener"
+                aria-label="Play: Voice In, Voice Out — a no-code AI agent pipeline, 5 minutes 54 seconds"
+              >
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">5:54</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-violet"></i>voice</span>
+                <h3>
+                  <a href="https://www.youtube.com/watch?v=leoPQLaWMeU" rel="noopener">Voice In, Voice Out</a>
+                </h3>
+                <p>Speech-to-text, a model, and text-to-speech wired on the canvas — a spoken conversation with an agent you built.</p>
+              </div>
+            </article>
+
+            <article class="vid cut-card reveal">
+              <a
+                class="vid-thumb"
+                href="https://www.youtube.com/watch?v=eHIHABKbwVg"
+                data-video="eHIHABKbwVg"
+                data-title="Run Local + Remote AI Models in One Agent | No-Code | TheYgent"
+                rel="noopener"
+                aria-label="Play: Run Local and Remote AI Models in One Agent — 7 minutes 1 second"
+              >
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">7:01</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-amber"></i>hybrid</span>
+                <h3>
+                  <a href="https://www.youtube.com/watch?v=eHIHABKbwVg" rel="noopener">Local + Remote Models in One Agent</a>
+                </h3>
+                <p>A local model triages and handles the easy work; the hard question goes to a hosted API — one graph, each branch calling its own model.</p>
+              </div>
+            </article>
           </div>
         </div>
       </section>
