@@ -1559,24 +1559,35 @@ function ModelDetail({
 }
 
 function VariantRow({ variant, onInstall }: { variant: CatalogVariant; onInstall: () => void }) {
+  const unusable = variant.unusableReason ?? null;
   return (
     <Item variant="outline" className="flex-nowrap gap-3 px-3 py-2">
       <ItemContent className="min-w-0 flex-row flex-wrap items-center gap-2">
         <span className="mono text-sm text-foreground">{variant.label}</span>
         <Badge variant="secondary">{engineLabel(variant.engine)}</Badge>
         {variant.recommended && <ToneBadge tone="blue">recommended</ToneBadge>}
-        {variant.quality && (
-          <span className="text-[11px] text-muted-foreground">{variant.quality}</span>
+        {unusable ? (
+          <span className="text-[11px] text-muted-foreground">not a complete model</span>
+        ) : (
+          variant.quality && (
+            <span className="text-[11px] text-muted-foreground">{variant.quality}</span>
+          )
         )}
       </ItemContent>
       <ItemActions className="shrink-0 gap-3">
         <span className="text-xs text-muted-foreground">{formatBytes(variant.sizeBytes)}</span>
-        <span title={variant.fitReason ?? undefined}>
-          <ToneBadge tone={FIT_TONE[variant.fit]}>{FIT_LABEL[variant.fit]}</ToneBadge>
+        <span title={unusable ?? variant.fitReason ?? undefined}>
+          {unusable ? (
+            <ToneBadge tone="red">incomplete</ToneBadge>
+          ) : (
+            <ToneBadge tone={FIT_TONE[variant.fit]}>{FIT_LABEL[variant.fit]}</ToneBadge>
+          )}
         </span>
         <Button
           size="sm"
-          variant={variant.fit === "too-large" ? "outline" : "default"}
+          variant={unusable || variant.fit === "too-large" ? "outline" : "default"}
+          disabled={Boolean(unusable)}
+          title={unusable ?? undefined}
           onClick={onInstall}
         >
           Install

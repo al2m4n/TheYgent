@@ -559,6 +559,7 @@ export interface CatalogVariant {
   recommended: boolean;
   quality?: string | null; // "balanced", "high quality", "full precision", …
   fitReason?: string | null; // "~5 GB needed · 16 GB RAM" (tooltip)
+  unusableReason?: string | null;
 }
 
 export interface CatalogEntry {

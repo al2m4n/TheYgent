@@ -101,6 +101,14 @@ Every variant carries a **fit badge** sized against your machine's RAM, so you c
 
 Hover a badge for the reasoning, e.g. "~5 GB needed · 16 GB RAM". Picking a too-large variant is allowed but warns you first.
 
+### Incomplete image models
+
+Some image-generation repositories publish only **part** of a model. A modern text-to-image model is three pieces — a denoiser, a VAE, and a text encoder — and many repositories ship quantizations of the denoiser alone, with the other two living in separate repositories. The files look like everything else: multi-gigabyte, `.gguf`, tagged for text-to-image.
+
+TheYgent loads one self-contained checkpoint, so a denoiser on its own can't render. Those variants show an **incomplete** badge instead of a fit badge, their **Install** button is disabled, and none of them is ever marked recommended. Hover the badge for what's missing. Look for a repository that publishes a complete checkpoint — a single file that bundles all three parts.
+
+If a repository slips past this check, the install still succeeds and the refusal arrives when you register or first use the model, naming the same missing parts.
+
 ### Download progress
 
 When you install, the download runs **inside your inference plane** — TheYgent never sees the bytes. Progress appears as a card in the notification center (bottom-right): a progress bar, bytes done and total, live speed, an ETA, and a **Cancel** button. It moves through `downloading → registering → done`, survives navigation and page reloads (it re-attaches to active jobs), and finishes with "Installed ✓". On completion the model is auto-registered under the logical id you chose and appears in the Installed table.

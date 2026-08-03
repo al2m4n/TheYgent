@@ -42,6 +42,7 @@ from theygent_inference_plane.capabilities import (
     REASONING_MARKERS,
     template_implies_reasoning,
 )
+from theygent_inference_plane.weights import IncompleteWeights, diffusion_defect
 
 
 @runtime_checkable
@@ -787,7 +788,7 @@ class MlxVlmLauncher:
 # family — the `llamacpp` engine) and `mflux` (FLUX on Apple Silicon — the `mlx` engine).
 
 
-def locate_image_model(binding: ManagedBinding) -> str:
+def locate_image_model(binding: ManagedBinding, cli_engine: str) -> str:
     """The diffusion weights the wrapper hands its CLI.
 
     ``sd-cli`` takes a single weights FILE (a catalog install lands a directory — pick the one
@@ -802,7 +803,7 @@ def locate_image_model(binding: ManagedBinding) -> str:
         # wrapper's CLI surfaces a clear "no such file" if the reference isn't a local path.
         return model
     if os.path.isfile(model):
-        return model
+        return _complete_or_raise(model, cli_engine)
     candidates = sorted(
         glob.glob(os.path.join(model, "*.gguf")) + glob.glob(os.path.join(model, "*.safetensors"))
     )
@@ -812,11 +813,23 @@ def locate_image_model(binding: ManagedBinding) -> str:
             "model locally first"
         )
     if len(candidates) == 1:
-        return candidates[0]
+        return _complete_or_raise(candidates[0], cli_engine)
     raise RuntimeError(
         f"ambiguous diffusion weights for {model!r}: {[os.path.basename(c) for c in candidates]} — "
         "point the binding at the exact file"
     )
+
+
+def _complete_or_raise(path: str, cli_engine: str) -> str:
+    """``path`` back, or a named refusal if it is a fragment of a model rather than a model.
+
+    Scoped to ``sdcpp``: the check reads a GGUF header, and ``mflux`` is handed repo names and
+    safetensors directories that it resolves itself."""
+    if cli_engine != "sdcpp":
+        return path
+    if defect := diffusion_defect(path):
+        raise IncompleteWeights(defect)
+    return path
 
 
 class ImageServerHandle(_SubprocessHandle):
@@ -881,7 +894,7 @@ class ImageServerLauncher:
             "--engine",
             self._engine,
             "--model",
-            locate_image_model(binding),
+            locate_image_model(binding, self._engine),
             "--host",
             "127.0.0.1",
             "--port",

@@ -34,6 +34,7 @@ from theygent_inference_plane.capabilities import (
     template_implies_reasoning,
     template_implies_tools,
 )
+from theygent_inference_plane.weights import is_component_architecture
 
 # The managed engines an entry can be installed for (the binding enum). ``openai-compatible``
 # is a reachable passthrough — never installed — so it is not an install target.
@@ -134,6 +135,7 @@ class CatalogVariant(_Wire):
     recommended: bool = False
     quality: str | None = None  # human hint: "balanced", "high quality", "full precision", ...
     fit_reason: str | None = None  # "~5 GB needed · 16 GB RAM" (tooltip on the fit badge)
+    unusable_reason: str | None = None
 
 
 class CatalogEntry(_Wire):
@@ -207,6 +209,12 @@ class CatalogProvider(Protocol):
     ) -> InstallPlan: ...
 
 
+class UninstallableVariant(RuntimeError):
+    """The requested variant is not a model, so no download of it can succeed. Separate from
+    ``CatalogError`` (the provider failed, retrying may work) because nothing about this one is
+    transient — it is a 422 about the choice, not a 502 about the Hub."""
+
+
 class CatalogError(RuntimeError):
     """A provider could not be reached / returned an unusable response."""
 
@@ -230,7 +238,11 @@ def fit_for(size_bytes: int | None, ram_total: int) -> Fit:
 
 def _mark_recommended(variants: list[CatalogVariant]) -> None:
     """Mark one variant recommended: the largest that *fits* (more quality for the headroom), else
-    the smallest (best chance of running at all) — defaulting to a sane quant."""
+    the smallest (best chance of running at all) — defaulting to a sane quant.
+
+    Variants the install would refuse are never recommended, and never stand in for the choice
+    when nothing fits — recommending a file that cannot run is worse than recommending none."""
+    variants = [v for v in variants if v.unusable_reason is None]
     if not variants:
         return
     fitting = [v for v in variants if v.fit == "fits" and v.size_bytes]
@@ -389,6 +401,33 @@ def _apply_hf_capabilities(entry: CatalogEntry, mi: Any) -> None:
     )
 
 
+def _gguf_architecture(mi: Any) -> str | None:
+    """The GGUF ``general.architecture`` Hugging Face reports for a repo, from an item fetched
+    with ``expand=["gguf"]``. Metadata only — the Hub reads the header so we do not have to."""
+    gguf = getattr(mi, "gguf", None)
+    if not isinstance(gguf, dict):
+        return None
+    arch = gguf.get("architecture")
+    return str(arch) if arch else None
+
+
+def _component_reason(architecture: str | None, modality: Modality) -> str | None:
+    """Why a text-to-image repo's GGUFs are pieces rather than models, or None.
+
+    Scoped to ``images.generation`` so the architecture names below can only ever be read as
+    diffusion architectures — the decision is never made for a repo that serves another task.
+    Best-effort in one direction only: an unrecognized architecture reads as installable and is
+    caught by the local header check after download, so this can cost a download but never a
+    wrongly refused install."""
+    if modality != "images.generation" or not is_component_architecture(architecture):
+        return None
+    return (
+        f"a {architecture} repository publishes the denoiser on its own — the VAE and text "
+        "encoder it needs to render are separate downloads. Image generation loads ONE "
+        "self-contained checkpoint, so these files cannot be installed and run as a model"
+    )
+
+
 def _hf_config_max_context(ref: str) -> int | None:
     """Best-effort real context window from an HF repo's ``config.json``
     (``max_position_embeddings``), fetching just that small file — never weights. Detail-view only
@@ -536,8 +575,11 @@ class HuggingFaceProvider:
         # Capability hints for the detail view. ``files_metadata`` (needed above for sibling sizes)
         # and ``expand`` are mutually exclusive on HF's model_info, so caps ride a second small
         # request — best-effort, like the model-card blurb below.
+        architecture: str | None = None
         try:
-            _apply_hf_capabilities(entry, self._hf().model_info(ref, expand=["config", "gguf"]))
+            expanded = self._hf().model_info(ref, expand=["config", "gguf"])
+            _apply_hf_capabilities(entry, expanded)
+            architecture = _gguf_architecture(expanded)
         except Exception:
             pass
         # The ``expand=config`` metadata omits max_position_embeddings (unlike the GGUF header), so
@@ -551,7 +593,9 @@ class HuggingFaceProvider:
         modality = _modality_for_pipeline(getattr(info, "pipeline_tag", None))
         variants: list[CatalogVariant] = []
 
-        # llamacpp: one variant per GGUF file (the quant), sized individually.
+        # llamacpp: one variant per GGUF file (the quant), sized individually. Every quant of a
+        # denoiser-only repo is equally unrenderable, so the reason is the repo's, not the file's.
+        unusable = _component_reason(architecture, modality)
         if "llamacpp" in requested:
             for sib in siblings:
                 name = sib.rfilename
@@ -570,6 +614,7 @@ class HuggingFaceProvider:
                         fit=fit_for(size, ram),
                         quality=_variant_quality(label, "llamacpp"),
                         fit_reason=_fit_reason(size, ram),
+                        unusable_reason=unusable,
                     )
                 )
                 if "llamacpp" not in entry.engines:
@@ -623,12 +668,25 @@ class HuggingFaceProvider:
             pipeline_tag = getattr(info, "pipeline_tag", None)
         except Exception:
             siblings = []
+        modality = _modality_for_pipeline(pipeline_tag)
         if engine == "llamacpp":
             filename = variant_id
             for sib in siblings:
                 if sib.rfilename == variant_id:
                     total_bytes = getattr(sib, "size", None)
                     break
+            # The one place a refusal still saves something: a denoiser runs to several GB, and
+            # every byte of it is wasted. `expand` and `files_metadata` are mutually exclusive on
+            # model_info, so the architecture costs a second small request — spent only for the
+            # installs that could be affected, and never allowed to block one on a Hub hiccup.
+            if modality == "images.generation":
+                architecture: str | None = None
+                try:
+                    architecture = _gguf_architecture(self._hf().model_info(ref, expand=["gguf"]))
+                except Exception:
+                    pass
+                if reason := _component_reason(architecture, modality):
+                    raise UninstallableVariant(f"{ref} cannot be installed: {reason}")
         else:  # mlx (whole repo)
             total_bytes = (
                 sum(
@@ -642,7 +700,7 @@ class HuggingFaceProvider:
             logical_id=logical_id,
             engine=engine,
             repo=ref,
-            modality=_modality_for_pipeline(pipeline_tag),
+            modality=modality,
             filename=filename,
             total_bytes=total_bytes,
         )
