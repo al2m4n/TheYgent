@@ -2,6 +2,13 @@
 
 TheYgent is a local-first platform for building and running AI agents: three small services run on your own machine, and everything — models, agents, runs, chat history — lives where you put it. This section takes you from a fresh clone to your first working agent in about ten minutes.
 
+## Watch the walkthrough
+
+<figure class="video">
+  <iframe src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I" title="Self-Hosted AI Agent Orchestration — a full TheYgent walkthrough" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <figcaption>Self-Hosted AI Agent Orchestration (23:52) — cloning the repository, bringing the stack up, installing a model, and building, running, and tracing an agent. The pages below are the written version of the same path.</figcaption>
+</figure>
+
 ## What you need
 
 | Requirement | Why |

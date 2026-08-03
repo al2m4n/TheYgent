@@ -148,6 +148,34 @@
     });
   })();
 
+  /* ── Video facades ─────────────────────────────────────────────────────────
+     Each card is a link to YouTube until it is clicked; the first plain click swaps
+     the drawn thumbnail for a youtube-nocookie player in its place. So the page
+     makes no request to a video host unless a visitor asks for one, and with JS
+     off (or on a modified click) the link still opens the video. */
+  (function videos() {
+    document.querySelectorAll("a[data-video]").forEach(function (link) {
+      link.addEventListener("click", function (e) {
+        // Leave new-tab / new-window / download intents to the browser.
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        var frame = document.createElement("iframe");
+        frame.src =
+          "https://www.youtube-nocookie.com/embed/" + link.getAttribute("data-video") + "?autoplay=1&rel=0";
+        frame.title = link.getAttribute("data-title") || "TheYgent walkthrough";
+        frame.allow =
+          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+        frame.referrerPolicy = "strict-origin-when-cross-origin";
+        frame.setAttribute("allowfullscreen", "");
+        var shell = document.createElement("div");
+        shell.className = "vid-frame";
+        shell.appendChild(frame);
+        link.replaceWith(shell);
+        frame.focus();
+      });
+    });
+  })();
+
   /* ── Scroll reveal (opacity crossfade only) ────────────────────────────── */
   (function reveal() {
     var items = document.querySelectorAll(".reveal");

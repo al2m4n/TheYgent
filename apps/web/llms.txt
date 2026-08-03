@@ -30,6 +30,12 @@ Key facts:
 - [API Reference](https://docs.theygent.ai/latest/reference/api/): control-plane and inference-plane HTTP APIs
 - [Troubleshooting](https://docs.theygent.ai/latest/reference/troubleshooting/): common issues and fixes
 
+## Videos
+
+- [Self-Hosted AI Agent Orchestration](https://www.youtube.com/watch?v=3LE_VrIbe0I) (23:52): full walkthrough — clone the repository, bring the three local services up, install a model, then build, run, and trace an agent
+- [Voice In, Voice Out: A No-Code AI Agent Pipeline](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54): a voice agent built on the canvas — speech-to-text, a language model, and text-to-speech, served by local engines
+- [Run Local + Remote AI Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01): a local model triages and answers easy requests while a router sends hard ones to a hosted API, each branch calling its model directly
+
 ## Source
 
 - [GitHub repository](https://github.com/al2m4n/TheYgent): source code, issues, releases, samples

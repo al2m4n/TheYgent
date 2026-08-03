@@ -4,6 +4,11 @@ Voice shows up in [chat](index.md) two ways: you can talk to a voice **model** d
 
 Raw audio always goes **directly to your inference plane**, never through the control plane. Only a short readable record of the turn ("🎤 voice message", "🔊 audio") is written to the session afterwards.
 
+<figure class="video">
+  <iframe src="https://www.youtube-nocookie.com/embed/leoPQLaWMeU" title="Voice In, Voice Out — a no-code AI agent pipeline" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <figcaption>Voice In, Voice Out (5:54) — building the transcribe → llm → speak pipeline described below, then talking to it.</figcaption>
+</figure>
+
 ## Recording and attaching audio
 
 The composer grows two audio controls whenever the target speaks or listens:

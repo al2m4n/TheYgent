@@ -13,6 +13,13 @@
   <a href="docs/dev-docs/README.md">Developer docs</a>
 </p>
 
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=leoPQLaWMeU">
+    <img src="https://img.youtube.com/vi/leoPQLaWMeU/maxresdefault.jpg" alt="Watch: Voice In, Voice Out — a no-code AI agent pipeline" width="640">
+  </a>
+  <p><em><strong>Voice in, voice out</strong> (5:54) — speech-to-text, a model, and text-to-speech wired on the canvas, then a spoken conversation with the agent.</em></p>
+</div>
+
 TheYgent is a no-code, local-first platform for building and running AI agents. You compose
 an agent visually — LLM steps, tools, MCP servers, retrieval, routers, guardrails, human
 approval — and run it against models on *your* infrastructure: llama.cpp anywhere, MLX on

@@ -63,6 +63,11 @@ There is nothing to warm, evict, or wait for. A remote id never counts against y
 
 ## Mixing local and remote in one agent
 
+<figure class="video">
+  <iframe src="https://www.youtube-nocookie.com/embed/eHIHABKbwVg" title="Run Local + Remote AI Models in One Agent" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <figcaption>Run Local + Remote AI Models in One Agent (7:01) — the routed hybrid below, built and run: the local model answers the easy request, the hosted one takes the hard question.</figcaption>
+</figure>
+
 Because both local and remote models are just logical ids, a single agent can use both — routing simple work to a fast local model and hard work to a stronger hosted one. The usual shape is a small local classifier that decides, feeding a [router node](../building/nodes/router.md) that sends each request down the matching branch:
 
 ```mermaid

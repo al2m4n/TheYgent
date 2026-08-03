@@ -56,6 +56,9 @@ extra:
     provider: mike
     default: latest
 
+extra_css:
+  - assets/video.css
+
 markdown_extensions:
   - admonition
   - attr_list

@@ -1283,6 +1283,114 @@ h3 {
   transform: translateY(-3px);
 }
 
+/* ═══════════════════════════ WALKTHROUGHS ══════════════════════════════════
+   The thumbnail is drawn here — the mark on a ramp-lit facet, a play button and
+   a duration — so nothing is fetched from a video host until a visitor clicks. */
+.vid {
+  --cut: 16px;
+  background: var(--elev);
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s ease;
+}
+.vid:hover {
+  transform: translateY(-3px);
+}
+.vid.cut-card:hover::before {
+  background: linear-gradient(150deg, var(--periwinkle), var(--border) 60%);
+}
+.vid-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  background: radial-gradient(115% 130% at 50% 6%, var(--hover), var(--surface) 72%);
+}
+.vid-mark {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 74%;
+  transform: translate(-50%, -50%);
+  opacity: 0.09;
+  pointer-events: none;
+}
+.vid-btn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ramp);
+  color: #fff;
+  box-shadow: 0 8px 24px var(--cta-shadow);
+  transition: transform 0.2s ease;
+}
+.vid-btn svg {
+  margin-left: 3px; /* optical centring: the triangle's mass sits left of its box */
+}
+.vid-thumb:hover .vid-btn,
+.vid-thumb:focus-visible .vid-btn {
+  transform: translate(-50%, -50%) scale(1.07);
+}
+.vid-dur {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  padding: 0.15em 0.45em;
+  font-size: 0.72rem;
+  border-radius: 5px;
+  color: var(--text-2);
+  background: color-mix(in oklab, var(--bg) 78%, transparent);
+  border: 1px solid var(--border);
+}
+.vid-body {
+  padding: 18px 22px 24px;
+}
+.vid-kicker {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.vid-body h3 {
+  font-size: 1.14rem;
+  margin: 10px 0 8px;
+  font-weight: 600;
+}
+.vid-body h3 a {
+  color: inherit;
+  text-decoration: none;
+}
+.vid-body h3 a:hover {
+  color: var(--accent);
+}
+.vid-body p {
+  color: var(--text-2);
+  font-size: 0.92rem;
+}
+/* The player that replaces the thumbnail on click, in the same 16:9 box. */
+.vid-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-bottom: 1px solid var(--border);
+  background: #000;
+}
+.vid-frame iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
 /* ═══════════════════════════ QUICKSTART ════════════════════════════════════ */
 .qs-grid {
   display: grid;

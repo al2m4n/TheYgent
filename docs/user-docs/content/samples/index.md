@@ -21,6 +21,7 @@ A local triage model classifies every request and emits `{"route": ..., "questio
 [router](../building/nodes/router.md) follows the matching handle. Greetings and easy questions
 are answered by your **local** model; coding, analysis, and long-form work go to the **API**
 model. Two model bindings, one graph, no proxying — each branch calls its model directly.
+Seen end to end in [Run Local + Remote Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01).
 
 ### Private SQL analyst — data privacy by construction
 
@@ -120,7 +121,8 @@ STT transcribes the audio, a model answers in spoken prose, TTS reads it back. T
 offer every registered model with the right modality — **pick local models for all three slots
 and the audio never leaves your machine**. Each media step's `err` port routes to an honest
 failure output. Input is an audio artifact (`POST /artifacts`) or an audio URL; New Chat's
-voice mode drives the same shape end-to-end.
+voice mode drives the same shape end-to-end. Built and used in
+[Voice In, Voice Out](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54).
 
 ### Art department — local image generation
 
