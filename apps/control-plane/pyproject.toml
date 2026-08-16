@@ -31,7 +31,7 @@ dependencies = [
     # Encrypt tool/MCP secret material at rest (Fernet) behind a secret_ref, so the IR
     # carries no secret and rotation never bumps a hash (secrets.py). Present transitively (via the
     # MCP/DBOS stacks); declared now that we depend on it directly. A real KMS is the deferred upgrade.
-    "cryptography>=42",
+    "cryptography>=50.0.0",
     # Retrieval storage: vector similarity lives in the SAME Postgres (pgvector), so chunks stay
     # transactional with their source rows — no second storage engine. The package is the
     # SQLAlchemy Vector type; the extension itself is created by migration 0015.
