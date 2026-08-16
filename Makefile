@@ -67,7 +67,7 @@ PG_VOLUME ?= theygent-pgdata
 # The sample observability stack (deploy/otel): OTel collector (:4318) → Tempo → Grafana (:3000).
 OTEL_COMPOSE := deploy/otel/docker-compose.yml
 
-.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-delete
+.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-up k8s-forward k8s-forward-stop k8s-down k8s-delete
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -320,23 +320,68 @@ otel-logs: ## Tail the sample OTel stack (the collector's debug exporter prints 
 # compose and side-loaded; imagePullPolicy stays IfNotPresent.
 
 K8S_IMAGES := theygent/control-plane:dev theygent/inference-plane:dev theygent/worker:dev theygent/interface:dev
+K8S_DEPLOYS := control-plane inference-plane worker interface
 
 # NOT `minikube image load`: with the docker driver it silently keeps an EXISTING same-tag
 # image (even with --overwrite), so a rebuilt :dev never reaches the cluster — pods keep
 # running stale code. save + load against minikube's own daemon replaces the tag reliably.
+# The `docker save` runs with the minikube docker-env explicitly stripped (`env -u`): if the
+# caller's shell already ran `eval $(minikube docker-env)`, an unguarded save would read the
+# OLD image straight from minikube and load it back — a silent no-op that strands stale pods.
+# So: save from the host daemon, load into minikube. `--shell bash` forces sh-parsable output
+# regardless of $SHELL (fish/zsh emit different syntax that a POSIX `eval` can't apply).
 k8s-load: docker-build ## Build images and load them into minikube (force-replaces same-tag images)
 	@for img in $(K8S_IMAGES); do \
 		echo "==> loading $$img into minikube"; \
-		docker save $$img -o /tmp/theygent-k8s-img.tar; \
-		( eval "$$(minikube -p minikube docker-env)" && docker load -i /tmp/theygent-k8s-img.tar ); \
+		env -u DOCKER_HOST -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH -u MINIKUBE_ACTIVE_DOCKERD \
+			docker save $$img -o /tmp/theygent-k8s-img.tar; \
+		( eval "$$(minikube -p minikube docker-env --shell bash)" && docker load -i /tmp/theygent-k8s-img.tar ); \
 		rm -f /tmp/theygent-k8s-img.tar; \
 	done
 
-k8s-apply: ## Apply the Kubernetes manifests (kubectl apply -k deploy/k8s)
+# Depends on k8s-load so an apply always ships freshly built images. `apply -k` alone is a
+# no-op when the manifests are unchanged (same :dev tag, imagePullPolicy IfNotPresent), so a
+# reloaded image would never reach running pods — `rollout restart` is what rebinds them.
+k8s-apply: k8s-load ## Build+load latest images, apply manifests, and roll pods onto them
 	kubectl apply -k deploy/k8s
+	kubectl -n theygent rollout restart deployment $(K8S_DEPLOYS)
+	@for d in $(K8S_DEPLOYS); do \
+		echo "==> waiting for rollout: $$d"; \
+		kubectl -n theygent rollout status deployment/$$d --timeout=180s; \
+	done
 
-k8s-delete: ## Tear down the Kubernetes resources (PVC data included)
-	kubectl delete -k deploy/k8s
+# One-shot dev flow: build → load → deploy → refresh pods → port-forward. ClusterIP services
+# are unreachable from the host, so the forward is what actually makes the stack usable.
+k8s-up: k8s-apply k8s-forward ## Deploy latest images to minikube and port-forward the stack
+
+# Host ports mirror the make/compose contract (control 8080, inference 8081, interface 5174)
+# so the interface image's baked-in localhost URLs resolve. The interface Service listens on
+# :80, hence 5174:80. `trap 'kill 0'` tears down all three forwards on Ctrl-C — but only this
+# invocation's group, so an ORPHANED forward from a crashed/prior run keeps holding a port and
+# the next start dies with "address already in use". k8s-forward-stop reaps any such strays
+# first (matched by the namespace flag, so only our forwards are touched, never other kubectl).
+k8s-forward: k8s-forward-stop ## Port-forward control-plane:8080, inference:8081, interface:5174 (Ctrl-C to stop)
+	@echo "port-forwarding — control http://localhost:8080  inference http://localhost:8081  interface http://localhost:5174"
+	@echo "(Ctrl-C to stop)"
+	@trap 'kill 0' INT TERM EXIT; \
+	kubectl -n theygent port-forward svc/control-plane 8080:8080 & \
+	kubectl -n theygent port-forward svc/inference-plane 8081:8081 & \
+	kubectl -n theygent port-forward svc/interface 5174:80 & \
+	wait
+
+k8s-forward-stop: ## Kill any lingering theygent port-forwards (frees 8080/8081/5174)
+	@pkill -f 'kubectl -n theygent port-forward' 2>/dev/null && echo "stopped stray port-forwards" || echo "no port-forwards running"
+
+# Full teardown: `delete -k` removes every listed manifest — the namespace and all three PVCs
+# (theygent-data, inference-data, pgdata), so registry, weights, artifacts, and the Postgres
+# volume all go with it. --ignore-not-found makes a re-run (or a partial cluster) a clean no-op.
+# Also reaps port-forwards (host processes, not cluster resources — a delete alone leaves them
+# looping, retrying against a namespace that no longer exists and holding the host ports).
+k8s-down: k8s-forward-stop ## Tear down everything in the cluster, PVC data included (namespace, planes, Postgres, volumes)
+	kubectl delete -k deploy/k8s --ignore-not-found
+
+# Back-compat alias for the teardown.
+k8s-delete: k8s-down ## Alias for k8s-down
 
 docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:8000)
 	uv run --project docs/user-docs mkdocs serve -f docs/user-docs/mkdocs.yml
