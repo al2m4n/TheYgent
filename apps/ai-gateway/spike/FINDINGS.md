@@ -97,6 +97,38 @@ Against the real API:
 See design consequences 2–5. Claude Code accepts a response `model` different from the one it
 requested.
 
+## Q5 — local model (Qwen3-4B-Instruct-2507 Q4_K_M on llama.cpp, Apple Silicon) — 🟡
+
+The route is Anthropic format → LiteLLM's Anthropic adapter → inference plane `/v1` (logical id
+`aux-local`) → llama-server.
+
+- **The route works end to end, with one opt-out.** LiteLLM 1.89.7 sends `openai/` models to the
+  OpenAI **Responses API** (`/v1/responses`), which the inference plane doesn't serve (404). The
+  adapter needs `litellm.use_chat_completions_url_for_anthropic_messages = True`. That flag is
+  process-wide, which suits the gateway's own process.
+- **Small requests are fast and well-formed once warm.** A title-style prompt came back in 0.51 s.
+  A one-tool request returned a correct structured `tool_use` with `stop_reason: tool_use` in
+  1.24 s. Quirk: the adapter adds an empty `text` block before the `tool_use`.
+- **Cold start is 62 s** (engine spawn and model load). The gateway must keep its local model warm
+  (`lifecycle.keepWarm`), or send side requests to the cloud until it's ready.
+- **Claude Code-sized agent turns are not viable locally.**
+  - **Subagent requests** (Explore, 6–15K-token prompts): 6/6 answered with structured tool calls,
+    but only **1/6 chose the same next action** as the cloud model, at **p50 34 s** (3.6–56 s)
+    against about 2.3 s in the cloud. When the cloud model had already finished and answered, the
+    local model kept calling tools.
+  - **Main requests** (~28K tokens): every one timed out at 180 s. That run was contaminated by the
+    point below, so it's an upper bound, not a clean measurement.
+  - This confirms the plan: local routing is for small auxiliary requests only.
+- **An abandoned non-streaming request keeps the engine busy.** The inference plane's non-streaming
+  `/v1/chat/completions` path holds the lease and awaits the engine with no disconnect check. A
+  client that times out or disconnects leaves the llama-server slot working until it finishes. Two
+  replays of the oversized 184K-token capture kept slots busy long after the client was gone.
+  LiteLLM's defaults (600 s timeout, then a retry) doubled one of them. **The gateway's local route
+  must therefore stream** (a disconnect then reaches the engine), set an explicit timeout with no
+  retries, and refuse prompts above a size cap.
+- **Still to do:** replay real auxiliary requests once the day of interactive use has captured
+  some.
+
 ## Q6 — identity header alongside a subscription login — ✅
 
 `ANTHROPIC_CUSTOM_HEADERS: X-TheYgent-Gateway-Key: …` arrives on every request next to
@@ -117,6 +149,7 @@ clean environment (`env -i`), so desktop-app variables don't leak in.
 
 - ⏳ Auxiliary fingerprint census and the real class mix: needs a day of interactive use.
 - ⏳ Q3: the desktop app honouring a project's `env` block.
-- ⏳ Q5: local replay of auxiliary requests (needs a local chat model on the inference plane).
+- ⏳ Q5: local replay of *auxiliary* requests (the model is installed as `aux-local`; this needs
+  auxiliary captures).
 - Optional: a measured mid-conversation Opus → Sonnet → Opus round trip (cache cold-start cost).
   The documented API behaviour is clear; measuring it costs allowance.

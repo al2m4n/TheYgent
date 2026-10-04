@@ -26,8 +26,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+import litellm
 from census import fingerprint, load
 from litellm.anthropic_interface import messages as anthropic_messages
+
+# LiteLLM sends `openai/` models through the OpenAI Responses API by default; the inference plane
+# serves chat completions only, so the adapter must take the chat-completions path.
+litellm.use_chat_completions_url_for_anthropic_messages = True
 
 
 def cloud_text(record: dict[str, Any]) -> str:
@@ -94,12 +99,18 @@ def expected_schema_keys(body: dict[str, Any]) -> list[str]:
     return sorted(((fmt.get("schema") or {}).get("properties") or {}).keys())
 
 
-def response_text(response: Any) -> str:
+def response_parts(response: Any) -> tuple[str, list[str], dict[str, Any]]:
+    """Text, tool-call names, and usage of an Anthropic-format response."""
     data = response if isinstance(response, dict) else getattr(response, "model_dump", lambda: {})()
-    return "".join(c.get("text", "") for c in data.get("content", []) if c.get("type") == "text")
+    content = [c for c in data.get("content") or [] if isinstance(c, dict)]
+    text = "".join(c.get("text", "") for c in content if c.get("type") == "text")
+    tools = [c.get("name", "") for c in content if c.get("type") == "tool_use"]
+    return text, tools, data.get("usage") or {}
 
 
-async def replay(record: dict[str, Any], model: str, inference: str) -> dict[str, Any]:
+async def replay(
+    record: dict[str, Any], model: str, inference: str, request_timeout_s: float
+) -> dict[str, Any]:
     body = json.loads(record["request_body"])
     request, notes = adapt(body)
     keys = expected_schema_keys(body)
@@ -110,11 +121,16 @@ async def replay(record: dict[str, Any], model: str, inference: str) -> dict[str
             api_base=f"{inference.rstrip('/')}/v1",
             api_key="sk-noauth",
             stream=False,
+            # An abandoned non-streaming call keeps the engine busy, and LiteLLM's default is a
+            # 600 s timeout followed by a retry — so bound it and never retry.
+            timeout=request_timeout_s,
+            num_retries=0,
             **request,
         )
-        text, error = response_text(response), None
+        text, tools, usage = response_parts(response)
+        error = None
     except Exception as exc:  # every failure is a finding, reported per request
-        text, error = "", f"{type(exc).__name__}: {exc}"[:200]
+        text, tools, usage, error = "", [], {}, f"{type(exc).__name__}: {exc}"[:200]
     latency = time.perf_counter() - t0
     valid: bool | None = None
     if keys and text:
@@ -124,10 +140,17 @@ async def replay(record: dict[str, Any], model: str, inference: str) -> dict[str
         except ValueError:
             valid = False
     reference = cloud_text(record)
+    cloud_tools = (record.get("response_summary") or {}).get("tool_uses") or []
     return {
         "fingerprint": fingerprint(record["request_summary"]),
         "latency_s": round(latency, 2),
-        "ok": bool(text) and error is None,
+        "ok": bool(text or tools) and error is None,
+        "input_tokens": usage.get("input_tokens"),
+        "output_tokens": usage.get("output_tokens"),
+        "local_tools": tools,
+        "cloud_tools": cloud_tools,
+        # The proposed shadow metric for agent turns: did both pick the same next action?
+        "same_next_action": (tools[:1] == cloud_tools[:1]) if error is None else None,
         "schema_valid": valid,
         "similarity": round(difflib.SequenceMatcher(None, reference, text).ratio(), 2)
         if reference
@@ -154,35 +177,60 @@ async def main() -> None:
     parser.add_argument("--inference", default="http://127.0.0.1:8081")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--no-previews", action="store_true")
+    parser.add_argument(
+        "--request-class",
+        default="auxiliary",
+        help="which captured class to replay (auxiliary, subagent, main, compaction)",
+    )
+    parser.add_argument("--timeout", type=float, default=180.0)
+    parser.add_argument(
+        "--max-body-bytes",
+        type=int,
+        default=300_000,
+        help="skip requests larger than this (a laptop-sized model cannot take the largest)",
+    )
     args = parser.parse_args()
     records = [
         r
         for r in load(args.captures.expanduser())
-        if r.get("request_class") == "auxiliary"
+        if r.get("request_class") == args.request_class
         and r.get("status") == 200
         and r.get("request_body")
+        and len(r["request_body"]) <= args.max_body_bytes
     ][: args.limit]
     if not records:
         sys.exit(
-            "no auxiliary captures with stored bodies (run the proxy with --bodies auxiliary|all)"
+            f"no {args.request_class} captures with stored bodies "
+            "(run the proxy with --bodies auxiliary|all)"
         )
-    results = [await replay(r, args.model, args.inference) for r in records]
-    columns = ["fingerprint", "latency s", "ok", "schema valid", "similarity", "notes", "local"]
-    columns += ["cloud", "error"]
+    results = [await replay(r, args.model, args.inference, args.timeout) for r in records]
+    columns = ["fingerprint", "latency s", "ok", "in/out tokens", "schema valid", "similarity"]
+    columns += [
+        "local tools",
+        "cloud tools",
+        "same next action",
+        "notes",
+        "local",
+        "cloud",
+        "error",
+    ]
     print("| " + " | ".join(columns) + " |")
     print("|" + "---|" * len(columns))
     for r in results:
         local = "" if args.no_previews else preview(r["local"])
         cloud = "" if args.no_previews else preview(r["cloud"])
         print(
-            f"| {r['fingerprint']} | {r['latency_s']} | {r['ok']} | {r['schema_valid']} | "
-            f"{r['similarity']} | {'; '.join(r['notes'])} | {local} | {cloud} | "
+            f"| {r['fingerprint']} | {r['latency_s']} | {r['ok']} | "
+            f"{r['input_tokens']}/{r['output_tokens']} | {r['schema_valid']} | {r['similarity']} | "
+            f"{','.join(r['local_tools']) or '-'} | {','.join(r['cloud_tools']) or '-'} | "
+            f"{r['same_next_action']} | {'; '.join(r['notes'])} | {local} | {cloud} | "
             f"{r['error'] or ''} |"
         )
     ok = [r for r in results if r["ok"]]
+    agree = [r for r in results if r["same_next_action"]]
     print(
-        f"\n{len(ok)}/{len(results)} answered; p50 latency "
-        f"{sorted(r['latency_s'] for r in results)[len(results) // 2]} s"
+        f"\n{len(ok)}/{len(results)} answered; {len(agree)}/{len(results)} same next action; "
+        f"p50 latency {sorted(r['latency_s'] for r in results)[len(results) // 2]} s"
     )
 
 
