@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import os
+from collections.abc import Coroutine
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -212,6 +213,57 @@ async def _guarded_sse(lines: Any, model: str, close: Any = None):
     finally:
         if close is not None:
             await close()
+
+
+# Ends the ASGI cycle of a completion whose client hung up. No client ever reads it (the
+# connection is already gone), so it adds nothing to the /v1/* wire shapes; it only spares
+# the server an error log for a request that had nobody left to answer.
+_CLIENT_CLOSED_REQUEST = 499
+
+
+class ClientDisconnected(Exception):
+    """The client went away before a non-streaming completion finished."""
+
+
+async def _client_disconnected(request: Request) -> None:
+    """Return once the client has gone away.
+
+    The JSON body is fully read before the handler runs, so the next ASGI message is
+    ``http.disconnect`` — awaiting it (the same way a streaming response listens for a
+    dropped client) notices the hang-up at once, with no polling interval."""
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
+async def _unless_client_disconnects[T](request: Request, call: Coroutine[Any, Any, T]) -> T:
+    """Await a non-streaming upstream call, cancelling it if the client disconnects first.
+
+    The server never cancels a non-streaming handler when its client hangs up, so without
+    this an abandoned request keeps its upstream call open: the engine keeps generating,
+    holding its slot, and the lease's inflight count stays raised — which blocks eviction
+    and draining — until the generation finishes. Cancelling the call closes its connection
+    to the upstream, the only signal an OpenAI-compatible server gets that the request was
+    abandoned. ``ClientDisconnected`` is raised only once the cancelled call has fully
+    unwound, so the caller's lease releases (once, on its normal exit path) with no upstream
+    call still open behind it."""
+    work = asyncio.create_task(call)
+    gone = asyncio.create_task(_client_disconnected(request))
+    try:
+        await asyncio.wait((work, gone), return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        # The handler itself was cancelled (server shutdown): the upstream call goes with it.
+        work.cancel()
+        gone.cancel()
+        await asyncio.gather(work, gone, return_exceptions=True)
+        raise
+    if work.done():
+        gone.cancel()
+        await asyncio.gather(gone, return_exceptions=True)
+        return work.result()
+    work.cancel()
+    await asyncio.gather(work, return_exceptions=True)
+    gone.result()  # a failed listener raises here instead of passing for a disconnect
+    raise ClientDisconnected
 
 
 def _cockpit_cors_origins() -> list[str]:
@@ -832,7 +884,7 @@ def create_app(
         }
 
     @app.post("/v1/chat/completions")
-    async def chat_completions(req: ChatRequest) -> Response:
+    async def chat_completions(req: ChatRequest, request: Request) -> Response:
         # The `model` field is a LOGICAL id. An engine name (e.g. "llamacpp") is
         # simply not a registered id -> model_not_found. Engine names never reach here.
         try:
@@ -858,15 +910,20 @@ def create_app(
         # (see _guarded_sse).
         try:
             if isinstance(binding, ManagedBinding):
-                return await _serve_managed(req, params)
-            return await _serve_reachable(binding, req, params)
+                return await _serve_managed(req, params, request)
+            return await _serve_reachable(binding, req, params, request)
+        except ClientDisconnected:
+            # The upstream call is already cancelled and any lease released.
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
             mapped = _data_plane_error(exc, req.model)
             if mapped is None:
                 raise
             return mapped
 
-    async def _serve_managed(req: ChatRequest, params: dict[str, Any]) -> Response:
+    async def _serve_managed(
+        req: ChatRequest, params: dict[str, Any], request: Request
+    ) -> Response:
         # Spawn + resolve capacity BEFORE committing to a response. For a stream,
         # the 200/text-event-stream status flushes before the body generator runs,
         # so a spawn/capacity failure must surface here as a clean error, not as a
@@ -906,11 +963,18 @@ def create_app(
                 background=BackgroundTask(stack.aclose),
             )
 
+        # A client that hangs up mid-completion cancels the upstream call, so an abandoned
+        # request stops occupying the engine and its lease releases at once instead of
+        # blocking eviction and draining until the generation finishes.
         async with manager.lease(req.model) as upstream:
-            result = await gateway.complete(upstream, req.messages, params)
+            result = await _unless_client_disconnects(
+                request, gateway.complete(upstream, req.messages, params)
+            )
         return JSONResponse(result)
 
-    async def _serve_reachable(binding: Any, req: ChatRequest, params: dict[str, Any]) -> Response:
+    async def _serve_reachable(
+        binding: Any, req: ChatRequest, params: dict[str, Any], request: Request
+    ) -> Response:
         try:
             api_key = resolve_credential(binding.credential_ref, credential_store) or "sk-noauth"
         except CredentialResolutionError as exc:
@@ -924,7 +988,9 @@ def create_app(
             # mapping with its real message instead of tearing an already-started stream.
             lines = await gateway.stream(upstream, req.messages, params)
             return StreamingResponse(_guarded_sse(lines, req.model), media_type="text/event-stream")
-        result = await gateway.complete(upstream, req.messages, params)
+        result = await _unless_client_disconnects(
+            request, gateway.complete(upstream, req.messages, params)
+        )
         return JSONResponse(result)
 
     # ── data plane: embeddings + audio ──────────────────────────────────
