@@ -29,6 +29,7 @@ WORKDIR /app
 # Dependency layer: lockfile + every workspace member's manifest (uv validates the lock
 # against all of them), no sources yet — third-party deps cache until the lock changes.
 COPY pyproject.toml uv.lock ./
+COPY apps/ai-gateway/pyproject.toml apps/ai-gateway/
 COPY apps/control-plane/pyproject.toml apps/control-plane/
 COPY apps/inference-plane/pyproject.toml apps/inference-plane/
 COPY apps/worker/pyproject.toml apps/worker/

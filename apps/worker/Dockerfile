@@ -21,6 +21,7 @@ ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
+COPY apps/ai-gateway/pyproject.toml apps/ai-gateway/
 COPY apps/control-plane/pyproject.toml apps/control-plane/
 COPY apps/inference-plane/pyproject.toml apps/inference-plane/
 COPY apps/worker/pyproject.toml apps/worker/

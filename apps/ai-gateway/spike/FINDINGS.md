@@ -1,0 +1,122 @@
+# Spike findings
+
+Claude Code 2.1.285, macOS, claude.ai Pro login, 2026-10-03/04. Headless runs (`claude -p`) through
+the capture proxy, in a scratch repository. Status per question: ✅ answered · 🟡 partial ·
+⏳ needs interactive traffic.
+
+## Design consequences (read this first)
+
+1. **The setup must set `ENABLE_TOOL_SEARCH=true`.** Claude Code turns MCP tool search off for any
+   custom `ANTHROPIC_BASE_URL`. With claude.ai connectors loaded, a one-line prompt went from
+   **28,455 to 184,191 input tokens (6.5×)**: 201 tools sent upfront instead of 11. Pointing Claude
+   Code at *any* gateway without this setting inflates every request. The gateway's setup snippet,
+   its managed-settings generator, and the observer report's baseline must all account for it.
+2. **Sonnet 5.5 is a drop-in target for Opus 5.5; Haiku 4.5 is not.**
+   - Explore subagents rewritten to `claude-sonnet-5-5` returned 200 and finished the task.
+   - Rewritten to `claude-haiku-4-5`, every request was rejected, because Claude Code's request shape
+     assumes the 5.x surface:
+     - adaptive thinking;
+     - top-level effort;
+     - `max_tokens` 128000 (Haiku's maximum is 64000);
+     - per-turn effort in `messages`;
+     - mid-conversation `role: system` messages.
+   - Even with the top-level fields adapted, the last two remain. They live inside `messages`.
+   - **v1 router tiers for main and subagent turns are therefore Opus 5.5 ↔ Sonnet 5.5.** Haiku needs a
+     message-rewriting adapter: deferred, and only ever for targets that run no preserved-thinking
+     check.
+3. **A rejected routed request must never reach Claude Code.** Claude Code's recovery disables the
+   rejected capability (thinking, then effort) **for the rest of that conversation**, so one bad
+   route degrades every later turn, even after routing goes back to Opus. When retries are exhausted,
+   the main agent works around it silently by doing the subagent's work itself on Opus, which costs
+   more, or reports a "setup problem" to the user. These 400s arrive before any streaming starts, so
+   the gateway can retry on the original model transparently. That retry is a router invariant.
+4. **Subagent spawn is a no-penalty switch point, measured.** The same Explore task, 3 requests each
+   with near-identical tokens: **$0.1621 on Opus 5.5 vs $0.0837 on Sonnet 5.5 (−48%)**, list price.
+   A subagent starts a fresh conversation, so there is no cache to lose.
+5. **Claude Code's own cost display assumes the requested model.** With subagents served by Sonnet,
+   `modelUsage` still filed every token under `claude-opus-5-5`. Under routing, `/usage` and the
+   status-line cost overstate spend. The gateway's report is the source of truth, and the
+   documentation must say so.
+6. **Seat-allowance savings are measurable per response.** Subscription responses carry the
+   `anthropic-ratelimit-unified-*` headers. 5-hour utilization went 0.38 → 0.41 and 7-day
+   0.04 → 0.06 over these runs.
+7. **Compaction shares the main conversation's cache** (same system prompt and tools; 29K tokens read
+   from cache). Routing it elsewhere forfeits that cache, so it stays on the main model.
+
+## Proxy fidelity — ✅
+
+Verified against a fake upstream:
+- The request body reaching the upstream has the same SHA-256 as the one sent, and response bytes
+  are identical.
+- Responses are streamed, not buffered (first byte at 8 ms on a 1.8 s stream).
+- Error bodies and `x-should-retry` pass through unchanged.
+- A client disconnect closes the upstream call.
+- No credential value reaches a capture file, even when an upstream echoes one back.
+
+Against the real API:
+- **Accounting matches Claude Code's exactly.** On the bug-fix run, cache read 67,247, cache write
+  19,474 and output 800 all equal Claude Code's `modelUsage`.
+- **Prompt caching works through the proxy,** including a cross-session hit of 9,896 tokens on a new
+  session's first request.
+
+## Q1 — headers — ✅ for main / subagent / compaction, ⏳ for auxiliary
+
+| Class | Hint headers seen |
+|---|---|
+| `main` | `request-class`, `session-id`, `prompt-id` |
+| `subagent` | `request-class`, `agent-id`, `agent-type: Explore`, `prev-tool-durations` (`Read=4;Read=2`), `prompt-id` |
+| `compaction` | `request-class`, `compaction: manual` (no `prompt-id`) |
+
+- **No auxiliary requests in headless runs.** Titles and prompt suggestions come from interactive
+  sessions, so the auxiliary fingerprint census needs a day of real use.
+- **Betas:** 13 `anthropic-beta` values per request, 14 with tool search on
+  (`advanced-tool-use-2025-11-20`). Forwarding them as an open list is required.
+- **Client identity:** the user-agent is `claude-cli/2.1.285 (external, sdk-cli)` and `x-app: cli`.
+  The connection probe `HEAD /api/hello` comes from `Bun/1.4.3`.
+- **Compression:** Claude Code asks for `gzip, deflate, br, zstd`. The spike forces `identity`
+  upstream. The real gateway either does the same or decodes on the side.
+
+## Q2 — request shape and token profile — ✅ (synthetic), ⏳ (real mix)
+
+- **Main:**
+  - `claude-opus-5-5` (the Pro default), `max_tokens` 128000, adaptive thinking (display omitted),
+    effort `medium`, `context_management`.
+  - System prompt in three blocks; block 0 is the attribution block
+    (`x-anthropic-billing-header: cc_version=…`), so fingerprints skip it.
+  - The last message is often a mid-conversation `role: system` message.
+- **Subagent (Explore):** its own 9-tool set and system prompt, same thinking and effort settings.
+  It ran on Opus because subagents inherit the session model here.
+- **Cache TTL:** cache markers carry no explicit TTL, but on this subscription `usage` reports every
+  cache write as 1-hour (`ephemeral_1h_input_tokens`). The cost model reads TTL from `usage`, not
+  from request markers.
+- **Synthetic totals at list price:** main $2.72 (of which about $1.47 is the single tool-search-off
+  request), subagent $0.25, compaction $0.03.
+
+## Q4 — model rewrite behaviour — ✅
+
+See design consequences 2–5. Claude Code accepts a response `model` different from the one it
+requested.
+
+## Q6 — identity header alongside a subscription login — ✅
+
+`ANTHROPIC_CUSTOM_HEADERS: X-TheYgent-Gateway-Key: …` arrives on every request next to
+`authorization: Bearer <oauth>` and the `oauth-2025-04-20` beta.
+
+## Streaming — ✅
+
+One `ping` per stream. The longest silent gap was 5.1 s (compaction, first byte at 6.9 s). A local
+route must still synthesize pings for longer local prompt processing.
+
+## Operational note — nested CLI login
+
+A headless `claude` started from a desktop-app session uses the CLI's own stored login. It had
+expired and wouldn't refresh, so `claude auth login` in a terminal fixed it. Synthetic runs use a
+clean environment (`env -i`), so desktop-app variables don't leak in.
+
+## Still open
+
+- ⏳ Auxiliary fingerprint census and the real class mix: needs a day of interactive use.
+- ⏳ Q3: the desktop app honouring a project's `env` block.
+- ⏳ Q5: local replay of auxiliary requests (needs a local chat model on the inference plane).
+- Optional: a measured mid-conversation Opus → Sonnet → Opus round trip (cache cold-start cost).
+  The documented API behaviour is clear; measuring it costs allowance.
