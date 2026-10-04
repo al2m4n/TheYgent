@@ -543,22 +543,41 @@ def _ms(t0: float) -> int:
     return int((time.perf_counter() - t0) * 1000)
 
 
+def client_source(headers: dict[str, str]) -> str:
+    """Which client sent the request: the entrypoint Claude Code names in its user-agent
+    (``claude-cli/2.1.285 (external, cli)`` -> ``cli``), else the user-agent product."""
+    agent = headers.get("user-agent", "")
+    match = re.search(r"\(external, ([^,)]+)", agent)
+    if match:
+        return match.group(1)
+    return agent.split("/", 1)[0] or "-"
+
+
 def _finish(writer: CaptureWriter, record: dict[str, Any], secrets: list[str]) -> None:
     writer.write(record, secrets)
     summary = record.get("request_summary") or {}
     response = record.get("response_summary") or {}
     usage = response.get("usage") or {}
     rewrite = record.get("rewrite") or {}
-    model = summary.get("model") or "-"
-    if rewrite.get("applied"):
-        model = f"{model}->{rewrite['to']}"
-    print(
-        f"{record['started'][11:19]} {record['method']:4} {record['path']:28} "
-        f"{(record.get('request_class') or '-'):10} {(record.get('agent_type') or '-'):15} "
-        f"{model:38} {record.get('status')} ttfb={record.get('first_byte_ms')}ms "
-        f"total={record.get('total_ms')}ms "
+    requested = summary.get("model") or "-"
+    sent = rewrite["to"] if rewrite.get("applied") else requested
+    served = response.get("model") or "-"
+    route = requested if sent == requested else f"{requested} => {sent}"
+    if served not in ("-", sent):
+        route += f" (served {served})"
+    session = (record.get("hints") or {}).get("x-claude-code-session-id") or "-"
+    tokens = (
         f"in={usage.get('input_tokens')} cr={usage.get('cache_read_input_tokens')} "
-        f"cw={usage.get('cache_creation_input_tokens')} out={usage.get('output_tokens')}",
+        f"cw={usage.get('cache_creation_input_tokens')} out={usage.get('output_tokens')}"
+        if usage
+        else ""
+    )
+    print(
+        f"{record['started'][11:19]} {client_source(record.get('request_headers') or {}):14} "
+        f"{session[:8]:8} {record['method']:4} {record['path']:20} "
+        f"{(record.get('request_class') or '-'):10} {(record.get('agent_type') or '-'):12} "
+        f"{route:34} {record.get('status')} ttfb={record.get('first_byte_ms')}ms "
+        f"total={record.get('total_ms')}ms {tokens}",
         flush=True,
     )
 

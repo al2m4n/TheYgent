@@ -42,6 +42,24 @@ the capture proxy, in a scratch repository. Status per question: ✅ answered ·
    0.04 → 0.06 over these runs.
 7. **Compaction shares the main conversation's cache** (same system prompt and tools; 29K tokens read
    from cache). Routing it elsewhere forfeits that cache, so it stays on the main model.
+8. **The desktop app is a different integration.** It ignores `ANTHROPIC_BASE_URL` and
+   `settings.json`. It reaches a gateway only through its own "third-party inference" configuration:
+   - `inferenceProvider: gateway`, with `inferenceGatewayBaseUrl`;
+   - credentials as a static API key, SSO with OIDC tokens the gateway validates, or a credential
+     helper;
+   - distributed by MDM, or entered under Developer → Configure Third-Party Inference.
+
+   That mode does **not** use a claude.ai subscription, and it runs local sessions only. So **seat
+   users can go through the gateway from the CLI and IDEs; desktop users only with an org credential
+   upstream.** In that mode:
+   - tool search needs the app's `toolSearchEnabled` key (`ENABLE_TOOL_SEARCH` doesn't apply);
+   - models come from the gateway's `GET /v1/models`, where an `anthropic_family_tier` field maps a
+     model to a tier;
+   - the SSO mode is a natural fit for team-mode identity.
+9. **Side requests are many calls but little money.** In a real interactive session they were 3 of
+   9 calls but **3.7% of spend** ($0.026 of $0.687). The title request costs about $0.005 even on
+   Opus. Local routing of side requests cuts API calls and latency, not much cost. The money is in
+   main and subagent turns, where the lever is Opus → Sonnet at no-penalty boundaries (point 4).
 
 ## Proxy fidelity — ✅
 
@@ -59,13 +77,25 @@ Against the real API:
 - **Prompt caching works through the proxy,** including a cross-session hit of 9,896 tokens on a new
   session's first request.
 
-## Q1 — headers — ✅ for main / subagent / compaction, ⏳ for auxiliary
+## Q1 — headers — ✅
 
 | Class | Hint headers seen |
 |---|---|
 | `main` | `request-class`, `session-id`, `prompt-id` |
 | `subagent` | `request-class`, `agent-id`, `agent-type: Explore`, `prev-tool-durations` (`Read=4;Read=2`), `prompt-id` |
 | `compaction` | `request-class`, `compaction: manual` (no `prompt-id`) |
+| `auxiliary` | `request-class` and `session-id`; `prompt-id` on some |
+
+### Auxiliary census (first interactive session, CLI)
+
+| Fingerprint | What it is | Shape | Verdict |
+|---|---|---|---|
+| `b0a8480b0d` | Session title | Its own short system prompt; structured output with a `title` field; no tools, no thinking; 1,195 in → 16 out; ran on **Opus 5.5** | Local candidate: small, standalone, schema-checkable |
+| `aae5b1e7c7` | Shares the main conversation's cached prefix (most likely the prompt suggestion) | 14 tools, adaptive thinking; 45,819 in (44,477 from cache) → 59 out | **Never route:** cheap in the cloud thanks to the cache, slow locally |
+| `210f65a401` | Quota check | `max_tokens: 1`, one user message ("quota"), no system prompt | **Never route:** it exists to read rate-limit state. It returned a transient 429 (`x-should-retry: true`) |
+
+A full day of use will add more kinds: summaries for `--resume`, classifiers, `/insights` and
+others. New fingerprints default to pass-through until reviewed.
 
 - **No auxiliary requests in headless runs.** Titles and prompt suggestions come from interactive
   sessions, so the auxiliary fingerprint census needs a day of real use.
@@ -97,7 +127,7 @@ Against the real API:
 See design consequences 2–5. Claude Code accepts a response `model` different from the one it
 requested.
 
-## Q5 — local model (Qwen3-4B-Instruct-2507 Q4_K_M on llama.cpp, Apple Silicon) — 🟡
+## Q5 — local model (Qwen3-4B-Instruct-2507 Q4_K_M on llama.cpp, Apple Silicon) — ✅
 
 The route is Anthropic format → LiteLLM's Anthropic adapter → inference plane `/v1` (logical id
 `aux-local`) → llama-server.
@@ -126,8 +156,18 @@ The route is Anthropic format → LiteLLM's Anthropic adapter → inference plan
   LiteLLM's defaults (600 s timeout, then a retry) doubled one of them. **The gateway's local route
   must therefore stream** (a disconnect then reaches the engine), set an explicit timeout with no
   retries, and refuse prompts above a size cap.
-- **Still to do:** replay real auxiliary requests once the day of interactive use has captured
-  some.
+- **The real session-title request replayed locally:** valid JSON with the `title` key,
+  `{"title": "tests coverage increase"}` against the cloud's `{"title":"Repo test coverage"}`
+  (similarity 0.76), in **1.25 s warm** against the cloud's 1.8 s (23.9 s cold). The adapter dropped
+  `output_config.format` and the model followed the prompt's JSON instruction anyway. Production
+  should map the schema onto llama.cpp's JSON-schema constraint so validity is guaranteed, not
+  hoped for.
+
+## Q3 — desktop app — ✅ (it does not use the project settings)
+
+A desktop session in the test project (`entrypoint=claude-desktop`, 09:36:26–09:36:40 UTC) got
+responses, but no request reached the proxy. The desktop app uses its own gateway configuration;
+see design consequence 8.
 
 ## Q6 — identity header alongside a subscription login — ✅
 
@@ -147,9 +187,9 @@ clean environment (`env -i`), so desktop-app variables don't leak in.
 
 ## Still open
 
-- ⏳ Auxiliary fingerprint census and the real class mix: needs a day of interactive use.
-- ⏳ Q3: the desktop app honouring a project's `env` block.
-- ⏳ Q5: local replay of *auxiliary* requests (the model is installed as `aux-local`; this needs
-  auxiliary captures).
+- A fuller auxiliary census from longer interactive use. The first session already shows the
+  three main kinds.
+- The desktop app through its own third-party-inference gateway mode. It needs an API-key or SSO
+  credential, not the subscription.
 - Optional: a measured mid-conversation Opus → Sonnet → Opus round trip (cache cold-start cost).
   The documented API behaviour is clear; measuring it costs allowance.
