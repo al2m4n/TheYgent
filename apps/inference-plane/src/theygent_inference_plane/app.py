@@ -215,22 +215,24 @@ async def _guarded_sse(lines: Any, model: str, close: Any = None):
             await close()
 
 
-# Ends the ASGI cycle of a completion whose client hung up. No client ever reads it (the
-# connection is already gone), so it adds nothing to the /v1/* wire shapes; it only spares
-# the server an error log for a request that had nobody left to answer.
+# Ends the ASGI cycle of a non-streaming call whose client hung up. No client ever reads it
+# (the connection is already gone), so it adds nothing to the /v1/* wire shapes; it only
+# spares the server an error log for a request that had nobody left to answer.
 _CLIENT_CLOSED_REQUEST = 499
 
 
 class ClientDisconnected(Exception):
-    """The client went away before a non-streaming completion finished."""
+    """The client went away before a non-streaming upstream call finished."""
 
 
 async def _client_disconnected(request: Request) -> None:
     """Return once the client has gone away.
 
-    The JSON body is fully read before the handler runs, so the next ASGI message is
-    ``http.disconnect`` — awaiting it (the same way a streaming response listens for a
-    dropped client) notices the hang-up at once, with no polling interval."""
+    The request body is fully read before the race starts — FastAPI reads a JSON body before
+    the handler runs, and the transcription handler parses its whole multipart form first —
+    so the next ASGI message is ``http.disconnect``. Awaiting it (the same way a streaming
+    response listens for a dropped client) notices the hang-up at once, with no polling
+    interval."""
     while (await request.receive())["type"] != "http.disconnect":
         pass
 
@@ -239,9 +241,9 @@ async def _unless_client_disconnects[T](request: Request, call: Coroutine[Any, A
     """Await a non-streaming upstream call, cancelling it if the client disconnects first.
 
     The server never cancels a non-streaming handler when its client hangs up, so without
-    this an abandoned request keeps its upstream call open: the engine keeps generating,
+    this an abandoned request keeps its upstream call open: the engine keeps working on it,
     holding its slot, and the lease's inflight count stays raised — which blocks eviction
-    and draining — until the generation finishes. Cancelling the call closes its connection
+    and draining — until the engine finishes. Cancelling the call closes its connection
     to the upstream, the only signal an OpenAI-compatible server gets that the request was
     abandoned. ``ClientDisconnected`` is raised only once the cancelled call has fully
     unwound, so the caller's lease releases (once, on its normal exit path) with no upstream
@@ -998,7 +1000,10 @@ def create_app(
     # helper. The `model` field is a LOGICAL id on these too — an engine name is simply not a
     # registered id (model_not_found), never rewritten onto the wire. These are non-streaming
     # awaited calls, so a spawn/capacity failure surfaces as a clean error before the response is
-    # built (no pre-commit dance needed).
+    # built (no pre-commit dance needed). Like a non-streaming chat completion, each upstream call
+    # is raced against its client: a hang-up cancels it (closing the upstream connection) before
+    # the lease releases, so an abandoned embedding, transcription, synthesis or minutes-long
+    # render stops holding the engine non-evictable and un-drainable.
 
     @contextlib.asynccontextmanager
     async def _lease_for(model: str):
@@ -1065,13 +1070,17 @@ def create_app(
         return _upstream_error(exc, model)
 
     @app.post("/v1/embeddings")
-    async def embeddings(req: EmbeddingsRequest) -> Response:
+    async def embeddings(req: EmbeddingsRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 params = merge_params(binding.params, req.model_dump())
                 params.pop("input", None)
-                result = await gateway.embed(upstream, req.input, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.embed(upstream, req.input, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
             mapped = _data_plane_error(exc, req.model)
             if mapped is None:
@@ -1080,6 +1089,8 @@ def create_app(
 
     @app.post("/v1/audio/transcriptions")
     async def transcriptions(request: Request) -> Response:
+        # Parsing the form drains the whole multipart body, so once the upload is validated the
+        # client's next ASGI message can only be its disconnect (see _client_disconnected).
         form = await request.form()
         model = form.get("model")
         upload = form.get("file")
@@ -1109,8 +1120,12 @@ def create_app(
         try:
             async with _lease_for(model) as (binding, upstream):
                 params = merge_params(binding.params, extra)
-                result = await gateway.transcribe(upstream, file_tuple, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.transcribe(upstream, file_tuple, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
             mapped = _data_plane_error(exc, model)
             if mapped is None:
@@ -1118,7 +1133,7 @@ def create_app(
             return mapped
 
     @app.post("/v1/audio/speech")
-    async def speech(req: SpeechRequest) -> Response:
+    async def speech(req: SpeechRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 # exclude_none: an omitted voice must not shadow the binding's registered default.
@@ -1127,11 +1142,15 @@ def create_app(
                 # engine-specific; nothing here invents one).
                 params = merge_params(binding.params, req.model_dump(exclude_none=True))
                 params.pop("input", None)
-                audio = await gateway.speak(upstream, req.input, params)
+                audio = await _unless_client_disconnects(
+                    request, gateway.speak(upstream, req.input, params)
+                )
             fmt = str(params.get("response_format", "mp3"))
             return Response(
                 content=audio, media_type=_AUDIO_MIME.get(fmt, "application/octet-stream")
             )
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
             mapped = _data_plane_error(exc, req.model)
             if mapped is None:
@@ -1139,13 +1158,17 @@ def create_app(
             return mapped
 
     @app.post("/v1/images/generations")
-    async def images_generations(req: ImagesRequest) -> Response:
+    async def images_generations(req: ImagesRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 params = merge_params(binding.params, req.model_dump())
                 params.pop("prompt", None)
-                result = await gateway.generate_image(upstream, req.prompt, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.generate_image(upstream, req.prompt, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
             mapped = _data_plane_error(exc, req.model)
             if mapped is None:

@@ -32,10 +32,12 @@ _CHUNKS = ["hello", " world"]
 FAKE_EMBEDDING = [0.1, 0.2, 0.3]
 FAKE_TRANSCRIPT = "the quick brown fox"
 FAKE_AUDIO = b"ID3fake-audio-bytes"
+FAKE_IMAGE_B64 = "iVBORw0KGgo="  # the PNG signature, base64
 
-# A non-stream completion that never finishes on its own, like an engine still chewing on an
-# oversized prompt: only the caller closing the connection ends it (or the safety cap below,
-# which keeps a broken test from wedging the server).
+# A non-streaming call that never finishes on its own, like an engine still chewing on an
+# oversized prompt or a minutes-long render: only the caller closing the connection ends it (or
+# the safety cap below, which keeps a broken test from wedging the server). Sent as the chat
+# message, the embeddings / speech input, the image prompt, or the transcribed file's bytes.
 HOLD_UNTIL_DISCONNECT = "__hold_until_disconnect__"
 _HOLD_CAP_SEC = 30.0
 
@@ -44,7 +46,7 @@ _HOLD_CAP_SEC = 30.0
 class _Captured:
     """What the upstream actually received. ``authorization`` lets a test prove the credential
     resolved locally and reached only this user-configured endpoint; the events are set from
-    the server thread when a held completion arrives / its caller hangs up on it."""
+    the server thread when a held call arrives / its caller hangs up on it."""
 
     authorization: str | None = None
     hold_started: threading.Event = field(default_factory=threading.Event)
@@ -54,6 +56,22 @@ class _Captured:
 def _build_fake_app() -> tuple[FastAPI, _Captured]:
     app = FastAPI()
     captured = _Captured()
+
+    async def hold_until_caller_hangs_up(request: Request) -> Response | None:
+        """Hold a call open until its caller disconnects; ``None`` if the cap passes first."""
+        captured.hold_started.set()
+
+        async def caller_hung_up() -> None:
+            # The body is fully read, so the next ASGI message is the disconnect.
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        try:
+            await asyncio.wait_for(caller_hung_up(), timeout=_HOLD_CAP_SEC)
+        except TimeoutError:
+            return None  # never cancelled: answer normally; the test asserting the hang-up fails
+        captured.hold_abandoned.set()
+        return Response(status_code=499)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -82,20 +100,8 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
                 status_code=400,
             )
         if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
-            captured.hold_started.set()
-
-            async def caller_hung_up() -> None:
-                # The body is fully read, so the next ASGI message is the disconnect.
-                while (await request.receive())["type"] != "http.disconnect":
-                    pass
-
-            try:
-                await asyncio.wait_for(caller_hung_up(), timeout=_HOLD_CAP_SEC)
-            except TimeoutError:
-                pass  # never cancelled: answer normally; the test asserting the hang-up fails
-            else:
-                captured.hold_abandoned.set()
-                return Response(status_code=499)
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         if body.get("stream"):
             # A stream that fails AFTER chunks started flowing — by then the 200 is
             # committed on every hop. Real engines report this as an in-band SSE error
@@ -173,6 +179,9 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
         inputs = body.get("input")
         if inputs == "__force_upstream_404__":
             return JSONResponse({"error": {"message": "Not Found"}}, status_code=404)
+        if inputs == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         items = inputs if isinstance(inputs, list) else [inputs]
         return JSONResponse(
             {
@@ -190,14 +199,30 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
     async def transcriptions(request: Request):
         captured.authorization = request.headers.get("authorization")
         # Consume the multipart body so the request completes; the transcript is deterministic.
-        await request.form()
+        upload = (await request.form()).get("file")
+        audio = b"" if upload is None or isinstance(upload, str) else await upload.read()
+        if audio == HOLD_UNTIL_DISCONNECT.encode():
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         return JSONResponse({"text": FAKE_TRANSCRIPT})
 
     @app.post("/v1/audio/speech")
     async def speech(request: Request):
         captured.authorization = request.headers.get("authorization")
-        await request.json()
+        body = await request.json()
+        if body.get("input") == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         return Response(content=FAKE_AUDIO, media_type="audio/mpeg")
+
+    @app.post("/v1/images/generations")
+    async def images(request: Request):
+        captured.authorization = request.headers.get("authorization")
+        body = await request.json()
+        if body.get("prompt") == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
+        return JSONResponse({"created": 0, "data": [{"b64_json": FAKE_IMAGE_B64}]})
 
     return app, captured
 
@@ -265,12 +290,12 @@ class FakeUpstreamHandle:
 
     @property
     def hold_started(self) -> threading.Event:
-        """Set once a HOLD_UNTIL_DISCONNECT completion reaches this upstream."""
+        """Set once a HOLD_UNTIL_DISCONNECT call reaches this upstream."""
         return self._captured.hold_started
 
     @property
     def hold_abandoned(self) -> threading.Event:
-        """Set once the caller closed the connection on a held completion."""
+        """Set once the caller closed the connection on a held call."""
         return self._captured.hold_abandoned
 
     async def health(self) -> bool:
