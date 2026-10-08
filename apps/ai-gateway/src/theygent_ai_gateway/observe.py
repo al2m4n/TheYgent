@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from theygent_ir.gateway import Endpoint, Outcome, SeatAllowance, Timing, Usage
+from theygent_ir.gateway import Decision, Endpoint, Outcome, SeatAllowance, Timing, Usage
 
 from theygent_ai_gateway.identity import Identity
 from theygent_ai_gateway.signals import RequestSignals, token_or_none
@@ -238,6 +238,9 @@ class Observation:
     #: the model has no known rates or nothing was used.
     cost_usd: float | None = None
     pricing_version: str | None = None
+    #: What the policy would have done (never applied in observer mode); ``None`` when the
+    #: request was refused before the policy ran.
+    decision: Decision | None = None
 
 
 ObserveHook = Callable[[Observation], None]

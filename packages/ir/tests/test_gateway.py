@@ -107,7 +107,11 @@ def _config(**overrides: Any) -> dict[str, Any]:
     config: dict[str, Any] = {
         "version": 3,
         "mode": "observer",
-        "policy": {"subagent_target": "claude-sonnet-5-5", "local_target": "aux-local"},
+        "policy": {
+            "subagent_target": "claude-sonnet-5-5",
+            "main_target": "claude-sonnet-5-5",
+            "local_target": "aux-local",
+        },
         "fingerprints": [
             {"fingerprint": "b0a8480b0d1c2e3f", "status": "observe_only", "label": "session_title"},
             {"fingerprint": "210f65a4019a8b7c", "status": "never_route", "label": "quota_check"},
@@ -399,3 +403,15 @@ def test_key_set_has_no_duplicates() -> None:
         GatewayKeySet.model_validate(
             {"version": 1, "generated_at": NOW.isoformat(), "keys": [key, key]}
         )
+
+
+def test_safety_traffic_has_its_own_reason() -> None:
+    # A request carrying ``safeguards`` (auto mode's safety check) is never routed, and says so.
+    decision = Decision.model_validate({"action": "stay", "reasons": ["safety_check"]})
+    assert decision.reasons == ["safety_check"]
+
+
+def test_policy_targets_are_optional_and_additive() -> None:
+    # A config written before main_target existed still parses, with no main target.
+    policy = PolicyConfig.model_validate({"subagent_target": "claude-sonnet-5-5"})
+    assert policy.main_target is None

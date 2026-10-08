@@ -36,7 +36,15 @@ import httpx
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
-from theygent_ir.gateway import CredentialProfile, Endpoint, Outcome, SeatAllowance, Timing
+from theygent_ir.gateway import (
+    CredentialProfile,
+    Decision,
+    Endpoint,
+    GatewayConfig,
+    Outcome,
+    SeatAllowance,
+    Timing,
+)
 
 from theygent_ai_gateway.conversations import ConversationTracker, Position
 from theygent_ai_gateway.costs import PriceBook
@@ -55,6 +63,7 @@ from theygent_ai_gateway.observe import (
     deliver,
     seat_allowance,
 )
+from theygent_ai_gateway.policy import Plan, Policy, counterfactual_usd, to_decision
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ai_gateway.signals import RequestSignals, credential_kind, read_request
 
@@ -223,16 +232,29 @@ class _Exchange:
         self.identity: Identity | None = None
         self._tracker: ConversationTracker | None = getattr(request.app.state, "tracker", None)
         self._prices: PriceBook | None = getattr(request.app.state, "prices", None)
+        self._policy: Policy | None = getattr(request.app.state, "policy", None)
+        self._config: GatewayConfig | None = getattr(request.app.state, "config", None)
+        self.plan: Plan | None = None
         self.position: Position | None = None
 
     def place(self) -> None:
-        """Locate a Messages request in its conversation, before it is forwarded."""
-        if self._tracker is None or self._endpoint != "messages":
-            return
-        try:
-            self.position = self._tracker.begin(self._signals, self.identity)
-        except Exception as exc:
-            log.error("could not place the request in its conversation: %s", type(exc).__name__)
+        """Locate a request in its conversation and decide what routing would do with it, before
+        it is forwarded. Observer mode records the decision and never applies it."""
+        if self._tracker is not None and self._endpoint == "messages":
+            try:
+                self.position = self._tracker.begin(self._signals, self.identity)
+            except Exception as exc:
+                log.error("could not place the request: %s", type(exc).__name__)
+        if self._policy is not None:
+            try:
+                self.plan = self._policy.decide(
+                    self._signals,
+                    self.position,
+                    self._config,
+                    endpoint_is_messages=self._endpoint == "messages",
+                )
+            except Exception as exc:
+                log.error("the policy failed: %s", type(exc).__name__)
 
     def _ms(self) -> int:
         return int((time.perf_counter() - self._t0) * 1000)
@@ -266,6 +288,22 @@ class _Exchange:
         cost = self._prices.cost(model, usage)
         return (cost, self._prices.version) if cost is not None else (None, None)
 
+    def _decision(self, summary: ResponseSummary) -> Decision | None:
+        """The plan as a wire decision, with what it would have cost. A failure here loses the
+        decision, never the rest of the observation."""
+        if self.plan is None:
+            return None
+        try:
+            counterfactual = (
+                counterfactual_usd(self.plan, summary.usage, self.position, self._prices)
+                if self._prices is not None
+                else None
+            )
+            return to_decision(self.plan, counterfactual)
+        except Exception as exc:
+            log.error("could not record the decision: %s", type(exc).__name__)
+            return None
+
     def reject(self, response: JSONResponse) -> JSONResponse:
         """The gateway refused the request before forwarding it."""
         self._status = response.status_code
@@ -284,6 +322,7 @@ class _Exchange:
                 except Exception as exc:
                     log.error("could not update the conversation: %s", type(exc).__name__)
             cost_usd, pricing_version = self._cost(summary)
+            decision = self._decision(summary)
             observation = Observation(
                 started_at=self._started_at,
                 method=self._method,
@@ -302,6 +341,7 @@ class _Exchange:
                 position=self.position,
                 cost_usd=cost_usd,
                 pricing_version=pricing_version,
+                decision=decision,
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)

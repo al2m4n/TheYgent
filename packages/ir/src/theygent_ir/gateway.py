@@ -83,6 +83,7 @@ TargetKind = Literal["anthropic", "local"]
 ReasonCode = Literal[
     "mode_passthrough",
     "not_a_message_request",
+    "safety_check",
     "unlabeled_request",
     "unrecognized_request_class",
     "compaction",
@@ -91,6 +92,7 @@ ReasonCode = Literal[
     "fingerprint_unreviewed",
     "fingerprint_observe_only",
     "fingerprint_never_route",
+    "fingerprint_allow_cheaper",
     "local_candidate",
     "subagent_at_spawn",
     "mid_conversation",
@@ -301,6 +303,9 @@ class PolicyConfig(_GatewayWire):
 
     #: An Anthropic model id considered for a subagent at spawn.
     subagent_target: Token | None = None
+    #: An Anthropic model id considered for the main conversation where its cache is cold
+    #: (conversation start, after compaction, after the cache expired).
+    main_target: Token | None = None
     #: A logical model id on the inference plane, for auxiliary requests allowed to run locally.
     local_target: Token | None = None
     #: How much a mid-conversation switch's expected saving must exceed its cache cost.

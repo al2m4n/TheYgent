@@ -23,6 +23,7 @@ from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from theygent_ir.gateway import GatewayConfig
 
 from theygent_ai_gateway.conversations import ConversationTracker
 from theygent_ai_gateway.costs import PriceBook
@@ -34,6 +35,7 @@ from theygent_ai_gateway.identity import (
     sync_forever,
 )
 from theygent_ai_gateway.observe import ObserveHook
+from theygent_ai_gateway.policy import Policy
 from theygent_ai_gateway.proxy import forward
 from theygent_ai_gateway.settings import GatewaySettings, load_settings
 
@@ -58,6 +60,7 @@ def create_app(
     key_source: KeySource | None = None,
     tracker: ConversationTracker | None = None,
     prices: PriceBook | None = None,
+    config: GatewayConfig | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else load_settings(os.environ)
     keyring = KeyRing(settings.state_dir) if settings.auth_mode == "team" else None
@@ -105,7 +108,10 @@ def create_app(
     app.state.observe = observe
     app.state.keyring = keyring
     app.state.tracker = tracker if tracker is not None else ConversationTracker()
-    app.state.prices = prices if prices is not None else PriceBook.packaged()
+    book = prices if prices is not None else PriceBook.packaged()
+    app.state.prices = book.with_overrides(config.pricing_overrides) if config else book
+    app.state.config = config
+    app.state.policy = Policy()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
