@@ -49,7 +49,8 @@ These hold whenever the router lands:
 - **A routed request the target rejects is retried on the original model before Claude Code sees
   anything.** Claude Code disables a rejected capability for the rest of the conversation.
 - **Never route** compaction, the quota check, requests that share the main conversation's cache,
-  or unreviewed auxiliary fingerprints.
+  requests carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
+  fingerprints.
 
 ## Conventions
 
@@ -59,6 +60,14 @@ These hold whenever the router lands:
   the inference plane's management surface. The Anthropic-format paths keep Anthropic's shapes.
 - **`spike/` is research tooling, not product code.** The type check skips it. Nothing under
   `src/` imports from it.
+
+## Fixtures
+
+`tests/fixtures/exchanges/` holds real Claude Code exchanges rebuilt without content by
+`spike/make_fixtures.py`. Settings and counts are kept exactly; prompts, code, tool text, model
+output, Claude Code's prompt and the user's environment are placeholders. The repository is
+public: `test_fixtures.py` scans every fixture for paths, emails, credentials, foreign ids and
+prose, and any new fixture must pass it.
 
 ## Tests
 

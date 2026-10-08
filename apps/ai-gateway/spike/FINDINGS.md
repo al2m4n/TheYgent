@@ -61,6 +61,18 @@ the capture proxy, in a scratch repository. Status per question: ✅ answered ·
    Opus. Local routing of side requests cuts API calls and latency, not much cost. The money is in
    main and subagent turns, where the lever is Opus → Sonnet at no-penalty boundaries (point 4).
 
+10. **Request bodies can carry the user's environment outside `messages`.**
+    - In an interactive session, a side request carried a top-level `safeguards` field
+      (`[{"type": "dangerous_tool_use", "classifier_context": …}]`): the auto-mode
+      dangerous-tool-use check's context.
+    - That context holds the working and home directories, the username, git state, trusted
+      directories, permission rules and prior-turn context.
+    - It is more content that must never leave the gateway. The wire types already refuse it.
+    - It marks safety-classifier traffic, so **a request carrying `safeguards` is never
+      routed.**
+    - When building fixtures, every top-level field that isn't a known setting is treated as
+      content.
+
 ## Proxy fidelity — ✅
 
 Verified against a fake upstream:

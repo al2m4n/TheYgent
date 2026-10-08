@@ -2,9 +2,13 @@
 
 It records every request exactly as received (method, raw path, query, raw headers, body bytes)
 and answers with deterministic bytes, so a test can compare what went through the gateway against
-what the upstream saw and sent. The test-only ``x-fake-scenario`` request header picks a
-misbehaviour: a slow first byte, holding until the caller hangs up, breaking mid-stream, or an
-error response. (The gateway forwards that header like any other — headers are an open list.)
+what the upstream saw and sent. Two test-only request headers steer it (the gateway forwards them
+like any other — headers are an open list):
+
+* ``x-fake-fixture: <name>`` replays a recorded exchange (``_fixtures.py``): the recorded status,
+  headers and bytes, dropping the connection where the fixture says the upstream did;
+* ``x-fake-scenario`` picks a misbehaviour: a slow first byte, holding until the caller hangs up,
+  breaking mid-stream, or an error response.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import uvicorn
+from _fixtures import Exchange, load
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -137,6 +142,26 @@ class FakeAnthropic:
         return self.requests[-1]
 
 
+def replay(exchange: Exchange) -> Response:
+    """Answer exactly as the recorded upstream did."""
+    headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in exchange.response_headers]
+    if exchange.events is None:
+        response = Response(exchange.response_bytes(), status_code=exchange.status)
+        response.raw_headers = headers
+        return response
+    events = exchange.events
+
+    async def stream() -> AsyncIterator[bytes]:
+        for index, event in enumerate(events):
+            yield event.encode()
+            if exchange.abort_after_events is not None and index + 1 >= exchange.abort_after_events:
+                raise ConnectionResetError("the recorded upstream dropped the connection here")
+
+    response = StreamingResponse(stream(), status_code=exchange.status)
+    response.raw_headers = headers
+    return response
+
+
 def build_app(state: FakeAnthropic) -> Starlette:
     async def capture(request: Request) -> Captured:
         body = await request.body()
@@ -152,6 +177,9 @@ def build_app(state: FakeAnthropic) -> Starlette:
 
     async def messages(request: Request) -> Response:
         captured = await capture(request)
+        fixture = request.headers.get("x-fake-fixture")
+        if fixture:
+            return replay(load(fixture))
         scenario = request.headers.get("x-fake-scenario", "")
         if scenario == "error-400":
             return JSONResponse(

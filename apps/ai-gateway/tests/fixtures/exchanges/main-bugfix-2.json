@@ -1,0 +1,874 @@
+{
+ "name": "main-bugfix-2",
+ "description": "Main loop, second turn: tool results returned, cache warm.",
+ "note": null,
+ "source": "headless",
+ "client_version": "2.1.285",
+ "conversation": "bugfix",
+ "sequence": 2,
+ "request_class": "main",
+ "request": {
+  "method": "POST",
+  "path": "/v1/messages",
+  "query": "beta=true",
+  "headers": [
+   [
+    "accept",
+    "application/json"
+   ],
+   [
+    "authorization",
+    "Bearer sk-ant-oat01-fixture"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "claude-cli/2.1.285 (external, sdk-cli)"
+   ],
+   [
+    "x-claude-code-session-id",
+    "00000000-0000-4000-8000-000000000001"
+   ],
+   [
+    "x-stainless-arch",
+    "arm64"
+   ],
+   [
+    "x-stainless-lang",
+    "js"
+   ],
+   [
+    "x-stainless-os",
+    "MacOS"
+   ],
+   [
+    "x-stainless-package-version",
+    "0.127.0"
+   ],
+   [
+    "x-stainless-retry-count",
+    "0"
+   ],
+   [
+    "x-stainless-runtime",
+    "node"
+   ],
+   [
+    "x-stainless-runtime-version",
+    "v26.3.0"
+   ],
+   [
+    "x-stainless-timeout",
+    "600"
+   ],
+   [
+    "anthropic-beta",
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,extended-cache-ttl-2025-04-11"
+   ],
+   [
+    "anthropic-dangerous-direct-browser-access",
+    "true"
+   ],
+   [
+    "anthropic-version",
+    "2023-06-01"
+   ],
+   [
+    "x-app",
+    "cli"
+   ],
+   [
+    "x-claude-code-prev-tool-durations",
+    "Bash=107"
+   ],
+   [
+    "x-claude-code-prompt-id",
+    "00000000-0000-4000-8000-000000000002"
+   ],
+   [
+    "x-claude-code-request-class",
+    "main"
+   ],
+   [
+    "accept-encoding",
+    "gzip, deflate, br, zstd"
+   ]
+  ],
+  "body": {
+   "model": "claude-opus-5-5",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text a461242f 859ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 99437535 580ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text fb03c993 175ch]"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text bba170ac 46039ch]"
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_1",
+         "description": "[text ed2891e6 64ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "batch": {
+            "type": "array"
+           },
+           "container": {
+            "type": "object",
+            "properties": {
+             "kind": {
+              "type": "string"
+             },
+             "id": {
+              "type": "string"
+             },
+             "create": {
+              "type": "object"
+             }
+            },
+            "required": [
+             "[text 79523740 4ch]"
+            ]
+           },
+           "verbose": {
+            "type": "boolean"
+           },
+           "opId": {
+            "type": "string"
+           }
+          }
+         }
+        }
+       }
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_2",
+         "description": "[text 90dde47b 180ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "items": {
+            "type": "array",
+            "description": "[text accd3983 164ch]"
+           }
+          }
+         }
+        }
+       }
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_3",
+         "description": "[text 9fffd4b3 69ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "ref": {
+            "type": "object",
+            "properties": {
+             "object": {
+              "type": "string",
+              "enum": [
+               "[text 6d695b8d 7ch]",
+               "[text c0be918a 4ch]",
+               "[text f8f4c9d3 4ch]",
+               "[text 09cd523a 9ch]",
+               "[text b174cffd 4ch]"
+              ]
+             },
+             "id": {
+              "type": "string"
+             }
+            },
+            "required": [
+             "[text ff5b16b1 6ch]",
+             "[text e89d34f7 2ch]"
+            ]
+           },
+           "engine": {
+            "type": "string"
+           },
+           "payload": {
+            "anyOf": [
+             {
+              "type": "object"
+             },
+             {
+              "type": "string"
+             }
+            ]
+           },
+           "container": {
+            "type": "object",
+            "properties": {
+             "kind": {
+              "type": "string"
+             },
+             "id": {
+              "type": "string"
+             },
+             "version": {
+              "type": "string"
+             }
+            },
+            "required": [
+             "[text 79523740 4ch]",
+             "[text e89d34f7 2ch]"
+            ]
+           },
+           "verbose": {
+            "type": "boolean"
+           },
+           "opId": {
+            "type": "string"
+           },
+           "answering": {
+            "type": "string",
+            "maxLength": 64
+           }
+          },
+          "required": [
+           "[text c6836859 3ch]",
+           "[text 8096d16c 7ch]"
+          ]
+         }
+        }
+       }
+      }
+     ],
+     "output_config": {
+      "effort": "medium"
+     }
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_fixture0003",
+       "name": "Bash",
+       "input": {
+        "command": "[text a1275734 199ch]",
+        "description": "[text 6a802643 24ch]"
+       },
+       "caller": {
+        "type": "direct"
+       },
+       "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "tool_use_id": "toolu_fixture0003",
+       "type": "tool_result",
+       "content": "[text 95414d4f 291ch]",
+       "is_error": false,
+       "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+       }
+      }
+     ]
+    }
+   ],
+   "system": [
+    {
+     "type": "text",
+     "text": "x-anthropic-billing-header: cc_version=2.1.285.979; cc_entrypoint=sdk-cli;"
+    },
+    {
+     "type": "text",
+     "text": "[text b0a700d9 62ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    },
+    {
+     "type": "text",
+     "text": "[text f2f57bcc 6090ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ],
+   "tools": [
+    {
+     "name": "Agent",
+     "description": "[text 15f7371a 1628ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text f47f24d3 42ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 9cbc3bd8 33ch]",
+        "type": "string"
+       },
+       "subagent_type": {
+        "description": "[text 97930208 50ch]",
+        "type": "string"
+       },
+       "model": {
+        "description": "[text 888e6bb4 358ch]",
+        "type": "string",
+        "enum": [
+         "sonnet",
+         "opus",
+         "haiku",
+         "fable"
+        ]
+       },
+       "run_in_background": {
+        "description": "[text 3f783742 286ch]",
+        "type": "boolean"
+       },
+       "isolation": {
+        "description": "[text eef8f1c9 221ch]",
+        "type": "string",
+        "enum": [
+         "worktree",
+         "remote"
+        ]
+       }
+      },
+      "required": [
+       "description",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Bash",
+     "description": "[text c20915bc 1493ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "command": {
+        "description": "[text 8c1609cf 22ch]",
+        "type": "string"
+       },
+       "timeout": {
+        "description": "[text e2215b32 70ch]",
+        "type": "number"
+       },
+       "description": {
+        "description": "[text 93d385dd 926ch]",
+        "type": "string"
+       },
+       "run_in_background": {
+        "description": "[text 10c49126 182ch]",
+        "type": "boolean"
+       },
+       "dangerouslyDisableSandbox": {
+        "description": "[text d2824ebf 90ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Edit",
+     "description": "[text 1ced2991 360ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2f4ea387 39ch]",
+        "type": "string"
+       },
+       "old_string": {
+        "description": "[text 08891bb7 19ch]",
+        "type": "string"
+       },
+       "new_string": {
+        "description": "[text 16e8ccb9 63ch]",
+        "type": "string"
+       },
+       "replace_all": {
+        "description": "[text 3b5cd450 53ch]",
+        "default": false,
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "file_path",
+       "old_string",
+       "new_string"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListAgents",
+     "description": "[text 9eeb551c 777ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "channel": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       },
+       "q": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Read",
+     "description": "[text 7212f90c 790ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2cce1e6f 37ch]",
+        "type": "string"
+       },
+       "offset": {
+        "description": "[text c55cb4ef 92ch]",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+       },
+       "limit": {
+        "description": "[text 94244167 83ch]",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+       },
+       "pages": {
+        "description": "[text 604a67dc 113ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReportFindings",
+     "description": "[text 8c156cd1 574ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "level": {
+        "description": "[text 10bdac91 30ch]",
+        "type": "string",
+        "enum": [
+         "low",
+         "medium",
+         "high",
+         "xhigh",
+         "max"
+        ]
+       },
+       "findings": {
+        "description": "[text b3214641 60ch]",
+        "maxItems": 32,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "file": {
+           "description": "[text 04336ab8 48ch]",
+           "type": "string"
+          },
+          "line": {
+           "description": "[text ceee7899 37ch]",
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "summary": {
+           "description": "[text 0f47ee36 36ch]",
+           "type": "string"
+          },
+          "short_summary": {
+           "description": "[text 9c679b2d 96ch]",
+           "type": "string",
+           "maxLength": 60
+          },
+          "failure_scenario": {
+           "description": "[text d95e4bf5 42ch]",
+           "type": "string"
+          },
+          "category": {
+           "description": "[text e655e635 110ch]",
+           "type": "string",
+           "maxLength": 40
+          },
+          "verdict": {
+           "description": "[text eec3762a 57ch]",
+           "type": "string",
+           "enum": [
+            "CONFIRMED",
+            "PLAUSIBLE"
+           ]
+          },
+          "outcome": {
+           "description": "[text 2f8eadf3 78ch]",
+           "type": "string",
+           "enum": [
+            "fixed",
+            "skipped",
+            "no_change_needed"
+           ]
+          }
+         },
+         "required": [
+          "file",
+          "summary",
+          "failure_scenario"
+         ],
+         "additionalProperties": false
+        }
+       }
+      },
+      "required": [
+       "findings"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ScheduleWakeup",
+     "description": "[text 2d4de8f0 3148ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "delaySeconds": {
+        "description": "[text 457e421a 98ch]",
+        "type": "number"
+       },
+       "reason": {
+        "description": "[text 87cc33f7 136ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text c50480b3 355ch]",
+        "type": "string"
+       },
+       "stop": {
+        "description": "[text 95359fc2 154ch]",
+        "type": "boolean"
+       },
+       "noop": {
+        "description": "[text 5c2ea389 307ch]",
+        "type": "boolean"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Skill",
+     "description": "[text 1aee8b30 1417ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "skill": {
+        "description": "[text 7a121837 71ch]",
+        "type": "string"
+       },
+       "args": {
+        "description": "[text 0972ebc0 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "skill"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ToolSearch",
+     "description": "[text 45fb0b06 953ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "query": {
+        "description": "[text 828ca284 99ch]",
+        "type": "string"
+       },
+       "max_results": {
+        "description": "[text 698adf39 48ch]",
+        "default": 5,
+        "type": "number"
+       }
+      },
+      "required": [
+       "query",
+       "max_results"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "description": "[text c1cab8b8 83ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     },
+     "defer_loading": true
+    },
+    {
+     "name": "Write",
+     "description": "[text fe532834 240ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 4846848f 71ch]",
+        "type": "string"
+       },
+       "content": {
+        "description": "[text 59a5e2a9 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   ],
+   "metadata": {
+    "user_id": "fixture"
+   },
+   "max_tokens": 128000,
+   "thinking": {
+    "type": "adaptive",
+    "display": "omitted"
+   },
+   "context_management": {
+    "edits": [
+     {
+      "type": "clear_thinking_20251015",
+      "keep": "all"
+     }
+    ]
+   },
+   "output_config": {
+    "effort": "medium"
+   },
+   "stream": true
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/event-stream; charset=utf-8"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-representative-claim",
+    "five_hour"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-status",
+    "rejected"
+   ],
+   [
+    "anthropic-ratelimit-unified-reset",
+    "1791076800"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-utilization",
+    "0.32"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-reset",
+    "1791640800"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-reset",
+    "1791076800"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-fallback-percentage",
+    "0.5"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-disabled-reason",
+    "org_level_disabled"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-utilization",
+    "0.05"
+   ],
+   [
+    "anthropic-ratelimit-unified-status",
+    "allowed"
+   ],
+   [
+    "request-id",
+    "req_fixture0004"
+   ]
+  ],
+  "events": [
+   "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus-5-5\",\"id\":\"msg_fixture0005\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":323,\"cache_read_input_tokens\":28514,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":323},\"output_tokens\":50,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"diagnostics\":null,\"context_management\":null}}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+   "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 865cb320 22ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text ae0a48c2 19ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text a3da19cf 19ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 6aedfe15 14ch]\"}}\n\n",
+   "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture0006\",\"name\":\"Edit\",\"input\":{},\"caller\":{\"type\":\"direct\"}}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"file_path\\\": \\\"[text 54fee564 130ch]\\\", \\\"old_string\\\": \\\"[text b46fc025 16ch]\\\", \\\"new_string\\\": \\\"[text 0479d031 16ch]\\\"}\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_fixture0007\",\"name\":\"Bash\",\"input\":{},\"caller\":{\"type\":\"direct\"}}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\": \\\"[text 07ba123b 212ch]\\\", \\\"description\\\": \\\"[text c080722d 27ch]\\\"}\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+   "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\n",
+   "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":323,\"cache_read_input_tokens\":28514,\"output_tokens\":388,\"output_tokens_details\":{\"thinking_tokens\":0},\"iterations\":[{\"input_tokens\":2,\"output_tokens\":388,\"cache_read_input_tokens\":28514,\"cache_creation_input_tokens\":323,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":323},\"type\":\"message\"}]},\"context_management\":{\"applied_edits\":[]}}\n\n",
+   "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  ]
+ },
+ "abort_after_events": null
+}

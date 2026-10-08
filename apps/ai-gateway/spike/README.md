@@ -8,6 +8,7 @@ traffic, before any of the real gateway is built. Findings accumulate in [FINDIN
 | `capture_proxy.py` | Byte-faithful passthrough to `api.anthropic.com` that records every exchange (credentials redacted) |
 | `census.py` | Turns captures into a report: classes, hint headers, token profile, auxiliary fingerprints, rate-limit headers |
 | `local_replay.py` | Replays captured auxiliary requests against a local model through the inference plane |
+| `make_fixtures.py` | Rebuilds selected captures as the content-free fixtures in `tests/fixtures/exchanges/` |
 
 ## What gets recorded, and where
 
