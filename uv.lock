@@ -3485,6 +3485,7 @@ source = { editable = "apps/ai-gateway" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "theygent-ir" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -3492,6 +3493,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -3500,6 +3502,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "theygent-ir", editable = "packages/ir" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
@@ -3507,6 +3510,7 @@ requires-dist = [
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
+    { name = "pytest-xdist", specifier = ">=3" },
     { name = "ruff", specifier = ">=0.5" },
     { name = "ty", specifier = ">=0.0.1a1" },
 ]

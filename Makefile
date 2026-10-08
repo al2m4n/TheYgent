@@ -38,7 +38,7 @@ endif
 # Python test suites run per-package: the apps share test-file basenames
 # (test_fast_suite.py, test_integration_mlx.py) with no package __init__, so a single
 # root pytest collides on import. Each entry is run with its own dir as rootdir.
-PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane
+PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane apps/ai-gateway
 
 # Each service is identified by the PORT it listens on — that is the authoritative "is it up and
 # which process is it", NOT a recorded pid. `start` records `$!`, but that is the `uv run`/`pnpm`

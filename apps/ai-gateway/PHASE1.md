@@ -45,7 +45,7 @@ Status: `todo` · `doing` · `done`.
 
 | ID | Task | Depends | Done when | Status |
 |---|---|---|---|---|
-| A1 | Service skeleton: `create_app` factory with injectable seams, empty-safe `THEYGENT_AI_GATEWAY_*` settings, `__main__`/`asgi`, `/healthz` `/readyz`; added to `PY_TEST_DIRS` and the `ty` hook | — | It boots; the fast suite runs with no network | todo |
+| A1 | Service skeleton: `create_app` factory with injectable seams, empty-safe `THEYGENT_AI_GATEWAY_*` settings, `__main__`/`asgi`, `/healthz` `/readyz`; added to `PY_TEST_DIRS` and the `ty` hook | — | It boots; the fast suite runs with no network | done |
 | A2 | Byte-faithful pass-through, promoted from the spike, over `/v1/messages`, `count_tokens`, `/v1/models` and `HEAD /api/hello` | A1 | Body hash and response bytes identical; first byte not buffered; disconnect cancels upstream; no credential in logs | todo |
 | A3 | Fixtures from the Phase 0 captures (structure kept, prompt/tool text placeholders, no user content), plus a fake Anthropic upstream that replays them | A1 | Main, subagent, auxiliary, compaction, 400, 429 and mid-stream drop; no proprietary or user text committed | todo |
 | A4 | Signals and side parser: hint headers, client source, credential kind, auxiliary fingerprint (attribution block skipped), usage with 5-minute/1-hour cache writes, seat-allowance headers | A0, A3 | Table tests over fixtures; a parse failure never affects the forwarded bytes | todo |

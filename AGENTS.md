@@ -4,7 +4,8 @@ Rules for anyone — human or coding agent — making changes to this repository
 files add local rules: [apps/control-plane](apps/control-plane/AGENTS.md),
 [apps/inference-plane](apps/inference-plane/AGENTS.md),
 [apps/interface](apps/interface/AGENTS.md), [apps/worker](apps/worker/AGENTS.md),
-[apps/web](apps/web/AGENTS.md), [packages/ir](packages/ir/AGENTS.md),
+[apps/web](apps/web/AGENTS.md), [apps/ai-gateway](apps/ai-gateway/AGENTS.md),
+[packages/ir](packages/ir/AGENTS.md),
 [packages/ir-types](packages/ir-types/AGENTS.md),
 [packages/gateway-client](packages/gateway-client/AGENTS.md),
 [docs/user-docs](docs/user-docs/AGENTS.md). Read the architecture first:
