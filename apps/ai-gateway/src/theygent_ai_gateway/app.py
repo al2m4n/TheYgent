@@ -5,9 +5,10 @@ upstream with no network: ``upstream_transport`` replaces the HTTP transport the
 uses. The upstream client lives for the app's lifetime (one connection pool, closed on shutdown).
 
 The gateway's own surface (``/healthz``, ``/readyz``, and later ``/admin/*``) speaks camelCase,
-like the inference plane's management surface; the Anthropic-format paths keep Anthropic's
-shapes. FastAPI's generated docs routes are off — the gateway sits on a coding agent's model path
-and serves nothing it doesn't need to.
+like the inference plane's management surface. Every other path is forwarded to the upstream
+unchanged (see ``proxy.py``), so the Anthropic-format paths keep Anthropic's shapes. FastAPI's
+generated docs routes are off — the gateway sits on a coding agent's model path and serves
+nothing it doesn't need to.
 """
 
 from __future__ import annotations
@@ -20,11 +21,18 @@ import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from theygent_ai_gateway.proxy import forward
 from theygent_ai_gateway.settings import GatewaySettings, load_settings
 
 #: Streams can stay open through long thinking pauses (Claude Code itself waits five minutes of
 #: silence before giving up), so reads have no timeout; connecting and sending stay bounded.
 UPSTREAM_TIMEOUT = httpx.Timeout(connect=15.0, read=None, write=120.0, pool=30.0)
+#: Parallel subagents and many developers mean many concurrent streams. No connection cap: a
+#: capped pool would silently queue requests in the gateway, where the upstream's own rate
+#: limits are the right back-pressure.
+UPSTREAM_LIMITS = httpx.Limits(max_connections=None, max_keepalive_connections=100)
+#: Every method a client may use; the gateway forwards them all.
+FORWARDED_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 
 def create_app(
@@ -40,6 +48,7 @@ def create_app(
             base_url=settings.upstream_url,
             transport=upstream_transport,
             timeout=UPSTREAM_TIMEOUT,
+            limits=UPSTREAM_LIMITS,
             follow_redirects=False,
         )
         app.state.upstream = upstream
@@ -77,4 +86,6 @@ def create_app(
             status_code=200 if ready else 503,
         )
 
+    # Registered last: every path the gateway does not answer itself is forwarded upstream.
+    app.add_api_route("/{path:path}", forward, methods=FORWARDED_METHODS, include_in_schema=False)
     return app
