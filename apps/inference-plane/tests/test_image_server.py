@@ -32,8 +32,8 @@ from theygent_inference_plane.app import create_app
 from theygent_inference_plane.launcher import ImageServerLauncher
 
 _WAIT_SEC = 10.0
-# The wrapper is spawned with the plane's own interpreter and package, whose import alone takes
-# seconds; a cold spawn on a loaded CI box gets more room than a request does.
+# Each wrapper spawn starts a fresh interpreter; a cold spawn on a loaded CI box gets more room
+# than a request does.
 _SPAWN_WAIT_SEC = 60.0
 
 # Called the way the wrapper calls sd-cli (`-m MODEL -p PROMPT -o OUT …`). A prompt starting with
