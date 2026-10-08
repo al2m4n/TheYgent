@@ -39,7 +39,7 @@ These are the invariants a change must not break:
 | `eviction.py` | `EvictionPolicy` protocol + the count-ceiling, priority-then-LRU policy; `ResourceProbe` seam for a future byte-accounting policy |
 | `capabilities.py` | Pure, network-free capability detectors (reasoning/tool/vision/context) shared by the live probe and the catalog |
 | `binary.py` | `resolve_engine_command`: env var → `PATH` → `python -m` → not-found, resolved once at construction |
-| `image_server.py` | Bundled stdlib-only OpenAI images wrapper around one-shot CLI diffusion generators, serialized behind a lock |
+| `image_server.py` | Bundled stdlib-only OpenAI images wrapper around one-shot CLI diffusion generators, serialized behind a lock. Spawned as `python -m theygent_inference_plane.image_server`, which runs the package `__init__` first — so the package root re-exports `create_app` lazily and a cold image-engine spawn never imports the app or LiteLLM (a fast-suite guard spawns the launcher's command and checks) |
 | `weights.py` | Stdlib GGUF header reader: is a local diffusion file a whole checkpoint or one component of one; the `IncompleteWeights` refusal and the architecture predicate the catalog spends before a download |
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
