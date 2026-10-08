@@ -39,7 +39,7 @@ Status: `todo` · `doing` · `done`.
 
 | ID | Task | Depends | Done when | Status |
 |---|---|---|---|---|
-| A0 | Wire types for the decision record, gateway config, key sync, heartbeat and fingerprint, in `theygent_ir.gateway` | — | Strict models (unknown fields rejected); round-trip tests; the "no message text" rule written into the record type | todo |
+| A0 | Wire types for the decision record, gateway config, key sync, heartbeat and fingerprint, in `theygent_ir.gateway` | — | Strict models (unknown fields rejected); round-trip tests; the "no message text" rule written into the record type | done |
 
 ### W1 — gateway service (`apps/ai-gateway`)
 
@@ -77,7 +77,7 @@ Status: `todo` · `doing` · `done`.
 | I2 | Setup and keys: create a gateway key; copy-ready config per client. The CLI/IDE env block always sets `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` and `ENABLE_TOOL_SEARCH=true`; also the managed-settings JSON and the desktop app's gateway values (`inferenceGatewayBaseUrl`, API key, `toolSearchEnabled`) | C3 | The key is shown once; snippets differ per credential profile | todo |
 | I3 | Report: savings band, calls, tokens, seat utilization by class / client / developer / model; a note that Claude Code's own cost display assumes the requested model | C5 | Empty and loading states; time-range filter | todo |
 | I4 | Sessions: per-session timeline of requests and decisions | C5 | Shows reason codes | todo |
-| I5 | Catalog and Settings: fingerprint review; mode (observer / off); upstream credential status, written directly to the gateway | C6, A12 | The credential never transits the control plane | todo |
+| I5 | Catalog and Settings: fingerprint review; mode (`observer` records every exchange; `passthrough` forwards without recording); upstream credential status, written directly to the gateway | C6, A12 | The credential never transits the control plane | todo |
 
 ### W4 — run modes, docs, end-to-end proof
 

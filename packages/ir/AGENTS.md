@@ -1,9 +1,9 @@
 # AGENTS.md — packages/ir
 
 Rules for `packages/ir` (`theygent_ir`) — the single source of truth for the Agent Graph
-IR and the inference-plane registration payload. The repo-wide rules in the root
-[AGENTS.md](../../AGENTS.md) apply first; the design is documented in
-[docs/dev-docs/ir-and-packages.md](../../docs/dev-docs/ir-and-packages.md).
+IR, the inference-plane registration payload, and the AI gateway ↔ control plane wire
+types. The repo-wide rules in the root [AGENTS.md](../../AGENTS.md) apply first; the
+design is documented in [docs/dev-docs/ir-and-packages.md](../../docs/dev-docs/ir-and-packages.md).
 
 This is the most dangerous place in the repo to change: every saved agent's identity, both
 runtimes' dispatch, and the frontend's generated types hang off these models.
@@ -29,6 +29,10 @@ runtimes' dispatch, and the frontend's generated types hang off these models.
   `packages/ir-types`.
 - **`validate_graph` runs before any run or publish** — validation failures are 400s and
   nothing persists. Add new structural rules here, not in per-consumer code.
+- **The AI gateway wire types (`gateway.py`) carry no free text.** Every string field is a
+  constrained `Token` or a closed vocabulary — the plane boundary (prompts and credentials stay in
+  the gateway) is enforced by the types, and a schema-scanning test guards it. They are
+  snake_case (the control-plane API's casing) and never hashed.
 - **After any model change:** `make gen-ir-types` (regenerates the JSON Schema, the TS
   types, and the node registry). CI fails on drift, including untracked generated files.
 

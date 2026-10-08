@@ -3,8 +3,10 @@
 The inference-plane registration payload (``registration.py``) and the capabilities response
 are frozen here. The Agent Graph IR (``graph.py`` / ``contenthash.py``) defines
 the document envelope, nodes/edges, model bindings, the ``kind`` taxonomy, and the
-content-hash rule. This package stays pure — Pydantic models + static graph algorithms, no
-engine SDK, no gateway client. Execution (the walker) lives in the control-plane.
+content-hash rule. The AI gateway ↔ control plane wire types live in ``theygent_ir.gateway``
+(imported from the submodule, not re-exported here). This package stays pure — Pydantic
+models + static graph algorithms, no engine SDK, no gateway client. Execution (the walker)
+lives in the control-plane.
 """
 
 from theygent_ir.contenthash import content_hash
