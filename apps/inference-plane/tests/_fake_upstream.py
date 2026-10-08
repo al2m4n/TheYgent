@@ -9,8 +9,12 @@ This is the injected ``EngineLauncher`` for the fast suite.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 
 import httpx
 import uvicorn
@@ -29,12 +33,27 @@ FAKE_EMBEDDING = [0.1, 0.2, 0.3]
 FAKE_TRANSCRIPT = "the quick brown fox"
 FAKE_AUDIO = b"ID3fake-audio-bytes"
 
+# A non-stream completion that never finishes on its own, like an engine still chewing on an
+# oversized prompt: only the caller closing the connection ends it (or the safety cap below,
+# which keeps a broken test from wedging the server).
+HOLD_UNTIL_DISCONNECT = "__hold_until_disconnect__"
+_HOLD_CAP_SEC = 30.0
 
-def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
+
+@dataclass
+class _Captured:
+    """What the upstream actually received. ``authorization`` lets a test prove the credential
+    resolved locally and reached only this user-configured endpoint; the events are set from
+    the server thread when a held completion arrives / its caller hangs up on it."""
+
+    authorization: str | None = None
+    hold_started: threading.Event = field(default_factory=threading.Event)
+    hold_abandoned: threading.Event = field(default_factory=threading.Event)
+
+
+def _build_fake_app() -> tuple[FastAPI, _Captured]:
     app = FastAPI()
-    # Records what the upstream actually received, so a test can prove the credential
-    # resolved locally and reached only this user-configured endpoint.
-    captured: dict[str, object] = {"authorization": None}
+    captured = _Captured()
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -46,7 +65,7 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
-        captured["authorization"] = request.headers.get("authorization")
+        captured.authorization = request.headers.get("authorization")
         body = await request.json()
         model = body.get("model", "fake")
         last_content = (body.get("messages") or [{}])[-1].get("content")
@@ -62,6 +81,21 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
                 },
                 status_code=400,
             )
+        if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
+            captured.hold_started.set()
+
+            async def caller_hung_up() -> None:
+                # The body is fully read, so the next ASGI message is the disconnect.
+                while (await request.receive())["type"] != "http.disconnect":
+                    pass
+
+            try:
+                await asyncio.wait_for(caller_hung_up(), timeout=_HOLD_CAP_SEC)
+            except TimeoutError:
+                pass  # never cancelled: answer normally; the test asserting the hang-up fails
+            else:
+                captured.hold_abandoned.set()
+                return Response(status_code=499)
         if body.get("stream"):
             # A stream that fails AFTER chunks started flowing — by then the 200 is
             # committed on every hop. Real engines report this as an in-band SSE error
@@ -133,7 +167,7 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
 
     @app.post("/v1/embeddings")
     async def embeddings(request: Request):
-        captured["authorization"] = request.headers.get("authorization")
+        captured.authorization = request.headers.get("authorization")
         body = await request.json()
         model = body.get("model", "fake")
         inputs = body.get("input")
@@ -154,14 +188,14 @@ def _build_fake_app() -> tuple[FastAPI, dict[str, object]]:
 
     @app.post("/v1/audio/transcriptions")
     async def transcriptions(request: Request):
-        captured["authorization"] = request.headers.get("authorization")
+        captured.authorization = request.headers.get("authorization")
         # Consume the multipart body so the request completes; the transcript is deterministic.
         await request.form()
         return JSONResponse({"text": FAKE_TRANSCRIPT})
 
     @app.post("/v1/audio/speech")
     async def speech(request: Request):
-        captured["authorization"] = request.headers.get("authorization")
+        captured.authorization = request.headers.get("authorization")
         await request.json()
         return Response(content=FAKE_AUDIO, media_type="audio/mpeg")
 
@@ -175,8 +209,9 @@ def _dumps(obj: object) -> str:
 
 
 class _ThreadedServer:
-    def __init__(self) -> None:
-        app, self.captured = _build_fake_app()
+    """An ASGI app on real uvicorn (ephemeral port) in a daemon thread."""
+
+    def __init__(self, app: FastAPI) -> None:
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
@@ -195,9 +230,22 @@ class _ThreadedServer:
         self._thread.join(timeout=5)
 
 
+@contextmanager
+def serve_on_uvicorn(app: FastAPI) -> Iterator[str]:
+    """Serve ``app`` on real uvicorn for the block's duration; yields its base URL. For tests
+    that need a real socket to the app under test — a TestClient can never hang up mid-request."""
+    server = _ThreadedServer(app)
+    port = server.start()
+    try:
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.stop()
+
+
 class FakeUpstreamHandle:
     def __init__(self, advertised: Capabilities) -> None:
-        self._server = _ThreadedServer()
+        app, self._captured = _build_fake_app()
+        self._server = _ThreadedServer(app)
         self._port = self._server.start()
         self._advertised = advertised
         self.terminated = False
@@ -213,7 +261,17 @@ class FakeUpstreamHandle:
     @property
     def last_authorization(self) -> object:
         """The Authorization header this upstream last received (None if none)."""
-        return self._server.captured["authorization"]
+        return self._captured.authorization
+
+    @property
+    def hold_started(self) -> threading.Event:
+        """Set once a HOLD_UNTIL_DISCONNECT completion reaches this upstream."""
+        return self._captured.hold_started
+
+    @property
+    def hold_abandoned(self) -> threading.Event:
+        """Set once the caller closed the connection on a held completion."""
+        return self._captured.hold_abandoned
 
     async def health(self) -> bool:
         try:

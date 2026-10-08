@@ -74,6 +74,8 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 
 **A resident ceiling.** Only a limited number of engines stay loaded at once — **two by default** (`THEYGENT_MAX_RESIDENT`). When a new engine is needed and the ceiling is full, TheYgent **evicts** one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is **never** evicted; if nothing can be freed, the new call is refused with a `no_capacity` error rather than thrashing.
 
+**Abandoned calls are cancelled.** If the caller hangs up before a chat answer arrives — its client timed out, or the connection closed — TheYgent closes the request to the engine right away instead of holding it open for an answer nobody will read. Engines that watch for a closed connection, like llama.cpp, stop generating at once, so the engine is free for the next call; and a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.
+
 **Idle reaping.** An engine left idle longer than its idle timeout (**900 seconds** by default) is torn down automatically by a background sweep, freeing its memory. Mark a model **Keep warm** to exempt it from reaping.
 
 **Manual control.** From a model's row in [Registries](index.md), **Warm** preloads an engine (so the next call skips the cold start) and **Evict** frees it now. Both are safe no-ops for reachable endpoints and models that aren't loaded.
