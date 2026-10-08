@@ -24,6 +24,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from theygent_ai_gateway.conversations import ConversationTracker
 from theygent_ai_gateway.identity import (
     ControlPlaneKeySource,
     KeyRing,
@@ -54,6 +55,7 @@ def create_app(
     upstream_transport: httpx.AsyncBaseTransport | None = None,
     observe: ObserveHook | None = None,
     key_source: KeySource | None = None,
+    tracker: ConversationTracker | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else load_settings(os.environ)
     keyring = KeyRing(settings.state_dir) if settings.auth_mode == "team" else None
@@ -100,6 +102,7 @@ def create_app(
     app.state.upstream = None
     app.state.observe = observe
     app.state.keyring = keyring
+    app.state.tracker = tracker if tracker is not None else ConversationTracker()
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

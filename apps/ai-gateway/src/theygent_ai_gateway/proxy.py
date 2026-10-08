@@ -38,6 +38,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from theygent_ir.gateway import CredentialProfile, Endpoint, Outcome, SeatAllowance, Timing
 
+from theygent_ai_gateway.conversations import ConversationTracker, Position
 from theygent_ai_gateway.identity import (
     GATEWAY_KEY_HEADER,
     GATEWAY_KEY_PREFIX,
@@ -219,6 +220,17 @@ class _Exchange:
         self._seat: SeatAllowance | None = None
         self._done = False
         self.identity: Identity | None = None
+        self._tracker: ConversationTracker | None = getattr(request.app.state, "tracker", None)
+        self.position: Position | None = None
+
+    def place(self) -> None:
+        """Locate a Messages request in its conversation, before it is forwarded."""
+        if self._tracker is None or self._endpoint != "messages":
+            return
+        try:
+            self.position = self._tracker.begin(self._signals, self.identity)
+        except Exception as exc:
+            log.error("could not place the request in its conversation: %s", type(exc).__name__)
 
     def _ms(self) -> int:
         return int((time.perf_counter() - self._t0) * 1000)
@@ -252,6 +264,11 @@ class _Exchange:
         self._done = True
         try:
             summary = self._observer.finish() if self._observer else ResponseSummary()
+            if self._tracker is not None and self.position is not None and outcome == "complete":
+                try:
+                    self._tracker.complete(self.position, self._status, summary)
+                except Exception as exc:
+                    log.error("could not update the conversation: %s", type(exc).__name__)
             observation = Observation(
                 started_at=self._started_at,
                 method=self._method,
@@ -267,6 +284,7 @@ class _Exchange:
                 response=summary,
                 seat_allowance=self._seat,
                 identity=self.identity,
+                position=self.position,
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)
@@ -396,6 +414,7 @@ async def forward(request: Request) -> Response:
     refusal = _authenticate(exchange, settings, request.app.state.keyring, headers, endpoint)
     if refusal is not None:
         return exchange.reject(refusal)
+    exchange.place()
     profile: CredentialProfile = (
         exchange.identity.credential_profile if exchange.identity else "passthrough"
     )

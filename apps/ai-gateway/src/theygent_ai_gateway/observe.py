@@ -14,12 +14,15 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from theygent_ir.gateway import Endpoint, Outcome, SeatAllowance, Timing, Usage
 
 from theygent_ai_gateway.identity import Identity
 from theygent_ai_gateway.signals import RequestSignals, token_or_none
+
+if TYPE_CHECKING:
+    from theygent_ai_gateway.conversations import Position
 
 log = logging.getLogger(__name__)
 
@@ -229,6 +232,8 @@ class Observation:
     seat_allowance: SeatAllowance | None
     #: The developer, in team mode; ``None`` in personal mode or when the request was refused.
     identity: Identity | None = None
+    #: Where a Messages request sat in its conversation (``None`` for other endpoints).
+    position: Position | None = None
 
 
 ObserveHook = Callable[[Observation], None]
