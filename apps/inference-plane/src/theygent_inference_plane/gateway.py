@@ -167,7 +167,9 @@ class Gateway:
         #      swallows that abort into a silent empty body, where a direct read raises and maps
         #      to an honest, actionable upstream error.
         # An upstream that itself requires a voice answers with its own error, surfaced through
-        # the same status mapping as every upstream error.
+        # the same status mapping as every upstream error. Cancelling this call (its caller hung
+        # up) closes the connection to the engine on the way out of the per-call client, which is
+        # how the engine learns the synthesis was abandoned.
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
                 resp = await client.post(
@@ -201,7 +203,9 @@ class Gateway:
         # upstream DIRECTLY, like speak. The local generators are diffusion CLIs behind a bundled
         # wrapper server (not the dispatch layer), and a reachable image API is already this exact
         # OpenAI shape, so one direct POST covers both. Generation is minutes-scale per image and
-        # loads weights per request, so the timeout is generous.
+        # loads weights per request, so the timeout is generous. Cancelling this call (its caller
+        # hung up) closes the connection on the way out of the per-call client; the bundled
+        # wrapper watches for exactly that and kills the render.
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(1200.0, connect=10.0)) as client:
                 resp = await client.post(
