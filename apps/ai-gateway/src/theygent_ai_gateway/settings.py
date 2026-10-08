@@ -29,11 +29,19 @@ ENV_UPSTREAM_URL = "THEYGENT_AI_GATEWAY_UPSTREAM_URL"
 ENV_AUTH_MODE = "THEYGENT_AI_GATEWAY_AUTH_MODE"
 ENV_STATE_DIR = "THEYGENT_AI_GATEWAY_STATE_DIR"
 ENV_GATEWAY_ID = "THEYGENT_AI_GATEWAY_ID"
+#: Authenticates the gateway to the control plane (key sync, config, records). A deployment secret.
+ENV_SERVICE_KEY = "THEYGENT_AI_GATEWAY_SERVICE_KEY"
+#: The organization's Anthropic API key, injected for developers on the org_key profile. A
+#: deployment secret; it never transits the control plane.
+ENV_ORG_API_KEY = "THEYGENT_AI_GATEWAY_ORG_API_KEY"
+ENV_KEY_SYNC_SECONDS = "THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS"
 #: Read by every service that reaches the control plane, as THEYGENT_INFERENCE_PLANE_URL is for
 #: the inference plane.
 ENV_CONTROL_PLANE_URL = "THEYGENT_CONTROL_PLANE_URL"
 
 DEFAULT_PORT = 8082
+#: How often team mode re-syncs developer keys; a revoked key is refused within one interval.
+DEFAULT_KEY_SYNC_SECONDS = 30.0
 DEFAULT_UPSTREAM_URL = "https://api.anthropic.com"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -66,6 +74,9 @@ class GatewaySettings:
     auth_mode: AuthMode = "personal"
     state_dir: Path = field(default_factory=_default_state_dir)
     gateway_id: str = field(default_factory=_default_gateway_id)
+    service_key: str | None = field(default=None, repr=False)
+    org_api_key: str | None = field(default=None, repr=False)
+    key_sync_seconds: float = DEFAULT_KEY_SYNC_SECONDS
 
     def __post_init__(self) -> None:
         if not 1 <= self.port <= 65535:
@@ -85,6 +96,20 @@ class GatewaySettings:
             raise SettingsError(
                 f"team mode authenticates developers with keys from the control plane; "
                 f"set {ENV_CONTROL_PLANE_URL}"
+            )
+        if self.auth_mode == "team" and self.service_key is None:
+            raise SettingsError(
+                f"team mode fetches developer keys from the control plane as a service; "
+                f"set {ENV_SERVICE_KEY}"
+            )
+        if self.auth_mode == "personal" and self.org_api_key is not None:
+            raise SettingsError(
+                f"{ENV_ORG_API_KEY} is for team mode's org_key profile; personal mode forwards "
+                "the caller's own credential"
+            )
+        if not 1 <= self.key_sync_seconds <= 3600:
+            raise SettingsError(
+                f"{ENV_KEY_SYNC_SECONDS} must be between 1 and 3600, got {self.key_sync_seconds}"
             )
         object.__setattr__(self, "upstream_url", _http_url(ENV_UPSTREAM_URL, self.upstream_url))
         if self.control_plane_url is not None:
@@ -125,6 +150,16 @@ def _read(env: Mapping[str, str], name: str) -> str | None:
     return value or None
 
 
+def _read_float(env: Mapping[str, str], name: str) -> float | None:
+    raw = _read(env, name)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise SettingsError(f"{name} must be a number, got {raw!r}") from None
+
+
 def _read_int(env: Mapping[str, str], name: str) -> int | None:
     raw = _read(env, name)
     if raw is None:
@@ -149,4 +184,11 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
         auth_mode=cast(AuthMode, _read(env, ENV_AUTH_MODE) or "personal"),
         state_dir=Path(state_dir) if state_dir else _default_state_dir(),
         gateway_id=_read(env, ENV_GATEWAY_ID) or _default_gateway_id(),
+        service_key=_read(env, ENV_SERVICE_KEY),
+        org_api_key=_read(env, ENV_ORG_API_KEY),
+        key_sync_seconds=(
+            DEFAULT_KEY_SYNC_SECONDS
+            if (sync := _read_float(env, ENV_KEY_SYNC_SECONDS)) is None
+            else sync
+        ),
     )

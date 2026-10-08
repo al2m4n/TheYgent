@@ -13,7 +13,10 @@ from theygent_ai_gateway.settings import (
     ENV_CONTROL_PLANE_URL,
     ENV_GATEWAY_ID,
     ENV_HOST,
+    ENV_KEY_SYNC_SECONDS,
+    ENV_ORG_API_KEY,
     ENV_PORT,
+    ENV_SERVICE_KEY,
     ENV_STATE_DIR,
     ENV_UPSTREAM_URL,
     GatewaySettings,
@@ -22,6 +25,9 @@ from theygent_ai_gateway.settings import (
 )
 
 ALL_VARS = [
+    ENV_SERVICE_KEY,
+    ENV_ORG_API_KEY,
+    ENV_KEY_SYNC_SECONDS,
     ENV_HOST,
     ENV_PORT,
     ENV_UPSTREAM_URL,
@@ -59,6 +65,9 @@ def test_values_are_read(tmp_path: Path) -> None:
             ENV_AUTH_MODE: "team",
             ENV_STATE_DIR: str(tmp_path),
             ENV_GATEWAY_ID: "gw-cluster-1",
+            ENV_SERVICE_KEY: "tys_service_example",
+            ENV_ORG_API_KEY: "sk-ant-api03-org-example",
+            ENV_KEY_SYNC_SECONDS: "5",
         }
     )
     assert settings.host == "0.0.0.0"
@@ -68,6 +77,9 @@ def test_values_are_read(tmp_path: Path) -> None:
     assert settings.auth_mode == "team"
     assert settings.state_dir == tmp_path
     assert settings.gateway_id == "gw-cluster-1"
+    assert settings.service_key == "tys_service_example"
+    assert settings.org_api_key == "sk-ant-api03-org-example"
+    assert settings.key_sync_seconds == 5.0
 
 
 def test_state_dir_expands_the_home_directory() -> None:
@@ -104,6 +116,41 @@ def test_personal_mode_accepts_loopback(host: str) -> None:
 def test_team_mode_needs_the_control_plane() -> None:
     with pytest.raises(SettingsError, match=ENV_CONTROL_PLANE_URL):
         load_settings({ENV_AUTH_MODE: "team", ENV_HOST: "0.0.0.0"})
+
+
+def test_team_mode_needs_a_service_key() -> None:
+    with pytest.raises(SettingsError, match=ENV_SERVICE_KEY):
+        load_settings(
+            {ENV_AUTH_MODE: "team", ENV_HOST: "0.0.0.0", ENV_CONTROL_PLANE_URL: "http://cp:8080"}
+        )
+
+
+def test_personal_mode_refuses_an_org_key() -> None:
+    # Personal mode forwards the caller's own credential; an org key there would be ignored.
+    with pytest.raises(SettingsError, match=ENV_ORG_API_KEY):
+        load_settings({ENV_ORG_API_KEY: "sk-ant-api03-org"})
+
+
+@pytest.mark.parametrize("value", ["0", "0.5", "7200"])
+def test_key_sync_interval_is_bounded(value: str) -> None:
+    with pytest.raises(SettingsError, match=ENV_KEY_SYNC_SECONDS):
+        load_settings({ENV_KEY_SYNC_SECONDS: value})
+
+
+def test_a_non_numeric_key_sync_interval_fails_by_name() -> None:
+    with pytest.raises(SettingsError, match=ENV_KEY_SYNC_SECONDS):
+        load_settings({ENV_KEY_SYNC_SECONDS: "often"})
+
+
+def test_secrets_never_appear_in_repr() -> None:
+    settings = GatewaySettings(
+        auth_mode="team",
+        host="0.0.0.0",
+        control_plane_url="http://cp:8080",
+        service_key="tys_SECRET_SERVICE",
+        org_api_key="sk-ant-api03-SECRET-ORG",
+    )
+    assert "SECRET" not in repr(settings)
 
 
 @pytest.mark.parametrize("url", ["api.anthropic.com", "ftp://api.anthropic.com", "https://"])

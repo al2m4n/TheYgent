@@ -16,6 +16,12 @@ more expensive. Treat every rule below as load-bearing.
   to carry content.
 - **Personal mode listens on loopback only.** It accepts requests without a gateway key. Team
   mode needs keys from the control plane. Settings enforce both; don't weaken the checks.
+- **Team mode fails closed.** No gateway key, an unknown or revoked key, or no key set loaded yet
+  is a refusal (a named 401/503 in Anthropic's error shape), never a pass. Keys are compared as
+  SHA-256 digests; the persisted key set holds digests only.
+- **A gateway key (`tyg_…`) never goes upstream**, whichever header carried it. On the `org_key`
+  profile every client credential is replaced by the organization's key, which serves Claude
+  Code's endpoints only (messages, count_tokens, models).
 - **Never read `ANTHROPIC_BASE_URL`.** That variable points Claude Code *at* the gateway; honouring
   it would forward to itself. The upstream is `THEYGENT_AI_GATEWAY_UPSTREAM_URL`.
 

@@ -18,6 +18,7 @@ from typing import Any
 
 from theygent_ir.gateway import Endpoint, Outcome, SeatAllowance, Timing, Usage
 
+from theygent_ai_gateway.identity import Identity
 from theygent_ai_gateway.signals import RequestSignals, token_or_none
 
 log = logging.getLogger(__name__)
@@ -226,6 +227,8 @@ class Observation:
     timing: Timing
     response: ResponseSummary
     seat_allowance: SeatAllowance | None
+    #: The developer, in team mode; ``None`` in personal mode or when the request was refused.
+    identity: Identity | None = None
 
 
 ObserveHook = Callable[[Observation], None]

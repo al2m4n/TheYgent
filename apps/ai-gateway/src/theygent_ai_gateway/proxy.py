@@ -36,8 +36,15 @@ import httpx
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
-from theygent_ir.gateway import Endpoint, Outcome, SeatAllowance, Timing
+from theygent_ir.gateway import CredentialProfile, Endpoint, Outcome, SeatAllowance, Timing
 
+from theygent_ai_gateway.identity import (
+    GATEWAY_KEY_HEADER,
+    GATEWAY_KEY_PREFIX,
+    Identity,
+    KeyRing,
+    presented_gateway_key,
+)
 from theygent_ai_gateway.observe import (
     Observation,
     ObserveHook,
@@ -46,7 +53,8 @@ from theygent_ai_gateway.observe import (
     deliver,
     seat_allowance,
 )
-from theygent_ai_gateway.signals import RequestSignals, read_request
+from theygent_ai_gateway.settings import GatewaySettings
+from theygent_ai_gateway.signals import RequestSignals, credential_kind, read_request
 
 log = logging.getLogger(__name__)
 
@@ -68,8 +76,11 @@ HOP_BY_HOP = frozenset(
         "content-length",
     }
 )
-#: Authenticates a developer to the gateway (team mode). Never forwarded upstream.
-GATEWAY_KEY_HEADER = "x-theygent-gateway-key"
+#: Headers that carry a credential for the upstream.
+_CREDENTIAL_HEADERS = frozenset({"authorization", "x-api-key"})
+#: The endpoints an org_key developer may reach with the organization's key: Claude Code's own.
+#: Anything else (files, batches, admin APIs) would let a gateway key spend the org's key freely.
+ORG_KEY_ENDPOINTS = frozenset({"messages", "count_tokens", "models"})
 #: The gateway's own surface; requests here are answered by the gateway or refused, never forwarded.
 OWN_PATH_PREFIXES = ("/healthz", "/readyz", "/admin")
 #: Header naming why the gateway itself answered with an error (as opposed to relaying one).
@@ -95,15 +106,36 @@ def is_own_path(path: str) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in OWN_PATH_PREFIXES)
 
 
-def upstream_request_headers(raw: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+def _is_gateway_token(name: str, value: bytes) -> bool:
+    text = value.decode("latin-1").strip()
+    if name == "authorization" and text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    return text.startswith(GATEWAY_KEY_PREFIX)
+
+
+def upstream_request_headers(
+    raw: list[tuple[bytes, bytes]],
+    *,
+    profile: CredentialProfile = "passthrough",
+    org_api_key: str | None = None,
+) -> list[tuple[bytes, bytes]]:
     """The client's headers as the upstream should see them: order and duplicates kept,
-    connection-level headers and the gateway's own key dropped, compression turned off."""
-    kept = [
-        (name, value)
-        for name, value in raw
-        if (lowered := name.decode("latin-1").lower()) not in HOP_BY_HOP
-        and lowered not in ("accept-encoding", GATEWAY_KEY_HEADER)
-    ]
+    connection-level headers dropped, compression turned off.
+
+    A gateway key never goes upstream, in whichever header it came. On the ``org_key`` profile
+    every client credential is dropped and the organization's key goes in its place."""
+    kept: list[tuple[bytes, bytes]] = []
+    for name, value in raw:
+        lowered = name.decode("latin-1").lower()
+        if lowered in HOP_BY_HOP or lowered in ("accept-encoding", GATEWAY_KEY_HEADER):
+            continue
+        if lowered in _CREDENTIAL_HEADERS and (
+            profile == "org_key" or _is_gateway_token(lowered, value)
+        ):
+            continue
+        kept.append((name, value))
+    if profile == "org_key" and org_api_key is not None:
+        kept.append((b"x-api-key", org_api_key.encode("latin-1")))
     kept.append((b"accept-encoding", b"identity"))
     return kept
 
@@ -186,6 +218,7 @@ class _Exchange:
         self._observer: ResponseObserver | None = None
         self._seat: SeatAllowance | None = None
         self._done = False
+        self.identity: Identity | None = None
 
     def _ms(self) -> int:
         return int((time.perf_counter() - self._t0) * 1000)
@@ -207,6 +240,12 @@ class _Exchange:
         if self._observer is not None:
             self._observer.feed(data)  # never raises
 
+    def reject(self, response: JSONResponse) -> JSONResponse:
+        """The gateway refused the request before forwarding it."""
+        self._status = response.status_code
+        self.finish("rejected")
+        return response
+
     def finish(self, outcome: Outcome) -> None:
         if self._done:
             return
@@ -227,6 +266,7 @@ class _Exchange:
                 ),
                 response=summary,
                 seat_allowance=self._seat,
+                identity=self.identity,
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)
@@ -268,6 +308,68 @@ async def _close_unrelayed(upstream: httpx.Response, exchange: _Exchange) -> Non
     exchange.finish("client_disconnected")
 
 
+def _authenticate(
+    exchange: _Exchange,
+    settings: GatewaySettings,
+    ring: KeyRing | None,
+    headers: dict[str, str],
+    endpoint: Endpoint,
+) -> JSONResponse | None:
+    """Team mode: identify the developer and check their profile can serve this request.
+    Returns the refusal, or ``None`` to forward. Personal mode has no identities to check."""
+    if settings.auth_mode != "team":
+        return None
+    if ring is None or not ring.loaded:
+        return gateway_error(
+            503, "gateway_keys_unavailable", "developer keys are not loaded yet", retry=True
+        )
+    token = presented_gateway_key(headers)
+    if token is None:
+        return gateway_error(
+            401,
+            "gateway_key_missing",
+            "this gateway needs a TheYgent gateway key (x-theygent-gateway-key header, or a "
+            "tyg_ token in ANTHROPIC_AUTH_TOKEN)",
+            retry=False,
+        )
+    identity = ring.lookup(token)
+    if identity is None:
+        return gateway_error(
+            401, "gateway_key_invalid", "unknown or revoked gateway key", retry=False
+        )
+    exchange.identity = identity
+    if identity.credential_profile == "org_key":
+        if settings.org_api_key is None:
+            return gateway_error(
+                503,
+                "org_key_not_configured",
+                "this developer is billed to the organization, but the gateway has no org key",
+                retry=False,
+            )
+        if endpoint not in ORG_KEY_ENDPOINTS:
+            return gateway_error(
+                403,
+                "endpoint_not_allowed",
+                "the organization's key serves Claude Code's endpoints only",
+                retry=False,
+            )
+        return None
+    upstream_headers = {
+        k: v
+        for k, v in headers.items()
+        if k in _CREDENTIAL_HEADERS and not _is_gateway_token(k, v.encode("latin-1"))
+    }
+    if credential_kind(upstream_headers) == "none":
+        return gateway_error(
+            401,
+            "upstream_credential_missing",
+            "this developer brings their own Anthropic credential (claude.ai login or API key), "
+            "and the request carries none",
+            retry=False,
+        )
+    return None
+
+
 async def forward(request: Request) -> Response:
     """Relay one request to the upstream and its response back."""
     path = request.url.path
@@ -280,14 +382,22 @@ async def forward(request: Request) -> Response:
 
     body = await request.body()
     endpoint = classify(path)
+    headers = {name.lower(): value for name, value in request.headers.items()}
+    settings: GatewaySettings = request.app.state.settings
+    if settings.auth_mode == "team" and endpoint == "hello":
+        # Claude Code's connection warm-up probe carries no credentials; answer it here rather
+        # than refuse it or forward it unauthenticated.
+        return Response(status_code=200)
     exchange = _Exchange(
         request,
         endpoint,
-        read_request(
-            {name.lower(): value for name, value in request.headers.items()},
-            body,
-            has_messages_body=endpoint in ("messages", "count_tokens"),
-        ),
+        read_request(headers, body, has_messages_body=endpoint in ("messages", "count_tokens")),
+    )
+    refusal = _authenticate(exchange, settings, request.app.state.keyring, headers, endpoint)
+    if refusal is not None:
+        return exchange.reject(refusal)
+    profile: CredentialProfile = (
+        exchange.identity.credential_profile if exchange.identity else "passthrough"
     )
     raw_path: bytes = request.scope.get("raw_path") or path.encode()
     query: bytes = request.scope.get("query_string", b"")
@@ -296,7 +406,9 @@ async def forward(request: Request) -> Response:
         request.method,
         # Relative to the upstream base URL, so a base URL with a path prefix keeps it.
         target.lstrip("/"),
-        headers=upstream_request_headers(list(request.headers.raw)),
+        headers=upstream_request_headers(
+            list(request.headers.raw), profile=profile, org_api_key=settings.org_api_key
+        ),
         content=body,
     )
     try:
