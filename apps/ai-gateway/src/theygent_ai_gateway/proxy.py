@@ -26,14 +26,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator, Coroutine
+from datetime import UTC, datetime
 from typing import Any
 
 import anyio
 import httpx
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from theygent_ir.gateway import Endpoint
+from starlette.background import BackgroundTask
+from theygent_ir.gateway import Endpoint, Outcome, SeatAllowance, Timing
+
+from theygent_ai_gateway.observe import (
+    Observation,
+    ObserveHook,
+    ResponseObserver,
+    ResponseSummary,
+    deliver,
+    seat_allowance,
+)
+from theygent_ai_gateway.signals import RequestSignals, read_request
 
 log = logging.getLogger(__name__)
 
@@ -155,19 +168,104 @@ async def _unless_client_disconnects[T](request: Request, call: Coroutine[Any, A
     raise ClientDisconnected
 
 
-async def _relay(upstream: httpx.Response) -> AsyncIterator[bytes]:
-    """Yield the upstream body as it arrives. If the client hangs up, the server cancels this
-    generator and the upstream connection closes, which ends generation upstream. The HTTP
-    client already closes a stream whose iteration is cancelled; the shielded ``aclose`` makes
-    that close explicit and immune to a re-delivered cancellation. If the upstream breaks
-    mid-body the error propagates and the client's response ends abruptly — never with a clean
-    end that would pass a truncated stream off as complete."""
+class _Exchange:
+    """One exchange's observation, assembled as the exchange happens and delivered to the
+    observe hook exactly once, however it ends. Every step is guarded: observing must never
+    change or interrupt what is relayed."""
+
+    def __init__(self, request: Request, endpoint: Endpoint, signals: RequestSignals) -> None:
+        self._hook: ObserveHook | None = getattr(request.app.state, "observe", None)
+        self._started_at = datetime.now(UTC)
+        self._t0 = time.perf_counter()
+        self._method = request.method
+        self._endpoint = endpoint
+        self._signals = signals
+        self._status: int | None = None
+        self._headers_ms: int | None = None
+        self._first_byte_ms: int | None = None
+        self._observer: ResponseObserver | None = None
+        self._seat: SeatAllowance | None = None
+        self._done = False
+
+    def _ms(self) -> int:
+        return int((time.perf_counter() - self._t0) * 1000)
+
+    def headers_arrived(self, upstream: httpx.Response) -> None:
+        self._status = upstream.status_code
+        self._headers_ms = self._ms()
+        try:
+            self._observer = ResponseObserver(
+                upstream.headers.get("content-type"), upstream.headers.get("content-encoding")
+            )
+            self._seat = seat_allowance(upstream.headers)
+        except Exception as exc:
+            log.error("could not start reading the response: %s", type(exc).__name__)
+
+    def chunk(self, data: bytes) -> None:
+        if self._first_byte_ms is None:
+            self._first_byte_ms = self._ms()
+        if self._observer is not None:
+            self._observer.feed(data)  # never raises
+
+    def finish(self, outcome: Outcome) -> None:
+        if self._done:
+            return
+        self._done = True
+        try:
+            summary = self._observer.finish() if self._observer else ResponseSummary()
+            observation = Observation(
+                started_at=self._started_at,
+                method=self._method,
+                endpoint=self._endpoint,
+                request=self._signals,
+                status=self._status,
+                outcome=outcome,
+                timing=Timing(
+                    headers_ms=self._headers_ms,
+                    first_byte_ms=self._first_byte_ms,
+                    total_ms=self._ms(),
+                ),
+                response=summary,
+                seat_allowance=self._seat,
+            )
+        except Exception as exc:
+            log.error("could not assemble the observation: %s", type(exc).__name__)
+            return
+        deliver(self._hook, observation)
+
+
+async def _relay(upstream: httpx.Response, exchange: _Exchange) -> AsyncIterator[bytes]:
+    """Yield the upstream body as it arrives, letting the exchange read a copy of each chunk.
+
+    If the client hangs up, the server cancels this generator and the upstream connection
+    closes, which ends generation upstream. The HTTP client already closes a stream whose
+    iteration is cancelled; the shielded ``aclose`` makes that close explicit and immune to a
+    re-delivered cancellation. If the upstream breaks mid-body the error propagates and the
+    client's response ends abruptly — never with a clean end that would pass a truncated stream
+    off as complete."""
+    outcome: Outcome = "complete"
     try:
         async for chunk in upstream.aiter_raw():
+            exchange.chunk(chunk)
             yield chunk
+    except (asyncio.CancelledError, GeneratorExit):
+        outcome = "client_disconnected"
+        raise
+    except BaseException:
+        outcome = "upstream_broke"
+        raise
     finally:
         with anyio.CancelScope(shield=True):
             await upstream.aclose()
+        exchange.finish(outcome)
+
+
+async def _close_unrelayed(upstream: httpx.Response, exchange: _Exchange) -> None:
+    """Runs after the response: covers a client that left before the body was ever iterated,
+    so ``_relay``'s own cleanup never ran. Both steps are idempotent."""
+    with anyio.CancelScope(shield=True):
+        await upstream.aclose()
+    exchange.finish("client_disconnected")
 
 
 async def forward(request: Request) -> Response:
@@ -181,6 +279,16 @@ async def forward(request: Request) -> Response:
         return gateway_error(503, "not_ready", "the gateway is starting up", retry=True)
 
     body = await request.body()
+    endpoint = classify(path)
+    exchange = _Exchange(
+        request,
+        endpoint,
+        read_request(
+            {name.lower(): value for name, value in request.headers.items()},
+            body,
+            has_messages_body=endpoint in ("messages", "count_tokens"),
+        ),
+    )
     raw_path: bytes = request.scope.get("raw_path") or path.encode()
     query: bytes = request.scope.get("query_string", b"")
     target = raw_path.decode("latin-1") + (f"?{query.decode('latin-1')}" if query else "")
@@ -194,14 +302,17 @@ async def forward(request: Request) -> Response:
     try:
         upstream = await _unless_client_disconnects(request, client.send(outbound, stream=True))
     except ClientDisconnected:
+        exchange.finish("client_disconnected")
         return Response(status_code=CLIENT_CLOSED_REQUEST)
     except httpx.TimeoutException as exc:
         log.warning("upstream timed out before answering: %s", type(exc).__name__)
+        exchange.finish("transport_error")
         return gateway_error(
             504, "upstream_timeout", "the upstream did not answer in time", retry=True
         )
     except httpx.HTTPError as exc:
         log.warning("upstream unreachable: %s", type(exc).__name__)
+        exchange.finish("transport_error")
         return gateway_error(
             502,
             "upstream_unreachable",
@@ -209,6 +320,11 @@ async def forward(request: Request) -> Response:
             retry=True,
         )
 
-    response = StreamingResponse(_relay(upstream), status_code=upstream.status_code)
+    exchange.headers_arrived(upstream)
+    response = StreamingResponse(
+        _relay(upstream, exchange),
+        status_code=upstream.status_code,
+        background=BackgroundTask(_close_unrelayed, upstream, exchange),
+    )
     response.raw_headers = client_response_headers(list(upstream.headers.raw))
     return response

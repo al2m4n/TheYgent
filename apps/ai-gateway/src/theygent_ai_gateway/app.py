@@ -2,7 +2,8 @@
 
 ``create_app`` takes its seams as arguments so the fast suite runs the real app against a fake
 upstream with no network: ``upstream_transport`` replaces the HTTP transport the upstream client
-uses. The upstream client lives for the app's lifetime (one connection pool, closed on shutdown).
+uses, and ``observe`` receives an ``Observation`` for every forwarded exchange once it ends. The
+upstream client lives for the app's lifetime (one connection pool, closed on shutdown).
 
 The gateway's own surface (``/healthz``, ``/readyz``, and later ``/admin/*``) speaks camelCase,
 like the inference plane's management surface. Every other path is forwarded to the upstream
@@ -21,6 +22,7 @@ import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from theygent_ai_gateway.observe import ObserveHook
 from theygent_ai_gateway.proxy import forward
 from theygent_ai_gateway.settings import GatewaySettings, load_settings
 
@@ -39,6 +41,7 @@ def create_app(
     settings: GatewaySettings | None = None,
     *,
     upstream_transport: httpx.AsyncBaseTransport | None = None,
+    observe: ObserveHook | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else load_settings(os.environ)
 
@@ -67,6 +70,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.upstream = None
+    app.state.observe = observe
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

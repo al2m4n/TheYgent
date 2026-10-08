@@ -128,9 +128,16 @@ others. New fingerprints default to pass-through until reviewed.
   - The last message is often a mid-conversation `role: system` message.
 - **Subagent (Explore):** its own 9-tool set and system prompt, same thinking and effort settings.
   It ran on Opus because subagents inherit the session model here.
-- **Cache TTL:** cache markers carry no explicit TTL, but on this subscription `usage` reports every
-  cache write as 1-hour (`ephemeral_1h_input_tokens`). The cost model reads TTL from `usage`, not
-  from request markers.
+- **Cache TTL** (corrected by the A4 fixture tests):
+  - Claude Code marks main-conversation requests, and side requests sharing that prefix, with
+    explicit `"ttl": "1h"` cache markers.
+  - Subagent and compaction requests get the 5-minute default.
+  - `usage.cache_creation` bills exactly what the markers ask for.
+  - This note originally said markers carry no TTL; that was wrong. The census tool wasn't yet
+    recording TTLs when the main requests were inspected.
+  - Routing consequence: a subagent's cache goes cold after 5 minutes, the main conversation's
+    after an hour, so a "cold-cache boundary" depends on the request class. The cost model reads
+    the billed split from `usage`.
 - **Synthetic totals at list price:** main $2.72 (of which about $1.47 is the single tool-search-off
   request), subagent $0.25, compaction $0.03.
 
