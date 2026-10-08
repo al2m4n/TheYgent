@@ -39,6 +39,7 @@ from starlette.background import BackgroundTask
 from theygent_ir.gateway import CredentialProfile, Endpoint, Outcome, SeatAllowance, Timing
 
 from theygent_ai_gateway.conversations import ConversationTracker, Position
+from theygent_ai_gateway.costs import PriceBook
 from theygent_ai_gateway.identity import (
     GATEWAY_KEY_HEADER,
     GATEWAY_KEY_PREFIX,
@@ -221,6 +222,7 @@ class _Exchange:
         self._done = False
         self.identity: Identity | None = None
         self._tracker: ConversationTracker | None = getattr(request.app.state, "tracker", None)
+        self._prices: PriceBook | None = getattr(request.app.state, "prices", None)
         self.position: Position | None = None
 
     def place(self) -> None:
@@ -252,6 +254,18 @@ class _Exchange:
         if self._observer is not None:
             self._observer.feed(data)  # never raises
 
+    def _cost(self, summary: ResponseSummary) -> tuple[float | None, str | None]:
+        """What the exchange cost, priced on the model that served it (else the one asked for)."""
+        usage = summary.usage
+        used = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens
+        used += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
+        if self._prices is None or not used:
+            return None, None
+        body = self._signals.body
+        model = summary.model or (body.model if body else None)
+        cost = self._prices.cost(model, usage)
+        return (cost, self._prices.version) if cost is not None else (None, None)
+
     def reject(self, response: JSONResponse) -> JSONResponse:
         """The gateway refused the request before forwarding it."""
         self._status = response.status_code
@@ -269,6 +283,7 @@ class _Exchange:
                     self._tracker.complete(self.position, self._status, summary)
                 except Exception as exc:
                     log.error("could not update the conversation: %s", type(exc).__name__)
+            cost_usd, pricing_version = self._cost(summary)
             observation = Observation(
                 started_at=self._started_at,
                 method=self._method,
@@ -285,6 +300,8 @@ class _Exchange:
                 seat_allowance=self._seat,
                 identity=self.identity,
                 position=self.position,
+                cost_usd=cost_usd,
+                pricing_version=pricing_version,
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)

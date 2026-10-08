@@ -234,6 +234,10 @@ class Observation:
     identity: Identity | None = None
     #: Where a Messages request sat in its conversation (``None`` for other endpoints).
     position: Position | None = None
+    #: Estimated USD at the price book's rates (API-equivalent on a subscription); ``None`` when
+    #: the model has no known rates or nothing was used.
+    cost_usd: float | None = None
+    pricing_version: str | None = None
 
 
 ObserveHook = Callable[[Observation], None]
