@@ -18,7 +18,7 @@ Invariants a change must not break:
 - **Every stream aborts on Stop/close/unmount.** The server cancels the run on disconnect; an orphaned reader would keep a local engine generating. A deliberate stop is recorded before aborting so it reads as "stopped", not a failure.
 - **Hand-kept mirrors stay in sync.** `lib/durable.ts` (`DURABLE_ONLY = {human, subgraph, loop, map}`), `lib/validate.ts` (the fast client mirror of the backend's `validate_graph`), and `lib/kind.ts` (the per-instance guardrail kind derivation) each track a backend counterpart by hand. The backend stays authoritative; client validation only gates Publish and test runs, never draft saves.
 - **Secrets are write-only on every wire.** Connection secrets read back as `hasSecret`, credentials as `hasValue`, OTLP header values as `{set, names}` with full-replacement writes. The UI never renders or re-sends a secret value.
-- **Two wire casings coexist by design.** Control-plane routes (`/runs`, `/sessions`, `/drafts`, `/bench`, `/settings`, `/rag`) are snake_case; inference `/admin/*` and all SSE frames are camelCase (`runId`). Honor each, don't normalize.
+- **Two wire casings coexist by design.** Control-plane routes (`/runs`, `/sessions`, `/drafts`, `/bench`, `/settings`, `/rag`, `/gateway`) are snake_case; inference `/admin/*` and all SSE frames are camelCase (`runId`). Honor each, don't normalize.
 - **Edge channel is derived from handle roles** (data↔data, control↔control, tool↔tools) — never a separate toggle — and at most one data edge may feed an in-port (mirrored client-side for an immediate red).
 
 ## Route map
@@ -34,6 +34,7 @@ Invariants a change must not break:
 | `/registries` | Installed models (register/warm/evict/delete, capability badges) plus catalog browse with fit badges sized against available RAM and tracked downloads. |
 | `/mcp` | Unified MCP page: stdio registrations, connections (encrypted auth, OAuth), hub installs, OpenAPI/GraphQL-generated servers, per-tool runner. |
 | `/rag` | Retrieval sources: upload/crawl, background ingest, per-source documents, inline query tester. |
+| `/gateway` | The AI Gateway, open to every signed-in user (admin-only tabs check the role). Overview: mode and config version (`GET /gateway/config`; a 404 means not configured, so gateways record nothing), each instance's latest heartbeat (`GET /gateway/instances`: online, whether it runs the latest config, upstream reachable, records waiting to export), polled every 15 s. |
 | `/settings` | Tabbed platform settings; the Inference tab talks to the inference plane directly; the Import / Export tab builds and applies whole-install transfer bundles. |
 
 ## Layout

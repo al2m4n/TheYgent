@@ -6,6 +6,7 @@ import { useAuth } from "./lib/auth";
 import { Chat } from "./routes/Chat";
 import { Dashboard } from "./routes/Dashboard";
 import { Editor } from "./routes/Editor";
+import { Gateway } from "./routes/Gateway";
 import { Home } from "./routes/Home";
 import { Mcp } from "./routes/Mcp";
 import { Rag } from "./routes/Rag";
@@ -133,6 +134,14 @@ const ragRoute = createRoute({
   component: requireRole("editor", Rag),
 });
 
+// Every signed-in user: developers manage their own gateway keys and read their own usage; the
+// admin-only tabs check the role themselves (and the API refuses regardless).
+const gatewayRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/gateway",
+  component: Gateway,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -151,6 +160,7 @@ const routeTree = rootRoute.addChildren([
   registriesRoute,
   mcpRoute,
   ragRoute,
+  gatewayRoute,
   settingsRoute,
 ]);
 

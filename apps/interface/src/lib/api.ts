@@ -1073,6 +1073,61 @@ export interface InferenceDiagnostics {
   binaries: DiagnosticsBinary[];
 }
 
+// ── AI gateway (control-plane /gateway/*, snake_case) ────────────────────────
+// The gateway proxies coding agents' model traffic; the control plane holds its config versions,
+// the heartbeats of its instances, and the metadata it records (never prompt content).
+
+export type GatewayMode = "passthrough" | "observer";
+export type FingerprintStatus =
+  | "unreviewed"
+  | "observe_only"
+  | "allow_cheaper"
+  | "allow_local"
+  | "never_route";
+
+export interface GatewayModelRates {
+  input: number;
+  output: number;
+  cache_write_5m: number;
+  cache_write_1h: number;
+  cache_read: number;
+}
+
+/** One immutable config version, as gateways receive it. */
+export interface GatewayConfig {
+  version: number;
+  mode: GatewayMode;
+  policy: {
+    subagent_target: string | null;
+    main_target: string | null;
+    local_target: string | null;
+    warm_switch_margin: number;
+  };
+  fingerprints: { fingerprint: string; status: FingerprintStatus; label: string | null }[];
+  pricing_overrides: Record<string, GatewayModelRates>;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+/** A gateway instance as its latest heartbeat described it. */
+export interface GatewayInstance {
+  gateway_id: string;
+  software_version: string;
+  mode: GatewayMode;
+  config_version: number | null;
+  /** Whether it runs the latest saved config. */
+  config_current: boolean;
+  key_set_version: number | null;
+  started_at: string;
+  /** Records waiting in its local log to be exported. */
+  spool_backlog: number;
+  upstream_reachable: boolean | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  online: boolean;
+  service_key_id: string | null;
+}
+
 export const api = {
   // ── control-plane runs + sessions (the operator surface) ──────────────────
   listRuns: (params: { limit?: number; before?: string } = {}) => {
@@ -1959,6 +2014,23 @@ export const api = {
     request<void>(controlPlaneUrl(), `/auth/providers/${encodeURIComponent(providerId)}`, {
       method: "DELETE",
     }),
+  // ── control plane: AI gateway (the AI Gateway page) ─────────────────────────
+  /** The latest gateway config, or null before any has been saved (gateways then forward
+   *  without recording). */
+  getGatewayConfig: async (): Promise<GatewayConfig | null> => {
+    try {
+      return await request<GatewayConfig>(controlPlaneUrl(), "/gateway/config");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404 && e.code === "gateway_config_not_found") {
+        return null;
+      }
+      throw e;
+    }
+  },
+  listGatewayInstances: () =>
+    request<{ instances: GatewayInstance[] }>(controlPlaneUrl(), "/gateway/instances").then(
+      (r) => r.instances,
+    ),
 };
 
 /** Where the control plane should send the browser to begin an OIDC sign-in — a NAVIGATION

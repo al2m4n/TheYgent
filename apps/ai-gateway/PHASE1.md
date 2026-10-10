@@ -73,7 +73,7 @@ Status: `todo` · `doing` · `done`.
 
 | ID | Task | Depends | Done when | Status |
 |---|---|---|---|---|
-| I1 | Page and Overview tab: instances, mode, config version, health | C4 | Vitest plus a visual check | todo |
+| I1 | Page and Overview tab: instances, mode, config version, health | C4 | Vitest plus a visual check. `/gateway` for every signed-in user, in the rail after Runs; Overview tiles (mode, config version, gateways online, records waiting) and each instance's heartbeat; the not-configured note. Checked against a real stack (disposable Postgres, control plane, a heartbeating gateway), desktop and mobile width | done |
 | I2 | Setup and keys: create a gateway key; copy-ready config per client. The CLI/IDE env block always sets `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` and `ENABLE_TOOL_SEARCH=true`; also the managed-settings JSON and the desktop app's gateway values (`inferenceGatewayBaseUrl`, API key, `toolSearchEnabled`) | C3 | The key is shown once; snippets differ per credential profile | todo |
 | I3 | Report: savings band, calls, tokens, seat utilization by class / client / developer / model; a note that Claude Code's own cost display assumes the requested model | C5 | Empty and loading states; time-range filter | todo |
 | I4 | Sessions: per-session timeline of requests and decisions | C5 | Shows reason codes | todo |
