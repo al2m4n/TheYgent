@@ -147,3 +147,23 @@ def test_real_llama_server_runs_with_the_launch_settings() -> None:
             caps = client.get("/admin/models/local/capabilities").json()
             assert caps["maxContext"] == expected, caps
             client.post("/admin/models/local:evict")
+
+
+@_skip
+def test_real_llama_server_output_is_readable_from_its_log(tmp_path) -> None:
+    # The engine's own output (model load, slot setup) lands in a named log under the state dir
+    # and stays readable through /admin/models/{id}/logs, during the run and after it.
+    assert _GGUF is not None
+    app = create_app(state_path=tmp_path / "registry.json", max_resident=1, enable_reaper=False)
+    with TestClient(app) as client:
+        client.put(
+            "/admin/models/local",
+            json={"binding": "llamacpp", "source": "local-path", "model": _GGUF},
+        )
+        assert client.post("/admin/models/local:warm").status_code == 200
+        client.post("/admin/models/local:evict")
+        body = client.get("/admin/models/local/logs", params={"lines": 2000}).json()
+        assert body["path"].startswith(str(tmp_path / "logs"))
+        text = "\n".join(body["lines"])
+        assert "starting:" in text and "llama" in text.lower()
+        assert "n_ctx" in text  # llama-server's own load log, not just our header

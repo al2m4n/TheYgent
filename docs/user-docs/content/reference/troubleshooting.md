@@ -80,6 +80,12 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix.** Wait for an in-flight request to finish, evict a model you're not using (the **Evict** action on Registries, or `POST /admin/models/{id}:evict`), or raise `THEYGENT_MAX_RESIDENT` if you have the RAM.
 
+### `engine_failed` (503)
+
+**Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.
+
+**Fix.** Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the `ctxSize` [launch setting](../models/engines.md#llamacpp-launch-settings), pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's **Logs** button).
+
 ### `modality_not_supported` (404)
 
 **Cause.** The engine answered the endpoint with a 404 — usually you called a modality the model can't do (embeddings against a chat-only model), or, for a remote `openai-compatible` model, the `baseUrl` is missing its `/v1` suffix.

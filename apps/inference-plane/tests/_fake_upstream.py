@@ -49,6 +49,12 @@ HARMONY_ANSWER_REPLY = (
     "<|start|>assistant<|channel|>final<|message|>Timer B is 32 seconds by default."
 )
 
+# Sent as the chat message: the engine answers the way a llama-server with a failed GPU backend
+# does (COMPUTE_ERROR), or with an ordinary per-request server error (SERVER_ERROR).
+COMPUTE_ERROR = "__compute_error__"
+COMPUTE_ERROR_MID_STREAM = "__compute_error_mid_stream__"
+SERVER_ERROR = "__server_error__"
+
 # A non-streaming call that never finishes on its own, like an engine still chewing on an
 # oversized prompt or a minutes-long render: only the caller closing the connection ends it (or
 # the safety cap below, which keeps a broken test from wedging the server). Sent as the chat
@@ -116,6 +122,24 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
                 },
                 status_code=400,
             )
+        # What llama-server answers once its GPU backend has failed (Metal out of memory): every
+        # request, small or large, until the process is replaced.
+        if last_content == COMPUTE_ERROR:
+            return JSONResponse(
+                {"error": {"code": 500, "message": "Compute error.", "type": "server_error"}},
+                status_code=500,
+            )
+        if last_content == SERVER_ERROR:
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": 500,
+                        "message": "template rendering failed",
+                        "type": "server_error",
+                    }
+                },
+                status_code=500,
+            )
         if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
             if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
                 return abandoned
@@ -167,7 +191,12 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
             # committed on every hop. Real engines report this as an in-band SSE error
             # frame (e.g. a context overflow mid-generation), which the dispatch layer
             # re-raises mid-iteration.
-            if last_content == "__abort_mid_stream__":
+            if last_content in ("__abort_mid_stream__", COMPUTE_ERROR_MID_STREAM):
+                reason = (
+                    "Compute error."
+                    if last_content == COMPUTE_ERROR_MID_STREAM
+                    else "engine died mid-generation"
+                )
 
                 async def broken():
                     chunk = {
@@ -184,7 +213,7 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
                         ],
                     }
                     yield f"data: {_dumps(chunk)}\n\n"
-                    err = {"error": {"message": "engine died mid-generation"}}
+                    err = {"error": {"message": reason}}
                     yield f"data: {_dumps(err)}\n\n"
 
                 return StreamingResponse(broken(), media_type="text/event-stream")
@@ -334,6 +363,12 @@ class FakeUpstreamHandle:
         self._port = self._server.start()
         self._advertised = advertised
         self.terminated = False
+        #: Set by a test to stand for an engine process that has exited with this code.
+        self.exited_with: int | None = None
+
+    @property
+    def exit_code(self) -> int | None:
+        return self.exited_with
 
     @property
     def base_url(self) -> str:

@@ -22,6 +22,7 @@ from theygent_ir import Capabilities, ManagedBinding
 from theygent_inference_plane.binary import EngineBinaryNotFound, resolve_engine_command
 from theygent_inference_plane.launcher import (
     EngineHandle,
+    EngineLogs,
     _free_port,
     _spawn_openai_server,
     _SubprocessHandle,
@@ -50,8 +51,15 @@ class VllmLauncher:
 
     ENV_VAR = "THEYGENT_VLLM_BIN"
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 600.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 600.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._command: list[str] | None = resolve_engine_command(
                 exe_name="vllm",
@@ -90,6 +98,9 @@ class VllmLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc: subprocess.Popen[bytes] = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return VllmHandle(proc, base_url)

@@ -306,6 +306,7 @@ curl http://localhost:8081/v1/chat/completions \
 | GET / DELETE | `/admin/models/{id}` | Read one / unregister (evicts then deletes). |
 | GET | `/admin/models/{id}/capabilities` | Probe tool-calling, vision, reasoning, max context, modalities. |
 | POST | `/admin/models/{id}:warm` / `:evict` | Pre-load / free the engine. |
+| GET | `/admin/models/{id}/logs?lines=200` | The tail of a managed model's engine log: `{logicalId, path, lines}`. `404 engine_log_not_found` for a reachable model or one whose engine hasn't run. |
 | GET | `/admin/engines` | Currently resident engines and `maxResident`. |
 | GET | `/admin/credentials` | List local credential names with `hasValue` (values are never read back). |
 | PUT / DELETE | `/admin/credentials/{name}` | Set / remove a local credential (values are write-only). |

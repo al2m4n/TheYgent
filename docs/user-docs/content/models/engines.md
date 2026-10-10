@@ -98,6 +98,10 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 
 **Missing binaries fail cleanly.** If a model's engine binary isn't installed on the machine, the call returns `engine_unavailable` — a clear, up-front error — never a mysterious crash on first inference.
 
+**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
+
+**Engine logs.** Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (`~/.theygent/inference/logs/` by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the **Logs** button on the model's row, or with `GET /admin/models/{id}/logs`.
+
 ```mermaid
 stateDiagram-v2
   [*] --> Cold
