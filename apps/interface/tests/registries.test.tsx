@@ -395,6 +395,51 @@ describe("Registries page — installed + add", () => {
     expect(screen.getByText("approx")).toBeInTheDocument();
   });
 
+  it("flags an engine that failed and shows its log", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = pathOf(url);
+      if (path === "/admin/models")
+        return jsonResponse({
+          models: [
+            {
+              logicalId: "gpt-oss-20b-gguf",
+              binding: { binding: "llamacpp", model: "/m/gpt-oss-20b.gguf" },
+              state: {
+                resident: false,
+                lastFailure: {
+                  reason: "GPU compute error — usually the model ran out of GPU memory",
+                  at: "2026-10-05T12:00:00+00:00",
+                },
+              },
+            },
+            {
+              logicalId: "hosted",
+              binding: { binding: "openai-compatible", model: "x" },
+              state: {},
+            },
+          ],
+        });
+      if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+      if (path === "/admin/models/gpt-oss-20b-gguf/logs")
+        return jsonResponse({
+          logicalId: "gpt-oss-20b-gguf",
+          path: "/state/logs/llamacpp-gpt-oss-20b.gguf.chat.log",
+          lines: ["load_model: n_ctx = 32768", "ggml_metal: Insufficient Memory"],
+        });
+      return jsonResponse({ downloads: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderRegistries();
+    await screen.findByText("gpt-oss-20b-gguf");
+    const badge = screen.getByText("failed");
+    expect(badge.parentElement?.getAttribute("title")).toContain("out of GPU memory");
+    // A reachable binding runs elsewhere — no local engine log to offer.
+    expect(screen.getAllByRole("button", { name: "Logs" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Logs" }));
+    expect(await screen.findByText(/Insufficient Memory/)).toBeInTheDocument();
+    expect(screen.getByText("/state/logs/llamacpp-gpt-oss-20b.gguf.chat.log")).toBeInTheDocument();
+  });
+
   it("adds a model by pasting a Hugging Face id and offers a Browse link", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       const path = pathOf(url);

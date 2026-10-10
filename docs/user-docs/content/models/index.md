@@ -38,7 +38,7 @@ A registered model's capabilities aren't known until the engine has loaded it, s
 | `<N>k ctx` | Its maximum context window. |
 | `approx` | The report is an approximation read from model metadata rather than the live server. |
 
-If nothing is reported, the cell reads **none reported**. Reachable (`openai-compatible`) endpoints are never probed — they advertise only the modality you declared when you registered them.
+If nothing is reported, the cell reads **none reported**. Probing a reachable (`openai-compatible`) endpoint loads nothing: a llama.cpp server is asked for its context size and chat template (marked **approx**); any other endpoint advertises only the modality you declared, with the rest unknown (**approx**).
 
 ### Row actions
 

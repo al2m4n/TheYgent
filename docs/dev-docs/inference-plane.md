@@ -28,7 +28,7 @@ These are the invariants a change must not break:
 | Path (under `apps/inference-plane/src/theygent_inference_plane/`) | Role |
 |---|---|
 | `app.py` | `create_app` factory: both HTTP surfaces, all injectable seams, the launcher-set wiring, OpenAI-style error mapping, guarded SSE, client-disconnect cancellation of non-streaming data-plane calls, CORS, the 30s reaper loop |
-| `manager.py` | `EngineManager`: lazy spawn on first use, lease/inflight tracking, draining, idle reap, admission-time eviction, live ceiling enforcement; hands the gateway an `Upstream` (`api_base`, `model`, `api_key`, `needs_tool_parse`) |
+| `manager.py` | `EngineManager`: lazy spawn on first use, lease/inflight tracking, draining, idle reap, admission-time eviction, live ceiling enforcement; hands the gateway an `Upstream` (`api_base`, `model`, `api_key`, `needs_tool_parse`, `effort_in_template`) |
 | `launcher.py` | `EngineLauncher`/`EngineHandle` protocols, the shared spawn → health-poll → terminate lifecycle, the llama.cpp / MLX / MLX-VLM / whisper.cpp / audio / image launchers, `ManagedLauncherSet` dispatch keyed on exact `(engine, modality)`, per-engine capability probes |
 | `vllm_engine.py` | `vllm serve` on a CUDA host — interface-only, unproven; every CUDA/VRAM assumption is confined here by rule |
 | `gateway.py` | L0 gateway: LiteLLM-backed engine-agnostic dispatch (complete/stream/embed/transcribe), SSE re-encoding, param merging; speech and image generation as direct HTTP POSTs |
@@ -45,6 +45,7 @@ These are the invariants a change must not break:
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
 | `tool_parse.py` | Normalizes MLX's textual tool-call output into structured OpenAI `tool_calls`; gated, false-positive-safe, designed to be deleted |
+| `harmony.py` | Parses gpt-oss's harmony replies (which `mlx_lm.server` returns verbatim) into `reasoning_content`, `content`, and `tool_calls`, incrementally for streams; used from `tool_parse` on the gated MLX chat path |
 | `clock.py` | Injectable time seam (`RealClock`/`ManualClock`) for deterministic eviction tests |
 | `__main__.py` / `asgi.py` | Dev entrypoint (env parsing, state-dir resolution, uvicorn) / production ASGI module kept separate so importing `create_app` has no side effects |
 
@@ -101,6 +102,12 @@ flowchart LR
 ### The launcher seam
 
 Every engine implements the same `EngineLauncher` protocol: `ready` / `not_ready_reason` / `launch(binding) → EngineHandle` (`base_url`, `health()`, `capabilities()`, `terminate()`). `ManagedLauncherSet` dispatches on the exact `(engine, modality)` pair and itself implements the protocol, so the manager sees one launcher. This is why MLX, vLLM, and every non-chat modality were added with zero `EngineManager` changes. llama.cpp registers chat, embeddings, and vision keys against one launcher (same binary, different flags), while MLX chat and vision are different programs behind different keys.
+
+**Reachable capabilities.** A reachable binding is probed only through llama-server's `/props` (`fetch_llamacpp_props`, sent with the binding's resolved credential): when it answers, the same builder as a managed llama.cpp engine fills context, template-derived reasoning and the chat flags, marked `approximate`. Any other upstream reports its declared modality with every other field unknown — `approximate: true`, never a confident false.
+
+**Engine failure and logs.** `EngineHandle.exit_code` lets the manager see a dead process; `EngineManager.mark_failed` retires an engine whose backend is unusable (the app calls it when an upstream 5xx carries llama.cpp's `Compute error`, before or mid-stream). A failed engine is never leased again — torn down when idle, replaced on the next request; a lease arriving while it still has requests in flight gets `503 engine_failed`. `state.lastFailure` (`{reason, at}`) lives until the replacement launches. Engine output goes through a pipe to `EngineLog` (a drain thread, so the engine never blocks on output): a named file per `(engine, model, modality)` under `<state dir>/logs/`, appended across restarts and rotated at 8 MB, served by `GET /admin/models/{id}/logs` — both named additive extensions of the management plane. Without a state dir the log is an anonymous temp file, as in the fast suite.
+
+**llama.cpp launch settings** are registration `params` keys (`ctxSize`, `parallel`, `batchSize`, `ubatchSize` → `-c`, `-np`, `-b`, `-ub`) — a named extension of the registration contract. Defaults: one slot, and the model's trained context (read from the GGUF header, `<architecture>.context_length`) capped at 32,768 for chat/vision; embeddings get a batch and micro-batch as large as their context (capped at 8,192), because llama-server rejects an embedding input larger than one physical batch. Registration refuses a non-integer value or a launch setting on any other engine (`422 invalid_binding`). Launch-only params (`LAUNCH_PARAMS`, including `pooling` and `mmproj`) are stripped by `merge_params`, so they never ride a request.
 
 Dispatch is fail-closed on the exact key — reachable bindings never reach it, and a missing pair is an error, not a chat fallback:
 

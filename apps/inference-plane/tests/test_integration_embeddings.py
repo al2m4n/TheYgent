@@ -80,3 +80,26 @@ def test_real_llamacpp_embeddings() -> None:
         assert len(batch) == 3
         assert all(len(item["embedding"]) == expected_dim for item in batch)
         assert app.state.manager.spawn_count == 1  # reused the resident engine
+
+
+@_skip
+def test_real_llamacpp_embeds_an_input_longer_than_the_default_batch() -> None:
+    # llama-server must fit a whole embedding input in one physical batch, 512 tokens unless
+    # told otherwise; the launcher sizes the batch to the context so a long chunk embeds.
+    app = create_app(launcher=LlamaCppLauncher(), max_resident=1, enable_reaper=False)
+    with TestClient(app) as client:
+        client.put(
+            "/admin/models/embed",
+            json={
+                "binding": "llamacpp",
+                "source": "local-path",
+                "model": _EMBED_GGUF,
+                "modality": "embeddings",
+            },
+        )
+        # Dotted table-of-contents lines: one token per dot, ~1,500 tokens in all.
+        long_input = "\n".join(f"Section {i} " + "." * 40 + f" {i}" for i in range(35))
+        r = client.post("/v1/embeddings", json={"model": "embed", "input": long_input})
+        assert r.status_code == 200, r.text
+        assert len(r.json()["data"][0]["embedding"]) > 0
+        client.post("/admin/models/embed:evict")
