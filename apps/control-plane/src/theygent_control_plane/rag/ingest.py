@@ -110,6 +110,11 @@ class IngestService:
         if job.crawling and job.tasks:
             raise IngestBusy(f"source {source.id!r} is mid-crawl; retry when it finishes")
         job.cancelled = False
+        if not job.tasks:
+            # A new ingest group: the job outlives its groups, and the settle reports the
+            # group's own outcome — a previous group's failure or counts don't belong in it.
+            job.counters = {"pages": 0, "documents": 0, "chunks": 0, "unchanged": 0}
+            job.last_error = None
         self._spawn(job, source, self._run_upload(job, source, filename, content_type, data))
 
     def cancel(self, source_id: str) -> bool:

@@ -274,6 +274,29 @@ def test_failed_reembed_keeps_the_last_good_chunks(
     assert any("outage loses" in m["text"] for m in result.json()["matches"])
 
 
+def test_successful_reupload_clears_the_previous_failure(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # The error on a source describes its latest ingest: once a later upload succeeds, a
+    # failure from an earlier one must not stay on the row next to status "ready".
+    source = _create_source(client)
+    sid = source["id"]
+    fake_inference.captured["embed_fail"] = True
+    _upload(client, sid, "handbook.md", _DOC)
+    failed = _wait_settled(client, sid)
+    assert failed["status"] == "failed"
+    assert failed["error"]
+
+    fake_inference.captured["embed_fail"] = False
+    _upload(client, sid, "handbook.md", _DOC)
+    recovered = _wait_settled(client, sid)
+
+    assert recovered["status"] == "ready", recovered
+    assert recovered["error"] is None, recovered
+    docs = client.get(f"/rag/sources/{sid}/documents").json()["documents"]
+    assert [d["status"] for d in docs] == ["embedded"]
+
+
 # ── the rag node: step mode ──────────────────────────────────────────────────
 
 
