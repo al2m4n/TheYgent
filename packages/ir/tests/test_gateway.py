@@ -543,3 +543,30 @@ def test_a_token_check_result_names_an_account_exactly_when_active(
     else:
         with pytest.raises(ValidationError):
             GatewayTokenCheckResult.model_validate(payload)
+
+
+# ── catalog entries ──────────────────────────────────────────────────────────
+
+
+def test_a_rule_can_be_listed_before_its_kind_is_seen() -> None:
+    entry = FingerprintEntry(fingerprint="0123456789abcdef", status="never_route")
+    assert (entry.first_seen, entry.request_count, entry.known_kind) == (None, 0, None)
+
+
+def test_sightings_come_in_pairs() -> None:
+    with pytest.raises(ValidationError):
+        FingerprintEntry(fingerprint="0123456789abcdef", status="unreviewed", first_seen=NOW)
+
+
+def test_a_suggestion_is_a_known_kind_and_a_status() -> None:
+    entry = FingerprintEntry(
+        fingerprint="0123456789abcdef",
+        status="unreviewed",
+        known_kind="session_title",
+        suggested_status="allow_local",
+    )
+    assert FingerprintEntry.model_validate_json(entry.model_dump_json()) == entry
+    with pytest.raises(ValidationError):
+        FingerprintEntry.model_validate(
+            {"fingerprint": "0123456789abcdef", "status": "unreviewed", "known_kind": "other"}
+        )

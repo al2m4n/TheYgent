@@ -135,6 +135,26 @@ async def test_concurrent_saves_take_distinct_versions(
     assert sorted(a.json()["version"] for a in answers) == [1, 2, 3, 4, 5]
 
 
+async def test_if_match_lets_exactly_one_of_racing_writes_through(
+    fake_inference: FakeInference, pg_url: str
+) -> None:
+    # The check and the save happen under one lock: of five admins who all read version 1, one
+    # saves version 2 and the others are told to reload.
+    app = create_app(inference_base_url=fake_inference.v1_url, database_url=pg_url)
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            await _auth.attach_async(ac)
+            assert (await ac.put("/gateway/config", json=OBSERVE)).status_code == 201
+            answers = await asyncio.gather(
+                *(
+                    ac.put("/gateway/config", json=OBSERVE, headers={"If-Match": '"1"'})
+                    for _ in range(5)
+                )
+            )
+    assert sorted(a.status_code for a in answers) == [201, 412, 412, 412, 412]
+
+
 @pytest.mark.parametrize(
     "body",
     [

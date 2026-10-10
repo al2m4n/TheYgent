@@ -20,6 +20,7 @@ definition the gateway's own report uses.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -73,6 +74,27 @@ class ConfigDraft(BaseModel):
     policy: PolicyConfig = Field(default_factory=PolicyConfig)
     fingerprints: list[FingerprintRule] = Field(default_factory=list)
     pricing_overrides: dict[str, ModelRates] = Field(default_factory=dict)
+
+
+class ConfigConflict(Exception):
+    """A config write was based on a version that is no longer current."""
+
+    def __init__(self, current: int | None) -> None:
+        super().__init__(f"the gateway config is at version {current}")
+        self.current = current
+
+
+def draft_of(config: GatewayConfig | None) -> ConfigDraft:
+    """What an admin would write to keep ``config`` as it is. With no config yet, the gateway's
+    unconfigured behaviour: passthrough."""
+    if config is None:
+        return ConfigDraft(mode="passthrough")
+    return ConfigDraft(
+        mode=config.mode,
+        policy=config.policy,
+        fingerprints=list(config.fingerprints),
+        pricing_overrides=dict(config.pricing_overrides),
+    )
 
 
 class ConfigVersion(BaseModel):
@@ -259,17 +281,29 @@ class AiGatewayStore:
             for row in result.scalars()
         ]
 
-    async def save_config(
-        self, session: AsyncSession, draft: ConfigDraft, *, by: str | None, now: datetime
+    async def update_config(
+        self,
+        session: AsyncSession,
+        change: Callable[[GatewayConfig | None], ConfigDraft],
+        *,
+        by: str | None,
+        now: datetime,
+        expect: Callable[[int | None], bool] | None = None,
     ) -> GatewayConfig:
-        """Store ``draft`` as the next version. Raises ``ValidationError`` for a config the
-        gateway would refuse (a duplicate fingerprint rule, an engine name as a local target)."""
+        """Save ``change(latest)`` as the next version. Read, check and write happen under one
+        lock, so no write lands on a version another write just replaced: ``expect`` sees the
+        current version first (``ConfigConflict`` when it refuses). Raises ``ValidationError``
+        for a config the gateway would refuse."""
         await session.execute(select(func.pg_advisory_xact_lock(_CONFIG_LOCK)))
-        latest = await self.latest_config_version(session)
+        latest = await self.latest_config(session)
+        current = latest.version if latest is not None else None
+        if expect is not None and not expect(current):
+            raise ConfigConflict(current)
+        draft = change(latest)
         config = GatewayConfig.model_validate(
             {
                 **draft.model_dump(mode="json"),
-                "version": (latest or 0) + 1,
+                "version": (current or 0) + 1,
                 "updated_at": now,
                 "updated_by": by,
             }

@@ -492,15 +492,33 @@ class GatewayHeartbeatAck(_GatewayWire):
     key_set_version: int | None = Field(default=None, ge=1)
 
 
+#: An auxiliary request recognised by its shape, which (unlike its fingerprint, a digest of the
+#: client's own prompt) survives a client release: the startup quota check, a side request riding
+#: the main conversation's cache, the session title.
+KnownKind = Literal["quota_check", "main_prefix_side_request", "session_title"]
+
+
 class FingerprintEntry(_GatewayWire):
-    """One auxiliary-request kind in the control plane's catalog, with what has been observed."""
+    """One auxiliary-request kind in the catalog: its review status and label (rules in the
+    config, ``unreviewed`` without one) and what has been observed of it. A rule can exist before
+    its kind is first seen, so the sightings are optional."""
 
     fingerprint: Fingerprint
     status: FingerprintStatus
     label: Token | None = None
-    first_seen: AwareDatetime
-    last_seen: AwareDatetime
-    request_count: int = Field(ge=0)
+    first_seen: AwareDatetime | None = None
+    last_seen: AwareDatetime | None = None
+    request_count: int = Field(default=0, ge=0)
     client_versions: list[Token] = Field(default_factory=list)
     shape: RequestShape | None = None
     shares_main_prefix: bool | None = None
+    #: What the observed shape says this kind is, and the status that suggests. A suggestion
+    #: only: the status is an admin's decision.
+    known_kind: KnownKind | None = None
+    suggested_status: FingerprintStatus | None = None
+
+    @model_validator(mode="after")
+    def _seen_together(self) -> FingerprintEntry:
+        if (self.first_seen is None) != (self.last_seen is None):
+            raise ValueError("first_seen and last_seen are both set or both unset")
+        return self

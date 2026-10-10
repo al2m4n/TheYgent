@@ -31,7 +31,7 @@ import os
 import re
 import shutil
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
@@ -66,16 +66,21 @@ from theygent_ir import (
 )
 from theygent_ir.gateway import (
     CredentialProfile,
+    FingerprintEntry,
+    FingerprintRule,
+    FingerprintStatus,
     GatewayEventBatch,
     GatewayHeartbeat,
     GatewayTokenCheck,
     GatewayTokenCheckResult,
+    Token,
 )
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
+from theygent_control_plane.ai_gateway import catalog as gateway_catalog
 from theygent_control_plane.ai_gateway import reports as gateway_reports
-from theygent_control_plane.ai_gateway.store import AiGatewayStore, ConfigDraft
+from theygent_control_plane.ai_gateway.store import AiGatewayStore, ConfigConflict, ConfigDraft
 from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.auth import (
     API_KEY_TOKEN_PREFIX,
@@ -605,6 +610,15 @@ class SetCredentialProfileRequest(BaseModel):
     credential_profile: CredentialProfile
 
 
+class FingerprintRuleRequest(BaseModel):
+    """An admin's review of one auxiliary-request kind; saved as a rule in a new config version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: FingerprintStatus
+    label: Token | None = None
+
+
 def _etag(version: int) -> str:
     return f'"{version}"'
 
@@ -636,6 +650,21 @@ def _report_range(
 def _aware(moment: datetime) -> datetime:
     """A timestamp without a zone is UTC."""
     return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def _expect_etag(if_match: str | None) -> Callable[[int | None], bool] | None:
+    """An ``If-Match`` header as a check on the current config version (none without one)."""
+    if if_match is None:
+        return None
+    return lambda current: _etag_matches(if_match, current)
+
+
+def _config_conflict(exc: ConfigConflict) -> JSONResponse:
+    return _error(
+        f"the gateway config is now at version {exc.current}; reload and retry",
+        status=412,
+        code="config_version_conflict",
+    )
 
 
 def _gateway_key_payload(key: ApiKey) -> dict[str, Any]:
@@ -5542,26 +5571,24 @@ def create_app(
                 status=422,
                 code="invalid_gateway_config",
             )
-        async with tx() as session:
-            if if_match is not None:
-                # Lost-update guard: the write applies only on top of the version it was read at.
-                latest = await ai_gateway_store.latest_config_version(session)
-                if not _etag_matches(if_match, latest):
-                    return _error(
-                        f"the gateway config is now at version {latest}; reload and retry",
-                        status=412,
-                        code="config_version_conflict",
-                    )
-            try:
-                config = await ai_gateway_store.save_config(
-                    session, draft, by=principal.id, now=datetime.now(UTC)
+        try:
+            async with tx() as session:
+                config = await ai_gateway_store.update_config(
+                    session,
+                    lambda _latest: draft,
+                    by=principal.id,
+                    now=datetime.now(UTC),
+                    # Lost-update guard: a write applies only on the version it was read at.
+                    expect=_expect_etag(if_match),
                 )
-            except ValidationError as exc:
-                return _error(
-                    f"invalid gateway config: {_validation_summary(exc)}",
-                    status=422,
-                    code="invalid_gateway_config",
-                )
+        except ConfigConflict as exc:
+            return _config_conflict(exc)
+        except ValidationError as exc:
+            return _error(
+                f"invalid gateway config: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_gateway_config",
+            )
         logger.info(
             "ai_gateway.config_saved", extra={"version": config.version, "mode": config.mode}
         )
@@ -5733,6 +5760,58 @@ def create_app(
                 f"unknown session {session_id!r}", status=404, code="gateway_session_not_found"
             )
         return detail.model_dump(mode="json")
+
+    # -- the fingerprint catalog: observed kinds joined with the latest config's rules --
+
+    @app.get("/gateway/fingerprints")
+    async def list_gateway_fingerprints(principal: Principal = Depends(require_auth)) -> Any:
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        async with tx() as session:
+            version, listed = await gateway_catalog.entries(session, ai_gateway_store)
+        return {
+            "config_version": version,
+            "fingerprints": [e.model_dump(mode="json") for e in listed],
+        }
+
+    @app.put("/gateway/fingerprints/{fingerprint}")
+    async def set_gateway_fingerprint_rule(
+        fingerprint: str,
+        request: Request,
+        if_match: str | None = Header(default=None),
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        try:
+            req = FingerprintRuleRequest.model_validate_json(await request.body())
+            # Checks the fingerprint itself (16 hex digits) before anything is saved.
+            FingerprintRule(fingerprint=fingerprint, status=req.status, label=req.label)
+        except ValidationError as exc:
+            return _error(
+                f"invalid fingerprint rule: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_fingerprint_rule",
+            )
+        try:
+            async with tx() as session:
+                config = await ai_gateway_store.update_config(
+                    session,
+                    gateway_catalog.with_rule(fingerprint, req.status, req.label),
+                    by=principal.id,
+                    now=datetime.now(UTC),
+                    expect=_expect_etag(if_match),
+                )
+                listed = await gateway_catalog.entry(session, ai_gateway_store, fingerprint)
+        except ConfigConflict as exc:
+            return _config_conflict(exc)
+        logger.info(
+            "ai_gateway.fingerprint_reviewed",
+            extra={"fingerprint": fingerprint, "status": req.status, "version": config.version},
+        )
+        entry = listed or FingerprintEntry(fingerprint=fingerprint, status="unreviewed")
+        return JSONResponse(
+            {"config_version": config.version, "fingerprint": entry.model_dump(mode="json")},
+            headers={"ETag": _etag(config.version)},
+        )
 
     # -- developers' gateway keys: a developer mints and revokes their own; admins see all --
 
