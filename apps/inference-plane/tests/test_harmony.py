@@ -137,7 +137,7 @@ async def _aiter(items: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
 
 
 def _chunks(text: str, size: int) -> list[dict[str, Any]]:
-    pieces = [
+    pieces: list[dict[str, Any]] = [
         {
             "id": "c",
             "created": 0,

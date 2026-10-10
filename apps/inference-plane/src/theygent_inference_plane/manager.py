@@ -263,8 +263,9 @@ class EngineManager:
 
     def state(self, logical_id: str) -> dict[str, Any]:
         eng = self._resident.get(logical_id)
+        view: dict[str, Any]
         if eng is None or eng.terminated:
-            view: dict[str, Any] = {"resident": False, "inflight": 0, "draining": False}
+            view = {"resident": False, "inflight": 0, "draining": False}
         else:
             view = {
                 "resident": True,

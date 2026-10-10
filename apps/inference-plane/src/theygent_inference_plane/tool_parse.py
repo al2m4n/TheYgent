@@ -327,7 +327,11 @@ def normalize_mlx_completion(resp: dict[str, Any], offered: set[str]) -> dict[st
     choices = resp.get("choices") or []
     message = (choices[0].get("message") or {}) if choices else {}
     content = message.get("content")
-    if not harmony.is_harmony(content) or _has_structured_tool_calls(message):
+    if (
+        not isinstance(content, str)
+        or not harmony.is_harmony(content)
+        or _has_structured_tool_calls(message)
+    ):
         return normalize_completion_dict(resp, offered) if offered else resp
     reasoning, answer, calls = harmony.parse(content, offered)
     message["content"] = answer or (None if calls else "")

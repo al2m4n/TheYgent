@@ -717,7 +717,7 @@ def _serve(pages: dict[str, tuple[int, dict[str, str], bytes]]) -> Any:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, *args: Any) -> None:
+        def log_message(self, format: str, *args: Any) -> None:
             return
 
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)

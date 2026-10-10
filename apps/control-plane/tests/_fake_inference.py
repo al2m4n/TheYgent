@@ -135,7 +135,7 @@ def _build_app(
         if isinstance(inputs, str):
             inputs = [inputs]
         limit = captured.get("embed_max_chars")
-        if limit is not None and any(len(t) > limit for t in inputs):
+        if isinstance(limit, int) and any(len(t) > limit for t in inputs):
             # The shape a llama.cpp embedding server's rejection reaches the control plane in:
             # its 500 relayed by the inference plane as a 502 upstream_error.
             longest = max(len(t) for t in inputs)

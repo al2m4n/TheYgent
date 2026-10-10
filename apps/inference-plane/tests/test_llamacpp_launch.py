@@ -42,7 +42,7 @@ def _binding(modality: str = "chat", model: str = "org/repo", **params: object) 
     source = "local-path" if model.startswith("/") else "hf"
     return ManagedBinding(
         binding="llamacpp",
-        source=source,  # ty: ignore[invalid-argument-type]
+        source=source,
         model=model,
         modality=modality,  # ty: ignore[invalid-argument-type]
         params=dict(params),
