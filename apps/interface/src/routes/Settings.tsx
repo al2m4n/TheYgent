@@ -49,7 +49,8 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList>
+        {/* Ten tabs outgrow a phone: the list scrolls within itself, never the page. */}
+        <TabsList className="max-w-full justify-start overflow-x-auto">
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
               {t.label}
