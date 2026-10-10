@@ -51,6 +51,7 @@ from theygent_ir.gateway import (
 from theygent_ai_gateway.configsync import ConfigState
 from theygent_ai_gateway.conversations import ConversationTracker, Position
 from theygent_ai_gateway.costs import PriceBook
+from theygent_ai_gateway.credentials import OrgKey
 from theygent_ai_gateway.identity import (
     GATEWAY_KEY_HEADER,
     GATEWAY_KEY_PREFIX,
@@ -403,6 +404,7 @@ def _authenticate(
     ring: KeyRing | None,
     headers: dict[str, str],
     endpoint: Endpoint,
+    org_api_key: str | None,
 ) -> JSONResponse | None:
     """Team mode: identify the developer and check their profile can serve this request.
     Returns the refusal, or ``None`` to forward. Personal mode has no identities to check."""
@@ -428,7 +430,7 @@ def _authenticate(
         )
     exchange.identity = identity
     if identity.credential_profile == "org_key":
-        if settings.org_api_key is None:
+        if org_api_key is None:
             return gateway_error(
                 503,
                 "org_key_not_configured",
@@ -482,7 +484,11 @@ async def forward(request: Request) -> Response:
         endpoint,
         read_request(headers, body, has_messages_body=endpoint in ("messages", "count_tokens")),
     )
-    refusal = _authenticate(exchange, settings, request.app.state.keyring, headers, endpoint)
+    org_key: OrgKey | None = getattr(request.app.state, "org_key", None)
+    org_api_key = org_key.value if org_key is not None else None
+    refusal = _authenticate(
+        exchange, settings, request.app.state.keyring, headers, endpoint, org_api_key
+    )
     if refusal is not None:
         return exchange.reject(refusal)
     exchange.place()
@@ -497,7 +503,7 @@ async def forward(request: Request) -> Response:
         # Relative to the upstream base URL, so a base URL with a path prefix keeps it.
         target.lstrip("/"),
         headers=upstream_request_headers(
-            list(request.headers.raw), profile=profile, org_api_key=settings.org_api_key
+            list(request.headers.raw), profile=profile, org_api_key=org_api_key
         ),
         content=body,
     )

@@ -55,6 +55,19 @@ The rules that follow:
   organization's traffic is recorded only once an admin has chosen observer mode. A standalone
   personal gateway observes from the start.
 
+## The admin surface
+
+- **It fails closed.** `/admin/*` admits only callers the control plane vouches for as admins; if
+  the control plane cannot answer, the answer is 503, never a pass. Only a standalone personal
+  gateway (loopback, no control plane) is open.
+- **It never returns a secret.** Credentials are reported as set or not, with their source; no
+  response, repr or log line carries a key or a bearer. Cached answers are keyed by the bearer's
+  digest.
+- **A key the deployment set wins.** The admin surface writes the org key only for
+  single-instance installs; an environment-provided key cannot be replaced from it.
+- **Browsers reach `/admin/*` only.** CORS is answered there, for the interface's origins, and
+  never on a proxied path.
+
 ## The request log
 
 - **Recording never blocks a request.** The observe hook only queues the observation; a writer

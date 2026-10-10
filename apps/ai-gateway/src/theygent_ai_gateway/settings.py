@@ -36,6 +36,8 @@ ENV_SERVICE_KEY = "THEYGENT_AI_GATEWAY_SERVICE_KEY"
 ENV_ORG_API_KEY = "THEYGENT_AI_GATEWAY_ORG_API_KEY"
 ENV_KEY_SYNC_SECONDS = "THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS"
 ENV_HEARTBEAT_SECONDS = "THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS"
+#: Browser origins allowed to call the gateway's admin surface (comma-separated): the interface.
+ENV_ADMIN_ORIGINS = "THEYGENT_AI_GATEWAY_ADMIN_ORIGINS"
 #: Read by every service that reaches the control plane, as THEYGENT_INFERENCE_PLANE_URL is for
 #: the inference plane.
 ENV_CONTROL_PLANE_URL = "THEYGENT_CONTROL_PLANE_URL"
@@ -47,6 +49,8 @@ DEFAULT_KEY_SYNC_SECONDS = 30.0
 #: applies within one interval.
 DEFAULT_HEARTBEAT_SECONDS = 30.0
 DEFAULT_UPSTREAM_URL = "https://api.anthropic.com"
+#: The interface's dev origins. Only ``/admin/*`` answers browsers; proxied paths never do.
+DEFAULT_ADMIN_ORIGINS = ("http://localhost:5174", "http://127.0.0.1:5174")
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 _TOKEN = TypeAdapter(Token)
@@ -82,6 +86,7 @@ class GatewaySettings:
     org_api_key: str | None = field(default=None, repr=False)
     key_sync_seconds: float = DEFAULT_KEY_SYNC_SECONDS
     heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS
+    admin_origins: tuple[str, ...] = DEFAULT_ADMIN_ORIGINS
 
     def __post_init__(self) -> None:
         if not 1 <= self.port <= 65535:
@@ -120,6 +125,11 @@ class GatewaySettings:
             raise SettingsError(
                 f"{ENV_HEARTBEAT_SECONDS} must be between 1 and 3600, got {self.heartbeat_seconds}"
             )
+        object.__setattr__(
+            self,
+            "admin_origins",
+            tuple(_http_url(ENV_ADMIN_ORIGINS, origin) for origin in self.admin_origins),
+        )
         object.__setattr__(self, "upstream_url", _http_url(ENV_UPSTREAM_URL, self.upstream_url))
         if self.control_plane_url is not None:
             object.__setattr__(
@@ -210,5 +220,12 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
             DEFAULT_HEARTBEAT_SECONDS
             if (beat := _read_float(env, ENV_HEARTBEAT_SECONDS)) is None
             else beat
+        ),
+        admin_origins=tuple(
+            origin.strip()
+            for origin in (_read(env, ENV_ADMIN_ORIGINS) or ",".join(DEFAULT_ADMIN_ORIGINS)).split(
+                ","
+            )
+            if origin.strip()
         ),
     )

@@ -23,12 +23,22 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from theygent_ir.gateway import GatewayConfig, GatewayHeartbeat, GatewayMode
 
+from theygent_ai_gateway.admin import (
+    AdminCors,
+    AdminRefused,
+    CachedTokenCheck,
+    ControlPlaneTokenCheck,
+    TokenCheck,
+    admin_error,
+)
+from theygent_ai_gateway.admin import build_router as build_admin_router
 from theygent_ai_gateway.configsync import (
     CONFIG_FILE,
     ConfigSource,
@@ -40,6 +50,7 @@ from theygent_ai_gateway.configsync import (
 )
 from theygent_ai_gateway.conversations import ConversationTracker
 from theygent_ai_gateway.costs import PriceBook
+from theygent_ai_gateway.credentials import OrgKey
 from theygent_ai_gateway.identity import (
     ControlPlaneKeySource,
     KeyRing,
@@ -88,6 +99,7 @@ def create_app(
     request_log: RequestLog | None = None,
     event_sink: EventSink | None = None,
     config_source: ConfigSource | None = None,
+    token_check: TokenCheck | None = None,
 ) -> FastAPI:
     settings = settings if settings is not None else load_settings(os.environ)
     keyring = KeyRing(settings.state_dir) if settings.auth_mode == "team" else None
@@ -117,6 +129,12 @@ def create_app(
         config_state.apply(config, persist=False)
     health = UpstreamHealth()
     version = software_version()
+    org_key = OrgKey(
+        env_value=settings.org_api_key,
+        state_dir=settings.state_dir,
+        applicable=settings.auth_mode == "team",
+    )
+    org_key.load()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -129,6 +147,7 @@ def create_app(
         )
         app.state.upstream = upstream
         started_at = datetime.now(UTC)
+        app.state.started_at = started_at
         # The last known good config first, so a restart without the control plane keeps it.
         config_state.load_from_disk()
         async with contextlib.AsyncExitStack() as stack:
@@ -142,6 +161,8 @@ def create_app(
                 client = httpx.AsyncClient(timeout=CONTROL_PLANE_TIMEOUT)
                 stack.push_async_callback(client.aclose)
                 control_plane = (client, settings.control_plane_url, settings.service_key)
+                if token_check is None:
+                    app.state.admin_check = CachedTokenCheck(ControlPlaneTokenCheck(*control_plane))
             if keyring is not None:
                 # The last known keys first, so a restart without the control plane still serves.
                 keyring.load_from_disk()
@@ -186,6 +207,8 @@ def create_app(
                 yield
             finally:
                 app.state.upstream = None
+                if token_check is None:
+                    app.state.admin_check = None
 
     app = FastAPI(
         title="TheYgent AI gateway",
@@ -203,6 +226,52 @@ def create_app(
     app.state.tracker = tracker if tracker is not None else ConversationTracker()
     app.state.config_state = config_state
     app.state.policy = Policy()
+    app.state.org_key = org_key
+    app.state.started_at = None
+    # Who may call /admin/*: callers the control plane vouches for as admins. A standalone
+    # personal gateway has no control plane to ask, so its admin surface is open like the gateway
+    # itself (loopback only, which personal-mode settings enforce). Anything else without a
+    # checker refuses: the surface fails closed.
+    app.state.admin_check = CachedTokenCheck(token_check) if token_check is not None else None
+    app.state.admin_open = (
+        settings.auth_mode == "personal" and not reaches_control_plane and token_check is None
+    )
+    app.add_middleware(AdminCors, origins=settings.admin_origins)
+    app.add_exception_handler(AdminRefused, _admin_refused)
+
+    async def admin_status(request: Request) -> dict[str, Any]:
+        snapshot = config_state.current
+        stats = records.stats
+        started: datetime | None = app.state.started_at
+        return {
+            "gatewayId": settings.gateway_id,
+            "softwareVersion": version,
+            "authMode": settings.auth_mode,
+            "mode": snapshot.mode,
+            "configVersion": snapshot.version,
+            "startedAt": started.isoformat() if started else None,
+            "upstreamUrl": settings.upstream_url,
+            "controlPlaneUrl": settings.control_plane_url,
+            "upstreamReachable": health.reachable,
+            "keySet": (
+                {"loaded": keyring.loaded, "version": keyring.version}
+                if keyring is not None
+                else None
+            ),
+            "requestLog": {
+                "recorded": stats.recorded,
+                "dropped": stats.dropped,
+                "unrecordable": stats.unrecordable,
+                "unwritten": stats.unwritten,
+                "exported": stats.exported,
+                "unreadable": stats.unreadable,
+                "prunedUnexported": stats.pruned_unexported,
+                "lastExportError": stats.last_export_error,
+                "backlog": await asyncio.to_thread(records.spool.backlog),
+            },
+        }
+
+    app.include_router(build_admin_router(admin_status))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -236,3 +305,9 @@ async def _cancel(task: asyncio.Task[None]) -> None:
     task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await task
+
+
+async def _admin_refused(_request: Request, exc: Exception) -> JSONResponse:
+    if not isinstance(exc, AdminRefused):  # registered for AdminRefused only
+        raise exc
+    return admin_error(exc)
