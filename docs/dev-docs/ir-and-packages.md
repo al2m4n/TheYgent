@@ -140,6 +140,9 @@ The plane boundary is enforced by the types:
   can quote request content.
 - **Logical model ids only.** A local routing target is a logical model id, never an engine name,
   per the data-plane rule.
+- **Every record has a decision.** A request refused before the policy ran is recorded with
+  `request_refused`, and one the policy failed on with `policy_error`, so the records add up to
+  the traffic.
 
 None of these models is hashed, and `packages/ir-types` does not generate them.
 

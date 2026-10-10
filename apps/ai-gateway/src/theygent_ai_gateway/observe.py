@@ -16,7 +16,15 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from theygent_ir.gateway import Decision, Endpoint, Outcome, SeatAllowance, Timing, Usage
+from theygent_ir.gateway import (
+    Decision,
+    Endpoint,
+    GatewayMode,
+    Outcome,
+    SeatAllowance,
+    Timing,
+    Usage,
+)
 
 from theygent_ai_gateway.identity import Identity
 from theygent_ai_gateway.signals import RequestSignals, token_or_none
@@ -230,6 +238,9 @@ class Observation:
     timing: Timing
     response: ResponseSummary
     seat_allowance: SeatAllowance | None
+    #: What the policy would have done (never applied in observer mode). A request refused before
+    #: the policy ran says ``request_refused``; one the policy failed on says ``policy_error``.
+    decision: Decision
     #: The developer, in team mode; ``None`` in personal mode or when the request was refused.
     identity: Identity | None = None
     #: Where a Messages request sat in its conversation (``None`` for other endpoints).
@@ -238,9 +249,9 @@ class Observation:
     #: the model has no known rates or nothing was used.
     cost_usd: float | None = None
     pricing_version: str | None = None
-    #: What the policy would have done (never applied in observer mode); ``None`` when the
-    #: request was refused before the policy ran.
-    decision: Decision | None = None
+    #: The config the exchange was decided under; ``None`` (and observer mode) before any config.
+    config_version: int | None = None
+    mode: GatewayMode = "observer"
 
 
 ObserveHook = Callable[[Observation], None]
@@ -255,3 +266,14 @@ def deliver(hook: ObserveHook | None, observation: Observation) -> None:
         hook(observation)
     except Exception as exc:
         log.error("the observe hook failed: %s", type(exc).__name__)
+
+
+def fan_out(*hooks: ObserveHook) -> ObserveHook:
+    """One hook that hands each observation to every hook in turn; one failing never keeps an
+    observation from the others."""
+
+    def each(observation: Observation) -> None:
+        for hook in hooks:
+            deliver(hook, observation)
+
+    return each

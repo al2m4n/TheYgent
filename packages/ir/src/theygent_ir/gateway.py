@@ -82,6 +82,8 @@ TargetKind = Literal["anthropic", "local"]
 #: to this list, never a free-text string.
 ReasonCode = Literal[
     "mode_passthrough",
+    "request_refused",
+    "policy_error",
     "not_a_message_request",
     "safety_check",
     "unlabeled_request",

@@ -42,6 +42,7 @@ from theygent_ir.gateway import (
     Endpoint,
     GatewayConfig,
     Outcome,
+    ReasonCode,
     SeatAllowance,
     Timing,
 )
@@ -288,11 +289,13 @@ class _Exchange:
         cost = self._prices.cost(model, usage)
         return (cost, self._prices.version) if cost is not None else (None, None)
 
-    def _decision(self, summary: ResponseSummary) -> Decision | None:
-        """The plan as a wire decision, with what it would have cost. A failure here loses the
-        decision, never the rest of the observation."""
+    def _decision(self, summary: ResponseSummary, outcome: Outcome) -> Decision:
+        """The plan as a wire decision, with what it would have cost. Every exchange gets one: a
+        request refused before the policy ran is ``request_refused``, and a policy failure is
+        recorded as ``policy_error`` rather than losing the exchange."""
         if self.plan is None:
-            return None
+            reason: ReasonCode = "request_refused" if outcome == "rejected" else "policy_error"
+            return to_decision(Plan.stay(reason), None)
         try:
             counterfactual = (
                 counterfactual_usd(self.plan, summary.usage, self.position, self._prices)
@@ -302,7 +305,7 @@ class _Exchange:
             return to_decision(self.plan, counterfactual)
         except Exception as exc:
             log.error("could not record the decision: %s", type(exc).__name__)
-            return None
+            return to_decision(Plan.stay("policy_error"), None)
 
     def reject(self, response: JSONResponse) -> JSONResponse:
         """The gateway refused the request before forwarding it."""
@@ -322,7 +325,7 @@ class _Exchange:
                 except Exception as exc:
                     log.error("could not update the conversation: %s", type(exc).__name__)
             cost_usd, pricing_version = self._cost(summary)
-            decision = self._decision(summary)
+            decision = self._decision(summary, outcome)
             observation = Observation(
                 started_at=self._started_at,
                 method=self._method,
@@ -342,6 +345,8 @@ class _Exchange:
                 cost_usd=cost_usd,
                 pricing_version=pricing_version,
                 decision=decision,
+                config_version=self._config.version if self._config else None,
+                mode=self._config.mode if self._config else "observer",
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)

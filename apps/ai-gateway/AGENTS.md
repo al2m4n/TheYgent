@@ -44,6 +44,17 @@ The rules that follow:
 - Never buffer a stream. Forward `ping` events. Relay through `message_delta` and `message_stop`.
 - A client disconnect cancels the upstream call.
 
+## The request log
+
+- **Recording never blocks a request.** The observe hook only queues the observation; a writer
+  task does the disk work in a thread. A full queue drops (and counts) observations; it never
+  waits.
+- **Every exchange gets a record**, refused and failed ones included (`request_refused`,
+  `policy_error`). Passthrough mode records nothing.
+- **The export cursor moves only on an acknowledgement.** A refused batch is retried, never
+  skipped: the records were validated against the same wire types, so a refusal means the two
+  sides disagree, and dropping the batch would lose data that is accepted once that is fixed.
+
 ## Routing (later phases)
 
 These hold whenever the router lands:

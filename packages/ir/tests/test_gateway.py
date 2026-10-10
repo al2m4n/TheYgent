@@ -415,3 +415,11 @@ def test_policy_targets_are_optional_and_additive() -> None:
     # A config written before main_target existed still parses, with no main target.
     policy = PolicyConfig.model_validate({"subagent_target": "claude-sonnet-5-5"})
     assert policy.main_target is None
+
+
+@pytest.mark.parametrize("reason", ["request_refused", "policy_error"])
+def test_an_exchange_without_a_policy_decision_still_records_one(reason: str) -> None:
+    # A request refused before the policy ran (team-mode authentication), or one the policy
+    # failed on, is still recorded: its decision says why there was nothing to decide.
+    decision = Decision.model_validate({"action": "stay", "reasons": [reason]})
+    assert decision.reasons == [reason]
