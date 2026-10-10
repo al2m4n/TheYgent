@@ -135,8 +135,8 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 
 ## Postgres: schema, domain, stores
 
-One database, 27 tables in the `public` schema, owned end to end by the Alembic chain
-`0001 → 0019` (sessions were originally named `thread` — the chain replays history, and
+One database, 34 tables in the `public` schema, owned end to end by the Alembic chain
+`0001 → 0020` (sessions were originally named `thread` — the chain replays history, and
 the rename is itself a migration). By area:
 
 | Area | Tables |
@@ -149,7 +149,8 @@ the rename is itself a migration). By area:
 | RAG | `rag_source`, `rag_document`, `rag_chunk` (untyped pgvector column + dim + generated tsvector) |
 | Bench | `bench_suite`, `bench_case`, `bench_run`, `bench_preset` |
 | Platform | `platform_setting`, `gate_counter` (fixed-window rate limits) |
-| Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers), `auth_provider` (client secret behind a `secret_ref`) |
+| Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers; `kind` is `personal`, `gateway` or `gateway_service`, and only `personal` keys authenticate this API), `auth_provider` (client secret behind a `secret_ref`) |
+| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (auxiliary-request catalog), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, bumped in the same transaction as any gateway-key change). Metadata only: no prompt or response content |
 
 The durable runtime keeps its checkpoint tables in a separate `dbos` schema in the same
 database — owned by its own migrator, never by Alembic.

@@ -639,6 +639,7 @@ class AuthStore:
             created_at=now(),
             last_used_at=None,
             revoked_at=None,
+            kind="personal",
         )
         session.add(row)
         await session.flush()
@@ -669,11 +670,12 @@ class AuthStore:
     async def resolve_api_key(self, session: AsyncSession, token: str) -> tuple[User, Role] | None:
         """Resolve a ``tyk_…`` bearer to ``(owner, effective role)`` — the meet of the key's
         role and the owner's CURRENT role, so a demotion needs no key rotation to bite.
-        ``None`` for unknown/revoked keys and disabled owners."""
+        ``None`` for unknown/revoked keys, disabled owners, and keys of any kind but
+        ``personal``: an AI gateway's keys never open the management API."""
         result = await session.execute(
             select(ApiKeyRow, UserAccountRow)
             .join(UserAccountRow, UserAccountRow.id == ApiKeyRow.user_id)
-            .where(ApiKeyRow.token_hash == token_digest(token))
+            .where(ApiKeyRow.token_hash == token_digest(token), ApiKeyRow.kind == "personal")
         )
         pair = result.first()
         if pair is None:

@@ -15,10 +15,24 @@ from pathlib import Path
 import asyncpg
 from _db import plain_dsn
 from alembic import command
+from alembic.autogenerate import compare_metadata
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import create_async_engine
+from theygent_control_plane.models import Base
 
 _ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 _SCRATCH_DB = "theygent_migration_roundtrip"
+AI_GATEWAY_TABLES = {
+    "ai_gateway_request",
+    "ai_gateway_daily_usage",
+    "ai_gateway_instance",
+    "ai_gateway_config",
+    "ai_gateway_fingerprint",
+    "ai_gateway_developer",
+    "ai_gateway_state",
+}
 
 
 def _admin_dsn(url: str) -> str:
@@ -58,7 +72,10 @@ async def _tables(url: str) -> set[str]:
             "'chat_session', 'run', 'message', 'mcp_server', 'agent', 'agent_version', "
             "'agent_draft', 'trigger', 'span', 'node_io', 'agent_io_policy', "
             "'bench_suite', 'bench_case', 'bench_run', 'bench_preset', "
-            "'secret', 'connection', 'gate_counter', 'platform_setting'"
+            "'secret', 'connection', 'gate_counter', 'platform_setting', "
+            "'ai_gateway_request', 'ai_gateway_daily_usage', 'ai_gateway_instance', "
+            "'ai_gateway_config', 'ai_gateway_fingerprint', 'ai_gateway_developer', "
+            "'ai_gateway_state'"
         )
         rows = await conn.fetch(
             f"SELECT to_regclass('public.' || t) AS reg FROM unnest(ARRAY[{names}]) AS t"
@@ -130,6 +147,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "connection",
             "gate_counter",
             "platform_setting",
+            *AI_GATEWAY_TABLES,
         }  # built
         # Column-level proof for the trigger-related run columns (a column add/drop is
         # invisible to the table-set check above, so the round-trip could silently regress
@@ -175,6 +193,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "connection",
             "gate_counter",
             "platform_setting",
+            *AI_GATEWAY_TABLES,
         }  # rebuilt
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))  # cols rebuilt
     finally:
@@ -218,3 +237,133 @@ def test_trigger_migration_single_step_down_up(pg_url: str) -> None:
         else:
             os.environ["DATABASE_URL"] = previous
         asyncio.run(_drop_scratch(pg_url))
+
+
+async def _api_keys(url: str) -> list[dict[str, object]]:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        columns = {
+            r["column_name"]
+            for r in await conn.fetch(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'api_key'"
+            )
+        }
+        kind = "kind" if "kind" in columns else "NULL AS kind"
+        return [dict(r) for r in await conn.fetch(f"SELECT id, {kind} FROM api_key ORDER BY id")]
+    finally:
+        await conn.close()
+
+
+async def _seed_key(url: str) -> None:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        await conn.execute(
+            "INSERT INTO user_account (id, username, display_name, role, disabled, created_at, "
+            "updated_at) VALUES ('usr_1', 'ada', 'Ada', 'admin', false, now(), now())"
+        )
+        await conn.execute(
+            "INSERT INTO api_key (id, user_id, name, role, token_hash, token_prefix, created_at) "
+            "VALUES ('key_1', 'usr_1', 'ci', 'admin', 'abc', 'tyk_abc', now())"
+        )
+    finally:
+        await conn.close()
+
+
+async def _key_set_version(url: str) -> int | None:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        return await conn.fetchval("SELECT key_set_version FROM ai_gateway_state WHERE id = 1")
+    finally:
+        await conn.close()
+
+
+def test_ai_gateway_migration_single_step_down_up(pg_url: str) -> None:
+    # 0020 on its own: existing API keys become personal (they keep opening the management API),
+    # the key-set version starts at 1, and the step reverses without touching the keys.
+    scratch = _scratch_url(pg_url)
+    asyncio.run(_recreate_scratch(pg_url))
+    previous = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = scratch
+        cfg = Config(str(_ALEMBIC_INI))
+        command.upgrade(cfg, "0019_user_avatar")
+        asyncio.run(_seed_key(scratch))
+        command.upgrade(cfg, "0020_ai_gateway")
+        assert asyncio.run(_api_keys(scratch)) == [{"id": "key_1", "kind": "personal"}]
+        assert AI_GATEWAY_TABLES <= asyncio.run(_tables(scratch))
+        assert asyncio.run(_key_set_version(scratch)) == 1
+        command.downgrade(cfg, "-1")
+        assert asyncio.run(_tables(scratch)).isdisjoint(AI_GATEWAY_TABLES)
+        assert asyncio.run(_api_keys(scratch)) == [{"id": "key_1", "kind": None}]
+        command.upgrade(cfg, "0020_ai_gateway")
+        assert asyncio.run(_api_keys(scratch)) == [{"id": "key_1", "kind": "personal"}]
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+        asyncio.run(_drop_scratch(pg_url))
+
+
+def test_the_ai_gateway_models_match_the_migrated_schema(pg_url: str) -> None:
+    # Models and migrations are kept in step by hand; this catches a column, type, nullability or
+    # index that one has and the other lacks, for the tables the AI gateway added or changed.
+    def drift(sync_conn: Connection) -> list[object]:
+        context = MigrationContext.configure(sync_conn, opts={"compare_type": True})
+        return list(compare_metadata(context, Base.metadata))
+
+    async def compare() -> list[object]:
+        engine = create_async_engine(pg_url)
+        try:
+            async with engine.connect() as conn:
+                return await conn.run_sync(drift)
+        finally:
+            await engine.dispose()
+
+    watched = AI_GATEWAY_TABLES | {"api_key"}
+    relevant = [d for d in asyncio.run(compare()) if _diff_tables(d) & watched]
+    assert relevant == []
+    # Autogenerate does not compare primary keys; the daily aggregates' composite key matters.
+    keys = asyncio.run(_primary_keys(pg_url, watched))
+    for table in watched:
+        modelled = [c.name for c in Base.metadata.tables[table].primary_key.columns]
+        assert keys[table] == modelled, table
+
+
+async def _primary_keys(url: str, tables: set[str]) -> dict[str, list[str]]:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        rows = await conn.fetch(
+            "SELECT tc.table_name, kcu.column_name FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema "
+            "WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = 'public' "
+            "AND tc.table_name = ANY($1::text[]) ORDER BY tc.table_name, kcu.ordinal_position",
+            sorted(tables),
+        )
+    finally:
+        await conn.close()
+    keys: dict[str, list[str]] = {table: [] for table in tables}
+    for row in rows:
+        keys[row["table_name"]].append(row["column_name"])
+    return keys
+
+
+def _diff_tables(diff: object) -> set[str]:
+    """The table names an autogenerate diff entry touches (entries are tuples, or lists of
+    tuples for column modifications)."""
+    if isinstance(diff, list):
+        return set().union(*(_diff_tables(d) for d in diff))
+    names: set[str] = set()
+    for part in diff if isinstance(diff, tuple) else ():
+        if isinstance(part, str) and part in _ALL_TABLES:
+            names.add(part)
+        table = getattr(part, "table", None) or (part if hasattr(part, "columns") else None)
+        name = getattr(table, "name", None)
+        if isinstance(name, str):
+            names.add(name)
+    return names
+
+
+_ALL_TABLES = set(Base.metadata.tables)

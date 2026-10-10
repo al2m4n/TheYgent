@@ -284,6 +284,32 @@ def test_api_key_mint_list_use_revoke(client: TestClient) -> None:
     assert client.get("/agents", headers=_bearer(token)).status_code == 401
 
 
+async def _key_kind(pg_url: str, key_id: str, kind: str | None = None) -> str:
+    conn = await asyncpg.connect(dsn=plain_dsn(pg_url))
+    try:
+        if kind is not None:
+            await conn.execute("UPDATE api_key SET kind = $1 WHERE id = $2", kind, key_id)
+        return await conn.fetchval("SELECT kind FROM api_key WHERE id = $1", key_id)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.parametrize("kind", ["gateway", "gateway_service"])
+def test_only_personal_keys_open_the_management_api(
+    client: TestClient, pg_url: str, kind: str
+) -> None:
+    # An AI gateway's keys live in the same table but never authenticate this API, whatever
+    # prefix they carry.
+    minted = client.post("/auth/api-keys", json={"name": "ci"}).json()
+    key_id, headers = minted["api_key"]["id"], _bearer(minted["token"])
+    assert asyncio.run(_key_kind(pg_url, key_id)) == "personal"
+    assert client.get("/agents", headers=headers).status_code == 200
+    asyncio.run(_key_kind(pg_url, key_id, kind))
+    refused = client.get("/agents", headers=headers)
+    assert refused.status_code == 401
+    assert refused.json()["error"]["code"] == "unauthorized"
+
+
 def test_api_key_role_cannot_exceed_owner(client: TestClient) -> None:
     _mk_user(client, "vika", "viewer")
     viewer = _bearer(_login(client, "vika"))
