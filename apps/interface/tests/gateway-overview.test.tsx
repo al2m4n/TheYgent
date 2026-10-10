@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OverviewTab } from "../src/components/gateway/OverviewTab";
+import { AuthProvider } from "../src/lib/auth";
 import { Gateway } from "../src/routes/Gateway";
 
 const MINUTE_AGO = new Date(Date.now() - 60_000).toISOString();
@@ -68,6 +69,25 @@ function mockControlPlane(config: () => Response, instances: () => Response): vo
     "fetch",
     vi.fn(async (url: string) => {
       const path = new URL(url).pathname;
+      if (path === "/auth/status") {
+        return json({
+          setup_required: false,
+          user: {
+            id: "usr_dev",
+            username: "dev",
+            display_name: "Dev",
+            email: null,
+            role: "editor",
+            disabled: false,
+            has_password: true,
+            avatar_url: null,
+            created_at: DAY_AGO,
+            updated_at: DAY_AGO,
+            last_login_at: null,
+          },
+          providers: [],
+        });
+      }
       if (path === "/gateway/config") return config();
       if (path === "/gateway/instances") return instances();
       return json({});
@@ -81,7 +101,11 @@ function tile(name: string): HTMLElement {
 
 function renderTab(ui = <OverviewTab />) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <AuthProvider>{ui}</AuthProvider>
+    </QueryClientProvider>,
+  );
 }
 
 afterEach(() => {

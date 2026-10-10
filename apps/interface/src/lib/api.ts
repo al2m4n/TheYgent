@@ -1303,6 +1303,73 @@ export interface GatewaySessionDetail {
   truncated: boolean;
 }
 
+export type GatewayKnownKind = "quota_check" | "main_prefix_side_request" | "session_title";
+
+/** One kind of auxiliary request: its review status and label (rules in the config) and what
+ *  was observed of it. The suggestion comes from its shape; the status is an admin's choice. */
+export interface GatewayFingerprintEntry {
+  fingerprint: string;
+  status: FingerprintStatus;
+  label: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  request_count: number;
+  client_versions: string[];
+  shape: Record<string, unknown> | null;
+  shares_main_prefix: boolean | null;
+  known_kind: GatewayKnownKind | null;
+  suggested_status: FingerprintStatus | null;
+}
+
+/** What an admin writes; the server assigns the version, time and author. */
+export interface GatewayConfigDraft {
+  mode: GatewayMode;
+  policy: GatewayConfig["policy"];
+  fingerprints: GatewayConfig["fingerprints"];
+  pricing_overrides: Record<string, GatewayModelRates>;
+}
+
+export interface GatewayConfigVersion {
+  version: number;
+  mode: GatewayMode;
+  created_at: string;
+  created_by: string | null;
+}
+
+/** The gateway's own view of its credentials (its admin surface, camelCase): whether each is set
+ *  and where it came from — never a value. */
+export interface GatewayCredentials {
+  orgApiKey: {
+    set: boolean;
+    source: "env" | "stored" | null;
+    updatedAt: string | null;
+    /** False when the deployment set it, or in personal mode (no org key there). */
+    writable: boolean;
+  };
+  serviceKey: { set: boolean };
+}
+
+export interface GatewayAdminStatus {
+  gatewayId: string;
+  softwareVersion: string;
+  authMode: "personal" | "team";
+  mode: GatewayMode;
+  configVersion: number | null;
+  startedAt: string | null;
+  upstreamUrl: string;
+  controlPlaneUrl: string | null;
+  upstreamReachable: boolean | null;
+  keySet: { loaded: boolean; version: number | null } | null;
+  requestLog: {
+    recorded: number;
+    dropped: number;
+    exported: number;
+    backlog: number;
+    lastExportError: string | null;
+  };
+  credentials: GatewayCredentials;
+}
+
 /** A gateway instance as its latest heartbeat described it. */
 export interface GatewayInstance {
   gateway_id: string;
@@ -2269,6 +2336,41 @@ export const api = {
       `/gateway/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ""}`,
     );
   },
+  // The config: immutable versions; ``ifMatch`` (the version the edit started from) refuses a
+  // write on top of a version someone else replaced (412 config_version_conflict).
+  putGatewayConfig: (draft: GatewayConfigDraft, ifMatch?: number) =>
+    request<GatewayConfig>(controlPlaneUrl(), "/gateway/config", {
+      method: "PUT",
+      body: JSON.stringify(draft),
+      headers: ifMatch !== undefined ? { "If-Match": `"${ifMatch}"` } : {},
+    }),
+  listGatewayConfigVersions: () =>
+    request<{ versions: GatewayConfigVersion[] }>(
+      controlPlaneUrl(),
+      "/gateway/config/versions",
+    ).then((r) => r.versions),
+  getGatewayConfigVersion: (version: number) =>
+    request<GatewayConfig>(controlPlaneUrl(), `/gateway/config/versions/${version}`),
+  listGatewayFingerprints: () =>
+    request<{ config_version: number | null; fingerprints: GatewayFingerprintEntry[] }>(
+      controlPlaneUrl(),
+      "/gateway/fingerprints",
+    ),
+  /** Review one kind: saves a new config version changing only its rule. */
+  setGatewayFingerprintRule: (
+    fingerprint: string,
+    rule: { status: FingerprintStatus; label: string | null },
+    ifMatch?: number | null,
+  ) =>
+    request<{ config_version: number; fingerprint: GatewayFingerprintEntry }>(
+      controlPlaneUrl(),
+      `/gateway/fingerprints/${encodeURIComponent(fingerprint)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(rule.label ? rule : { status: rule.status }),
+        headers: ifMatch != null ? { "If-Match": `"${ifMatch}"` } : {},
+      },
+    ),
   /** The caller's billing profile and live key count. */
   getGatewayMe: () => request<GatewayDeveloper>(controlPlaneUrl(), "/gateway/me"),
   /** Every account with its billing profile (admins only). */
@@ -2372,3 +2474,21 @@ export function flushDraftOnUnload(draftId: string, ir: IRDocument): void {
     /* unload is already in progress — nothing to surface */
   });
 }
+
+// ── the AI gateway's own admin surface (camelCase) ──────────────────────────
+// Reached DIRECTLY at the gateway's address, never through the control plane: the organization's
+// Anthropic key is written to the gateway here and nowhere else. The gateway checks the caller's
+// TheYgent bearer with the control plane and admits admins only.
+export const gatewayAdmin = {
+  status: () => request<GatewayAdminStatus>(gatewayUrl(), "/admin/status"),
+  credentials: () => request<GatewayCredentials>(gatewayUrl(), "/admin/credentials"),
+  setOrgKey: (apiKey: string) =>
+    request<GatewayCredentials>(gatewayUrl(), "/admin/credentials/org-api-key", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  clearOrgKey: () =>
+    request<GatewayCredentials>(gatewayUrl(), "/admin/credentials/org-api-key", {
+      method: "DELETE",
+    }),
+};

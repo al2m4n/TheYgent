@@ -25,12 +25,13 @@ React Flow's node/edge shape. App state, API calls, and persistence speak IR typ
   adapter "view isolation" test). A view-less IR still renders via auto-layout.
 - **`src/lib/api.ts` is the only HTTP seam** (`bench/dataplane.ts` is the one sanctioned
   sibling for raw `/v1/*` calls). Base URLs resolve **per call** via `controlPlaneUrl()` /
-  `inferenceUrl()` (localStorage override → `VITE_*` env → localhost default); never fetch
-  against the constants directly.
+  `inferenceUrl()` / `gatewayUrl()` (localStorage override → `VITE_*` env → localhost
+  default); never fetch against the constants directly.
 - **The plane split holds in the browser:** raw prompts, audio, and images go directly to
   the inference plane; the control plane receives run orchestration, session text, and
-  telemetry. Credentials (e.g. the HF token) PUT straight to the inference plane — never
-  proxied.
+  telemetry. Credentials PUT straight to the service that owns them — the HF token to the
+  inference plane, the organization's Anthropic key to the AI gateway — never proxied, never
+  displayed.
 - **Drafts are the mutable autosave tier, not versions.** They may be structurally
   invalid, are never validated as a graph, never hashed, never published. Publish goes
   through the agent-registry contract (create → 409 → add-version); version bumping is the

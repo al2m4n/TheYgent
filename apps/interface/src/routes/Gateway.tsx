@@ -1,23 +1,30 @@
 // The AI Gateway page: the gateway that sits between coding agents (Claude Code) and their models,
 // observing — and later routing — their traffic. Every signed-in user reaches it (developers
 // manage their own gateway keys and read their own usage here); tabs that change how the gateway
-// behaves are the admin's.
+// behaves (Catalog, Settings) are the admin's, as are the writes behind them.
 
+import { CatalogTab } from "../components/gateway/CatalogTab";
 import { OverviewTab } from "../components/gateway/OverviewTab";
 import { ReportTab } from "../components/gateway/ReportTab";
 import { SessionsTab } from "../components/gateway/SessionsTab";
+import { SettingsTab } from "../components/gateway/SettingsTab";
 import { SetupTab } from "../components/gateway/SetupTab";
 import { Page } from "../components/ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
+import { useAuth } from "../lib/auth";
 
 const TABS = [
-  { value: "overview", label: "Overview" },
-  { value: "report", label: "Report" },
-  { value: "sessions", label: "Sessions" },
-  { value: "setup", label: "Setup & keys" },
+  { value: "overview", label: "Overview", admin: false },
+  { value: "report", label: "Report", admin: false },
+  { value: "sessions", label: "Sessions", admin: false },
+  { value: "setup", label: "Setup & keys", admin: false },
+  { value: "catalog", label: "Catalog", admin: true },
+  { value: "settings", label: "Settings", admin: true },
 ] as const;
 
 export function Gateway() {
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole("admin");
   return (
     <Page className="space-y-4">
       <div>
@@ -29,8 +36,9 @@ export function Gateway() {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList>
-          {TABS.map((t) => (
+        {/* Six tabs outgrow a phone: the list scrolls within itself, never the page. */}
+        <TabsList className="max-w-full justify-start overflow-x-auto">
+          {TABS.filter((t) => isAdmin || !t.admin).map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
               {t.label}
             </TabsTrigger>
@@ -48,6 +56,16 @@ export function Gateway() {
         <TabsContent value="setup">
           <SetupTab />
         </TabsContent>
+        {isAdmin && (
+          <>
+            <TabsContent value="catalog">
+              <CatalogTab />
+            </TabsContent>
+            <TabsContent value="settings">
+              <SettingsTab />
+            </TabsContent>
+          </>
+        )}
       </Tabs>
     </Page>
   );
