@@ -29,6 +29,8 @@ from theygent_ir.gateway import (
     GatewayKey,
     GatewayKeySet,
     GatewayRequestRecord,
+    GatewayTokenCheck,
+    GatewayTokenCheckResult,
     GatewayTotals,
     ModelRates,
     PolicyConfig,
@@ -512,3 +514,32 @@ def test_totals_add_field_by_field() -> None:
     total = one + one + GatewayTotals()
     assert (total.calls, total.input_tokens, total.cost_usd) == (2, 2, 0.5)
     assert GatewayTotals.model_validate(total.model_dump()) == total  # a valid wire value
+
+
+# ── token check ──────────────────────────────────────────────────────────────
+
+
+def test_a_token_check_never_shows_its_token() -> None:
+    check = GatewayTokenCheck(token="tys_secret-session-bearer")
+    assert "tys_secret" not in repr(check)
+    assert GatewayTokenCheck.model_validate_json(check.model_dump_json()) == check
+
+
+@pytest.mark.parametrize(
+    ("payload", "valid"),
+    [
+        ({"active": True, "user_id": "usr_1", "role": "admin"}, True),
+        ({"active": False}, True),
+        ({"active": True, "user_id": "usr_1"}, False),
+        ({"active": False, "user_id": "usr_1", "role": "viewer"}, False),
+        ({"active": True, "user_id": "usr_1", "role": "owner"}, False),
+    ],
+)
+def test_a_token_check_result_names_an_account_exactly_when_active(
+    payload: dict[str, object], valid: bool
+) -> None:
+    if valid:
+        GatewayTokenCheckResult.model_validate(payload)
+    else:
+        with pytest.raises(ValidationError):
+            GatewayTokenCheckResult.model_validate(payload)

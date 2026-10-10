@@ -76,6 +76,8 @@ CompactionTrigger = Literal["auto", "manual", "reactive"]
 FingerprintStatus = Literal[
     "unreviewed", "observe_only", "allow_cheaper", "allow_local", "never_route"
 ]
+#: A TheYgent account's role, as the control plane's identity layer defines it.
+AccountRole = Literal["viewer", "editor", "admin"]
 DecisionAction = Literal["stay", "route"]
 TargetKind = Literal["anthropic", "local"]
 #: Why the policy decided what it did. A closed vocabulary: a new reason is a deliberate change
@@ -443,6 +445,29 @@ class GatewayKeySet(_GatewayWire):
         ids = [k.key_id for k in self.keys]
         if len(digests) != len(set(digests)) or len(ids) != len(set(ids)):
             raise ValueError("a key id or token digest appears more than once")
+        return self
+
+
+class GatewayTokenCheck(_GatewayWire):
+    """A gateway asks the control plane whether a TheYgent bearer (a session or a personal API
+    key) presented to the gateway's admin surface is live. The token travels only between the
+    gateway and the control plane, and never appears in a repr."""
+
+    token: Token = Field(repr=False)
+
+
+class GatewayTokenCheckResult(_GatewayWire):
+    """The control plane's answer: whose bearer it is and at what role, or ``active`` false for
+    anything else (unknown, expired, revoked, a disabled account, a gateway key)."""
+
+    active: bool
+    user_id: Token | None = None
+    role: AccountRole | None = None
+
+    @model_validator(mode="after")
+    def _identity_when_active(self) -> GatewayTokenCheckResult:
+        if self.active != (self.user_id is not None and self.role is not None):
+            raise ValueError("an active result names the account and its role; others neither")
         return self
 
 

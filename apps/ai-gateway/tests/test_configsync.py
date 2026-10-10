@@ -54,7 +54,7 @@ from theygent_ir.gateway import (
 
 WAIT_SEC = 10
 T0 = datetime(2026, 10, 10, 9, tzinfo=UTC)
-SERVICE_KEY = "tys_service_key"
+SERVICE_KEY = "tygs_service_key"
 PRICES = PriceBook.packaged()
 #: Contracted Sonnet rates: half the list price.
 SONNET_HALF = ModelRates(

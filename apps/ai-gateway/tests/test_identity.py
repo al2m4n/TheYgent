@@ -177,7 +177,7 @@ async def test_the_control_plane_source_fetches_and_honours_not_modified(
     fake, url = control_plane
     ring = KeyRing()
     async with httpx.AsyncClient() as client:
-        source = ControlPlaneKeySource(client, url, "tys_service_key")
+        source = ControlPlaneKeySource(client, url, "tygs_service_key")
         await sync_once(ring, source)
         assert ring.version == 1
         await sync_once(ring, source)  # unchanged: 304
@@ -186,9 +186,9 @@ async def test_the_control_plane_source_fetches_and_honours_not_modified(
     assert ring.version == 2
     assert ring.lookup(ORG_KEY_DEV) is None  # dropped from the new set: revoked
     assert fake.seen == [
-        ("Bearer tys_service_key", None),
-        ("Bearer tys_service_key", "1"),
-        ("Bearer tys_service_key", "1"),
+        ("Bearer tygs_service_key", None),
+        ("Bearer tygs_service_key", "1"),
+        ("Bearer tygs_service_key", "1"),
     ]
 
 
@@ -204,7 +204,7 @@ async def test_a_bad_control_plane_answer_keeps_the_known_keys(
     else:
         fake.body = b'{"version": 9, "keys": [{"token": "tyg_plaintext"}]}'
     async with httpx.AsyncClient() as client:
-        await sync_once(ring, ControlPlaneKeySource(client, url, "tys_service_key"))
+        await sync_once(ring, ControlPlaneKeySource(client, url, "tygs_service_key"))
     assert ring.version == 1
 
 
@@ -289,7 +289,7 @@ def _team_settings(
         upstream_url=upstream.base_url,
         auth_mode="team",
         control_plane_url="http://127.0.0.1:1",
-        service_key="tys_service_key",
+        service_key="tygs_service_key",
         org_api_key=org_key,
         key_sync_seconds=1,
         gateway_id="gw-team",

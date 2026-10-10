@@ -367,3 +367,49 @@ def _diff_tables(diff: object) -> set[str]:
 
 
 _ALL_TABLES = set(Base.metadata.tables)
+
+
+_KEY_SET_TRIGGERS = {
+    "ai_gateway_key_inserted",
+    "ai_gateway_key_deleted",
+    "ai_gateway_key_updated",
+    "ai_gateway_owner_enabled_changed",
+    "ai_gateway_profile_changed",
+}
+
+
+async def _key_set_machinery(url: str) -> tuple[set[str], bool]:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        triggers = {
+            r["tgname"]
+            for r in await conn.fetch("SELECT tgname FROM pg_trigger WHERE NOT tgisinternal")
+        }
+        function = await conn.fetchval(
+            "SELECT count(*) FROM pg_proc WHERE proname = 'ai_gateway_key_set_changed'"
+        )
+        return triggers & _KEY_SET_TRIGGERS, bool(function)
+    finally:
+        await conn.close()
+
+
+def test_key_set_trigger_migration_single_step_down_up(pg_url: str) -> None:
+    scratch = _scratch_url(pg_url)
+    asyncio.run(_recreate_scratch(pg_url))
+    previous = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = scratch
+        cfg = Config(str(_ALEMBIC_INI))
+        command.upgrade(cfg, "0021_ai_gateway_key_set")
+        assert asyncio.run(_key_set_machinery(scratch)) == (_KEY_SET_TRIGGERS, True)
+        command.downgrade(cfg, "0020_ai_gateway")
+        assert asyncio.run(_key_set_machinery(scratch)) == (set(), False)
+        assert AI_GATEWAY_TABLES <= asyncio.run(_tables(scratch))  # 0020's tables stay
+        command.upgrade(cfg, "head")
+        assert asyncio.run(_key_set_machinery(scratch)) == (_KEY_SET_TRIGGERS, True)
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+        asyncio.run(_drop_scratch(pg_url))

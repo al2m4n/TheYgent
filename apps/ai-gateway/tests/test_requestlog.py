@@ -145,7 +145,7 @@ class FakeControlPlane:
 
 @pytest.fixture
 def control_plane() -> Iterator[tuple[FakeControlPlane, str]]:
-    fake = FakeControlPlane("tys_service_key")
+    fake = FakeControlPlane("tygs_service_key")
     with serve(fake.app()) as url:
         yield fake, url
 
@@ -211,7 +211,7 @@ def test_team_records_name_the_developer_and_refusals_say_why(tmp_path: Path) ->
             upstream_url=upstream.base_url,
             auth_mode="team",
             control_plane_url="http://127.0.0.1:1",
-            service_key="tys_service_key",
+            service_key="tygs_service_key",
             gateway_id="gw-team",
             state_dir=tmp_path,
         )
@@ -494,14 +494,14 @@ async def test_the_control_plane_sink_posts_with_the_service_key(
     fake, url = control_plane
     batch = GatewayEventBatch(gateway_id="gw-test", records=[record(1), record(2)])
     async with httpx.AsyncClient() as client:
-        sink = ControlPlaneEventSink(client, url, "tys_service_key")
+        sink = ControlPlaneEventSink(client, url, "tygs_service_key")
         assert await sink.send(batch) == GatewayEventAck(accepted=2, duplicates=0)
         assert await sink.send(batch) == GatewayEventAck(accepted=0, duplicates=2)
         fake.status = 503
         with pytest.raises(ExportRefused) as refused:
             await sink.send(batch)
     assert refused.value.status == 503
-    assert fake.auth[0] == "Bearer tys_service_key"
+    assert fake.auth[0] == "Bearer tygs_service_key"
     assert GatewayEventBatch.model_validate_json(fake.bodies[0]) == batch
 
 
@@ -591,7 +591,7 @@ def test_no_prompt_or_response_content_leaves_the_gateway(
         settings = GatewaySettings(
             upstream_url=upstream_url,
             control_plane_url=cp_url,
-            service_key="tys_service_key",
+            service_key="tygs_service_key",
             gateway_id="gw-test",
             state_dir=tmp_path,
         )

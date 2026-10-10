@@ -64,7 +64,12 @@ from theygent_ir import (
     parse_document,
     validate_graph,
 )
-from theygent_ir.gateway import GatewayEventBatch
+from theygent_ir.gateway import (
+    CredentialProfile,
+    GatewayEventBatch,
+    GatewayTokenCheck,
+    GatewayTokenCheckResult,
+)
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
@@ -75,6 +80,7 @@ from theygent_control_plane.auth import (
     GATEWAY_SERVICE_TOKEN_PREFIX,
     MIN_PASSWORD_LENGTH,
     SESSION_TOKEN_PREFIX,
+    ApiKey,
     AuthStore,
     GatewayServiceCaller,
     OidcError,
@@ -587,6 +593,22 @@ class ChangePasswordRequest(BaseModel):
     # FIRST password has nothing to present, so it may be absent in exactly that case.
     current_password: str | None = None
     new_password: str
+
+
+class CreateGatewayKeyRequest(BaseModel):
+    name: str
+
+
+class SetCredentialProfileRequest(BaseModel):
+    credential_profile: CredentialProfile
+
+
+def _gateway_key_payload(key: ApiKey) -> dict[str, Any]:
+    """A gateway or service key's public shape. Gateway keys carry no role: they open a gateway,
+    never this API."""
+    payload = key.model_dump(mode="json")
+    payload.pop("role", None)
+    return payload
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -5404,6 +5426,143 @@ def create_app(
                 session, batch, service_key_id=caller.key_id, received_at=datetime.now(UTC)
             )
         return ack.model_dump(mode="json")
+
+    @app.get("/gateway/keys/sync", dependencies=[Depends(require_gateway_service)])
+    async def sync_gateway_keys(since: int | None = Query(default=None)) -> Any:
+        # The key set gateways authenticate developers against: digests only. 304 when the
+        # gateway already holds this version; triggers move the version with every change.
+        async with tx() as session:
+            if since is not None and since == await ai_gateway_store.key_set_version(session):
+                return Response(status_code=304)
+            key_set = await ai_gateway_store.key_set(session, generated_at=datetime.now(UTC))
+        return key_set.model_dump(mode="json")
+
+    @app.post("/gateway/introspect", dependencies=[Depends(require_gateway_service)])
+    async def introspect_for_gateway(req: GatewayTokenCheck) -> Any:
+        # A gateway's admin surface accepts the same bearers this API does: a session or a
+        # personal API key. Everything else is inactive, gateway keys included.
+        result = GatewayTokenCheckResult(active=False)
+        async with tx() as session:
+            if req.token.startswith(SESSION_TOKEN_PREFIX):
+                user = await auth_store.resolve_session(session, req.token)
+                if user is not None:
+                    result = GatewayTokenCheckResult(active=True, user_id=user.id, role=user.role)
+            elif req.token.startswith(API_KEY_TOKEN_PREFIX):
+                resolved = await auth_store.resolve_api_key(session, req.token)
+                if resolved is not None:
+                    key_user, role = resolved
+                    result = GatewayTokenCheckResult(active=True, user_id=key_user.id, role=role)
+        return result.model_dump(mode="json")
+
+    # -- developers' gateway keys: a developer mints and revokes their own; admins see all --
+
+    @app.post("/gateway/keys", status_code=201)
+    async def create_gateway_key(
+        req: CreateGatewayKeyRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_gateway_key")
+        async with tx() as session:
+            bearer, key = await auth_store.create_api_key(
+                session, user_id=principal.id or "", name=req.name, role="viewer", kind="gateway"
+            )
+        logger.info("ai_gateway.key_created", extra={"key_id": key.id})
+        # The raw token appears in THIS response and never again.
+        return JSONResponse(
+            {"token": bearer, "gateway_key": _gateway_key_payload(key)}, status_code=201
+        )
+
+    @app.get("/gateway/keys")
+    async def list_gateway_keys(
+        all_users: bool = Query(default=False, alias="all"),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        if all_users and principal.role != "admin":
+            raise AuthError(
+                "listing every developer's keys requires the admin role",
+                code="forbidden",
+                status=403,
+            )
+        async with tx() as session:
+            keys = await auth_store.list_api_keys(
+                session, None if all_users else principal.id or "", kind="gateway"
+            )
+        return {"gateway_keys": [_gateway_key_payload(k) for k in keys]}
+
+    @app.delete("/gateway/keys/{key_id}")
+    async def revoke_gateway_key(key_id: str, principal: Principal = Depends(require_auth)) -> Any:
+        async with tx() as session:
+            key = await auth_store.get_api_key(session, key_id, kind="gateway")
+            if key is None or (key.user_id != principal.id and principal.role != "admin"):
+                # Another account's key id is indistinguishable from a nonexistent one.
+                return _error(
+                    f"unknown gateway key {key_id!r}", status=404, code="gateway_key_not_found"
+                )
+            await auth_store.revoke_api_key(session, key_id)
+        logger.info("ai_gateway.key_revoked", extra={"key_id": key_id})
+        return Response(status_code=204)
+
+    # -- gateways' own service keys and developers' credential profiles: admins only --
+
+    @app.post("/gateway/service-keys", status_code=201)
+    async def create_gateway_service_key(
+        req: CreateGatewayKeyRequest, principal: Principal = Depends(require_admin)
+    ) -> Any:
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_service_key")
+        async with tx() as session:
+            bearer, key = await auth_store.create_api_key(
+                session,
+                user_id=principal.id or "",
+                name=req.name,
+                role="admin",
+                kind="gateway_service",
+            )
+        logger.info("ai_gateway.service_key_created", extra={"key_id": key.id})
+        return JSONResponse(
+            {"token": bearer, "service_key": _gateway_key_payload(key)}, status_code=201
+        )
+
+    @app.get("/gateway/service-keys", dependencies=[Depends(require_admin)])
+    async def list_gateway_service_keys() -> Any:
+        async with tx() as session:
+            keys = await auth_store.list_api_keys(session, None, kind="gateway_service")
+        return {"service_keys": [_gateway_key_payload(k) for k in keys]}
+
+    @app.delete("/gateway/service-keys/{key_id}", dependencies=[Depends(require_admin)])
+    async def revoke_gateway_service_key(key_id: str) -> Any:
+        async with tx() as session:
+            if await auth_store.get_api_key(session, key_id, kind="gateway_service") is None:
+                return _error(
+                    f"unknown service key {key_id!r}", status=404, code="service_key_not_found"
+                )
+            await auth_store.revoke_api_key(session, key_id)
+        logger.info("ai_gateway.service_key_revoked", extra={"key_id": key_id})
+        return Response(status_code=204)
+
+    @app.get("/gateway/developers", dependencies=[Depends(require_admin)])
+    async def list_gateway_developers() -> Any:
+        async with tx() as session:
+            developers = await ai_gateway_store.developers(session)
+        return {"developers": [d.model_dump(mode="json") for d in developers]}
+
+    @app.put("/gateway/developers/{user_id}")
+    async def set_gateway_credential_profile(
+        user_id: str,
+        req: SetCredentialProfileRequest,
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        async with tx() as session:
+            known = await ai_gateway_store.set_credential_profile(
+                session, user_id, req.credential_profile, by=principal.id, now=datetime.now(UTC)
+            )
+        if not known:
+            return _error(f"unknown user {user_id!r}", status=404, code="user_not_found")
+        logger.info(
+            "ai_gateway.credential_profile_set",
+            extra={"user_id": user_id, "credential_profile": req.credential_profile},
+        )
+        return {"user_id": user_id, "credential_profile": req.credential_profile}
 
     # ── liveness / readiness ─────────────────────────────────────────────
 

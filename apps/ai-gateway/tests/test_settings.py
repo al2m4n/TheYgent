@@ -68,7 +68,7 @@ def test_values_are_read(tmp_path: Path) -> None:
             ENV_AUTH_MODE: "team",
             ENV_STATE_DIR: str(tmp_path),
             ENV_GATEWAY_ID: "gw-cluster-1",
-            ENV_SERVICE_KEY: "tys_service_example",
+            ENV_SERVICE_KEY: "tygs_service_example",
             ENV_ORG_API_KEY: "sk-ant-api03-org-example",
             ENV_KEY_SYNC_SECONDS: "5",
             ENV_HEARTBEAT_SECONDS: "12.5",
@@ -81,7 +81,7 @@ def test_values_are_read(tmp_path: Path) -> None:
     assert settings.auth_mode == "team"
     assert settings.state_dir == tmp_path
     assert settings.gateway_id == "gw-cluster-1"
-    assert settings.service_key == "tys_service_example"
+    assert settings.service_key == "tygs_service_example"
     assert settings.org_api_key == "sk-ant-api03-org-example"
     assert settings.key_sync_seconds == 5.0
     assert settings.heartbeat_seconds == 12.5
@@ -154,7 +154,7 @@ def test_secrets_never_appear_in_repr() -> None:
         auth_mode="team",
         host="0.0.0.0",
         control_plane_url="http://cp:8080",
-        service_key="tys_SECRET_SERVICE",
+        service_key="tygs_SECRET_SERVICE",
         org_api_key="sk-ant-api03-SECRET-ORG",
     )
     assert "SECRET" not in repr(settings)

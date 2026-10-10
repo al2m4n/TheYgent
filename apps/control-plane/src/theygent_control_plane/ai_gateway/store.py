@@ -9,6 +9,10 @@
 * new auxiliary requests update the fingerprint catalog's stats (first and last seen, count,
   client versions, latest shape); a kind seen for the first time is ``unreviewed``.
 
+``key_set`` is what gateways authenticate developers against: every live gateway key of an
+enabled account, as a digest, with its developer's credential profile. Its version moves (by
+trigger, migration ``0021``) in the same transaction as any change to that set.
+
 Aggregate and catalog rows are upserted in key order, so concurrent batches touching the same
 rows take their locks in the same order. Totals are ``GatewayTotals.of`` summed: the same
 definition the gateway's own report uses.
@@ -18,21 +22,46 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import case, func, text
+from pydantic import BaseModel
+from sqlalchemy import case, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from theygent_ir.gateway import (
+    CredentialProfile,
     GatewayEventAck,
     GatewayEventBatch,
+    GatewayKey,
+    GatewayKeySet,
     GatewayRequestRecord,
     GatewayTotals,
 )
 
 from theygent_control_plane.models import (
     AiGatewayDailyUsageRow,
+    AiGatewayDeveloperRow,
     AiGatewayFingerprintRow,
     AiGatewayRequestRow,
+    AiGatewayStateRow,
+    ApiKeyRow,
+    UserAccountRow,
 )
+
+#: A developer without a profile row brings their own credential.
+DEFAULT_PROFILE: CredentialProfile = "passthrough"
+
+
+class Developer(BaseModel):
+    """An account as the AI gateway sees it: how it is billed, and how many live keys it has."""
+
+    user_id: str
+    username: str
+    display_name: str
+    disabled: bool
+    credential_profile: CredentialProfile
+    live_gateway_keys: int
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
 
 #: A day's aggregates are keyed by these, with ``''`` for a missing value.
 DailyKey = tuple[date, str, str, str, str, str, str]
@@ -112,6 +141,95 @@ def daily_key(record: GatewayRequestRecord) -> DailyKey:
 
 class AiGatewayStore:
     """Never commits: the caller owns the transaction."""
+
+    async def key_set_version(self, session: AsyncSession) -> int:
+        row = await session.get(AiGatewayStateRow, 1)
+        return row.key_set_version if row is not None else 1
+
+    async def key_set(self, session: AsyncSession, *, generated_at: datetime) -> GatewayKeySet:
+        # The version is read before the keys: a change committing in between then shows up
+        # under the older version, and the gateway's next sync sees the newer one and fetches
+        # again. Read the other way round, a gateway could keep stale keys under a new version.
+        version = await self.key_set_version(session)
+        result = await session.execute(
+            select(ApiKeyRow.id, ApiKeyRow.token_hash, ApiKeyRow.user_id, AiGatewayDeveloperRow)
+            .join(UserAccountRow, UserAccountRow.id == ApiKeyRow.user_id)
+            .outerjoin(AiGatewayDeveloperRow, AiGatewayDeveloperRow.user_id == ApiKeyRow.user_id)
+            .where(
+                ApiKeyRow.kind == "gateway",
+                ApiKeyRow.revoked_at.is_(None),
+                UserAccountRow.disabled.is_(False),
+            )
+            .order_by(ApiKeyRow.id)
+        )
+        keys = [
+            GatewayKey(
+                key_id=key_id,
+                token_sha256=token_hash,
+                developer_id=user_id,
+                credential_profile=(
+                    profile.credential_profile if profile is not None else DEFAULT_PROFILE
+                ),
+            )
+            for key_id, token_hash, user_id, profile in result.all()
+        ]
+        return GatewayKeySet(version=version, generated_at=generated_at, keys=keys)
+
+    async def developers(self, session: AsyncSession) -> list[Developer]:
+        live = (
+            select(ApiKeyRow.user_id, func.count().label("n"))
+            .where(ApiKeyRow.kind == "gateway", ApiKeyRow.revoked_at.is_(None))
+            .group_by(ApiKeyRow.user_id)
+            .subquery()
+        )
+        result = await session.execute(
+            select(UserAccountRow, AiGatewayDeveloperRow, live.c.n)
+            .outerjoin(AiGatewayDeveloperRow, AiGatewayDeveloperRow.user_id == UserAccountRow.id)
+            .outerjoin(live, live.c.user_id == UserAccountRow.id)
+            .order_by(UserAccountRow.created_at, UserAccountRow.id)
+        )
+        return [
+            Developer(
+                user_id=user.id,
+                username=user.username,
+                display_name=user.display_name,
+                disabled=user.disabled,
+                credential_profile=(
+                    profile.credential_profile if profile is not None else DEFAULT_PROFILE
+                ),
+                live_gateway_keys=keys or 0,
+                updated_at=profile.updated_at if profile is not None else None,
+                updated_by=profile.updated_by if profile is not None else None,
+            )
+            for user, profile, keys in result.all()
+        ]
+
+    async def set_credential_profile(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        profile: CredentialProfile,
+        *,
+        by: str | None,
+        now: datetime,
+    ) -> bool:
+        """Set how ``user_id``'s gateway traffic is billed. ``False`` for an unknown account."""
+        if await session.get(UserAccountRow, user_id) is None:
+            return False
+        statement = insert(AiGatewayDeveloperRow).values(
+            user_id=user_id, credential_profile=profile, updated_at=now, updated_by=by
+        )
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=["user_id"],
+                set_={
+                    "credential_profile": statement.excluded.credential_profile,
+                    "updated_at": statement.excluded.updated_at,
+                    "updated_by": statement.excluded.updated_by,
+                },
+            )
+        )
+        return True
 
     async def ingest(
         self,

@@ -133,12 +133,13 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Bench | `POST/GET /bench/suites` · `POST/GET /bench/runs` · `GET /bench/compare` · `POST/GET/DELETE /bench/presets` |
 | Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `PUT /artifacts/{ref}` (preserve-ref restore for imports) · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
 | Transfer | `POST /export` · `POST /import` — the control-plane half of the whole-install bundle, behind `transfer:export` / `transfer:import` (see [Import/export](#importexport-the-transfer-bundle)) |
-| AI gateway service | `POST /gateway/events` — AI gateways deliver `GatewayEventBatch`es and get a `GatewayEventAck`. Opened only by a gateway's own service key (`tygs_…`, `api_key.kind` `gateway_service`, held by an enabled admin). Records are stored once by id (a re-sent batch is a no-op), the records that were new are added to the per-day aggregates (`GatewayTotals`, the same sums the gateway's own report uses), and auxiliary kinds feed the fingerprint catalog. `422 invalid_event_batch` names field locations, never values; `413 event_batch_too_large` over 4 MiB |
+| AI gateway keys | `POST/GET /gateway/keys` · `DELETE /gateway/keys/{id}` — a developer's own `tyg_` keys (`?all=true` and revoking others' for admins) · `POST/GET /gateway/service-keys` · `DELETE /gateway/service-keys/{id}` (admin) · `GET /gateway/developers` · `PUT /gateway/developers/{user_id}` (admin; credential profile `passthrough` \| `org_key`) |
+| AI gateway service | `GET /gateway/keys/sync?since=` — the key set (digests, developer, credential profile), `304` when the gateway already holds the version · `POST /gateway/introspect` — whether a session or personal key is live, and its role, for a gateway's admin surface · `POST /gateway/events` — AI gateways deliver `GatewayEventBatch`es and get a `GatewayEventAck`. Opened only by a gateway's own service key (`tygs_…`, `api_key.kind` `gateway_service`, held by an enabled admin). Records are stored once by id (a re-sent batch is a no-op), the records that were new are added to the per-day aggregates (`GatewayTotals`, the same sums the gateway's own report uses), and auxiliary kinds feed the fingerprint catalog. `422 invalid_event_batch` names field locations, never values; `413 event_batch_too_large` over 4 MiB |
 
 ## Postgres: schema, domain, stores
 
 One database, 34 tables in the `public` schema, owned end to end by the Alembic chain
-`0001 → 0020` (sessions were originally named `thread` — the chain replays history, and
+`0001 → 0021` (sessions were originally named `thread` — the chain replays history, and
 the rename is itself a migration). By area:
 
 | Area | Tables |
@@ -152,7 +153,7 @@ the rename is itself a migration). By area:
 | Bench | `bench_suite`, `bench_case`, `bench_run`, `bench_preset` |
 | Platform | `platform_setting`, `gate_counter` (fixed-window rate limits) |
 | Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers; `kind` is `personal`, `gateway` or `gateway_service`, and only `personal` keys authenticate this API), `auth_provider` (client secret behind a `secret_ref`) |
-| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (auxiliary-request catalog), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, bumped in the same transaction as any gateway-key change). Metadata only: no prompt or response content |
+| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (auxiliary-request catalog), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, moved by triggers — migration `0021` — in the same transaction as any change to the live gateway keys, an account's enabled state, or a credential profile, whichever code path or hand-run SQL made it). Metadata only: no prompt or response content |
 
 The durable runtime keeps its checkpoint tables in a separate `dbos` schema in the same
 database — owned by its own migrator, never by Alembic.

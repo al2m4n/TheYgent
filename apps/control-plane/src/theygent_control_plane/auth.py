@@ -673,17 +673,25 @@ class AuthStore:
         await session.flush()
         return token, _to_api_key(row)
 
-    async def list_api_keys(self, session: AsyncSession, user_id: str) -> list[ApiKey]:
+    async def list_api_keys(
+        self, session: AsyncSession, user_id: str | None, *, kind: ApiKeyKind = "personal"
+    ) -> list[ApiKey]:
+        """``user_id``'s keys of ``kind``, newest first; every account's when ``user_id`` is
+        ``None``."""
+        stmt = select(ApiKeyRow).where(ApiKeyRow.kind == kind)
+        if user_id is not None:
+            stmt = stmt.where(ApiKeyRow.user_id == user_id)
         result = await session.execute(
-            select(ApiKeyRow)
-            .where(ApiKeyRow.user_id == user_id)
-            .order_by(ApiKeyRow.created_at.desc(), ApiKeyRow.id.desc())
+            stmt.order_by(ApiKeyRow.created_at.desc(), ApiKeyRow.id.desc())
         )
         return [_to_api_key(row) for row in result.scalars()]
 
-    async def get_api_key(self, session: AsyncSession, key_id: str) -> ApiKey | None:
+    async def get_api_key(
+        self, session: AsyncSession, key_id: str, *, kind: ApiKeyKind = "personal"
+    ) -> ApiKey | None:
+        """A key of ``kind``; a key of another kind reads as nonexistent."""
         row = await session.get(ApiKeyRow, key_id)
-        return _to_api_key(row) if row is not None else None
+        return _to_api_key(row) if row is not None and row.kind == kind else None
 
     async def revoke_api_key(self, session: AsyncSession, key_id: str) -> bool:
         """Soft-revoke (the row stays as an audit breadcrumb). Idempotent."""

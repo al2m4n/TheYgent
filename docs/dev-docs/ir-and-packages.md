@@ -143,6 +143,9 @@ The plane boundary is enforced by the types:
 - **Every record has a decision.** A request refused before the policy ran is recorded with
   `request_refused`, and one the policy failed on with `policy_error`, so the records add up to
   the traffic.
+- **Token checks never show the token.** `GatewayTokenCheck` (a gateway asking whether a
+  TheYgent bearer is live) keeps its token out of every repr; `GatewayTokenCheckResult` names an
+  account and role exactly when it is active.
 - **One definition of the totals.** `GatewayTotals.of(record)` is a record's contribution
   (calls, errors, tokens, cost, the cost with routing applied, calls and tokens routed, API calls
   avoided), and totals add field by field. The gateway's own report and the control plane's
