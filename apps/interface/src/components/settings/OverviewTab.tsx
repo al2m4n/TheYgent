@@ -289,11 +289,13 @@ function BootConfig({ form }: { form: PlatformSettingsForm }) {
         </div>
       )}
 
-      <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-xs">
+      {/* Paths and URL lists are unbreakable runs, so the value column may shrink and wrap them —
+          on a phone each key stacks over its value and the page never scrolls sideways. */}
+      <dl className="mt-3 grid grid-cols-1 gap-y-2 text-xs sm:grid-cols-[auto_minmax(0,1fr)] sm:gap-x-6">
         {boot.map((b) => (
-          <div key={b.key} className="contents">
+          <div key={b.key} className="sm:contents">
             <dt className="mono text-muted-foreground">{b.key}</dt>
-            <dd>
+            <dd className="wrap-break-word">
               <span className="mono text-foreground">{fmtBootValue(b.value)}</span>
               <span className="ml-2 text-muted-foreground/70">{b.description}</span>
             </dd>
