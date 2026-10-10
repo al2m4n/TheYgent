@@ -243,6 +243,58 @@ def _parse_header(data: bytes) -> GgufSummary | None:
     return GgufSummary(architecture, frozenset(prefixes))
 
 
+#: Integer metadata types a context length may be stored as.
+_INT_TYPES = frozenset({0, 1, 2, 3, 4, 5, 10, 11})
+
+
+def read_gguf_context_length(path: str) -> int | None:
+    """The context a GGUF language model was trained for (``<architecture>.context_length``),
+    or ``None`` when the file does not say or is not a GGUF this reader understands. Only the
+    metadata section is read, and only as far as that key."""
+    for limit in _HEADER_READS:
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read(limit)
+        except OSError:
+            return None
+        try:
+            return _parse_context_length(data)
+        except _Truncated:
+            if len(data) < limit:
+                return None
+        except (ValueError, struct.error, MemoryError, OverflowError):
+            return None
+    return None
+
+
+def _parse_context_length(data: bytes) -> int | None:
+    if not data.startswith(b"GGUF"):
+        return None
+    header = _Header(data)
+    header.take(4)  # magic
+    if header.u32() not in _SUPPORTED_VERSIONS:
+        return None
+    header.u64()  # tensor count — the tensor infos follow the metadata and are not needed
+    kv_count = header.u64()
+    architecture: str | None = None
+    lengths: dict[str, int] = {}
+    for _ in range(kv_count):
+        key = header.string()
+        value_type = header.u32()
+        if key == "general.architecture" and value_type == _TYPE_STRING:
+            architecture = header.string()
+        elif key.endswith(".context_length") and value_type in _INT_TYPES:
+            lengths[key] = int(header.scalar(_SCALAR_FORMAT[value_type]))
+        else:
+            header.skip_value(value_type)
+        if architecture is not None and f"{architecture}.context_length" in lengths:
+            break
+    if architecture is None:
+        return None
+    length = lengths.get(f"{architecture}.context_length")
+    return length if length is not None and length > 0 else None
+
+
 def is_component_architecture(architecture: str | None) -> bool:
     """Whether a GGUF architecture name identifies a bare denoiser rather than a whole model.
 

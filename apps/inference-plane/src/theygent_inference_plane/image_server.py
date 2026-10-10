@@ -10,6 +10,10 @@ Weights load per request (the CLIs are one-shot), so generation carries the mode
 call. Stdlib only (no heavy deps): it reads
 the produced PNG and base64-encodes it. The engine binary is resolved from the CLI (or its env
 override); if missing, ``/readyz``-style startup fails loudly.
+
+A render lives only as long as someone is waiting for it: a caller that hangs up has its render
+killed (or, still queued, never started), and terminating this server kills the render in flight
+rather than orphaning a CLI that holds the model in memory.
 """
 
 from __future__ import annotations
@@ -18,7 +22,10 @@ import argparse
 import base64
 import json
 import os
+import select
 import shutil
+import signal
+import socket
 import subprocess
 import tempfile
 import threading
@@ -44,6 +51,53 @@ _GENERATION_TIMEOUT_SEC = 1000
 # memory. One at a time keeps memory bounded (a single accelerator can't run two diffusions in
 # parallel usefully anyway); concurrent callers queue on this lock.
 _GEN_LOCK = threading.Lock()
+
+# How often a render — or a request queued for one — checks that its caller is still connected.
+# The plane closes the connection the moment its own client hangs up, so this bounds how long an
+# abandoned render keeps the lock (and the accelerator) after nobody is left to read the image.
+_HANGUP_POLL_SEC = 0.25
+
+
+class _Renders:
+    """The CLI processes rendering right now.
+
+    An engine teardown SIGTERMs this server, and a process that dies does not take its children
+    with it: an orphaned CLI keeps rendering — holding the full model in memory — for nobody,
+    while the plane may already be loading another engine into that memory. Tracking the live
+    renders lets the SIGTERM handler kill them before the server exits."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._live: set[subprocess.Popen[bytes]] = set()
+        self._stopping = False
+
+    def spawn(self, cmd: list[str]) -> subprocess.Popen[bytes]:
+        with self._lock:
+            # Checked under the lock so a render can never start after kill_all has run.
+            if self._stopping:
+                raise _GenerationError("the image server is shutting down")
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self._live.add(proc)
+            return proc
+
+    def discard(self, proc: subprocess.Popen[bytes]) -> None:
+        with self._lock:
+            self._live.discard(proc)
+
+    def kill_all(self) -> None:
+        with self._lock:
+            self._stopping = True
+            live = list(self._live)
+        for proc in live:
+            proc.kill()
+            # Reaped here, so the render is gone (not a zombie) by the time the server exits.
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+_RENDERS = _Renders()
 
 
 def _int_param(value: Any, default: int) -> int:
@@ -188,6 +242,10 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             n = max(1, min(_int_param(req.get("n"), 1), 4))
             images = [{"b64_json": self._generate(prompt, req)} for _ in range(n)]
+        except _CallerGone:
+            # Nobody is left to answer, and the render it was waiting on is already stopped.
+            self.close_connection = True
+            return
         except _BadRequest as exc:
             self._json(
                 400,
@@ -220,21 +278,61 @@ class _Handler(BaseHTTPRequestHandler):
             cmd = _build_command(self.engine, self.binary, self.model, prompt, out, req)
             # Serialize + bound the render: one model-loading CLI at a time (memory), and a
             # wall-clock cap under the callers' HTTP timeout so a stuck render fails cleanly,
-            # never a dropped connection.
-            with _GEN_LOCK:
-                try:
-                    proc = subprocess.run(cmd, capture_output=True, timeout=_GENERATION_TIMEOUT_SEC)
-                except subprocess.TimeoutExpired as exc:
-                    raise _GenerationError(
-                        f"{self.engine} timed out after {_GENERATION_TIMEOUT_SEC}s"
-                    ) from exc
-            if proc.returncode != 0 or not os.path.exists(out):
-                combined = (proc.stderr or b"") + b"\n" + (proc.stdout or b"")
+            # never a dropped connection. A caller that hangs up while queued gives its turn up
+            # without ever starting a render.
+            while not _GEN_LOCK.acquire(timeout=_HANGUP_POLL_SEC):
+                if self._caller_gone():
+                    raise _CallerGone
+            try:
+                returncode, output = self._render(cmd)
+            finally:
+                _GEN_LOCK.release()
+            if returncode != 0 or not os.path.exists(out):
                 raise _GenerationError(
-                    f"{self.engine} failed to generate: {_failure_reason(combined)}"
+                    f"{self.engine} failed to generate: {_failure_reason(output)}"
                 )
             with open(out, "rb") as f:
                 return base64.b64encode(f.read()).decode()
+
+    def _render(self, cmd: list[str]) -> tuple[int, bytes]:
+        """Run the CLI to completion: its exit code and its combined stderr + stdout.
+
+        Killed early if the caller hangs up (``_CallerGone``) or the wall-clock cap passes
+        (``_GenerationError``) — an abandoned render otherwise holds the lock, and every caller
+        queued behind it, for minutes."""
+        if self._caller_gone():
+            raise _CallerGone
+        proc = _RENDERS.spawn(cmd)
+        deadline = time.monotonic() + _GENERATION_TIMEOUT_SEC
+        with proc:
+            try:
+                while True:
+                    try:
+                        stdout, stderr = proc.communicate(timeout=_HANGUP_POLL_SEC)
+                    except subprocess.TimeoutExpired:
+                        if self._caller_gone():
+                            raise _CallerGone from None
+                        if time.monotonic() >= deadline:
+                            raise _GenerationError(
+                                f"{self.engine} timed out after {_GENERATION_TIMEOUT_SEC}s"
+                            ) from None
+                    else:
+                        return proc.returncode, stderr + b"\n" + stdout
+            finally:
+                proc.kill()  # a no-op once the CLI has exited
+                _RENDERS.discard(proc)
+
+    def _caller_gone(self) -> bool:
+        """Whether the caller has closed its connection.
+
+        The request body is fully read before any render starts, and an HTTP client sends
+        nothing more while it waits for the answer, so the socket turning readable means the
+        peer closed it (end of stream, or a reset)."""
+        try:
+            readable, _, _ = select.select([self.connection], [], [], 0)
+            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+        except OSError:
+            return True
 
     def log_message(self, *args: Any) -> None:  # keep the plane's logs clean
         pass
@@ -242,6 +340,10 @@ class _Handler(BaseHTTPRequestHandler):
 
 class _GenerationError(RuntimeError):
     pass
+
+
+class _CallerGone(Exception):
+    """The caller hung up before its image was rendered."""
 
 
 class _BadRequest(ValueError):
@@ -269,6 +371,14 @@ def main() -> None:
     _Handler.engine = args.engine
     _Handler.binary = binary
     _Handler.model = args.model
+
+    def _terminate(signum: int, _frame: object) -> None:
+        # The plane tears an engine down with SIGTERM. Exiting without killing the render first
+        # would orphan its CLI (see _Renders).
+        _RENDERS.kill_all()
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
     ThreadingHTTPServer((args.host, args.port), _Handler).serve_forever()
 
 

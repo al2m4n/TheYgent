@@ -240,6 +240,13 @@ export interface ModelView {
   state?: unknown;
 }
 
+/** The tail of a managed model's engine log (`GET /admin/models/{id}/logs`). */
+export interface ModelLogs {
+  logicalId: string;
+  path: string;
+  lines: string[];
+}
+
 // ── control-plane MCP server summary (camelCase) ─────────────────────────────
 export interface McpServerSummary {
   name: string;
@@ -1620,6 +1627,13 @@ export const api = {
     request<ModelView>(inferenceUrl(), `/admin/models/${encodeURIComponent(logicalId)}:evict`, {
       method: "POST",
     }),
+
+  // The engine's own output (model load, errors), kept across restarts under the plane's state dir.
+  getModelLogs: (logicalId: string, lines = 500) =>
+    request<ModelLogs>(
+      inferenceUrl(),
+      `/admin/models/${encodeURIComponent(logicalId)}/logs?lines=${lines}`,
+    ),
 
   // ── inference plane: catalog (the "Discover" tab) ───────────────────────────
   // Discovery + install live in the inference plane (the user's trust domain). Install downloads

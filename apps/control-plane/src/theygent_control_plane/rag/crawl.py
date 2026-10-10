@@ -11,8 +11,13 @@ opt-in ``WITH_JS_RENDER`` build arg, and the hint says so.
 
 Scope discipline: the crawl stays same-origin AND under the root URL's path prefix (pointing
 at ``/docs/`` must not wander into the marketing site), respects robots.txt, and is bounded
-by ``max_pages`` — an unbounded crawl is never the default. Storage is in-memory per crawl
-(nothing lands on disk); extraction (boilerplate removal → markdown) happens per page so the
+by ``max_pages`` — an unbounded crawl is never the default. Scope is checked on the URL a
+page was finally served from, so an in-scope link that redirects elsewhere is dropped; only
+HTML is ingested, and directory-listing sort links (``?C=N;O=D``) are never followed.
+``max_pages`` is exact: it counts ingested pages, not requests the library schedules.
+Storage is in-memory per crawl (nothing lands on disk) and each crawl owns its request
+queue — the library caches a default queue process-wide, which concurrent crawls would
+otherwise share. Extraction (boilerplate removal → markdown) happens per page so the
 caller can chunk/embed incrementally and report honest progress.
 """
 
@@ -20,14 +25,21 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_PAGES = 200
+
+#: Apache/nginx directory-listing sort links — the same listing re-ordered, never new content.
+_SORT_LINK = re.compile(r"\?C=[NMSD][;&]O=[AD]$")
+_HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 
 
 @dataclass(frozen=True)
@@ -107,6 +119,48 @@ def _path_prefix(root_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
 
+def _is_html(content_type: str | None) -> bool:
+    """Whether a response is a page to extract. No header at all leaves it to the extractor."""
+    if not content_type:
+        return True
+    return content_type.split(";", 1)[0].strip().lower() in _HTML_TYPES
+
+
+class _Scope:
+    """Where one crawl may go, and how many pages it has taken.
+
+    The scope starts as the root's path prefix. When the root itself redirects (http → https,
+    the bare domain → ``www``), the prefix it landed on joins the scope: the site moved, the
+    crawl did not leave it. Every other redirect is judged against the scope as it stands."""
+
+    def __init__(self, root_url: str, max_pages: int) -> None:
+        self.prefixes = [_path_prefix(root_url)]
+        self.max_pages = max_pages
+        self.taken = 0
+
+    def follow_root(self, final_url: str) -> None:
+        prefix = _path_prefix(final_url)
+        if prefix not in self.prefixes:
+            self.prefixes.append(prefix)
+
+    def admits(self, url: str) -> bool:
+        if _SORT_LINK.search(url):
+            return False
+        return any(url.startswith(p) or url == p.rstrip("/") for p in self.prefixes)
+
+    def take(self) -> bool:
+        """Claim one page of the budget; False once it is spent. Synchronous, so concurrent
+        handlers on the one event loop can never overshoot it."""
+        if self.taken >= self.max_pages:
+            return False
+        self.taken += 1
+        return True
+
+    @property
+    def full(self) -> bool:
+        return self.taken >= self.max_pages
+
+
 def _extract(content: bytes | str, url: str) -> CrawledPage | None:
     """Boilerplate-stripped markdown + title for one fetched page; ``None`` when the page has
     no extractable main content (nav/index shells) — skipped, not an error."""
@@ -140,17 +194,52 @@ async def crawl_site(
     on the source."""
     # Imported here, not at module top: crawlee spins up its service locator on import-heavy
     # paths, and only the crawl ingest path needs it.
-    from crawlee import ConcurrencySettings, Glob
+    from crawlee import ConcurrencySettings, Glob, Request
     from crawlee.storage_clients import MemoryStorageClient
+    from crawlee.storages import RequestQueue
 
-    prefix = _path_prefix(config.root_url)
-    # The slashless spelling of the prefix directory is also in scope — pages commonly link
-    # ``…/docs`` while the canonical prefix is ``…/docs/``.
-    include = [Glob(f"{prefix}**"), Glob(prefix.rstrip("/"))]
+    scope = _Scope(config.root_url, config.max_pages)
+    root = Request.from_url(config.root_url)
+    storage_client = MemoryStorageClient()  # per-crawl, in-memory, nothing on disk
+    # A queue of this crawl's own: the default queue is cached process-wide by storage-client
+    # type, so two crawls running at once would pull each other's requests.
+    queue = await RequestQueue.open(
+        alias=f"rag-crawl-{uuid.uuid4().hex}", storage_client=storage_client
+    )
+
+    def include() -> list[Glob]:
+        # The slashless spelling of the prefix directory is also in scope — pages commonly
+        # link ``…/docs`` while the canonical prefix is ``…/docs/``. Each glob names scheme,
+        # host and path, so these globs ARE the origin check: links are enqueued with the
+        # "all" strategy, whose same-origin alternative would compare against the root's
+        # original host and drop every link once the root redirected to its canonical host.
+        return [g for p in scope.prefixes for g in (Glob(f"{p}**"), Glob(p.rstrip("/")))]
+
+    async def admit(request: Any, final_url: str, content_type: str | None) -> bool:
+        """Whether a fetched response becomes a page of this crawl (and counts towards
+        ``max_pages``). Out-of-scope redirect targets and non-HTML responses are dropped."""
+        if request.unique_key == root.unique_key and final_url != request.url:
+            scope.follow_root(final_url)
+        if not scope.admits(final_url) or not _is_html(content_type):
+            logger.debug("rag.crawl_skipped", extra={"url": final_url, "type": content_type})
+            return False
+        if not scope.take():
+            return False
+        if scope.full:
+            # In-flight pages still finish; nothing new is fetched.
+            crawler.stop("rag crawl reached max_pages")
+        if on_visit is not None:
+            await on_visit(final_url)
+        return True
+
     common: dict = {
-        "max_requests_per_crawl": config.max_pages,
+        # Fetches that are not pages (out-of-scope redirects, images) use requests without
+        # using the page budget, so the request cap leaves room for them; ``max_pages`` itself
+        # is enforced exactly by the scope.
+        "max_requests_per_crawl": 2 * config.max_pages + 10,
+        "request_manager": queue,
         "respect_robots_txt_file": True,
-        "storage_client": MemoryStorageClient(),  # per-crawl, in-memory, nothing on disk
+        "storage_client": storage_client,
         # Both knobs set because the library's desired default exceeds a low max.
         "concurrency_settings": ConcurrencySettings(
             desired_concurrency=config.desired_concurrency,
@@ -182,13 +271,16 @@ async def crawl_site(
 
         @crawler.router.default_handler
         async def handle_js(ctx: PlaywrightCrawlingContext) -> None:  # pragma: no cover - thin
-            if on_visit is not None:
-                await on_visit(ctx.request.loaded_url or ctx.request.url)
+            final_url = ctx.request.loaded_url or ctx.request.url
+            content_type = ctx.response.headers.get("content-type") if ctx.response else None
+            if not await admit(ctx.request, final_url, content_type):
+                return
             html = await ctx.page.content()
-            page = _extract(html, ctx.request.loaded_url or ctx.request.url)
+            page = _extract(html, final_url)
             if page is not None:
                 await on_page(page)
-            await ctx.enqueue_links(strategy="same-origin", include=include)
+            if not scope.full:
+                await ctx.enqueue_links(strategy="all", include=include(), exclude=[_SORT_LINK])
 
     else:
         from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
@@ -197,16 +289,19 @@ async def crawl_site(
 
         @crawler.router.default_handler
         async def handle_static(ctx: BeautifulSoupCrawlingContext) -> None:
-            if on_visit is not None:
-                await on_visit(ctx.request.loaded_url or ctx.request.url)
+            final_url = ctx.request.loaded_url or ctx.request.url
+            content_type = ctx.http_response.headers.get("content-type")
+            if not await admit(ctx.request, final_url, content_type):
+                return
             raw = await ctx.http_response.read()
-            page = _extract(raw, ctx.request.loaded_url or ctx.request.url)
+            page = _extract(raw, final_url)
             if page is not None:
                 await on_page(page)
-            await ctx.enqueue_links(strategy="same-origin", include=include)
+            if not scope.full:
+                await ctx.enqueue_links(strategy="all", include=include(), exclude=[_SORT_LINK])
 
     try:
-        await crawler.run([config.root_url])
+        await crawler.run([root])
     except Exception as exc:
         message = str(exc)
         # Two Playwright failure shapes mean "no usable browser": the executable is absent
@@ -217,3 +312,5 @@ async def crawl_site(
         ):
             raise BrowserNotInstalled(_browser_install_hint()) from exc
         raise
+    finally:
+        await queue.drop()  # releases the queue and its process-wide cache entry

@@ -59,7 +59,7 @@ Hosted models don't all take the same parameters — one may reject `temperature
 
 ### Remote models have no lifecycle
 
-There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its **State** stays effectively cold, and **Warm** / **Evict** are no-ops. Capability probing is also skipped — the model advertises only the modality you declared, so the fit and capability badges you see for local models don't apply.
+There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its **State** stays effectively cold, and **Warm** / **Evict** are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (`llama-server`), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked **approx** because TheYgent didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (**approx**), not as unsupported.
 
 ## Mixing local and remote in one agent
 

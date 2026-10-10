@@ -50,7 +50,7 @@ First [install](../models/installing.md) a text-to-image model from the catalog 
 A few behaviors worth knowing:
 
 - **Size, count, steps.** `size` is `WxH`, snapped to multiples of 64 (default `512x512`); `n` is clamped to 1–4; `steps` passes through.
-- **Generation is serialized** — one render at a time, so concurrent requests queue — and weights load per request, so every image pays the model-load cost. A slow render is kept alive with periodic keepalives so a long, delta-free generation is not mistaken for a dead connection.
+- **Generation is serialized** — one render at a time, so concurrent requests queue — and weights load per request, so every image pays the model-load cost. A render whose caller hangs up is stopped, and a queued request whose caller has left never starts, so an abandoned image never holds up the next one. A slow render is kept alive with periodic keepalives so a long, delta-free generation is not mistaken for a dead connection.
 
 ### With an imagine-backed agent
 

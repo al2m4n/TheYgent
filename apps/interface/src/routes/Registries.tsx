@@ -352,6 +352,7 @@ function InstalledPanel() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   // The per-model bench opens in a modal (no separate page) — test/benchmark right here.
   const [benchModel, setBenchModel] = useState<ModelView | null>(null);
+  const [logsModel, setLogsModel] = useState<ModelView | null>(null);
   // Clicking a row opens the registration itself: hub installs (source=hf) reopen the catalog
   // detail; everything else gets an editable settings form. Buttons inside the row keep their own
   // actions — the row handler ignores clicks that land on any button.
@@ -470,6 +471,7 @@ function InstalledPanel() {
             <ItemGroup className="gap-2">
               {filtered.map((m: ModelView) => {
                 const st = isResident(m) ? "resident" : "cold";
+                const failure = lastFailure(m);
                 const { text, full } = modelDisplay(m.binding);
                 const warming = warm.isPending && warm.variables === m.logicalId;
                 const evicting = evict.isPending && evict.variables === m.logicalId;
@@ -511,6 +513,13 @@ function InstalledPanel() {
                         >
                           {st}
                         </CategoryBadge>
+                        {failure && (
+                          <span
+                            title={`${failure.reason} · ${relativeTime(failure.at)} — restarted on the next request; see Logs`}
+                          >
+                            <ToneBadge tone="red">failed</ToneBadge>
+                          </span>
+                        )}
                         <span
                           className="mono max-w-[16rem] truncate text-muted-foreground"
                           title={full}
@@ -547,6 +556,16 @@ function InstalledPanel() {
                       >
                         {evicting ? "Evicting…" : "Evict"}
                       </Button>
+                      {m.binding.binding !== "openai-compatible" && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setLogsModel(m)}
+                          title="Logs — the engine's own output"
+                        >
+                          Logs
+                        </Button>
+                      )}
                       <Button
                         variant="destructive"
                         size="sm"
@@ -563,6 +582,15 @@ function InstalledPanel() {
             </ItemGroup>
           )}
         </>
+      )}
+      {logsModel && (
+        <Modal
+          title={`Engine log · ${logsModel.logicalId}`}
+          width="max-w-4xl"
+          onClose={() => setLogsModel(null)}
+        >
+          <EngineLogView logicalId={logsModel.logicalId} />
+        </Modal>
       )}
       {benchModel && (
         <Modal
@@ -626,6 +654,39 @@ function InstalledPanel() {
 function isResident(m: ModelView): boolean {
   const state = m.state as { resident?: boolean } | undefined;
   return Boolean(state?.resident);
+}
+
+// The engine's last failure (a GPU error, a dead process) until a replacement launches.
+function lastFailure(m: ModelView): { reason: string; at: string } | null {
+  const state = m.state as { lastFailure?: { reason: string; at: string } } | undefined;
+  return state?.lastFailure ?? null;
+}
+
+// The tail of a managed model's engine log, fetched when opened (and on Refresh).
+function EngineLogView({ logicalId }: { logicalId: string }) {
+  const { data, error, isFetching, refetch } = useQuery({
+    queryKey: ["model-logs", logicalId],
+    queryFn: () => api.getModelLogs(logicalId),
+  });
+  if (error) {
+    return <p className="text-muted-foreground text-sm">{(error as Error).message}</p>;
+  }
+  if (!data) return <Spinner />;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="mono truncate text-muted-foreground text-xs" title={data.path}>
+          {data.path}
+        </span>
+        <Button variant="outline" size="sm" disabled={isFetching} onClick={() => refetch()}>
+          {isFetching ? "Refreshing…" : "Refresh"}
+        </Button>
+      </div>
+      <pre className="mono max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 text-xs">
+        {data.lines.join("\n")}
+      </pre>
+    </div>
+  );
 }
 
 // Capabilities are PROBED on demand (a click), never on list load: probing warms the engine

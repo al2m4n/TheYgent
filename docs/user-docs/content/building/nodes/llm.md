@@ -62,7 +62,7 @@ The **Model parameters** section edits the generation params stored on the bindi
 
 Each field has a **?** help tooltip. The last two are **capability-gated** — the editor hides them unless the model reports it supports them, so you never set a switch the model will ignore.
 
-The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`.
+The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`. A local model (llama.cpp, MLX) also receives the effort as the chat-template variable `chat_template_kwargs.reasoning_effort`, which is where templates such as gpt-oss read it; a model reached by URL receives only the `reasoning_effort` field.
 
 ```json
 "models": {
@@ -146,6 +146,7 @@ A few things follow from wiring a capability:
 - When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls) and **max tool iterations** (the round limit, default 8).
 - The model runs a **bounded loop**: it answers or calls a tool; each tool result is fed back; it calls again until it answers or hits the iteration limit.
 - There is deliberately no compile-time capability check. A model that does not support tool-calling simply returns a plain answer and ignores the tools.
+- Local models that write tool calls as text work too: Llama-style calls and gpt-oss's own reply format on MLX are turned into real tool calls, and gpt-oss's reasoning is kept out of the answer (it arrives as the reasoning stream).
 
 A tool node is *either* a capability (wired to an llm's `tools` port, the model supplies its arguments) *or* a plain pipeline step (wired with data edges, you template its arguments) — never both. See [Tools](tools.md).
 

@@ -80,6 +80,26 @@ def test_chunker_splits_oversized_blocks_with_overlap() -> None:
         assert first_sentence and first_sentence in prev.text
 
 
+def test_chunker_budgets_symbol_dense_text_by_its_tokens() -> None:
+    # An embedding tokenizer spends a token on nearly every punctuation mark, so a dotted table
+    # of contents holds several times more tokens than its length / 4. Chunks are budgeted on
+    # an estimate that counts them, or one "450-token" chunk outgrows the embedding batch.
+    from theygent_control_plane.rag.chunking import estimate_tokens
+
+    toc = "\n".join(
+        f"{n}.{m} Dialplan function {n}{m} " + "." * 40 + f" {n * 10 + m}"
+        for n in range(1, 30)
+        for m in range(1, 10)
+    )
+    assert estimate_tokens(toc) > 2 * (len(toc) // 4)
+    chunks = chunk_markdown(f"# Contents\n\n{toc}", max_tokens=200, overlap_tokens=20)
+    assert len(chunks) > 1
+    assert all(estimate_tokens(c.text) <= 200 for c in chunks)
+    # Prose keeps the chars / 4 budget, so ordinary documents chunk exactly as before.
+    prose = "Llamas eat hay and fresh grass every morning before the herd moves on. " * 3
+    assert estimate_tokens(prose) == len(prose) // 4
+
+
 async def test_execute_rag_without_backend_binds_err() -> None:
     out = await execute_rag(None, source="rag_x", query="q", top_k=5, min_similarity=None)
     assert out.ok is False
@@ -183,6 +203,14 @@ def test_ingest_endpoint_is_crawl_only(client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "invalid_rag_source"
 
 
+def test_creating_a_crawl_source_does_not_start_the_crawl(client: TestClient) -> None:
+    # The documented API contract: create stores the source, `:ingest` starts the crawl (the
+    # interface calls both). An unreachable root proves nothing was fetched in between.
+    source = _create_source(client, kind="crawl", root_url="http://127.0.0.1:9/docs/")
+    time.sleep(0.2)
+    assert client.get(f"/rag/sources/{source['id']}").json()["status"] == "empty"
+
+
 def test_query_before_any_ingest_is_a_clean_400(client: TestClient) -> None:
     source = _create_source(client)
     resp = client.post(f"/rag/sources/{source['id']}/query", json={"query": "anything"})
@@ -272,6 +300,70 @@ def test_failed_reembed_keeps_the_last_good_chunks(
     assert docs[0]["status"] == "embedded"
     result = client.post(f"/rag/sources/{sid}/query", json={"query": "paragraph the outage loses"})
     assert any("outage loses" in m["text"] for m in result.json()["matches"])
+
+
+def test_an_input_too_large_for_the_embedding_server_is_split_not_fatal(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # A chunk can still exceed what the embedding server accepts (its batch or context, in its
+    # own tokenizer's tokens). Only that chunk is split until it fits — the rest of the
+    # document is not lost to one oversized passage.
+    long_paragraph = " ".join(f"Llamas graze on meadow {i} at dawn." for i in range(40))
+    doc = f"# Herd\n\n## Grazing\n\n{long_paragraph}\n\n## Water\n\nLlamas drink twice a day."
+    fake_inference.captured["embed_max_chars"] = 400
+    source = _create_source(client)
+    sid = source["id"]
+    _upload(client, sid, "herd.md", doc)
+    settled = _wait_settled(client, sid)
+
+    assert settled["status"] == "ready", settled
+    assert settled["error"] is None, settled
+    texts = [
+        m["text"]
+        for m in client.post(
+            f"/rag/sources/{sid}/query", json={"query": "meadow 39 dawn", "top_k": 20}
+        ).json()["matches"]
+    ]
+    assert all(len(t) <= 400 for t in texts)
+    assert any("meadow 39" in t for t in texts)
+    assert any("meadow 0 " in t for t in texts)
+
+
+def test_an_embedding_outage_still_fails_the_document(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # Splitting is for inputs the server rejects as too large; any other failure is not
+    # retried piecemeal.
+    fake_inference.captured["embed_fail"] = True
+    source = _create_source(client)
+    sid = source["id"]
+    _upload(client, sid, "handbook.md", _DOC)
+    settled = _wait_settled(client, sid)
+    assert settled["status"] == "failed"
+    assert fake_inference.captured["embed_calls"] == 0  # the 503 path never reached a count
+
+
+def test_successful_reupload_clears_the_previous_failure(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # The error on a source describes its latest ingest: once a later upload succeeds, a
+    # failure from an earlier one must not stay on the row next to status "ready".
+    source = _create_source(client)
+    sid = source["id"]
+    fake_inference.captured["embed_fail"] = True
+    _upload(client, sid, "handbook.md", _DOC)
+    failed = _wait_settled(client, sid)
+    assert failed["status"] == "failed"
+    assert failed["error"]
+
+    fake_inference.captured["embed_fail"] = False
+    _upload(client, sid, "handbook.md", _DOC)
+    recovered = _wait_settled(client, sid)
+
+    assert recovered["status"] == "ready", recovered
+    assert recovered["error"] is None, recovered
+    docs = client.get(f"/rag/sources/{sid}/documents").json()["documents"]
+    assert [d["status"] for d in docs] == ["embedded"]
 
 
 # ── the rag node: step mode ──────────────────────────────────────────────────
@@ -563,6 +655,261 @@ def test_crawl_ingests_a_real_local_site(client: TestClient, local_site: str) ->
     top = result["matches"][0]
     assert "purple cable" in top["text"]
     assert top["uri"].startswith("http://127.0.0.1")
+
+
+# ── crawl scope: concurrent crawls, redirects, non-HTML, page limits ────────
+
+
+def _prose(topic: str) -> str:
+    # trafilatura skips pages with too little main content, so every page carries a paragraph.
+    return (
+        f"<h1>{topic}</h1><p>This page explains {topic} in detail. The {topic} section covers "
+        f"what {topic} is, when to reach for it, and how {topic} behaves when something goes "
+        f"wrong, with enough prose that the extractor keeps it as main content.</p>"
+    )
+
+
+def _docs_site(name: str) -> dict[str, tuple[int, dict[str, str], bytes]]:
+    """A docs tree under /docs/ with the traps real sites have: an in-scope link that
+    redirects out of scope, an image, directory-listing sort links, and an out-of-scope link."""
+
+    def html(body: str) -> tuple[int, dict[str, str], bytes]:
+        page = _PAGE_STYLE.format(title=name, body=body)
+        return 200, {"content-type": "text/html; charset=utf-8"}, page.encode("utf-8")
+
+    return {
+        "/docs/": html(
+            _prose(f"{name} overview")
+            + '<a href="/docs/a.html">A</a> <a href="/docs/b.html">B</a> '
+            '<a href="/docs/moved">Moved</a> <a href="/docs/diagram.png">Diagram</a> '
+            '<a href="/docs/?C=N;O=D">Name</a> <a href="/docs/?C=M;O=A">Modified</a> '
+            '<a href="/blog/news.html">News</a>'
+        ),
+        "/docs/a.html": html(_prose(f"{name} alpha")),
+        "/docs/b.html": html(_prose(f"{name} beta")),
+        "/docs/moved": (302, {"location": "/blog/moved.html"}, b""),
+        "/docs/diagram.png": (200, {"content-type": "image/png"}, b"\x89PNG\r\n\x1a\n" + b"x" * 64),
+        "/docs/?C=N;O=D": html(_prose(f"{name} overview sorted")),
+        "/docs/?C=M;O=A": html(_prose(f"{name} overview by date")),
+        "/blog/moved.html": html(_prose(f"{name} blog post")),
+        "/blog/news.html": html(_prose(f"{name} news")),
+    }
+
+
+def _serve(pages: dict[str, tuple[int, dict[str, str], bytes]]) -> Any:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            host = self.headers.get("host", "")
+            if host.startswith("localhost:"):
+                # The site's canonical host is 127.0.0.1, the way a bare domain sends
+                # visitors on to its www host.
+                port = host.split(":", 1)[1]
+                self.send_response(301)
+                self.send_header("location", f"http://127.0.0.1:{port}{self.path}")
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
+            status, headers, body = pages.get(self.path, (404, {}, b""))
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.fixture
+def docs_sites() -> Any:
+    servers = [_serve(_docs_site("ferns")), _serve(_docs_site("lichens"))]
+    try:
+        yield [f"http://127.0.0.1:{s.server_address[1]}" for s in servers]
+    finally:
+        for server in servers:
+            server.shutdown()
+
+
+def _document_uris(client: TestClient, source_id: str) -> list[str]:
+    docs = client.get(f"/rag/sources/{source_id}/documents").json()["documents"]
+    return sorted(d["uri"] for d in docs)
+
+
+def test_concurrent_crawls_stay_in_their_own_scope(
+    client: TestClient, docs_sites: list[str]
+) -> None:
+    # Two crawls running at once must not share a request queue: each source holds only its
+    # own pages, never a redirect target outside its root path, an image, or a sort link.
+    ids = []
+    for site in docs_sites:
+        source = _create_source(client, kind="crawl", root_url=f"{site}/docs/", max_pages=20)
+        ids.append(source["id"])
+    for sid in ids:
+        assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    for sid in ids:
+        assert _wait_settled(client, sid, timeout=60.0)["status"] == "ready"
+
+    for site, sid in zip(docs_sites, ids, strict=True):
+        assert _document_uris(client, sid) == [
+            f"{site}/docs/",
+            f"{site}/docs/a.html",
+            f"{site}/docs/b.html",
+        ]
+
+
+def test_crawl_follows_a_root_that_redirects_to_another_host(
+    client: TestClient, docs_sites: list[str]
+) -> None:
+    site = docs_sites[0]
+    moved_root = site.replace("127.0.0.1", "localhost") + "/docs/"
+    source = _create_source(client, kind="crawl", root_url=moved_root, max_pages=20)
+    sid = source["id"]
+    assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    assert _wait_settled(client, sid, timeout=60.0)["status"] == "ready"
+    assert _document_uris(client, sid) == [
+        f"{site}/docs/",
+        f"{site}/docs/a.html",
+        f"{site}/docs/b.html",
+    ]
+
+
+def test_crawl_page_limit_is_exact(client: TestClient, docs_sites: list[str]) -> None:
+    source = _create_source(client, kind="crawl", root_url=f"{docs_sites[0]}/docs/", max_pages=1)
+    sid = source["id"]
+    assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    settled = _wait_settled(client, sid, timeout=60.0)
+    assert settled["status"] == "ready", settled
+    assert _document_uris(client, sid) == [f"{docs_sites[0]}/docs/"]
+    assert settled["progress"]["pages"] == 1
+
+
+# ── vector leg with many sources sharing one dimension ──────────────────────
+
+
+async def _seed_source(
+    sm: Any,
+    store: Any,
+    name: str,
+    vectors: list[list[float]],
+    texts: list[tuple[str | None, str]] | None = None,
+) -> str:
+    from theygent_control_plane.rag.chunking import Chunk
+
+    texts = texts or [(None, f"{name} chunk {i}") for i in range(len(vectors))]
+
+    async with sm() as session, session.begin():
+        source = await store.create_source(
+            session, name=name, kind="upload", config={}, embedding_model="embed-small"
+        )
+        await store.claim_embedding_dim(session, source.id, len(vectors[0]))
+        await store.replace_document(
+            session,
+            source_id=source.id,
+            uri=f"{name}.md",
+            title=name,
+            content_hash=f"sha256:{name}",
+            chars=1,
+            dim=len(vectors[0]),
+            chunks=[
+                Chunk(text=body, heading=heading, position=i)
+                for i, (heading, body) in enumerate(texts)
+            ],
+            embeddings=vectors,
+        )
+    return source.id
+
+
+@pytest.mark.parametrize("iterative", [True, False], ids=["iterative-scan", "exact-scan"])
+async def test_vector_leg_finds_a_source_whose_neighbours_belong_to_another(
+    pg_url: str, iterative: bool
+) -> None:
+    # Every source of one dimension shares one HNSW index, and an HNSW scan only yields its
+    # candidate list (hnsw.ef_search, 40 by default) before the source filter applies. When a
+    # query lands in another source's neighbourhood, a plain index scan finds nothing of the
+    # queried source — although an exact scan of it has an obvious best match. A pgvector
+    # without iterative scans (``exact-scan``) must get the right answer from an exact scan.
+    import random
+
+    from sqlalchemy import text as text_sql
+    from theygent_control_plane import db
+    from theygent_control_plane.rag.store import RagStore
+
+    rng = random.Random(7)
+
+    def near(axis: int) -> list[float]:
+        vec = [rng.uniform(-0.05, 0.05) for _ in range(8)]
+        vec[axis] = 1.0
+        return vec
+
+    engine = db.create_engine(pg_url)
+    sm = db.create_sessionmaker(engine)
+    store = RagStore()
+    if not iterative:
+        store._iterative_scan = False  # as if the database's pgvector predates 0.8
+    try:
+        # The crowd sits right next to the query; the queried source sits on another axis,
+        # except one chunk leaning towards the query — its exact best match.
+        await _seed_source(sm, store, "crowd", [near(0) for _ in range(1500)])
+        target_vectors = [near(1) for _ in range(1499)] + [[0.5, 1.0, 0, 0, 0, 0, 0, 0]]
+        target = await _seed_source(sm, store, "target", target_vectors)
+        async with sm() as session, session.begin():
+            await store.ensure_dim_index(session, 8)
+            await session.execute(text_sql("ANALYZE rag_chunk"))
+
+        async with sm() as session:
+            matches = await store.search(
+                session,
+                source_id=target,
+                dim=8,
+                query_text="nothing in the corpus says this",  # keyword leg finds nothing
+                query_vector=[1.0, 0, 0, 0, 0, 0, 0, 0],
+                top_k=3,
+            )
+        assert matches, "the vector leg returned nothing for a source that has matches"
+        assert matches[0].text == "target chunk 1499"
+    finally:
+        await engine.dispose()
+
+
+async def test_keyword_leg_falls_back_to_any_term(pg_url: str) -> None:
+    # Chunks split at headings, so a query mixing a function name with its section heading
+    # ("… Synopsis") has no chunk holding every term. The keyword leg then matches any term,
+    # which ranks the function's own chunk first even when its vector is not the nearest.
+    from theygent_control_plane import db
+    from theygent_control_plane.rag.store import RagStore
+
+    engine = db.create_engine(pg_url)
+    sm = db.create_sessionmaker(engine)
+    store = RagStore()
+    try:
+        source = await _seed_source(
+            sm,
+            store,
+            "dialplan",
+            [[1.0, 0, 0, 0], [0.9, 0.1, 0, 0], [0.2, 1.0, 0, 0]],
+            texts=[
+                ("Functions > CUT > Synopsis", "Splits a variable's contents by a delimiter."),
+                ("Functions > LEN > Synopsis", "Returns the length of a string."),
+                ("Functions > FIELDQTY > Synopsis", "FIELDQTY(varname,delim) counts fields."),
+            ],
+        )
+        async with sm() as session:
+            matches = await store.search(
+                session,
+                source_id=source,
+                dim=4,
+                query_text="FIELDQTY(varname,delim) Synopsis",
+                query_vector=[1.0, 0, 0, 0],  # nearest to CUT, not to FIELDQTY
+                top_k=3,
+            )
+        assert matches[0].text.startswith("FIELDQTY(varname,delim)"), matches
+    finally:
+        await engine.dispose()
 
 
 # ── restart honesty ──────────────────────────────────────────────────────────

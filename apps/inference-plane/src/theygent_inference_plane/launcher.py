@@ -21,12 +21,16 @@ import contextlib
 import glob
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import IO, ClassVar, Protocol, runtime_checkable
 
 import httpx
@@ -42,7 +46,11 @@ from theygent_inference_plane.capabilities import (
     REASONING_MARKERS,
     template_implies_reasoning,
 )
-from theygent_inference_plane.weights import IncompleteWeights, diffusion_defect
+from theygent_inference_plane.weights import (
+    IncompleteWeights,
+    diffusion_defect,
+    read_gguf_context_length,
+)
 
 
 @runtime_checkable
@@ -52,6 +60,11 @@ class EngineHandle(Protocol):
     @property
     def base_url(self) -> str:
         """Root URL of the OpenAI-compatible upstream (no trailing /v1)."""
+        ...
+
+    @property
+    def exit_code(self) -> int | None:
+        """The engine process's exit status once it has exited; ``None`` while it runs."""
         ...
 
     async def health(self) -> bool: ...
@@ -90,55 +103,156 @@ async def _health_ok(base_url: str, health_path: str = "/health") -> bool:
         return False
 
 
-def _output_tail(log: IO[bytes], *, limit: int = 2000) -> str:
-    """Best-effort tail of a dead/terminated child's captured output, for the crash message.
-    Only safe to call once the child is gone (parent and child share the file offset)."""
-    try:
-        log.seek(0)
-        data = log.read()
-    except OSError:
-        return ""
-    if not data:
-        return ""
-    text = data.decode("utf-8", "replace").strip()
-    return f"\n--- engine output (tail) ---\n{text[-limit:]}" if text else ""
+#: An engine log rotates (to ``<name>.log.1``) once it grows past this.
+ENGINE_LOG_MAX_BYTES = 8 * 1024 * 1024
+_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+class EngineLog:
+    """Where one engine process's output goes: stdout and stderr through a pipe, drained by a
+    thread into a file the engine can never block on.
+
+    With a path the file is named and outlives the process — a failure that happens long after
+    startup (a GPU running out of memory mid-request) is diagnosable from it, and a relaunch
+    appends below the previous run instead of erasing it. It rotates once past ``max_bytes``,
+    keeping one previous file. Without a path (no state dir) it is an anonymous temp file,
+    reclaimed when the engine exits; either way its tail explains a failed startup."""
+
+    def __init__(self, path: Path | None, *, max_bytes: int = ENGINE_LOG_MAX_BYTES) -> None:
+        self.path = path
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self._file: IO[bytes] = open(path, "ab") if path is not None else tempfile.TemporaryFile()
+        self._thread: threading.Thread | None = None
+
+    def write(self, data: bytes) -> None:
+        with self._lock:
+            self._file.write(data)
+            self._file.flush()
+            if self._file.tell() > self._max_bytes:
+                self._rotate()
+
+    def _rotate(self) -> None:
+        if self.path is None:
+            self._file.seek(0)
+            self._file.truncate()
+            return
+        self._file.close()
+        os.replace(self.path, self.path.with_name(self.path.name + ".1"))
+        self._file = open(self.path, "ab")
+
+    def drain(self, stream: IO[bytes]) -> None:
+        """Copy ``stream`` (the engine's stdout) into the log until the engine closes it."""
+
+        def pump() -> None:
+            with contextlib.suppress(OSError, ValueError):
+                while chunk := stream.read1(65536):  # ty: ignore[unresolved-attribute]
+                    self.write(chunk)
+            with self._lock, contextlib.suppress(OSError):
+                self._file.close()
+
+        self._thread = threading.Thread(target=pump, name="engine-log", daemon=True)
+        self._thread.start()
+
+    def wait_drained(self, timeout: float = 2.0) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout)
+
+    def tail(self, *, limit: int = 2000) -> str:
+        """The last ``limit`` characters written (best-effort; empty when nothing was)."""
+        with self._lock:
+            try:
+                if self.path is not None:
+                    data = self.path.read_bytes()[-limit * 4 :]
+                else:
+                    self._file.seek(0)
+                    data = self._file.read()
+                    self._file.seek(0, os.SEEK_END)
+            except (OSError, ValueError):
+                return ""
+        return data.decode("utf-8", "replace")[-limit:]
+
+
+class EngineLogs:
+    """The directory engine logs live in: one file per (engine, model, modality), so the log of
+    a model's engine is always at the same place. ``None`` keeps every log anonymous."""
+
+    def __init__(self, directory: Path | None) -> None:
+        self.directory = directory
+
+    def path_for(self, binding: ManagedBinding) -> Path | None:
+        if self.directory is None:
+            return None
+        stem = os.path.basename(binding.model.rstrip("/")) or binding.model
+        name = _UNSAFE_NAME.sub("_", f"{binding.binding}-{stem}.{binding.modality}")
+        return self.directory / f"{name}.log"
+
+    def open(self, binding: ManagedBinding | None) -> EngineLog:
+        return EngineLog(self.path_for(binding) if binding is not None else None)
+
+    def read(self, binding: ManagedBinding, *, lines: int) -> list[str] | None:
+        """The last ``lines`` lines of the binding's engine log, across the rotation boundary;
+        ``None`` when there is no log for it."""
+        path = self.path_for(binding)
+        if path is None or not path.exists():
+            return None
+        out: list[str] = []
+        for candidate in (path, path.with_name(path.name + ".1")):
+            try:
+                text = candidate.read_bytes()[-lines * 512 :].decode("utf-8", "replace")
+            except OSError:
+                continue
+            out = text.splitlines()[-(lines - len(out)) :] + out if lines > len(out) else out
+            if len(out) >= lines:
+                break
+        return out[-lines:]
+
+
+def _output_tail(log: EngineLog, *, limit: int = 2000) -> str:
+    """The engine's last output, for the message of a startup that failed."""
+    log.wait_drained()
+    text = log.tail(limit=limit).strip()
+    return f"\n--- engine output (tail) ---\n{text}" if text else ""
 
 
 async def _spawn_openai_server(
-    cmd: list[str], base_url: str, *, startup_timeout: float, health_path: str = "/health"
+    cmd: list[str],
+    base_url: str,
+    *,
+    startup_timeout: float,
+    health_path: str = "/health",
+    log: EngineLog | None = None,
 ) -> subprocess.Popen[bytes]:
     """Spawn an OpenAI-compatible server subprocess and wait until it is healthy.
 
-    stdout+stderr go to an anonymous temp file rather than being discarded: when the engine
-    crashes at startup (a missing Metal/CUDA runtime, an unresolvable model, bad flags) its
-    traceback is the only thing that says *why*, so we fold the tail into the raised error. A
-    temp file (not a PIPE) is used because a long-lived server whose output nobody drains
-    would eventually block on a full pipe buffer. The parent's handle is dropped once startup
-    resolves; the child keeps its own fd and the file is reclaimed when the engine exits.
+    stdout+stderr go to the engine's log (see ``EngineLog``) rather than being discarded: when
+    the engine crashes at startup (a missing Metal/CUDA runtime, an unresolvable model, bad
+    flags) its traceback is the only thing that says *why*, so its tail is folded into the
+    raised error; later failures are read from the same log.
     """
-    log = tempfile.TemporaryFile()
-    try:
-        proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
-            cmd, stdout=log, stderr=subprocess.STDOUT
-        )
-        loop = asyncio.get_event_loop()
-        deadline = loop.time() + startup_timeout
-        while loop.time() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError(
-                    f"engine exited early (code {proc.returncode}): {cmd[0]}{_output_tail(log)}"
-                )
-            if await _health_ok(base_url, health_path):
-                return proc
-            await asyncio.sleep(0.25)
-        proc.terminate()
-        raise TimeoutError(
-            f"engine {cmd[0]} did not become ready within {startup_timeout}s{_output_tail(log)}"
-        )
-    finally:
-        # Drop the parent's copy of the fd. On success the child keeps its own dup and logs into
-        # the (now-anonymous) file for its lifetime; on failure we've already read the tail above.
-        log.close()
+    log = log or EngineLog(None)
+    log.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} starting: {' '.join(cmd)} ---\n".encode())
+    proc = subprocess.Popen(  # noqa: ASYNC220 — supervised long-lived child
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT
+    )
+    assert proc.stdout is not None
+    log.drain(proc.stdout)
+    loop = asyncio.get_event_loop()
+    deadline = loop.time() + startup_timeout
+    while loop.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"engine exited early (code {proc.returncode}): {cmd[0]}{_output_tail(log)}"
+            )
+        if await _health_ok(base_url, health_path):
+            return proc
+        await asyncio.sleep(0.25)
+    proc.terminate()
+    raise TimeoutError(
+        f"engine {cmd[0]} did not become ready within {startup_timeout}s{_output_tail(log)}"
+    )
 
 
 class _SubprocessHandle:
@@ -161,6 +275,10 @@ class _SubprocessHandle:
     def pid(self) -> int:
         return self._proc.pid
 
+    @property
+    def exit_code(self) -> int | None:
+        return self._proc.poll()
+
     async def health(self) -> bool:
         return await _health_ok(self._base_url, self._health_path)
 
@@ -182,6 +300,82 @@ class _SubprocessHandle:
 
 # ── llama.cpp (managed, proven) ─────────────────────────────────────────
 
+#: llama-server launch settings a registration may set in its ``params`` (camelCase, like the
+#: rest of the registration payload) → the flag each becomes. ``ctxSize`` is the context
+#: llama-server allocates in total, shared by its ``parallel`` slots.
+LLAMACPP_LAUNCH_FLAGS: dict[str, str] = {
+    "ctxSize": "-c",
+    "parallel": "-np",
+    "batchSize": "-b",
+    "ubatchSize": "-ub",
+}
+#: Registration params that configure the engine process rather than a request — the gateway
+#: never forwards them as generation params.
+LAUNCH_PARAMS: frozenset[str] = frozenset({"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS})
+#: The modalities llama-server itself serves; the launch settings apply to these only.
+_LLAMA_SERVER_MODALITIES = ("chat", "vision", "embeddings")
+
+#: A chat model's context when its registration sets none: the model's trained context, capped.
+#: Left to itself llama-server sizes a KV cache for the full trained context in each of several
+#: slots — 231,936 tokens for gpt-oss-20b — which exhausts a 24 GB Mac's GPU memory.
+DEFAULT_CHAT_CONTEXT = 32768
+#: An embedding model's context when neither the registration nor the GGUF says; and the cap.
+DEFAULT_EMBEDDINGS_CONTEXT = 2048
+MAX_EMBEDDINGS_CONTEXT = 8192
+
+
+def launch_params_defect(binding: object) -> str | None:
+    """Why a registration's launch settings cannot be applied, or ``None``. Checked at
+    registration, so a typo or a setting for the wrong engine fails loudly instead of being
+    ignored at every launch."""
+    params = getattr(binding, "params", {}) or {}
+    present = [k for k in LLAMACPP_LAUNCH_FLAGS if k in params]
+    if not present:
+        return None
+    engine = getattr(binding, "binding", None)
+    modality = getattr(binding, "modality", None)
+    if engine != "llamacpp" or modality not in _LLAMA_SERVER_MODALITIES:
+        return (
+            f"launch settings {present} apply to llamacpp chat, vision and embeddings "
+            f"bindings only (this is {engine} {modality})"
+        )
+    for key in present:
+        value = params[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return f"launch setting {key!r} must be a positive integer, got {value!r}"
+    return None
+
+
+def _trained_context(binding: ManagedBinding) -> int | None:
+    """The trained context from the weights' own header, when the binding names a local file."""
+    if binding.source != "local-path" or not os.path.isfile(binding.model):
+        return None
+    return read_gguf_context_length(binding.model)
+
+
+def llamacpp_launch_settings(binding: ManagedBinding) -> dict[str, int]:
+    """The launch settings llama-server gets: the registration's own, over safe defaults.
+
+    Chat and vision get one slot with the model's trained context capped at
+    ``DEFAULT_CHAT_CONTEXT``. Embeddings get one slot and a batch as large as the context:
+    llama-server must fit a whole input in one physical batch (512 tokens by default), so any
+    longer chunk was rejected though the model's context had room for it."""
+    if defect := launch_params_defect(binding):
+        # Registration refuses these; a registration that arrived another way (an import)
+        # fails here with the same reason rather than with a bare conversion error.
+        raise RuntimeError(defect)
+    explicit = {k: int(binding.params[k]) for k in LLAMACPP_LAUNCH_FLAGS if k in binding.params}
+    trained = _trained_context(binding)
+    if binding.modality == "embeddings":
+        ctx = explicit.get("ctxSize") or min(
+            trained or DEFAULT_EMBEDDINGS_CONTEXT, MAX_EMBEDDINGS_CONTEXT
+        )
+        defaults = {"ctxSize": ctx, "parallel": 1, "batchSize": ctx, "ubatchSize": ctx}
+    else:
+        ctx = min(trained, DEFAULT_CHAT_CONTEXT) if trained else DEFAULT_CHAT_CONTEXT
+        defaults = {"ctxSize": ctx, "parallel": 1}
+    return {**defaults, **explicit}
+
 
 def locate_llama_mmproj(binding: ManagedBinding) -> str | None:
     """The multimodal projector file for a llama.cpp vision binding, if one sits with the weights.
@@ -201,6 +395,47 @@ def locate_llama_mmproj(binding: ManagedBinding) -> str | None:
     return sorted(hits)[0] if hits else None
 
 
+async def fetch_llamacpp_props(root_url: str, api_key: str | None = None) -> dict | None:
+    """llama-server's ``/props`` (context size, chat template), or ``None`` when the server at
+    ``root_url`` does not answer it as llama-server does — the way to tell a llama.cpp server
+    from any other OpenAI-compatible one without a completion."""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{root_url.rstrip('/')}/props", headers=headers)
+        props = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(props, dict) or not isinstance(
+        props.get("default_generation_settings"), dict
+    ):
+        return None
+    return props
+
+
+def llamacpp_capabilities(props: dict, modality: str, *, approximate: bool = False) -> Capabilities:
+    """Capabilities from llama-server's ``/props``: the real context size, and reasoning from
+    the chat template; tool-calling and structured output are model-dependent, advertised
+    conservatively (real probe TBD)."""
+    max_context = props.get("default_generation_settings", {}).get("n_ctx")
+    reasoning = _template_implies_reasoning(props.get("chat_template"))
+    if modality == "embeddings":
+        # An embeddings server (llama-server --embeddings) serves /v1/embeddings only — it
+        # declares the embeddings modality EXPLICITLY (derivation leaves an explicit list
+        # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
+        return Capabilities(modalities=["embeddings"], max_context=max_context, approximate=True)
+    # A vision server (llama-server + a multimodal projector) accepts image_url content on
+    # /v1/chat/completions. vision=True → derived modalities ["chat", "vision"].
+    return Capabilities(
+        tool_calling=True,
+        structured_output=True,
+        vision=modality == "vision",
+        reasoning=reasoning,
+        max_context=max_context,
+        approximate=approximate,
+    )
+
+
 class LlamaCppHandle(_SubprocessHandle):
     def __init__(
         self, proc: subprocess.Popen[bytes], base_url: str, *, modality: str = "chat"
@@ -209,46 +444,23 @@ class LlamaCppHandle(_SubprocessHandle):
         self._modality = modality
 
     async def capabilities(self) -> Capabilities:
-        # llama-server exposes context size + the chat template via /props; tool-calling and
-        # structured output are model-dependent, advertised conservatively (real probe TBD).
-        max_context: int | None = None
-        reasoning = False
-        with contextlib.suppress(httpx.HTTPError, KeyError, ValueError):
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                props = (await client.get(f"{self._base_url}/props")).json()
-                max_context = props.get("default_generation_settings", {}).get("n_ctx")
-                reasoning = _template_implies_reasoning(props.get("chat_template"))
-        if self._modality == "embeddings":
-            # An embeddings server (llama-server --embeddings) serves /v1/embeddings only — it
-            # declares the embeddings modality EXPLICITLY (derivation leaves an explicit list
-            # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
-            return Capabilities(
-                modalities=["embeddings"], max_context=max_context, approximate=True
-            )
-        if self._modality == "vision":
-            # A vision server (llama-server + a multimodal projector) accepts image_url content on
-            # /v1/chat/completions. vision=True → derived modalities ["chat", "vision"].
-            return Capabilities(
-                tool_calling=True,
-                structured_output=True,
-                vision=True,
-                reasoning=reasoning,
-                max_context=max_context,
-            )
-        return Capabilities(
-            tool_calling=True,
-            structured_output=True,
-            vision=False,
-            reasoning=reasoning,
-            max_context=max_context,
+        return llamacpp_capabilities(
+            await fetch_llamacpp_props(self._base_url) or {}, self._modality
         )
 
 
 class LlamaCppLauncher:
     """Spawns ``llama-server`` for the bound model and waits until it is ready."""
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 120.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._binary: str | None = resolve_llama_server_binary(binary_path)
             self._reason: str | None = None
@@ -292,6 +504,8 @@ class LlamaCppLauncher:
             # embedded one, so a projector-less repo degrades to a clear error, not a silent run.
             mmproj = binding.params.get("mmproj") or locate_llama_mmproj(binding)
             cmd += ["--mmproj", mmproj] if mmproj else ["--mmproj-auto"]
+        for key, value in llamacpp_launch_settings(binding).items():
+            cmd += [LLAMACPP_LAUNCH_FLAGS[key], str(value)]
         return cmd
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
@@ -300,7 +514,10 @@ class LlamaCppLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return LlamaCppHandle(proc, base_url, modality=binding.modality)
 
@@ -364,8 +581,15 @@ class WhisperCppLauncher:
 
     ENV_VAR = "THEYGENT_WHISPERCPP_BIN"
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 120.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._command: list[str] | None = resolve_engine_command(
                 exe_name="whisper-server",
@@ -419,7 +643,10 @@ class WhisperCppLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return WhisperCppHandle(proc, base_url)
 
@@ -448,8 +675,15 @@ class MlxAudioLauncher:
 
     ENV_VAR = "THEYGENT_MLX_AUDIO_BIN"
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 120.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 120.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._command: list[str] | None = resolve_engine_command(
                 exe_name="mlx_audio.server",
@@ -497,6 +731,7 @@ class MlxAudioLauncher:
             self._build_command(binding, port),
             base_url,
             startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
             health_path="/v1/models",
         )
         return MlxAudioHandle(proc, base_url)
@@ -631,8 +866,15 @@ class MlxLauncher:
 
     ENV_VAR = "THEYGENT_MLX_BIN"
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 180.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 180.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._command: list[str] | None = resolve_engine_command(
                 exe_name="mlx_lm.server",
@@ -680,7 +922,10 @@ class MlxLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return MlxHandle(proc, base_url, model=binding.model, source=binding.source)
 
@@ -725,8 +970,15 @@ class MlxVlmLauncher:
 
     ENV_VAR = "THEYGENT_MLX_VLM_BIN"
 
-    def __init__(self, binary_path: str | None = None, *, startup_timeout: float = 180.0) -> None:
+    def __init__(
+        self,
+        binary_path: str | None = None,
+        *,
+        startup_timeout: float = 180.0,
+        logs: EngineLogs | None = None,
+    ) -> None:
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         try:
             self._command: list[str] | None = resolve_engine_command(
                 exe_name="mlx_vlm.server",
@@ -774,7 +1026,10 @@ class MlxVlmLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return MlxVlmHandle(proc, base_url, model=binding.model, source=binding.source)
 
@@ -860,9 +1115,12 @@ class ImageServerLauncher:
         "mflux": "install mflux (e.g. `uv tool install mflux`) so `mflux-generate` is on PATH",
     }
 
-    def __init__(self, cli_engine: str, *, startup_timeout: float = 60.0) -> None:
+    def __init__(
+        self, cli_engine: str, *, startup_timeout: float = 60.0, logs: EngineLogs | None = None
+    ) -> None:
         self._engine = cli_engine
         self._startup_timeout = startup_timeout
+        self._logs = logs or EngineLogs(None)
         env = os.environ.get(self._ENV_VARS[cli_engine])
         self._binary: str | None = env or shutil.which(self._EXE[cli_engine])
         self._reason: str | None = (
@@ -909,7 +1167,10 @@ class ImageServerLauncher:
         port = _free_port()
         base_url = f"http://127.0.0.1:{port}"
         proc = await _spawn_openai_server(
-            self._build_command(binding, port), base_url, startup_timeout=self._startup_timeout
+            self._build_command(binding, port),
+            base_url,
+            startup_timeout=self._startup_timeout,
+            log=self._logs.open(binding),
         )
         return ImageServerHandle(proc, base_url)
 

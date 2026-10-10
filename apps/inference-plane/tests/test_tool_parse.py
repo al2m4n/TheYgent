@@ -210,6 +210,7 @@ async def test_stream_bare_json_that_is_not_offered_passes_through() -> None:
 
 class _FakeHandle:
     base_url = "http://127.0.0.1:9"
+    exit_code = None
 
     async def terminate(self) -> None:  # pragma: no cover - never called here
         ...

@@ -7,9 +7,11 @@ Each chunk records its heading path ("Install > macOS"); the *embedded* text is 
 heading-path-prefixed chunk (cheap context that measurably lifts retrieval), while the stored
 ``text`` stays the raw chunk the user reads in results.
 
-Token counts are estimated at ~4 chars/token. Retrieval budgets don't need exact tokenizer
-parity with the embedding model — they need a stable, model-agnostic ceiling comfortably under
-every candidate model's context window.
+Token counts are estimated, never tokenized: ~4 chars/token for prose, and at least one token
+per word and per punctuation mark — an embedding tokenizer spends a token on nearly every mark,
+so a dotted table of contents or a config listing holds several times more tokens than its
+length / 4. Retrieval budgets don't need exact tokenizer parity with the embedding model — they
+need a stable, model-agnostic ceiling comfortably under every candidate model's limits.
 """
 
 from __future__ import annotations
@@ -38,8 +40,12 @@ class Chunk:
     position: int
 
 
+#: One match per word (letters/digits) and per punctuation mark — the floor of a token count.
+_TOKENISH = re.compile(r"[^\W_]+|[^\w\s]|_")
+
+
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    return max(1, len(text) // 4, len(_TOKENISH.findall(text)))
 
 
 def embedding_text(chunk: Chunk) -> str:
@@ -105,9 +111,11 @@ def _split_blocks(markdown: str) -> list[_Block]:
 def _split_oversized(text: str, max_tokens: int, overlap_tokens: int) -> list[str]:
     """Blind-split one block that alone exceeds the budget: sentence-ish boundaries first,
     hard cuts as the last resort, with a tail overlap so a fact straddling the cut survives
-    in at least one piece."""
-    max_chars = max_tokens * 4
-    overlap_chars = overlap_tokens * 4
+    in at least one piece. Pieces are cut by characters at the block's own chars-per-token
+    density, so symbol-dense text gets proportionally shorter pieces."""
+    chars_per_token = min(4.0, len(text) / estimate_tokens(text))
+    max_chars = max(1, int(max_tokens * chars_per_token))
+    overlap_chars = int(overlap_tokens * chars_per_token)
     sentences = re.split(r"(?<=[.!?])\s+|\n", text)
     pieces: list[str] = []
     current = ""

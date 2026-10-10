@@ -32,10 +32,33 @@ _CHUNKS = ["hello", " world"]
 FAKE_EMBEDDING = [0.1, 0.2, 0.3]
 FAKE_TRANSCRIPT = "the quick brown fox"
 FAKE_AUDIO = b"ID3fake-audio-bytes"
+FAKE_IMAGE_B64 = "iVBORw0KGgo="  # the PNG signature, base64
 
-# A non-stream completion that never finishes on its own, like an engine still chewing on an
-# oversized prompt: only the caller closing the connection ends it (or the safety cap below,
-# which keeps a broken test from wedging the server).
+# A gpt-oss reply in its harmony format, as mlx_lm.server returns it (verbatim, unparsed):
+# reasoning on the analysis channel, then a call to the offered function. Sent back when the
+# last message is HARMONY_TOOL_TURN; HARMONY_ANSWER_TURN gets reasoning and a final answer.
+HARMONY_TOOL_TURN = "__harmony_tool_turn__"
+HARMONY_ANSWER_TURN = "__harmony_answer_turn__"
+HARMONY_TOOL_REPLY = (
+    "<|channel|>analysis<|message|>We need to search RFC 3261 for Timer B. Use function.<|end|>"
+    "<|start|>assistant<|channel|>commentary to=functions.rfc3261_search <|constrain|>json"
+    '<|message|>{"query":"Timer B INVITE client transaction RFC 3261"}'
+)
+HARMONY_ANSWER_REPLY = (
+    "<|channel|>analysis<|message|>Timer B is 64*T1.<|end|>"
+    "<|start|>assistant<|channel|>final<|message|>Timer B is 32 seconds by default."
+)
+
+# Sent as the chat message: the engine answers the way a llama-server with a failed GPU backend
+# does (COMPUTE_ERROR), or with an ordinary per-request server error (SERVER_ERROR).
+COMPUTE_ERROR = "__compute_error__"
+COMPUTE_ERROR_MID_STREAM = "__compute_error_mid_stream__"
+SERVER_ERROR = "__server_error__"
+
+# A non-streaming call that never finishes on its own, like an engine still chewing on an
+# oversized prompt or a minutes-long render: only the caller closing the connection ends it (or
+# the safety cap below, which keeps a broken test from wedging the server). Sent as the chat
+# message, the embeddings / speech input, the image prompt, or the transcribed file's bytes.
 HOLD_UNTIL_DISCONNECT = "__hold_until_disconnect__"
 _HOLD_CAP_SEC = 30.0
 
@@ -44,9 +67,10 @@ _HOLD_CAP_SEC = 30.0
 class _Captured:
     """What the upstream actually received. ``authorization`` lets a test prove the credential
     resolved locally and reached only this user-configured endpoint; the events are set from
-    the server thread when a held completion arrives / its caller hangs up on it."""
+    the server thread when a held call arrives / its caller hangs up on it."""
 
     authorization: str | None = None
+    chat_body: dict | None = None
     hold_started: threading.Event = field(default_factory=threading.Event)
     hold_abandoned: threading.Event = field(default_factory=threading.Event)
 
@@ -55,18 +79,39 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
     app = FastAPI()
     captured = _Captured()
 
+    async def hold_until_caller_hangs_up(request: Request) -> Response | None:
+        """Hold a call open until its caller disconnects; ``None`` if the cap passes first."""
+        captured.hold_started.set()
+
+        async def caller_hung_up() -> None:
+            # The body is fully read, so the next ASGI message is the disconnect.
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        try:
+            await asyncio.wait_for(caller_hung_up(), timeout=_HOLD_CAP_SEC)
+        except TimeoutError:
+            return None  # never cancelled: answer normally; the test asserting the hang-up fails
+        captured.hold_abandoned.set()
+        return Response(status_code=499)
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
     @app.get("/props")
-    async def props() -> dict[str, object]:
-        return {"default_generation_settings": {"n_ctx": 4096}}
+    async def props(request: Request) -> dict[str, object]:
+        captured.authorization = request.headers.get("authorization")
+        return {
+            "default_generation_settings": {"n_ctx": 4096},
+            "chat_template": "{%- if tools %}{{ tools | tojson }}{%- endif %}<think>",
+        }
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         captured.authorization = request.headers.get("authorization")
         body = await request.json()
+        captured.chat_body = body
         model = body.get("model", "fake")
         last_content = (body.get("messages") or [{}])[-1].get("content")
         # A provider that rejects the request outright (e.g. an unsupported generation
@@ -81,27 +126,81 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
                 },
                 status_code=400,
             )
+        # What llama-server answers once its GPU backend has failed (Metal out of memory): every
+        # request, small or large, until the process is replaced.
+        if last_content == COMPUTE_ERROR:
+            return JSONResponse(
+                {"error": {"code": 500, "message": "Compute error.", "type": "server_error"}},
+                status_code=500,
+            )
+        if last_content == SERVER_ERROR:
+            return JSONResponse(
+                {
+                    "error": {
+                        "code": 500,
+                        "message": "template rendering failed",
+                        "type": "server_error",
+                    }
+                },
+                status_code=500,
+            )
         if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
-            captured.hold_started.set()
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
+        harmony = {HARMONY_TOOL_TURN: HARMONY_TOOL_REPLY, HARMONY_ANSWER_TURN: HARMONY_ANSWER_REPLY}
+        reply_text = harmony.get(last_content) if isinstance(last_content, str) else None
+        if reply_text is not None and body.get("stream"):
 
-            async def caller_hung_up() -> None:
-                # The body is fully read, so the next ASGI message is the disconnect.
-                while (await request.receive())["type"] != "http.disconnect":
-                    pass
+            async def harmony_stream():
+                # Seven-character pieces, so special tokens arrive split across chunks.
+                for i in range(0, len(reply_text), 7):
+                    delta = {"content": reply_text[i : i + 7]}
+                    chunk = {
+                        "id": "chatcmpl-fake",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": model,
+                        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                    }
+                    yield f"data: {_dumps(chunk)}\n\n"
+                final = {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {_dumps(final)}\n\n"
+                yield "data: [DONE]\n\n"
 
-            try:
-                await asyncio.wait_for(caller_hung_up(), timeout=_HOLD_CAP_SEC)
-            except TimeoutError:
-                pass  # never cancelled: answer normally; the test asserting the hang-up fails
-            else:
-                captured.hold_abandoned.set()
-                return Response(status_code=499)
+            return StreamingResponse(harmony_stream(), media_type="text/event-stream")
+        if reply_text is not None:
+            return JSONResponse(
+                {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": reply_text},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
         if body.get("stream"):
             # A stream that fails AFTER chunks started flowing — by then the 200 is
             # committed on every hop. Real engines report this as an in-band SSE error
             # frame (e.g. a context overflow mid-generation), which the dispatch layer
             # re-raises mid-iteration.
-            if last_content == "__abort_mid_stream__":
+            if last_content in ("__abort_mid_stream__", COMPUTE_ERROR_MID_STREAM):
+                reason = (
+                    "Compute error."
+                    if last_content == COMPUTE_ERROR_MID_STREAM
+                    else "engine died mid-generation"
+                )
 
                 async def broken():
                     chunk = {
@@ -118,7 +217,7 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
                         ],
                     }
                     yield f"data: {_dumps(chunk)}\n\n"
-                    err = {"error": {"message": "engine died mid-generation"}}
+                    err = {"error": {"message": reason}}
                     yield f"data: {_dumps(err)}\n\n"
 
                 return StreamingResponse(broken(), media_type="text/event-stream")
@@ -173,6 +272,9 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
         inputs = body.get("input")
         if inputs == "__force_upstream_404__":
             return JSONResponse({"error": {"message": "Not Found"}}, status_code=404)
+        if inputs == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         items = inputs if isinstance(inputs, list) else [inputs]
         return JSONResponse(
             {
@@ -190,14 +292,30 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
     async def transcriptions(request: Request):
         captured.authorization = request.headers.get("authorization")
         # Consume the multipart body so the request completes; the transcript is deterministic.
-        await request.form()
+        upload = (await request.form()).get("file")
+        audio = b"" if upload is None or isinstance(upload, str) else await upload.read()
+        if audio == HOLD_UNTIL_DISCONNECT.encode():
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         return JSONResponse({"text": FAKE_TRANSCRIPT})
 
     @app.post("/v1/audio/speech")
     async def speech(request: Request):
         captured.authorization = request.headers.get("authorization")
-        await request.json()
+        body = await request.json()
+        if body.get("input") == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
         return Response(content=FAKE_AUDIO, media_type="audio/mpeg")
+
+    @app.post("/v1/images/generations")
+    async def images(request: Request):
+        captured.authorization = request.headers.get("authorization")
+        body = await request.json()
+        if body.get("prompt") == HOLD_UNTIL_DISCONNECT:
+            if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
+                return abandoned
+        return JSONResponse({"created": 0, "data": [{"b64_json": FAKE_IMAGE_B64}]})
 
     return app, captured
 
@@ -249,6 +367,12 @@ class FakeUpstreamHandle:
         self._port = self._server.start()
         self._advertised = advertised
         self.terminated = False
+        #: Set by a test to stand for an engine process that has exited with this code.
+        self.exited_with: int | None = None
+
+    @property
+    def exit_code(self) -> int | None:
+        return self.exited_with
 
     @property
     def base_url(self) -> str:
@@ -264,13 +388,18 @@ class FakeUpstreamHandle:
         return self._captured.authorization
 
     @property
+    def last_chat_body(self) -> dict | None:
+        """The JSON body this upstream's chat endpoint last received (None if none)."""
+        return self._captured.chat_body
+
+    @property
     def hold_started(self) -> threading.Event:
-        """Set once a HOLD_UNTIL_DISCONNECT completion reaches this upstream."""
+        """Set once a HOLD_UNTIL_DISCONNECT call reaches this upstream."""
         return self._captured.hold_started
 
     @property
     def hold_abandoned(self) -> threading.Event:
-        """Set once the caller closed the connection on a held completion."""
+        """Set once the caller closed the connection on a held call."""
         return self._captured.hold_abandoned
 
     async def health(self) -> bool:

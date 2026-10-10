@@ -10,9 +10,11 @@ the gateway proxies them directly.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from theygent_ir import Capabilities, ManagedBinding
@@ -39,6 +41,11 @@ class NoCapacityError(RuntimeError):
     """No room for a new engine and nothing was evictable (all in-flight)."""
 
 
+class EngineFailedError(RuntimeError):
+    """The model's engine failed and still has requests in flight; a replacement launches
+    once they end. Retryable — the caller is told to retry, not that the model is broken."""
+
+
 @dataclass
 class Upstream:
     """Where the gateway sends an OpenAI-compatible request."""
@@ -53,6 +60,11 @@ class Upstream:
     # *behaviour*, set by the manager from the binding — it carries no engine NAME onto
     # `/v1/*` (the logical-id rule holds).
     needs_tool_parse: bool = False
+    # A local engine renders its chat template itself, and templates that honour a reasoning
+    # effort (gpt-oss) read it as the template variable ``reasoning_effort`` — the top-level
+    # OpenAI field alone never reaches them. Set for managed chat engines; a reachable upstream
+    # (often a hosted API that rejects unknown fields) gets the OpenAI field only.
+    effort_in_template: bool = False
 
 
 @dataclass
@@ -67,6 +79,9 @@ class _Resident:
     inflight: int = 0
     draining: bool = False
     terminated: bool = False
+    #: The engine reported itself unusable (or its process died): never handed out again,
+    #: torn down once idle, replaced by a fresh launch.
+    failed: bool = False
 
 
 class EngineManager:
@@ -89,6 +104,8 @@ class EngineManager:
         self._resident: dict[str, _Resident] = {}
         self._lock = asyncio.Lock()
         self._spawn_count = 0
+        # The last engine failure per logical id, until a replacement launches.
+        self._failures: dict[str, dict[str, Any]] = {}
 
     # ── public lifecycle ────────────────────────────────────────────────
 
@@ -103,6 +120,23 @@ class EngineManager:
             eng = self._resident.get(logical_id)
             if eng is None or eng.terminated:
                 return
+            if eng.inflight > 0:
+                eng.draining = True
+            else:
+                await self._terminate_locked(logical_id)
+
+    async def mark_failed(self, logical_id: str, reason: str) -> None:
+        """Record that the resident engine for ``logical_id`` is unusable — its backend is in
+        an error state that only a new process clears (a GPU error), though the process itself
+        still runs and answers health checks. The engine is never leased again: torn down now
+        if idle, else as soon as its in-flight requests end, and the next request launches a
+        replacement. A no-op when nothing is resident."""
+        async with self._lock:
+            self._failures[logical_id] = {"reason": reason, "at": time.time()}
+            eng = self._resident.get(logical_id)
+            if eng is None or eng.terminated:
+                return
+            eng.failed = True
             if eng.inflight > 0:
                 eng.draining = True
             else:
@@ -229,14 +263,22 @@ class EngineManager:
 
     def state(self, logical_id: str) -> dict[str, Any]:
         eng = self._resident.get(logical_id)
+        view: dict[str, Any]
         if eng is None or eng.terminated:
-            return {"resident": False, "inflight": 0, "draining": False}
-        return {
-            "resident": True,
-            "inflight": eng.inflight,
-            "draining": eng.draining,
-            "baseUrl": eng.handle.base_url,
-        }
+            view = {"resident": False, "inflight": 0, "draining": False}
+        else:
+            view = {
+                "resident": True,
+                "inflight": eng.inflight,
+                "draining": eng.draining,
+                "baseUrl": eng.handle.base_url,
+            }
+        if (failure := self._failures.get(logical_id)) is not None:
+            view["lastFailure"] = {
+                "reason": failure["reason"],
+                "at": datetime.fromtimestamp(failure["at"], UTC).isoformat(),
+            }
+        return view
 
     @property
     def spawn_count(self) -> int:
@@ -293,12 +335,28 @@ class EngineManager:
             raise NotManagedError(logical_id)
         eng = self._resident.get(logical_id)
         if eng is not None and not eng.terminated:
-            eng.draining = False  # wanted again — cancel any pending drain
-            eng.last_used = self._clock.now()
-            return eng
+            exit_code = eng.handle.exit_code
+            if exit_code is not None and not eng.failed:
+                # The process died under us (a crash, an OOM kill): its port answers nothing.
+                eng.failed = True
+                self._failures[logical_id] = {
+                    "reason": f"the engine process exited (code {exit_code})",
+                    "at": time.time(),
+                }
+            if not eng.failed:
+                eng.draining = False  # wanted again — cancel any pending drain
+                eng.last_used = self._clock.now()
+                return eng
+            if eng.inflight > 0:
+                eng.draining = True
+                raise EngineFailedError(
+                    f"the engine for {logical_id!r} failed and is shutting down; retry shortly"
+                )
+            await self._terminate_locked(logical_id)
         await self._make_room_locked(binding, logical_id)
         handle = await self._launcher.launch(binding)
         self._spawn_count += 1
+        self._failures.pop(logical_id, None)
         eng = _Resident(
             logical_id=logical_id,
             handle=handle,
@@ -355,4 +413,5 @@ class EngineManager:
             model=eng.binding.model,
             api_key="sk-noauth",
             needs_tool_parse=needs_tool_parse,
+            effort_in_template=eng.binding.modality in ("chat", "vision"),
         )
