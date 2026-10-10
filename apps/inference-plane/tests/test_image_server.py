@@ -201,16 +201,35 @@ def _handler(connection: socket.socket) -> image_server._Handler:
     return handler
 
 
+class _StartedRenders(image_server._Renders):
+    """Hands a render back only once the fake CLI has logged its start.
+
+    The wall-clock cap runs from the moment ``spawn`` returns, and on a loaded machine merely
+    starting the CLI can outlast a short test cap — it would be killed before logging its pid.
+    Waiting here makes the cap time a render that is running, not one still starting. If the CLI
+    never logs, the render is handed back anyway so the wrapper's own cleanup still kills it."""
+
+    def __init__(self, log: Path) -> None:
+        super().__init__()
+        self._log = log
+
+    def spawn(self, cmd: list[str]) -> subprocess.Popen[bytes]:
+        proc = super().spawn(cmd)
+        _eventually(lambda: bool(_renders(self._log)))
+        return proc
+
+
 # Watching the caller replaces a blocking wait on the CLI, so the wall-clock cap is enforced by
 # the same loop — a stuck render still fails as a clean error and its CLI is killed.
 def test_a_stuck_render_still_times_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(image_server, "_GENERATION_TIMEOUT_SEC", 0.5)
     cli, log = _fake_cli(tmp_path)
+    monkeypatch.setattr(image_server, "_RENDERS", _StartedRenders(log))
+    monkeypatch.setattr(image_server, "_GENERATION_TIMEOUT_SEC", 0.5)
     ours, theirs = socket.socketpair()
     with ours, theirs:
         with pytest.raises(image_server._GenerationError, match="timed out"):
             _handler(ours)._render([str(cli), "-p", "slow", "-o", str(tmp_path / "out.png")])
-    pid = int(log.read_text().split(" ", 1)[0])
+    [(pid, _)] = _renders(log)
     assert not _alive(pid)
 
 
