@@ -28,6 +28,22 @@ Under the `llamacpp` binding, TheYgent covers several modalities by spawning the
 - **Speech-to-text** — served by **whisper.cpp**'s `whisper-server`, registered under `binding: llamacpp` with `modality: audio.transcription`. With `ffmpeg` installed it also transcodes browser microphone recordings (webm/opus); without it, only WAV works. Whisper needs its own native `ggml-*.bin` weights — a chat-style GGUF won't work, and an ambiguous weights path raises a clear error telling you which file to point at.
 - **Image generation** — a bundled wrapper around stable-diffusion.cpp's `sd-cli` (see the note under [Installing the engine binaries](#installing-the-engine-binaries)).
 
+### llama.cpp launch settings
+
+A llama.cpp chat, vision, or embeddings model starts with settings sized to fit a laptop rather than the model's maximum:
+
+| Setting (`params` key) | `llama-server` flag | Default |
+|---|---|---|
+| `ctxSize` | `-c` | Chat and vision: the model's trained context, capped at 32,768 tokens. Embeddings: the trained context, capped at 8,192 (2,048 when the file doesn't say). |
+| `parallel` | `-np` | `1` — one request at a time, so the whole context serves it. |
+| `batchSize` | `-b` | Embeddings: the context size. Otherwise llama-server's own default. |
+| `ubatchSize` | `-ub` | Embeddings: the context size, so any input that fits the context fits one batch. Otherwise llama-server's own default. |
+
+Set any of them in the model's registration `params` to override, for example `"params": {"ctxSize": 65536}` for a longer context, or `{"parallel": 4, "ctxSize": 65536}` to serve four requests at once (the context is shared by the slots). They configure the engine when it starts — they are never sent with a request — and a value that isn't a positive integer, or one set on a non-llama.cpp model, is refused when you register it. The context a running model actually has shows as **max context** in its capabilities.
+
+!!! tip "Out of GPU memory"
+    If a large model fails with `Compute error` or runs out of GPU memory, lower its `ctxSize`: the context's cache is allocated up front, on top of the weights.
+
 ## MLX
 
 **MLX** is Apple's array framework, and TheYgent's MLX engines run **only on Apple Silicon** (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.
@@ -81,6 +97,10 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 **Manual control.** From a model's row in [Registries](index.md), **Warm** preloads an engine (so the next call skips the cold start) and **Evict** frees it now. Both are safe no-ops for reachable endpoints and models that aren't loaded.
 
 **Missing binaries fail cleanly.** If a model's engine binary isn't installed on the machine, the call returns `engine_unavailable` — a clear, up-front error — never a mysterious crash on first inference.
+
+**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
+
+**Engine logs.** Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (`~/.theygent/inference/logs/` by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the **Logs** button on the model's row, or with `GET /admin/models/{id}/logs`.
 
 ```mermaid
 stateDiagram-v2

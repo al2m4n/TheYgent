@@ -32,6 +32,10 @@ class _NoopHandle:
     def base_url(self) -> str:
         return "http://127.0.0.1:0"
 
+    @property
+    def exit_code(self) -> int | None:
+        return None
+
     async def health(self) -> bool:
         return True
 

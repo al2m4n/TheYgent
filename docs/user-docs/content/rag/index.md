@@ -40,11 +40,11 @@ A **crawl** source ingests a website — point it at a docs root and TheYgent wa
 
 | Field | What it does |
 |---|---|
-| **Root URL** | Where the crawl starts. The crawl stays on the same origin **and under the root's path** — pointing at `https://example.com/docs` never wanders into the rest of the site. |
-| **Max pages** | The crawl budget (default 200). The crawl stops when it runs out, whatever is left. |
+| **Root URL** | Where the crawl starts. The crawl stays on the same origin **and under the root's path** — pointing at `https://example.com/docs` never wanders into the rest of the site. A root that names a page (`…/guide/intro.html`) covers its folder (`…/guide/`). If the root itself redirects (to `https://`, or from `example.com` to `www.example.com`), the crawl follows the site to its new address. |
+| **Max pages** | The crawl budget (default 200): the exact number of pages ingested at most. The crawl stops when it runs out, whatever is left. With `1`, only the root page is ingested. |
 | **Render JavaScript** | Off by default. Turn it on for script-rendered sites; it uses a headless browser, which needs a one-time `playwright install chromium` on the machine running the control plane. Most docs sites don't need it. |
 
-The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Click **Crawl** to start (creating the source starts the first crawl automatically) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
+The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Only HTML pages are ingested: images and other files are skipped, a link that redirects outside the crawl's scope is dropped, and directory-listing sort links (`?C=N;O=D`) are not followed. Several crawls can run at once without mixing their pages. Click **Crawl** to start (creating the source in the UI starts the first crawl automatically; over the API, call [`POST /rag/sources/{id}:ingest`](../reference/api.md) after creating it) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
 
 ## Watching an ingest
 
@@ -55,6 +55,9 @@ Statuses are honest:
 - **ready** — the source has searchable content. If a few pages failed along the way, the source is still `ready` and the error note says what went wrong.
 - **failed** — nothing usable was ingested (site unreachable, embedding model down, …), or a restart interrupted the job.
 - A failed re-ingest **never destroys what you already had**: new content replaces old only after it has embedded successfully, so a transient outage leaves the previous content serving.
+- The error note always describes the **latest** ingest: once a later ingest succeeds, an earlier failure is cleared.
+
+Text is cut into chunks of about 450 tokens (the `rag.chunk_max_tokens` setting). Symbol-heavy text — tables of contents, config listings, code — is budgeted by its words and punctuation, so it gets shorter chunks. If the embedding server still rejects a chunk as too large for it, only that chunk is split until it fits; the rest of the document is unaffected.
 
 Expand a source row (click its name) to see every document with its status, chunk count, and any per-document error.
 
@@ -63,7 +66,7 @@ Expand a source row (click its name) to see every document with its status, chun
 Every source row has a **Query** button — an inline search box that runs *exactly* the retrieval a rag node would run, so you can check what an agent would see before wiring anything:
 
 - Each match shows its score, the document it came from, its heading path (e.g. `Install > macOS`), and the passage text.
-- **sim** is the semantic (cosine) similarity when the vector leg matched. Search is **hybrid**: meaning-based similarity is fused with keyword full-text search, so paraphrases *and* exact identifiers both rank.
+- **sim** is the semantic (cosine) similarity when the vector leg matched. Search is **hybrid**: meaning-based similarity is fused with keyword full-text search, so paraphrases *and* exact identifiers both rank. The keyword half prefers passages containing every word of the query; when none does (a word that only appears in a heading, say), it ranks passages by how many of the words they contain.
 
 If the results look wrong, that's a signal to fix the source (crawl scope, missing documents) — not the agent.
 

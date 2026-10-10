@@ -18,6 +18,7 @@ import httpx
 import litellm
 
 from theygent_inference_plane import tool_parse
+from theygent_inference_plane.launcher import LAUNCH_PARAMS
 from theygent_inference_plane.manager import Upstream
 
 # OpenAI request fields that are routing/identity, not generation params.
@@ -35,12 +36,39 @@ def _to_dict(obj: Any) -> dict[str, Any]:
 
 
 def merge_params(binding_params: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
-    """Binding defaults first, then the request's generation fields override."""
-    merged: dict[str, Any] = {_PARAM_ALIASES.get(k, k): v for k, v in binding_params.items()}
+    """Binding defaults first, then the request's generation fields override. A binding's
+    launch settings (``LAUNCH_PARAMS``) configure the engine process and are never sent."""
+    merged: dict[str, Any] = {
+        _PARAM_ALIASES.get(k, k): v for k, v in binding_params.items() if k not in LAUNCH_PARAMS
+    }
     for key, value in request.items():
         if key not in _RESERVED:
             merged[key] = value
     return merged
+
+
+def _chat_params(upstream: Upstream, params: dict[str, Any]) -> dict[str, Any]:
+    """The params a chat dispatch sends, with ``reasoning_effort`` made deliverable.
+
+    The dispatch layer checks ``reasoning_effort`` against its own list of model names and
+    rejects it for any other — and a local engine's model is a file path or repo id, a hosted
+    one any name a provider chose. ``allowed_openai_params`` tells it to forward the field as
+    is; the upstream decides what it means. A managed engine also gets the effort as a chat
+    template variable (``Upstream.effort_in_template``), where an explicit
+    ``chat_template_kwargs.reasoning_effort`` from the caller wins."""
+    effort = params.get("reasoning_effort")
+    if effort is None:
+        return params
+    out = dict(params)
+    allowed = list(out.get("allowed_openai_params") or [])
+    out["allowed_openai_params"] = [*allowed, "reasoning_effort"]
+    if upstream.effort_in_template:
+        kwargs = out.get("chat_template_kwargs")
+        out["chat_template_kwargs"] = {
+            "reasoning_effort": effort,
+            **(kwargs if isinstance(kwargs, dict) else {}),
+        }
+    return out
 
 
 def _voice_hint(params: dict[str, Any]) -> str:
@@ -77,15 +105,15 @@ class Gateway:
             api_base=upstream.api_base,
             api_key=upstream.api_key,
             messages=messages,
-            **params,
+            **_chat_params(upstream, params),
         )
         result = _to_dict(resp)
-        # MLX-chat tool-call normalization: mlx_lm.server returns Llama's text tool
-        # call as content, not structured tool_calls — rewrite it so the (engine-agnostic) control
-        # plane sees the OpenAI shape. Gated to the MLX path + a tools-bearing request; a no-match
-        # leaves the response byte-identical (see tool_parse).
-        if upstream.needs_tool_parse and tool_parse.has_tools(params):
-            return tool_parse.normalize_completion_dict(
+        # MLX-chat normalization: mlx_lm.server passes a model's own text formats through as
+        # content — a harmony reply (gpt-oss reasoning, answer and tool calls) or Llama's text
+        # tool call — so rewrite them into the OpenAI shape the (engine-agnostic) control plane
+        # reads. Gated to the MLX path; a reply in neither format is returned unchanged.
+        if upstream.needs_tool_parse:
+            return tool_parse.normalize_mlx_completion(
                 result, tool_parse.offered_tool_names(params)
             )
         return result
@@ -105,18 +133,18 @@ class Gateway:
             api_key=upstream.api_key,
             messages=messages,
             stream=True,
-            **params,
+            **_chat_params(upstream, params),
         )
         return self._sse_lines(resp, upstream, params)
 
     async def _sse_lines(
         self, resp: Any, upstream: Upstream, params: dict[str, Any]
     ) -> AsyncIterator[str]:
-        if upstream.needs_tool_parse and tool_parse.has_tools(params):
-            # Buffer + rewrite the MLX text tool call into synthetic structured tool_calls chunks;
-            # a normal answer still streams (the rewriter flushes once it can't be a tool call).
+        if upstream.needs_tool_parse:
+            # Rewrite a harmony reply or an MLX text tool call into OpenAI chunks; a normal
+            # answer still streams (the rewriters hold only what may still be one of those).
             names = tool_parse.offered_tool_names(params)
-            async for chunk in tool_parse.rewrite_mlx_tool_stream(resp, names, _to_dict):
+            async for chunk in tool_parse.normalize_mlx_stream(resp, names, _to_dict):
                 yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
             return

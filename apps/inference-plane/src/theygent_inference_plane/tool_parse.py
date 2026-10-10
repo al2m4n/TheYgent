@@ -11,6 +11,12 @@ split), so an MLX-backed agent's wired tool never executes — the raw ``<|pytho
 returned verbatim. This module is the gateway-level adapter that rewrites that text into structured
 ``tool_calls``, so the control plane stays untouched.
 
+gpt-oss replies in its own harmony format (reasoning, answer and tool calls as channels of one
+text), which ``mlx_lm.server`` also passes through verbatim; ``normalize_mlx_completion`` /
+``normalize_mlx_stream`` route such a reply through ``harmony`` — tools or not, since the
+reasoning must not reach the answer either way — and every other reply through the Llama-format
+rewrite below when tools were offered.
+
 REMOVABLE BY DESIGN. This is a named adapter
 gated to the MLX chat path (``Upstream.needs_tool_parse``); when a tool-aware MLX server ships
 (emitting native ``tool_calls``), flip the gate off for it and delete this module. It NEVER runs for
@@ -29,6 +35,8 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from typing import Any
+
+from theygent_inference_plane import harmony
 
 # Llama 3.x function-calling markers (the real shapes mlx_lm.server passes through as content).
 _PYTHON_TAG = "<|python_tag|>"
@@ -296,3 +304,152 @@ async def rewrite_mlx_tool_stream(
     else:
         for h in held:
             yield h
+
+
+# ── the MLX chat path: harmony replies, then Llama-format text calls ─────────
+
+
+def _harmony_tool_calls(calls: list[harmony.HarmonyCall]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": f"call_{i}",
+            "type": "function",
+            "function": {"name": c.name, "arguments": c.arguments},
+        }
+        for i, c in enumerate(calls)
+    ]
+
+
+def normalize_mlx_completion(resp: dict[str, Any], offered: set[str]) -> dict[str, Any]:
+    """Non-streaming MLX chat reply → the OpenAI shape. A harmony reply becomes
+    ``reasoning_content`` + ``content`` (+ ``tool_calls``); otherwise a Llama-format text call is
+    rewritten when tools were offered. Anything else is returned unchanged."""
+    choices = resp.get("choices") or []
+    message = (choices[0].get("message") or {}) if choices else {}
+    content = message.get("content")
+    if (
+        not isinstance(content, str)
+        or not harmony.is_harmony(content)
+        or _has_structured_tool_calls(message)
+    ):
+        return normalize_completion_dict(resp, offered) if offered else resp
+    reasoning, answer, calls = harmony.parse(content, offered)
+    message["content"] = answer or (None if calls else "")
+    if reasoning:
+        message["reasoning_content"] = reasoning
+    if calls:
+        message["tool_calls"] = _harmony_tool_calls(calls)
+        choices[0]["finish_reason"] = "tool_calls"
+    choices[0]["message"] = message
+    return resp
+
+
+async def _replay(held: list[Any], rest: AsyncIterator[Any]) -> AsyncIterator[Any]:
+    for item in held:
+        yield item
+    async for item in rest:
+        yield item
+
+
+def _delta_chunk(template: dict[str, Any], delta: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": template.get("id", "chatcmpl-mlx"),
+        "object": "chat.completion.chunk",
+        "created": template.get("created", 0),
+        "model": template.get("model", ""),
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+    }
+
+
+async def _rewrite_harmony_stream(
+    chunks: AsyncIterator[dict[str, Any]], offered: set[str]
+) -> AsyncIterator[dict[str, Any]]:
+    """Re-emit a harmony stream as OpenAI deltas: reasoning and answer text stream live as
+    ``reasoning_content`` / ``content``; tool calls are emitted whole once the reply ends,
+    followed by ``finish_reason: tool_calls``. Usage-only chunks pass through."""
+    parser = harmony.HarmonyStream(offered=offered)
+    template: dict[str, Any] | None = None
+    finish: dict[str, Any] | None = None
+    tail: list[dict[str, Any]] = []
+    first = True
+
+    def deltas(pieces: list[tuple[str, str]]) -> list[dict[str, Any]]:
+        nonlocal first
+        out = []
+        for kind, text in pieces:
+            delta: dict[str, Any] = {
+                "reasoning_content" if kind == "reasoning" else "content": text
+            }
+            if first:
+                delta["role"] = "assistant"
+                first = False
+            out.append(_delta_chunk(template or {}, delta))
+        return out
+
+    async for d in chunks:
+        if template is None:
+            template = d
+        choice = (d.get("choices") or [{}])[0]
+        piece = (choice.get("delta") or {}).get("content")
+        if isinstance(piece, str) and piece:
+            for out in deltas(parser.feed(piece)):
+                yield out
+        if choice.get("finish_reason"):
+            finish = d
+        elif d.get("usage") and not piece:
+            tail.append(d)
+    for out in deltas(parser.finish()):
+        yield out
+    if parser.calls and template is not None:
+        for synth in _synthetic_tool_call_chunks(template, _harmony_tool_calls(parser.calls)):
+            yield synth
+    elif finish is not None:
+        choice = dict((finish.get("choices") or [{}])[0])
+        choice["delta"] = {}
+        yield {**finish, "choices": [choice]}
+    for d in tail:
+        yield d
+
+
+async def normalize_mlx_stream(
+    chunks: AsyncIterator[Any], offered: set[str], to_dict: Any
+) -> AsyncIterator[dict[str, Any]]:
+    """Streaming MLX chat reply → OpenAI chunks. Holds the opening chunks only until the reply
+    shows whether it is harmony; a harmony reply is rewritten, any other goes to the Llama
+    text-call rewriter when tools were offered, or passes through unchanged."""
+    held: list[dict[str, Any]] = []
+    content = ""
+    decided: bool | None = None
+    stream = aiter(chunks)
+    async for chunk in stream:
+        d = to_dict(chunk)
+        held.append(d)
+        delta = ((d.get("choices") or [{}])[0].get("delta")) or {}
+        if delta.get("tool_calls"):
+            decided = False  # the engine structured the call itself
+            break
+        piece = delta.get("content")
+        if isinstance(piece, str):
+            content += piece
+        if content.strip():
+            if harmony.is_harmony(content):
+                decided = True
+                break
+            if not harmony.could_open_harmony(content):
+                decided = False
+                break
+
+    async def rest() -> AsyncIterator[dict[str, Any]]:
+        async for chunk in stream:
+            yield to_dict(chunk)
+
+    replay = _replay(held, rest())
+    if decided:
+        async for out in _rewrite_harmony_stream(replay, offered):
+            yield out
+    elif offered:
+        async for out in rewrite_mlx_tool_stream(replay, offered, lambda c: c):
+            yield out
+    else:
+        async for out in replay:
+            yield out

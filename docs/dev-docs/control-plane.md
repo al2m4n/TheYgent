@@ -226,15 +226,25 @@ effects; the route layer creates the resulting connection.
 The `rag/` package is the retrieval subsystem behind the `rag` node. Vector search lives
 in the *same* Postgres (pgvector), so chunks stay transactional with their source rows —
 no second storage engine. Ingest comes from two paths: site crawls (same-origin,
-path-prefix-scoped, robots.txt-respecting, optional JS rendering) and document uploads
+path-prefix-scoped on the final URL after redirects, HTML-only, robots.txt-respecting,
+optional JS rendering, an exact `max_pages`, and a request queue per crawl — crawlee caches
+its default queue process-wide, so concurrent crawls would otherwise share one) and document uploads
 (PDF/DOCX/PPTX/XLSX/HTML converted to markdown-ish text). Both feed a pure heading-aware
 chunker, then embed in batches through `GatewayClient.embed` with the source's pinned
-*logical* model id — the control plane never imports an embedding library.
+*logical* model id — the control plane never imports an embedding library. Token counts are
+estimated (chars/4, floored by one token per word and per punctuation mark); a batch the
+embedding server rejects as too large is re-embedded chunk by chunk, halving only the chunk
+that does not fit.
 
 Each source's embedding dimension is discovered from the first response and claimed
 first-writer-wins; queries filter on dimension and cast to `vector(dim)`, matching the
 per-dimension partial HNSW index created at ingest time. Retrieval is one SQL statement:
-cosine top-k fused with full-text search via reciprocal rank fusion. Document replacement
+cosine top-k fused with full-text search via reciprocal rank fusion. The HNSW index is shared
+by every source of a dimension, so the vector leg runs as an iterative index scan (pgvector
+0.8+; an older pgvector gets an exact scan of the source) — a plain scan stops at its
+candidate list before the source filter applies and can come back empty. The keyword leg
+requires every query term, falling back to any term when no chunk holds them all (headings
+are not in the indexed text). Document replacement
 is atomic — old chunks are deleted only in the same transaction that inserts their
 successors, so a mid-ingest failure degrades to stale content, never data loss. Graphs
 reference sources by stable id, so re-ingesting content never bumps an agent's
