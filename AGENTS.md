@@ -94,7 +94,7 @@ if a task seems to require it, stop and flag it instead.
 
 | Task | Command |
 |------|---------|
-| Bring the stack up (bare metal) | `make up` — inference :8081, control :8080, interface :5174 |
+| Bring the stack up (bare metal) | `make up` — inference :8081, control :8080, interface :5174, AI gateway :8082 |
 | All tests | `make test` (= `test-py` + `test-web` + `test-deploy`) |
 | All lint/type gates | `make lint` |
 | One Python package's tests | `uv run --package <name> pytest` (fast suite; integration is opt-in via `-m integration`) |

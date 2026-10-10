@@ -1,9 +1,10 @@
 # API reference
 
-A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. TheYgent has **two services**, each with its own base URL:
+A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. TheYgent has **three services** with an API, each with its own base URL:
 
-- **Control plane** — `http://localhost:8080` — agents, runs, sessions, triggers, connections, artifacts, observability.
+- **Control plane** — `http://localhost:8080` — agents, runs, sessions, triggers, connections, artifacts, observability, and the AI gateway's configuration and reports.
 - **Inference plane** — `http://localhost:8081` — the OpenAI-compatible data plane (`/v1/*`) and model management (`/admin/*`).
+- **AI gateway** — `http://localhost:8082` — Claude Code's Anthropic-format traffic, plus a small admin surface.
 
 The interface uses these same endpoints, so anything you can do in the UI you can do here. This page lists the user-facing surface; it is not the full internal API.
 
@@ -255,6 +256,29 @@ The Bench records results and presets here; testing itself runs against the infe
 | POST / GET / DELETE | `/bench/presets` | Save / list / delete named param presets. |
 | POST / GET | `/bench/suites` | Store / list golden-case suites (API-only; no UI yet). |
 
+### AI gateway
+
+What the [AI Gateway](../ai-gateway/index.md) page uses. Everyone manages their own gateway keys and reads their own records; admins manage everything else. Request bodies and answers are `snake_case`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/gateway/me` | Your billing profile (`passthrough` or `org_key`) and live gateway-key count. |
+| POST / GET | `/gateway/keys` | Create a gateway key (`{name}`; the `tyg_…` token is in this response only) / list yours (`?all=true` for everyone's, admin). |
+| DELETE | `/gateway/keys/{id}` | Revoke a key; gateways refuse it within one key sync. |
+| GET | `/gateway/report` | Totals and groupings for a range: `since`, `until`, `by` (`class`, `client`, `session`, `model`, `served-model`, `developer`, `decision`, `reason`, `day`), `scope` (`mine` or `org`), plus setup `warnings` and subscription `seats`. |
+| GET | `/gateway/sessions` · `/gateway/sessions/{id}` | Sessions most recently active first (`since`, `before`, `limit`) · one session's timeline of requests and decisions (`after`, `limit`). |
+| GET / PUT | `/gateway/config` | The latest configuration (its version is the `ETag`; `404 gateway_config_not_found` before any) / save the next version (admin; `If-Match` refuses a stale edit with `412 config_version_conflict`; `422 invalid_gateway_config`). |
+| GET | `/gateway/config/versions` · `/gateway/config/versions/{n}` | The history · one version. |
+| GET / PUT | `/gateway/fingerprints` · `/gateway/fingerprints/{fingerprint}` | The side-request catalog · review one kind (admin; saves a new configuration version). |
+| GET | `/gateway/instances` | Each gateway's latest heartbeat (offline after 120 s). |
+| GET / PUT | `/gateway/developers` · `/gateway/developers/{user_id}` | Every account's billing (admin) · set one: `{"credential_profile": "org_key"}` (or `"passthrough"`). |
+| POST / GET / DELETE | `/gateway/service-keys` · `/gateway/service-keys/{id}` | Gateways' service keys (admin; the `tygs_…` token is in the create response only). |
+
+```bash
+curl "http://localhost:8080/gateway/report?since=2026-10-01T00:00:00Z&by=day,model" \
+  -H "Authorization: Bearer tyk_your-api-key"
+```
+
 ### Import & export
 
 The control-plane half of the transfer bundle — the Settings **Import / Export** tab drives these plus the inference plane's pair below. See [Import & export](../import-export/index.md).
@@ -338,6 +362,22 @@ See [Remote models](../models/remote.md) for the reachable-binding fields.
 ```bash
 curl http://localhost:8081/readyz
 ```
+
+## AI gateway
+
+Every path except the gateway's own is forwarded to the Anthropic API exactly as sent — `POST /v1/messages`, `count_tokens`, `GET /v1/models` and whatever Claude Code adds — and answered exactly as Anthropic answers. In team mode each request needs a gateway key (`X-TheYgent-Gateway-Key: tyg_…`, or the key as `Authorization: Bearer` for developers billed to the organization). The gateway's own refusals carry an `x-theygent-gateway-error` header; see [errors the gateway returns](../ai-gateway/running.md#errors-the-gateway-returns).
+
+Its own surface is `camelCase`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/healthz` | Liveness. |
+| GET | `/readyz` | `200` when ready; `503` while starting or until developers' keys are loaded (team mode). Names the gateway id, mode and configuration version. |
+| GET | `/admin/status` | Identity, mode, configuration and key-set versions, the request log (recorded, exported, waiting), upstream health. |
+| GET | `/admin/credentials` | Whether the organization's key and the service key are set, and where the org key came from — never a value. `readOnly` says why the page may not write it: `env`, `personal_mode` or `deployment_only`. |
+| PUT / DELETE | `/admin/credentials/org-api-key` | Set (`{"api_key": "…"}`) / remove the organization's key on this gateway. `409 org_key_pinned`, `org_key_not_applicable` or `org_key_deployment_only` when it cannot; `422 invalid_api_key`. |
+
+The `/admin/*` paths take your TheYgent bearer (a session or a personal API key) and admit admins only — the gateway asks the control plane, and answers `503` if it cannot. A personal gateway with no control plane leaves them open, on loopback.
 
 ## Related pages
 

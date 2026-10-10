@@ -50,6 +50,7 @@ the lint gates that guard every commit.
 | `packages/gateway-client/tests/` | Unit tests for the chat-param split (standard fields as kwargs, engine knobs via `extra_body`). |
 | `apps/inference-plane/tests/` | Fast suite (fake upstream, manual clock) + `integration`-marked real-engine tests. |
 | `apps/control-plane/tests/` | Fast suite (ephemeral Postgres, fake inference plane, fake MCP/HTTP servers) + `integration`-marked cross-process tests. |
+| `apps/ai-gateway/tests/` | Fast suite: the real gateway against a fake Anthropic upstream, injected key/config/event seams, content-free Claude Code fixtures. No network. |
 | `apps/interface/tests/` | Vitest unit/component tests (`*.test.ts(x)`) plus `smoke/hand_drive.py`, a hand-drive smoke against a live stack. |
 | `deploy/tests/` | Static containerization contract guards (Dockerfiles, compose, k8s manifests). |
 | `.pre-commit-config.yaml` | Local hooks mirroring the CI gates, run with the workspace-pinned tool versions. |
@@ -141,6 +142,27 @@ construction.
 Background loops are gated by `create_app` flags (`start_dispatcher`,
 `dispatcher_interval_s`, `settings_refresh_s`), so the fast suite drives the schedule
 dispatcher's `tick()` and settings refresh directly instead of sleeping.
+
+### `apps/ai-gateway` — the real proxy, a fake Anthropic
+
+`tests/conftest.py` builds the real app; `create_app` takes injectable seams for everything
+outside it:
+
+- **`_fake_anthropic.py`** — a real local HTTP server that records every request exactly as
+  received and answers with deterministic bytes: a Claude-Code-shaped stream, a recorded
+  exchange replayed, or a misbehaviour on demand (a slow first byte, holding until the caller
+  hangs up, breaking mid-stream, an error). Pass-through, cancellation and stream relay are
+  exercised over real sockets.
+- **Key, config and event seams** — `StaticKeySource`, `StaticConfigSource` and a recording
+  event sink stand in for the control plane; the token check for the admin surface is
+  injected the same way. The control plane's side of the contract is tested in its own suite
+  against the same `theygent_ir.gateway` types.
+- **`tests/fixtures/exchanges/`** — real Claude Code exchanges rebuilt without content (counts
+  and settings kept, all text replaced). `test_fixtures.py` scans every fixture for paths,
+  emails, credentials, foreign ids and prose: the repository is public.
+- **An empty gateway environment per test** — an autouse fixture clears
+  `THEYGENT_AI_GATEWAY_*` and `THEYGENT_CONTROL_PLANE_URL`, because `make test` exports the
+  developer's `.env`.
 
 ## Unit vs integration
 

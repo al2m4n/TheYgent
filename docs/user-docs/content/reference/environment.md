@@ -3,7 +3,7 @@
 Every setting TheYgent reads from the environment. You configure these in the `.env` file at the repository root, which `make up` and the services load automatically. Only `DATABASE_URL` is required — everything else has a working default for a local install.
 
 !!! tip "Where to set them"
-    Copy `.env.example` to `.env` and edit it. The `Makefile` includes `.env` and exports every variable to the services it starts, so a value set there reaches all three planes. After editing `.env`, run `make restart` to pick up the change. See [Installation](../getting-started/installation.md).
+    Copy `.env.example` to `.env` and edit it. The `Makefile` includes `.env` and exports every variable to the services it starts, so a value set there reaches every service it starts. After editing `.env`, run `make restart` to pick up the change. See [Installation](../getting-started/installation.md).
 
 ## Required
 
@@ -76,14 +76,37 @@ The standalone [worker](../running/durable.md) reads `DATABASE_URL` (required) a
 |---|---|---|
 | `THEYGENT_INFERENCE_PLANE_BASE_URL` | falls back to `THEYGENT_INFERENCE_PLANE_URL`, then `http://127.0.0.1:8081/v1` | Legacy alias the worker checks for the inference URL. Prefer `THEYGENT_INFERENCE_PLANE_URL`. |
 
+## AI gateway
+
+The [AI Gateway](../ai-gateway/index.md) reads these at startup. A value that does not parse stops
+it with a message naming the variable. It never reads `ANTHROPIC_BASE_URL` — that variable points
+Claude Code *at* the gateway.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `THEYGENT_AI_GATEWAY_AUTH_MODE` | `personal` | `personal`: loopback only, no keys, each caller's own credential. `team`: every request needs a developer's gateway key, synced from the control plane (needs the next two variables). |
+| `THEYGENT_CONTROL_PLANE_URL` | unset | The control plane the gateway reports to and takes its configuration and developers' keys from, e.g. `http://127.0.0.1:8080`. Required in team mode; with a service key it attaches a personal gateway too. |
+| `THEYGENT_AI_GATEWAY_SERVICE_KEY` | unset | The gateway's credential towards the control plane (`tygs_…`), minted by an admin under **AI Gateway → Settings → Service keys**. Required in team mode. |
+| `THEYGENT_AI_GATEWAY_ORG_API_KEY` | unset | The organization's Anthropic API key, for developers billed to it (team mode only). A key set here cannot be replaced from the Settings tab. |
+| `THEYGENT_AI_GATEWAY_STORE_ORG_KEY` | `1` | Whether an admin may set the organization's key from the Settings tab, kept by this gateway (team mode only). Set `0` for a gateway that runs as several replicas: each would keep its own copy, so the key must come from `THEYGENT_AI_GATEWAY_ORG_API_KEY`. Accepts `1`/`0`, `true`/`false`, `yes`/`no`, `on`/`off`. |
+| `THEYGENT_AI_GATEWAY_HOST` | `127.0.0.1` | Listen address. Personal mode refuses anything but loopback. |
+| `THEYGENT_AI_GATEWAY_PORT` | `8082` | Listen port. |
+| `THEYGENT_AI_GATEWAY_UPSTREAM_URL` | `https://api.anthropic.com` | Where requests are forwarded. It must not be the gateway's own address. |
+| `THEYGENT_AI_GATEWAY_STATE_DIR` | `~/.theygent/ai-gateway` | The gateway's state: records not yet delivered, the last known configuration, developers' key digests, a stored organization key. |
+| `THEYGENT_AI_GATEWAY_ID` | `gw-<hostname>` | The name this gateway appears under on the Overview. |
+| `THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS` | `30` | How often team mode re-syncs developers' keys (1–3600); a revoked key is refused within one interval. |
+| `THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS` | `30` | How often the gateway reports itself and checks for a new configuration (1–3600). |
+| `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS` | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated browser origins allowed to call the gateway's admin surface — the interface's Settings tab. Add the interface's origin if you serve it elsewhere. |
+
 ## Interface (build-time)
 
-The web app reads these at build time (Vite `VITE_*` variables). Change them only if you moved a plane off its default port.
+The web app reads these at build time (Vite `VITE_*` variables). Change them only if you moved a service off its default address.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `VITE_CONTROL_PLANE_URL` | `http://localhost:8080` | The control-plane base URL the browser calls. |
 | `VITE_INFERENCE_URL` | `http://localhost:8081` | The inference-plane base URL the browser calls. |
+| `VITE_AI_GATEWAY_URL` | `http://localhost:8082` | The AI gateway's address: what the Setup & keys snippets name as `ANTHROPIC_BASE_URL`, and where the Settings tab reaches the gateway. Each browser can also override it on Setup & keys. |
 
 ## Advanced tuning
 

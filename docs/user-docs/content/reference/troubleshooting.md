@@ -264,6 +264,24 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix.** Set a fresh secret with `PATCH /triggers/{id}` (body `{"config": {"secret": "..."}}`), then enable the trigger. The same rule explains imported connections and MCP servers failing with auth errors: re-enter their secrets and env values — only key *names* were exported.
 
+## AI gateway
+
+### Claude Code shows an error from the TheYgent AI gateway
+
+The gateway names the reason in its message (and in the `x-theygent-gateway-error` header): a missing or revoked gateway key, no Anthropic credential where you are billed to your own, no organization key on the gateway, or Anthropic unreachable. Each code and its fix: [errors the gateway returns](../ai-gateway/running.md#errors-the-gateway-returns).
+
+### The AI Gateway page shows no gateway, or no traffic
+
+A gateway appears on the **Overview** only when it is attached to the control plane — `THEYGENT_CONTROL_PLANE_URL` and a service key ([Running the gateway](../ai-gateway/running.md#attach-it-to-the-control-plane)). An attached gateway records nothing until an admin saves a configuration in **Observer** mode on the Settings tab; and Claude Code reaches it only with `ANTHROPIC_BASE_URL` pointing at it ([Set up Claude Code](../ai-gateway/setup.md)).
+
+### The Settings tab says it can't reach the gateway
+
+The organization's key is read and written on the gateway itself, from your browser. Set the gateway's address on **Setup & keys**, and if the interface is served from another origin than `http://localhost:5174`, add that origin to `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS`.
+
+### The Report warns that tool search is off
+
+Claude Code turns MCP tool search off for any custom base URL and then sends every tool's definition with every request. Set `ENABLE_TOOL_SEARCH=true` (the desktop app: tool search on). See [why each setting](../ai-gateway/setup.md#why-each-setting).
+
 ## Browser and interface
 
 ### The interface can't reach a plane / CORS errors in the console

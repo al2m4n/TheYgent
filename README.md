@@ -53,10 +53,13 @@ sent it there.
   webhook, or a cron schedule.
 - **Chat & bench** — a unified chat for any model or agent (thinking view, voice, vision),
   and a bench for testing and comparing models and agents side by side.
+- **AI gateway for Claude Code** — put your team's Claude Code behind a proxy that records
+  what every exchange cost and what routing work to cheaper models would have saved, with
+  per-session timelines that explain each decision. It forwards every request unchanged.
 
 ## Architecture at a glance
 
-Two planes, three process types, one topology everywhere:
+Two planes, four process types, one topology everywhere:
 
 ```mermaid
 flowchart LR
@@ -69,8 +72,10 @@ flowchart LR
     ENG["llama.cpp · MLX · vLLM"]
   end
   HOSTED["any OpenAI-compatible API"]
+  AG["AI gateway :8082\nClaude Code → Anthropic, observed"]
 
   UI --> API
+  AG -->|"records (metadata only)"| API
   UI -->|"raw prompts & media, direct"| GW
   API -->|"logical model ids over HTTP"| GW
   W --> GW
@@ -88,6 +93,8 @@ flowchart LR
 - Agents are documents in a typed IR with a content hash over the canonical graph (layout
   is never hashed). The same IR runs on an in-process interactive runtime and on a
   journaled durable runtime.
+- The **AI gateway** sits between Claude Code and the Anthropic API in the same trust
+  domain: it forwards traffic byte-for-byte and sends the control plane metadata only.
 - The full map, with the reasoning behind each boundary, is in
   [docs/dev-docs/architecture.md](docs/dev-docs/architecture.md).
 
@@ -102,6 +109,7 @@ The full contributor docs live in [docs/dev-docs](docs/dev-docs/README.md):
 | [Graph execution](docs/dev-docs/graph-execution.md) | How an IR graph runs: the walker, the node set, `$in` substitution, conditional dataflow |
 | [Durable execution](docs/dev-docs/durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [Inference plane](docs/dev-docs/inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
+| [AI gateway](docs/dev-docs/ai-gateway.md) | The Claude Code proxy: pass-through, identity, the routing policy, records, the admin surface |
 | [Interface](docs/dev-docs/interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [IR and packages](docs/dev-docs/ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [Deployment](docs/dev-docs/deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |
@@ -118,7 +126,7 @@ make engines           # local engine servers (macOS): llama.cpp, whisper.cpp, f
                        # mlx-lm, mlx-vlm, mlx-audio — chat, vision, embeddings,
                        # speech-to-text, text-to-speech
 make up                # install deps, migrate, start inference-plane (8081) +
-                       # control-plane (8080) + interface (5174)
+                       # control-plane (8080) + interface (5174) + AI gateway (8082)
 ```
 
 `make help` lists everything else (status, logs, restart, test, lint). `/readyz` on the
@@ -136,7 +144,9 @@ make docker-down       # stop (data volumes survive; `docker compose down -v` dr
 The containerized inference plane bundles a CPU llama.cpp build (chat, embeddings, vision).
 MLX is Apple-Silicon-bare-metal only — to keep local MLX inference, run the inference plane
 on the host and overlay `docker-compose.host-inference.yml` (see that file's header). The
-standalone durable worker is opt-in: `THEYGENT_DURABLE=1 docker compose --profile worker up -d`.
+standalone durable worker is opt-in: `THEYGENT_DURABLE=1 docker compose --profile worker up -d`;
+so is the AI gateway, which needs a service key an admin mints first:
+`docker compose --profile gateway up -d`.
 JS-rendered crawling for retrieval sources (`render_js`) needs a browser baked into the
 control-plane image — opt in with `WITH_JS_RENDER=1 docker compose build control-plane`
 (~500MB); without it, static fetch still works and a `render_js` ingest fails with the
@@ -149,10 +159,12 @@ Dev flow against minikube — images built locally, side-loaded, applied with ku
 ```bash
 make k8s-load          # docker compose build + minikube image load
 make k8s-apply         # kubectl apply -k deploy/k8s
-kubectl -n theygent port-forward svc/interface 5174:80       # then :8080 / :8081 likewise
+kubectl -n theygent port-forward svc/interface 5174:80       # then :8080 / :8081 / :8082 likewise
 ```
 
-The control-plane and worker carry HorizontalPodAutoscalers (scale up/down with load);
+The control-plane, worker and AI gateway carry HorizontalPodAutoscalers (scale up/down with
+load); the AI gateway runs as a StatefulSet and starts once its Secret exists (see
+`deploy/k8s/ai-gateway.yaml`);
 `deploy/tests/` guards the Dockerfiles, compose files, and manifests in CI.
 
 ## Contributing
