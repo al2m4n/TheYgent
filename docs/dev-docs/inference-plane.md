@@ -44,7 +44,7 @@ These are the invariants a change must not break:
 | `weights.py` | Stdlib GGUF header reader: is a local diffusion file a whole checkpoint or one component of one; the `IncompleteWeights` refusal and the architecture predicate the catalog spends before a download |
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
-| `tool_parse.py` | Normalizes MLX's textual tool-call output into structured OpenAI `tool_calls`; gated, false-positive-safe, designed to be deleted |
+| `tool_parse.py` | Normalizes MLX's textual tool-call output into structured OpenAI `tool_calls`; gated, false-positive-safe, designed to be deleted. Its stream rewriters hold a reply's opening only to decide on its `content`: reasoning the engine separated (`mlx_lm.server` sends a think-token model's thinking as `reasoning`, which LiteLLM renames to `reasoning_content` before the plane sees it — `tests/test_mlx_reasoning.py` pins the rename) streams as it arrives and survives a reply that becomes a tool call |
 | `harmony.py` | Parses gpt-oss's harmony replies (which `mlx_lm.server` returns verbatim) into `reasoning_content`, `content`, and `tool_calls`, incrementally for streams; used from `tool_parse` on the gated MLX chat path |
 | `clock.py` | Injectable time seam (`RealClock`/`ManualClock`) for deterministic eviction tests |
 | `__main__.py` / `asgi.py` | Dev entrypoint (env parsing, state-dir resolution, uvicorn) / production ASGI module kept separate so importing `create_app` has no side effects |
