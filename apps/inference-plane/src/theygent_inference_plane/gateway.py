@@ -18,6 +18,7 @@ import httpx
 import litellm
 
 from theygent_inference_plane import tool_parse
+from theygent_inference_plane.launcher import LAUNCH_PARAMS
 from theygent_inference_plane.manager import Upstream
 
 # OpenAI request fields that are routing/identity, not generation params.
@@ -35,8 +36,11 @@ def _to_dict(obj: Any) -> dict[str, Any]:
 
 
 def merge_params(binding_params: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
-    """Binding defaults first, then the request's generation fields override."""
-    merged: dict[str, Any] = {_PARAM_ALIASES.get(k, k): v for k, v in binding_params.items()}
+    """Binding defaults first, then the request's generation fields override. A binding's
+    launch settings (``LAUNCH_PARAMS``) configure the engine process and are never sent."""
+    merged: dict[str, Any] = {
+        _PARAM_ALIASES.get(k, k): v for k, v in binding_params.items() if k not in LAUNCH_PARAMS
+    }
     for key, value in request.items():
         if key not in _RESERVED:
             merged[key] = value

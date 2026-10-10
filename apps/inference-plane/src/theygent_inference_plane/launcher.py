@@ -42,7 +42,11 @@ from theygent_inference_plane.capabilities import (
     REASONING_MARKERS,
     template_implies_reasoning,
 )
-from theygent_inference_plane.weights import IncompleteWeights, diffusion_defect
+from theygent_inference_plane.weights import (
+    IncompleteWeights,
+    diffusion_defect,
+    read_gguf_context_length,
+)
 
 
 @runtime_checkable
@@ -182,6 +186,82 @@ class _SubprocessHandle:
 
 # ── llama.cpp (managed, proven) ─────────────────────────────────────────
 
+#: llama-server launch settings a registration may set in its ``params`` (camelCase, like the
+#: rest of the registration payload) → the flag each becomes. ``ctxSize`` is the context
+#: llama-server allocates in total, shared by its ``parallel`` slots.
+LLAMACPP_LAUNCH_FLAGS: dict[str, str] = {
+    "ctxSize": "-c",
+    "parallel": "-np",
+    "batchSize": "-b",
+    "ubatchSize": "-ub",
+}
+#: Registration params that configure the engine process rather than a request — the gateway
+#: never forwards them as generation params.
+LAUNCH_PARAMS: frozenset[str] = frozenset({"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS})
+#: The modalities llama-server itself serves; the launch settings apply to these only.
+_LLAMA_SERVER_MODALITIES = ("chat", "vision", "embeddings")
+
+#: A chat model's context when its registration sets none: the model's trained context, capped.
+#: Left to itself llama-server sizes a KV cache for the full trained context in each of several
+#: slots — 231,936 tokens for gpt-oss-20b — which exhausts a 24 GB Mac's GPU memory.
+DEFAULT_CHAT_CONTEXT = 32768
+#: An embedding model's context when neither the registration nor the GGUF says; and the cap.
+DEFAULT_EMBEDDINGS_CONTEXT = 2048
+MAX_EMBEDDINGS_CONTEXT = 8192
+
+
+def launch_params_defect(binding: object) -> str | None:
+    """Why a registration's launch settings cannot be applied, or ``None``. Checked at
+    registration, so a typo or a setting for the wrong engine fails loudly instead of being
+    ignored at every launch."""
+    params = getattr(binding, "params", {}) or {}
+    present = [k for k in LLAMACPP_LAUNCH_FLAGS if k in params]
+    if not present:
+        return None
+    engine = getattr(binding, "binding", None)
+    modality = getattr(binding, "modality", None)
+    if engine != "llamacpp" or modality not in _LLAMA_SERVER_MODALITIES:
+        return (
+            f"launch settings {present} apply to llamacpp chat, vision and embeddings "
+            f"bindings only (this is {engine} {modality})"
+        )
+    for key in present:
+        value = params[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return f"launch setting {key!r} must be a positive integer, got {value!r}"
+    return None
+
+
+def _trained_context(binding: ManagedBinding) -> int | None:
+    """The trained context from the weights' own header, when the binding names a local file."""
+    if binding.source != "local-path" or not os.path.isfile(binding.model):
+        return None
+    return read_gguf_context_length(binding.model)
+
+
+def llamacpp_launch_settings(binding: ManagedBinding) -> dict[str, int]:
+    """The launch settings llama-server gets: the registration's own, over safe defaults.
+
+    Chat and vision get one slot with the model's trained context capped at
+    ``DEFAULT_CHAT_CONTEXT``. Embeddings get one slot and a batch as large as the context:
+    llama-server must fit a whole input in one physical batch (512 tokens by default), so any
+    longer chunk was rejected though the model's context had room for it."""
+    if defect := launch_params_defect(binding):
+        # Registration refuses these; a registration that arrived another way (an import)
+        # fails here with the same reason rather than with a bare conversion error.
+        raise RuntimeError(defect)
+    explicit = {k: int(binding.params[k]) for k in LLAMACPP_LAUNCH_FLAGS if k in binding.params}
+    trained = _trained_context(binding)
+    if binding.modality == "embeddings":
+        ctx = explicit.get("ctxSize") or min(
+            trained or DEFAULT_EMBEDDINGS_CONTEXT, MAX_EMBEDDINGS_CONTEXT
+        )
+        defaults = {"ctxSize": ctx, "parallel": 1, "batchSize": ctx, "ubatchSize": ctx}
+    else:
+        ctx = min(trained, DEFAULT_CHAT_CONTEXT) if trained else DEFAULT_CHAT_CONTEXT
+        defaults = {"ctxSize": ctx, "parallel": 1}
+    return {**defaults, **explicit}
+
 
 def locate_llama_mmproj(binding: ManagedBinding) -> str | None:
     """The multimodal projector file for a llama.cpp vision binding, if one sits with the weights.
@@ -292,6 +372,8 @@ class LlamaCppLauncher:
             # embedded one, so a projector-less repo degrades to a clear error, not a silent run.
             mmproj = binding.params.get("mmproj") or locate_llama_mmproj(binding)
             cmd += ["--mmproj", mmproj] if mmproj else ["--mmproj-auto"]
+        for key, value in llamacpp_launch_settings(binding).items():
+            cmd += [LLAMACPP_LAUNCH_FLAGS[key], str(value)]
         return cmd
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:

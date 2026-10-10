@@ -103,6 +103,8 @@ flowchart LR
 
 Every engine implements the same `EngineLauncher` protocol: `ready` / `not_ready_reason` / `launch(binding) → EngineHandle` (`base_url`, `health()`, `capabilities()`, `terminate()`). `ManagedLauncherSet` dispatches on the exact `(engine, modality)` pair and itself implements the protocol, so the manager sees one launcher. This is why MLX, vLLM, and every non-chat modality were added with zero `EngineManager` changes. llama.cpp registers chat, embeddings, and vision keys against one launcher (same binary, different flags), while MLX chat and vision are different programs behind different keys.
 
+**llama.cpp launch settings** are registration `params` keys (`ctxSize`, `parallel`, `batchSize`, `ubatchSize` → `-c`, `-np`, `-b`, `-ub`) — a named extension of the registration contract. Defaults: one slot, and the model's trained context (read from the GGUF header, `<architecture>.context_length`) capped at 32,768 for chat/vision; embeddings get a batch and micro-batch as large as their context (capped at 8,192), because llama-server rejects an embedding input larger than one physical batch. Registration refuses a non-integer value or a launch setting on any other engine (`422 invalid_binding`). Launch-only params (`LAUNCH_PARAMS`, including `pooling` and `mmproj`) are stripped by `merge_params`, so they never ride a request.
+
 Dispatch is fail-closed on the exact key — reachable bindings never reach it, and a missing pair is an error, not a chat fallback:
 
 ```mermaid

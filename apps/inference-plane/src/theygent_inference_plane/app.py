@@ -55,6 +55,7 @@ from theygent_inference_plane.launcher import (
     MlxVlmLauncher,
     WhisperCppLauncher,
     _hf_hub_dir,
+    launch_params_defect,
     locate_image_model,
 )
 from theygent_inference_plane.manager import (
@@ -449,6 +450,10 @@ def create_app(
         if defect := _image_weights_defect(binding):
             return _openai_error(
                 defect, status=422, type_="invalid_request_error", code="incomplete_weights"
+            )
+        if defect := launch_params_defect(binding):
+            return _openai_error(
+                defect, status=422, type_="invalid_request_error", code="invalid_binding"
             )
         registry.put(logical_id, binding)
         # A manual registration severs catalog provenance: the binding no longer points at

@@ -120,3 +120,30 @@ def test_real_llama_server_accepts_reasoning_effort() -> None:
         assert r.status_code == 200, r.text
         assert r.json()["choices"][0]["message"]["content"].strip()
         client.post("/admin/models/local:evict")
+
+
+@_skip
+def test_real_llama_server_runs_with_the_launch_settings() -> None:
+    # The flags are real llama-server flags, and the context it reports is the one set: the
+    # default caps the trained context, a registration's ctxSize replaces it.
+    from theygent_inference_plane.launcher import DEFAULT_CHAT_CONTEXT
+    from theygent_inference_plane.weights import read_gguf_context_length
+
+    assert _GGUF is not None
+    trained = read_gguf_context_length(_GGUF)
+    expected_default = min(trained, DEFAULT_CHAT_CONTEXT) if trained else DEFAULT_CHAT_CONTEXT
+    app = create_app(launcher=LlamaCppLauncher(), max_resident=1, enable_reaper=False)
+    with TestClient(app) as client:
+        for params, expected in (({}, expected_default), ({"ctxSize": 4096}, 4096)):
+            client.put(
+                "/admin/models/local",
+                json={
+                    "binding": "llamacpp",
+                    "source": "local-path",
+                    "model": _GGUF,
+                    "params": params,
+                },
+            )
+            caps = client.get("/admin/models/local/capabilities").json()
+            assert caps["maxContext"] == expected, caps
+            client.post("/admin/models/local:evict")
