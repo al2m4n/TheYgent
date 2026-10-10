@@ -55,6 +55,9 @@ Statuses are honest:
 - **ready** — the source has searchable content. If a few pages failed along the way, the source is still `ready` and the error note says what went wrong.
 - **failed** — nothing usable was ingested (site unreachable, embedding model down, …), or a restart interrupted the job.
 - A failed re-ingest **never destroys what you already had**: new content replaces old only after it has embedded successfully, so a transient outage leaves the previous content serving.
+- The error note always describes the **latest** ingest: once a later ingest succeeds, an earlier failure is cleared.
+
+Text is cut into chunks of about 450 tokens (the `rag.chunk_max_tokens` setting). Symbol-heavy text — tables of contents, config listings, code — is budgeted by its words and punctuation, so it gets shorter chunks. If the embedding server still rejects a chunk as too large for it, only that chunk is split until it fits; the rest of the document is unaffected.
 
 Expand a source row (click its name) to see every document with its status, chunk count, and any per-document error.
 

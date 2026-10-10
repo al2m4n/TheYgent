@@ -134,6 +134,23 @@ def _build_app(
         inputs = body.get("input")
         if isinstance(inputs, str):
             inputs = [inputs]
+        limit = captured.get("embed_max_chars")
+        if limit is not None and any(len(t) > limit for t in inputs):
+            # The shape a llama.cpp embedding server's rejection reaches the control plane in:
+            # its 500 relayed by the inference plane as a 502 upstream_error.
+            longest = max(len(t) for t in inputs)
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": {
+                        "message": "litellm.InternalServerError: OpenAIException - input "
+                        f"({longest} tokens) is too large to process. increase the physical "
+                        "batch size (current batch size: 512)",
+                        "type": "server_error",
+                        "code": "upstream_error",
+                    }
+                },
+            )
         captured["embed_model"] = body.get("model")
         captured["embed_calls"] = int(captured.get("embed_calls") or 0) + 1
         captured["embed_inputs"] = inputs
@@ -439,6 +456,9 @@ class FakeInference:
             "embed_inputs": None,
             # Flip to True mid-test to make /v1/embeddings return 503 (a transient outage).
             "embed_fail": False,
+            # Set to reject any input longer than this many characters, as an embedding server
+            # rejects an input larger than its batch.
+            "embed_max_chars": None,
         }
         app = _build_app(mode, self.captured, response, tool_name, tool_args)
         config = uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from theygent_control_plane.rag.chunking import (
@@ -39,6 +40,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _EMBED_BATCH = 32
+#: How many times one chunk may be halved after the embedding server rejects it as too large.
+_MAX_SPLIT_DEPTH = 4
+
+#: How embedding servers word "this input is longer than I accept" — llama.cpp (its batch and
+#: its context), OpenAI-style APIs and vLLM, text-embeddings-inference, and ollama. Matched on
+#: the relayed upstream message, the only place the reason survives.
+_INPUT_TOO_LARGE = re.compile(
+    r"too large to process|physical batch size|exceeds the (?:available )?context"
+    r"|maximum context length|must have less than \d+ tokens|input length exceeds",
+    re.IGNORECASE,
+)
+
+
+def _input_too_large(exc: Exception) -> bool:
+    return bool(_INPUT_TOO_LARGE.search(str(exc)))
+
+
+def _halves(chunk: Chunk) -> list[Chunk]:
+    """Split a chunk's text in two at the whitespace nearest its middle (a hard cut when it
+    has none). Positions are renumbered by the caller."""
+    text = chunk.text
+    middle = len(text) // 2
+    left, right = text.rfind(" ", 0, middle), text.find(" ", middle)
+    candidates = [i for i in (left, right) if i > 0]
+    cut = min(candidates, key=lambda i: abs(i - middle)) if candidates else middle
+    parts = [text[:cut].strip(), text[cut:].strip()]
+    return [Chunk(text=p, heading=chunk.heading, position=chunk.position) for p in parts if p]
 
 
 class IngestBusy(RuntimeError):
@@ -355,7 +383,7 @@ class IngestService:
             chunks = chunk_markdown(
                 markdown, max_tokens=chunk_max_tokens, overlap_tokens=chunk_overlap_tokens
             )
-            embeddings = await self._embed_all(source.embedding_model, chunks)
+            chunks, embeddings = await self._embed_all(source.embedding_model, chunks)
             async with self._sessionmaker() as session, session.begin():
                 if embeddings:
                     dim = len(embeddings[0])
@@ -404,11 +432,50 @@ class IngestService:
                 extra={"source_id": source.id, "uri": uri, "error": str(exc)},
             )
 
-    async def _embed_all(self, model: str, chunks: list[Chunk]) -> list[list[float]]:
-        embeddings: list[list[float]] = []
+    async def _embed_all(
+        self, model: str, chunks: list[Chunk]
+    ) -> tuple[list[Chunk], list[list[float]]]:
+        """Embed every chunk, in batches. The chunk budget is an estimate, so the embedding
+        server can still reject an input as larger than it accepts; only the rejected batch is
+        then re-embedded chunk by chunk, and a chunk that is itself too large is halved until
+        it fits. Returns the chunks as embedded (renumbered when any were split) with their
+        vectors. Any other failure propagates unchanged."""
+        embedded: list[tuple[Chunk, list[float]]] = []
         for start in range(0, len(chunks), self._embed_batch):
-            batch = [embedding_text(c) for c in chunks[start : start + self._embed_batch]]
-            response = await self._gateway.embed(model=model, inputs=batch)
-            data = sorted(response.data, key=lambda d: d.index)
-            embeddings.extend(list(d.embedding) for d in data)
-        return embeddings
+            batch = chunks[start : start + self._embed_batch]
+            try:
+                vectors = await self._embed_batch_texts(model, batch)
+            except Exception as exc:
+                if not _input_too_large(exc):
+                    raise
+                for chunk in batch:
+                    embedded.extend(await self._embed_splitting(model, chunk, depth=0))
+                continue
+            embedded.extend(zip(batch, vectors, strict=True))
+        out = [
+            (Chunk(text=c.text, heading=c.heading, position=i), v)
+            for i, (c, v) in enumerate(embedded)
+        ]
+        return [c for c, _ in out], [v for _, v in out]
+
+    async def _embed_batch_texts(self, model: str, batch: list[Chunk]) -> list[list[float]]:
+        response = await self._gateway.embed(model=model, inputs=[embedding_text(c) for c in batch])
+        return [list(d.embedding) for d in sorted(response.data, key=lambda d: d.index)]
+
+    async def _embed_splitting(
+        self, model: str, chunk: Chunk, *, depth: int
+    ) -> list[tuple[Chunk, list[float]]]:
+        try:
+            return [(chunk, (await self._embed_batch_texts(model, [chunk]))[0])]
+        except Exception as exc:
+            halves = _halves(chunk)
+            if not _input_too_large(exc) or depth >= _MAX_SPLIT_DEPTH or len(halves) < 2:
+                raise
+            logger.info(
+                "rag.chunk_split",
+                extra={"chars": len(chunk.text), "depth": depth + 1},
+            )
+            out: list[tuple[Chunk, list[float]]] = []
+            for half in halves:
+                out.extend(await self._embed_splitting(model, half, depth=depth + 1))
+            return out

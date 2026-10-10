@@ -80,6 +80,26 @@ def test_chunker_splits_oversized_blocks_with_overlap() -> None:
         assert first_sentence and first_sentence in prev.text
 
 
+def test_chunker_budgets_symbol_dense_text_by_its_tokens() -> None:
+    # An embedding tokenizer spends a token on nearly every punctuation mark, so a dotted table
+    # of contents holds several times more tokens than its length / 4. Chunks are budgeted on
+    # an estimate that counts them, or one "450-token" chunk outgrows the embedding batch.
+    from theygent_control_plane.rag.chunking import estimate_tokens
+
+    toc = "\n".join(
+        f"{n}.{m} Dialplan function {n}{m} " + "." * 40 + f" {n * 10 + m}"
+        for n in range(1, 30)
+        for m in range(1, 10)
+    )
+    assert estimate_tokens(toc) > 2 * (len(toc) // 4)
+    chunks = chunk_markdown(f"# Contents\n\n{toc}", max_tokens=200, overlap_tokens=20)
+    assert len(chunks) > 1
+    assert all(estimate_tokens(c.text) <= 200 for c in chunks)
+    # Prose keeps the chars / 4 budget, so ordinary documents chunk exactly as before.
+    prose = "Llamas eat hay and fresh grass every morning before the herd moves on. " * 3
+    assert estimate_tokens(prose) == len(prose) // 4
+
+
 async def test_execute_rag_without_backend_binds_err() -> None:
     out = await execute_rag(None, source="rag_x", query="q", top_k=5, min_similarity=None)
     assert out.ok is False
@@ -280,6 +300,47 @@ def test_failed_reembed_keeps_the_last_good_chunks(
     assert docs[0]["status"] == "embedded"
     result = client.post(f"/rag/sources/{sid}/query", json={"query": "paragraph the outage loses"})
     assert any("outage loses" in m["text"] for m in result.json()["matches"])
+
+
+def test_an_input_too_large_for_the_embedding_server_is_split_not_fatal(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # A chunk can still exceed what the embedding server accepts (its batch or context, in its
+    # own tokenizer's tokens). Only that chunk is split until it fits — the rest of the
+    # document is not lost to one oversized passage.
+    long_paragraph = " ".join(f"Llamas graze on meadow {i} at dawn." for i in range(40))
+    doc = f"# Herd\n\n## Grazing\n\n{long_paragraph}\n\n## Water\n\nLlamas drink twice a day."
+    fake_inference.captured["embed_max_chars"] = 400
+    source = _create_source(client)
+    sid = source["id"]
+    _upload(client, sid, "herd.md", doc)
+    settled = _wait_settled(client, sid)
+
+    assert settled["status"] == "ready", settled
+    assert settled["error"] is None, settled
+    texts = [
+        m["text"]
+        for m in client.post(
+            f"/rag/sources/{sid}/query", json={"query": "meadow 39 dawn", "top_k": 20}
+        ).json()["matches"]
+    ]
+    assert all(len(t) <= 400 for t in texts)
+    assert any("meadow 39" in t for t in texts)
+    assert any("meadow 0 " in t for t in texts)
+
+
+def test_an_embedding_outage_still_fails_the_document(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # Splitting is for inputs the server rejects as too large; any other failure is not
+    # retried piecemeal.
+    fake_inference.captured["embed_fail"] = True
+    source = _create_source(client)
+    sid = source["id"]
+    _upload(client, sid, "handbook.md", _DOC)
+    settled = _wait_settled(client, sid)
+    assert settled["status"] == "failed"
+    assert fake_inference.captured["embed_calls"] == 0  # the 503 path never reached a count
 
 
 def test_successful_reupload_clears_the_previous_failure(

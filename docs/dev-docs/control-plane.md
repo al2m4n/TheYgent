@@ -231,7 +231,10 @@ optional JS rendering, an exact `max_pages`, and a request queue per crawl — c
 its default queue process-wide, so concurrent crawls would otherwise share one) and document uploads
 (PDF/DOCX/PPTX/XLSX/HTML converted to markdown-ish text). Both feed a pure heading-aware
 chunker, then embed in batches through `GatewayClient.embed` with the source's pinned
-*logical* model id — the control plane never imports an embedding library.
+*logical* model id — the control plane never imports an embedding library. Token counts are
+estimated (chars/4, floored by one token per word and per punctuation mark); a batch the
+embedding server rejects as too large is re-embedded chunk by chunk, halving only the chunk
+that does not fit.
 
 Each source's embedding dimension is discovered from the first response and claimed
 first-writer-wins; queries filter on dimension and cast to `vector(dim)`, matching the
