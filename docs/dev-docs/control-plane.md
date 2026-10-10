@@ -226,7 +226,9 @@ effects; the route layer creates the resulting connection.
 The `rag/` package is the retrieval subsystem behind the `rag` node. Vector search lives
 in the *same* Postgres (pgvector), so chunks stay transactional with their source rows —
 no second storage engine. Ingest comes from two paths: site crawls (same-origin,
-path-prefix-scoped, robots.txt-respecting, optional JS rendering) and document uploads
+path-prefix-scoped on the final URL after redirects, HTML-only, robots.txt-respecting,
+optional JS rendering, an exact `max_pages`, and a request queue per crawl — crawlee caches
+its default queue process-wide, so concurrent crawls would otherwise share one) and document uploads
 (PDF/DOCX/PPTX/XLSX/HTML converted to markdown-ish text). Both feed a pure heading-aware
 chunker, then embed in batches through `GatewayClient.embed` with the source's pinned
 *logical* model id — the control plane never imports an embedding library.

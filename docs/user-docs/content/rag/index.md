@@ -40,11 +40,11 @@ A **crawl** source ingests a website — point it at a docs root and TheYgent wa
 
 | Field | What it does |
 |---|---|
-| **Root URL** | Where the crawl starts. The crawl stays on the same origin **and under the root's path** — pointing at `https://example.com/docs` never wanders into the rest of the site. |
-| **Max pages** | The crawl budget (default 200). The crawl stops when it runs out, whatever is left. |
+| **Root URL** | Where the crawl starts. The crawl stays on the same origin **and under the root's path** — pointing at `https://example.com/docs` never wanders into the rest of the site. A root that names a page (`…/guide/intro.html`) covers its folder (`…/guide/`). If the root itself redirects (to `https://`, or from `example.com` to `www.example.com`), the crawl follows the site to its new address. |
+| **Max pages** | The crawl budget (default 200): the exact number of pages ingested at most. The crawl stops when it runs out, whatever is left. With `1`, only the root page is ingested. |
 | **Render JavaScript** | Off by default. Turn it on for script-rendered sites; it uses a headless browser, which needs a one-time `playwright install chromium` on the machine running the control plane. Most docs sites don't need it. |
 
-The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Click **Crawl** to start (creating the source in the UI starts the first crawl automatically; over the API, call [`POST /rag/sources/{id}:ingest`](../reference/api.md) after creating it) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
+The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Only HTML pages are ingested: images and other files are skipped, a link that redirects outside the crawl's scope is dropped, and directory-listing sort links (`?C=N;O=D`) are not followed. Several crawls can run at once without mixing their pages. Click **Crawl** to start (creating the source in the UI starts the first crawl automatically; over the API, call [`POST /rag/sources/{id}:ingest`](../reference/api.md) after creating it) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
 
 ## Watching an ingest
 

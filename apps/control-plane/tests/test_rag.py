@@ -596,6 +596,137 @@ def test_crawl_ingests_a_real_local_site(client: TestClient, local_site: str) ->
     assert top["uri"].startswith("http://127.0.0.1")
 
 
+# ── crawl scope: concurrent crawls, redirects, non-HTML, page limits ────────
+
+
+def _prose(topic: str) -> str:
+    # trafilatura skips pages with too little main content, so every page carries a paragraph.
+    return (
+        f"<h1>{topic}</h1><p>This page explains {topic} in detail. The {topic} section covers "
+        f"what {topic} is, when to reach for it, and how {topic} behaves when something goes "
+        f"wrong, with enough prose that the extractor keeps it as main content.</p>"
+    )
+
+
+def _docs_site(name: str) -> dict[str, tuple[int, dict[str, str], bytes]]:
+    """A docs tree under /docs/ with the traps real sites have: an in-scope link that
+    redirects out of scope, an image, directory-listing sort links, and an out-of-scope link."""
+
+    def html(body: str) -> tuple[int, dict[str, str], bytes]:
+        page = _PAGE_STYLE.format(title=name, body=body)
+        return 200, {"content-type": "text/html; charset=utf-8"}, page.encode("utf-8")
+
+    return {
+        "/docs/": html(
+            _prose(f"{name} overview")
+            + '<a href="/docs/a.html">A</a> <a href="/docs/b.html">B</a> '
+            '<a href="/docs/moved">Moved</a> <a href="/docs/diagram.png">Diagram</a> '
+            '<a href="/docs/?C=N;O=D">Name</a> <a href="/docs/?C=M;O=A">Modified</a> '
+            '<a href="/blog/news.html">News</a>'
+        ),
+        "/docs/a.html": html(_prose(f"{name} alpha")),
+        "/docs/b.html": html(_prose(f"{name} beta")),
+        "/docs/moved": (302, {"location": "/blog/moved.html"}, b""),
+        "/docs/diagram.png": (200, {"content-type": "image/png"}, b"\x89PNG\r\n\x1a\n" + b"x" * 64),
+        "/docs/?C=N;O=D": html(_prose(f"{name} overview sorted")),
+        "/docs/?C=M;O=A": html(_prose(f"{name} overview by date")),
+        "/blog/moved.html": html(_prose(f"{name} blog post")),
+        "/blog/news.html": html(_prose(f"{name} news")),
+    }
+
+
+def _serve(pages: dict[str, tuple[int, dict[str, str], bytes]]) -> Any:
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            host = self.headers.get("host", "")
+            if host.startswith("localhost:"):
+                # The site's canonical host is 127.0.0.1, the way a bare domain sends
+                # visitors on to its www host.
+                port = host.split(":", 1)[1]
+                self.send_response(301)
+                self.send_header("location", f"http://127.0.0.1:{port}{self.path}")
+                self.send_header("content-length", "0")
+                self.end_headers()
+                return
+            status, headers, body = pages.get(self.path, (404, {}, b""))
+            self.send_response(status)
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: Any) -> None:
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.fixture
+def docs_sites() -> Any:
+    servers = [_serve(_docs_site("ferns")), _serve(_docs_site("lichens"))]
+    try:
+        yield [f"http://127.0.0.1:{s.server_address[1]}" for s in servers]
+    finally:
+        for server in servers:
+            server.shutdown()
+
+
+def _document_uris(client: TestClient, source_id: str) -> list[str]:
+    docs = client.get(f"/rag/sources/{source_id}/documents").json()["documents"]
+    return sorted(d["uri"] for d in docs)
+
+
+def test_concurrent_crawls_stay_in_their_own_scope(
+    client: TestClient, docs_sites: list[str]
+) -> None:
+    # Two crawls running at once must not share a request queue: each source holds only its
+    # own pages, never a redirect target outside its root path, an image, or a sort link.
+    ids = []
+    for site in docs_sites:
+        source = _create_source(client, kind="crawl", root_url=f"{site}/docs/", max_pages=20)
+        ids.append(source["id"])
+    for sid in ids:
+        assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    for sid in ids:
+        assert _wait_settled(client, sid, timeout=60.0)["status"] == "ready"
+
+    for site, sid in zip(docs_sites, ids, strict=True):
+        assert _document_uris(client, sid) == [
+            f"{site}/docs/",
+            f"{site}/docs/a.html",
+            f"{site}/docs/b.html",
+        ]
+
+
+def test_crawl_follows_a_root_that_redirects_to_another_host(
+    client: TestClient, docs_sites: list[str]
+) -> None:
+    site = docs_sites[0]
+    moved_root = site.replace("127.0.0.1", "localhost") + "/docs/"
+    source = _create_source(client, kind="crawl", root_url=moved_root, max_pages=20)
+    sid = source["id"]
+    assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    assert _wait_settled(client, sid, timeout=60.0)["status"] == "ready"
+    assert _document_uris(client, sid) == [
+        f"{site}/docs/",
+        f"{site}/docs/a.html",
+        f"{site}/docs/b.html",
+    ]
+
+
+def test_crawl_page_limit_is_exact(client: TestClient, docs_sites: list[str]) -> None:
+    source = _create_source(client, kind="crawl", root_url=f"{docs_sites[0]}/docs/", max_pages=1)
+    sid = source["id"]
+    assert client.post(f"/rag/sources/{sid}:ingest").status_code == 202
+    settled = _wait_settled(client, sid, timeout=60.0)
+    assert settled["status"] == "ready", settled
+    assert _document_uris(client, sid) == [f"{docs_sites[0]}/docs/"]
+    assert settled["progress"]["pages"] == 1
+
+
 # ── vector leg with many sources sharing one dimension ──────────────────────
 
 
