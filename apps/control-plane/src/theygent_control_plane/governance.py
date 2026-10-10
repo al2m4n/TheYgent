@@ -30,6 +30,10 @@ logger = logging.getLogger("theygent.control_plane.governance")
 #: separate axes for the same reason trace/io are); ``transfer:export``/``transfer:import`` gate
 #: the whole-install bundle surface (an export aggregates every sensitive read at once, an import
 #: writes across every table — both must tighten with the rest when RBAC lands).
+#: ``gateway_usage:read`` gates AI-gateway usage totals and their non-identifying breakdowns;
+#: ``gateway_usage:read_all`` gates what singles out a person across the organization (per-developer
+#: and per-session detail, anyone's sessions). Reading one's own records is an ownership check at
+#: the endpoints.
 Permission = Literal[
     "trace:read",
     "io:read",
@@ -38,6 +42,8 @@ Permission = Literal[
     "settings:write",
     "transfer:export",
     "transfer:import",
+    "gateway_usage:read",
+    "gateway_usage:read_all",
 ]
 
 #: Minimum role per permission. Viewers keep trace/io read: the chat surface embeds the run
@@ -52,6 +58,8 @@ _PERMISSION_FLOOR: dict[Permission, Role] = {
     "settings:write": "admin",
     "transfer:export": "admin",
     "transfer:import": "admin",
+    "gateway_usage:read": "viewer",
+    "gateway_usage:read_all": "admin",
 }
 
 

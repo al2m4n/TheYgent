@@ -66,7 +66,8 @@ A change to this service must not break these:
   whole-install export/import surface (`transfer:export` / `transfer:import`) route through
   `governance.authorize()`, which ranks the resolved role against a per-permission floor
   (`trace:read`/`io:read` = viewer, `agent:configure` = editor, settings and transfer =
-  admin). Do not add role logic elsewhere — the seam froze early precisely so enforcement
+  admin; AI-gateway usage: `gateway_usage:read` = viewer for totals and non-identifying
+  groupings, `gateway_usage:read_all` = admin for per-developer and per-session detail). Do not add role logic elsewhere — the seam froze early precisely so enforcement
   could land here once, with zero endpoint retrofit; ownership checks (a viewer's own chat
   sessions) live at the endpoints that carry an owner column.
 - **Errors use the house envelope**: every 4xx/5xx is `{"error": {"message", "code"}}` with
@@ -104,10 +105,10 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
-| `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog) |
+| `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog), keys, configs and instances (`store.py`); reports, sessions and timelines (`reports.py`, totals in SQL checked against `GatewayTotals`) |
 | `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
-| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0018` |
+| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0022` |
 
 ## HTTP surface
 
@@ -135,6 +136,7 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Transfer | `POST /export` · `POST /import` — the control-plane half of the whole-install bundle, behind `transfer:export` / `transfer:import` (see [Import/export](#importexport-the-transfer-bundle)) |
 | AI gateway keys | `POST/GET /gateway/keys` · `DELETE /gateway/keys/{id}` — a developer's own `tyg_` keys (`?all=true` and revoking others' for admins) · `POST/GET /gateway/service-keys` · `DELETE /gateway/service-keys/{id}` (admin) · `GET /gateway/developers` · `PUT /gateway/developers/{user_id}` (admin; credential profile `passthrough` \| `org_key`) |
 | AI gateway config | `GET /gateway/config` (signed-in users and gateways; the version is the `ETag`, `304` on a matching `If-None-Match`, `404 gateway_config_not_found` before any config) · `PUT /gateway/config` (admin; saves the next immutable version with its author; optional `If-Match`, `412 config_version_conflict` when stale; `422 invalid_gateway_config` for a config the gateway would refuse) · `GET /gateway/config/versions` · `GET /gateway/config/versions/{n}` · `GET /gateway/instances` (each gateway's latest heartbeat; offline after 120 s) |
+| AI gateway usage | `GET /gateway/report?since&until&by&scope&developer_id` (totals and groupings by `class`, `client`, `session`, `model` (requested, as Claude Code files it), `served-model`, `developer`, `decision`, `reason`, `day`; default the last 7 days by class, client and model) · `GET /gateway/sessions` (most recently active first; `limit`, `before`) · `GET /gateway/sessions/{id}` (the timeline of requests and decisions; `limit`, `after` = the last request's id). Everyone reads their own records in full (`scope=mine`, the default below admin); at `scope=org` non-admins get totals and non-identifying groupings, admins everything, including `developer_id` drill-down; another developer's session reads as `404` |
 | AI gateway service | `POST /gateway/heartbeat` — a gateway reports itself; the acknowledgement names the latest config and key-set versions · `GET /gateway/keys/sync?since=` — the key set (digests, developer, credential profile), `304` when the gateway already holds the version · `POST /gateway/introspect` — whether a session or personal key is live, and its role, for a gateway's admin surface · `POST /gateway/events` — AI gateways deliver `GatewayEventBatch`es and get a `GatewayEventAck`. Opened only by a gateway's own service key (`tygs_…`, `api_key.kind` `gateway_service`, held by an enabled admin). Records are stored once by id (a re-sent batch is a no-op), the records that were new are added to the per-day aggregates (`GatewayTotals`, the same sums the gateway's own report uses), and auxiliary kinds feed the fingerprint catalog. `422 invalid_event_batch` names field locations, never values (a caller's dictionary key reads `<key>`); `413 event_batch_too_large` over 4 MiB |
 
 ## Postgres: schema, domain, stores

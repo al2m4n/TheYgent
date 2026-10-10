@@ -32,7 +32,7 @@ import re
 import shutil
 import time
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
 from urllib.parse import urljoin
@@ -74,6 +74,7 @@ from theygent_ir.gateway import (
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
+from theygent_control_plane.ai_gateway import reports as gateway_reports
 from theygent_control_plane.ai_gateway.store import AiGatewayStore, ConfigDraft
 from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.auth import (
@@ -615,6 +616,26 @@ def _etag_matches(header: str | None, version: int | None) -> bool:
         return False
     tags = {tag.strip().removeprefix("W/") for tag in header.split(",")}
     return "*" in tags or _etag(version) in tags
+
+
+#: A report covers the last week unless asked otherwise.
+_GATEWAY_REPORT_DEFAULT_RANGE = timedelta(days=7)
+_GATEWAY_REPORT_DEFAULT_BY = "class,client,model"
+
+
+def _report_range(
+    since: datetime | None, until: datetime | None
+) -> tuple[datetime, datetime] | JSONResponse:
+    end = _aware(until) if until is not None else datetime.now(UTC)
+    start = _aware(since) if since is not None else end - _GATEWAY_REPORT_DEFAULT_RANGE
+    if start >= end:
+        return _error("since must be before until", status=400, code="invalid_report_range")
+    return start, end
+
+
+def _aware(moment: datetime) -> datetime:
+    """A timestamp without a zone is UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 def _gateway_key_payload(key: ApiKey) -> dict[str, Any]:
@@ -5593,6 +5614,125 @@ def create_app(
         async with tx() as session:
             instances = await ai_gateway_store.instances(session, now=datetime.now(UTC))
         return {"instances": [i.model_dump(mode="json") for i in instances]}
+
+    # -- usage reports: everyone reads their own; totals for viewers; detail across people for
+    # admins (gateway_usage:read / gateway_usage:read_all) --
+
+    def _gateway_scope(
+        principal: Principal, scope: str | None, developer_id: str | None
+    ) -> gateway_reports.Scope | JSONResponse:
+        """The records a reader asked for, if they may see them. ``mine`` is the reader's own
+        records (the default below admin); ``org`` is everyone's, optionally one developer's."""
+        everyone = authorize(principal, "gateway_usage:read_all", None)
+        chosen = scope or ("org" if everyone else "mine")
+        if chosen not in ("org", "mine"):
+            return _error("scope is org or mine", status=400, code="invalid_report_scope")
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        if chosen == "mine":
+            if developer_id is not None and developer_id != principal.id:
+                raise AuthError(
+                    "another developer's usage needs the admin role", code="forbidden", status=403
+                )
+            return gateway_reports.Scope(developer_id=principal.id or "")
+        if developer_id is not None and developer_id != principal.id and not everyone:
+            raise AuthError(
+                "another developer's usage needs the admin role", code="forbidden", status=403
+            )
+        return gateway_reports.Scope(developer_id=developer_id)
+
+    def _identifying_allowed(principal: Principal, scope: gateway_reports.Scope) -> bool:
+        """Per-developer and per-session detail is open for one's own records, or to admins."""
+        own = scope.developer_id is not None and scope.developer_id == principal.id
+        return own or authorize(principal, "gateway_usage:read_all", None)
+
+    @app.get("/gateway/report")
+    async def gateway_report(
+        since: datetime | None = Query(default=None),
+        until: datetime | None = Query(default=None),
+        by: str = Query(default=_GATEWAY_REPORT_DEFAULT_BY),
+        scope: str | None = Query(default=None),
+        developer_id: str | None = Query(default=None),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        window = _report_range(since, until)
+        if isinstance(window, JSONResponse):
+            return window
+        dimensions = [d.strip() for d in by.split(",") if d.strip()]
+        unknown = [d for d in dimensions if d not in gateway_reports.DIMENSIONS]
+        if unknown:
+            return _error(
+                f"unknown report dimension(s) {', '.join(unknown)}; choose from "
+                f"{', '.join(gateway_reports.DIMENSIONS)}",
+                status=400,
+                code="invalid_report_dimension",
+            )
+        reader = _gateway_scope(principal, scope, developer_id)
+        if isinstance(reader, JSONResponse):
+            return reader
+        identifying = sorted(set(dimensions) & gateway_reports.IDENTIFYING)
+        if identifying and not _identifying_allowed(principal, reader):
+            raise AuthError(
+                f"grouping everyone's usage by {', '.join(identifying)} needs the admin role",
+                code="forbidden",
+                status=403,
+            )
+        async with tx() as session:
+            report = await gateway_reports.build_report(
+                session, scope=reader, since=window[0], until=window[1], dimensions=dimensions
+            )
+        return report.model_dump(mode="json")
+
+    @app.get("/gateway/sessions")
+    async def gateway_sessions(
+        since: datetime | None = Query(default=None),
+        until: datetime | None = Query(default=None),
+        before: datetime | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+        scope: str | None = Query(default=None),
+        developer_id: str | None = Query(default=None),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        window = _report_range(since, until)
+        if isinstance(window, JSONResponse):
+            return window
+        reader = _gateway_scope(principal, scope, developer_id)
+        if isinstance(reader, JSONResponse):
+            return reader
+        if not _identifying_allowed(principal, reader):
+            raise AuthError("everyone's sessions need the admin role", code="forbidden", status=403)
+        async with tx() as session:
+            sessions = await gateway_reports.list_sessions(
+                session,
+                scope=reader,
+                since=window[0],
+                until=window[1],
+                limit=limit,
+                before=_aware(before) if before is not None else None,
+            )
+        return {"sessions": [s.model_dump(mode="json") for s in sessions]}
+
+    @app.get("/gateway/sessions/{session_id}")
+    async def gateway_session(
+        session_id: str,
+        after: str | None = Query(default=None),
+        limit: int = Query(default=500, ge=1, le=2000),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        everyone = authorize(principal, "gateway_usage:read_all", None)
+        reader = gateway_reports.Scope(developer_id=None if everyone else principal.id or "")
+        async with tx() as session:
+            detail = await gateway_reports.session_detail(
+                session, session_id, scope=reader, limit=limit, after=after
+            )
+        if detail is None:
+            # Another developer's session is indistinguishable from a nonexistent one.
+            return _error(
+                f"unknown session {session_id!r}", status=404, code="gateway_session_not_found"
+            )
+        return detail.model_dump(mode="json")
 
     # -- developers' gateway keys: a developer mints and revokes their own; admins see all --
 
