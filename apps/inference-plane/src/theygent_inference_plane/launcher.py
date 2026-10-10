@@ -395,6 +395,47 @@ def locate_llama_mmproj(binding: ManagedBinding) -> str | None:
     return sorted(hits)[0] if hits else None
 
 
+async def fetch_llamacpp_props(root_url: str, api_key: str | None = None) -> dict | None:
+    """llama-server's ``/props`` (context size, chat template), or ``None`` when the server at
+    ``root_url`` does not answer it as llama-server does — the way to tell a llama.cpp server
+    from any other OpenAI-compatible one without a completion."""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{root_url.rstrip('/')}/props", headers=headers)
+        props = resp.json() if resp.status_code == 200 else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(props, dict) or not isinstance(
+        props.get("default_generation_settings"), dict
+    ):
+        return None
+    return props
+
+
+def llamacpp_capabilities(props: dict, modality: str, *, approximate: bool = False) -> Capabilities:
+    """Capabilities from llama-server's ``/props``: the real context size, and reasoning from
+    the chat template; tool-calling and structured output are model-dependent, advertised
+    conservatively (real probe TBD)."""
+    max_context = props.get("default_generation_settings", {}).get("n_ctx")
+    reasoning = _template_implies_reasoning(props.get("chat_template"))
+    if modality == "embeddings":
+        # An embeddings server (llama-server --embeddings) serves /v1/embeddings only — it
+        # declares the embeddings modality EXPLICITLY (derivation leaves an explicit list
+        # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
+        return Capabilities(modalities=["embeddings"], max_context=max_context, approximate=True)
+    # A vision server (llama-server + a multimodal projector) accepts image_url content on
+    # /v1/chat/completions. vision=True → derived modalities ["chat", "vision"].
+    return Capabilities(
+        tool_calling=True,
+        structured_output=True,
+        vision=modality == "vision",
+        reasoning=reasoning,
+        max_context=max_context,
+        approximate=approximate,
+    )
+
+
 class LlamaCppHandle(_SubprocessHandle):
     def __init__(
         self, proc: subprocess.Popen[bytes], base_url: str, *, modality: str = "chat"
@@ -403,38 +444,8 @@ class LlamaCppHandle(_SubprocessHandle):
         self._modality = modality
 
     async def capabilities(self) -> Capabilities:
-        # llama-server exposes context size + the chat template via /props; tool-calling and
-        # structured output are model-dependent, advertised conservatively (real probe TBD).
-        max_context: int | None = None
-        reasoning = False
-        with contextlib.suppress(httpx.HTTPError, KeyError, ValueError):
-            async with httpx.AsyncClient(timeout=2.0) as client:
-                props = (await client.get(f"{self._base_url}/props")).json()
-                max_context = props.get("default_generation_settings", {}).get("n_ctx")
-                reasoning = _template_implies_reasoning(props.get("chat_template"))
-        if self._modality == "embeddings":
-            # An embeddings server (llama-server --embeddings) serves /v1/embeddings only — it
-            # declares the embeddings modality EXPLICITLY (derivation leaves an explicit list
-            # alone); chat-shaped flags don't apply. approximate: the chat caps aren't probed here.
-            return Capabilities(
-                modalities=["embeddings"], max_context=max_context, approximate=True
-            )
-        if self._modality == "vision":
-            # A vision server (llama-server + a multimodal projector) accepts image_url content on
-            # /v1/chat/completions. vision=True → derived modalities ["chat", "vision"].
-            return Capabilities(
-                tool_calling=True,
-                structured_output=True,
-                vision=True,
-                reasoning=reasoning,
-                max_context=max_context,
-            )
-        return Capabilities(
-            tool_calling=True,
-            structured_output=True,
-            vision=False,
-            reasoning=reasoning,
-            max_context=max_context,
+        return llamacpp_capabilities(
+            await fetch_llamacpp_props(self._base_url) or {}, self._modality
         )
 
 

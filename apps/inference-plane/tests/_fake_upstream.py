@@ -100,8 +100,12 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
         return {"status": "ok"}
 
     @app.get("/props")
-    async def props() -> dict[str, object]:
-        return {"default_generation_settings": {"n_ctx": 4096}}
+    async def props(request: Request) -> dict[str, object]:
+        captured.authorization = request.headers.get("authorization")
+        return {
+            "default_generation_settings": {"n_ctx": 4096},
+            "chat_template": "{%- if tools %}{{ tools | tojson }}{%- endif %}<think>",
+        }
 
     @app.post("/v1/chat/completions")
     async def chat(request: Request):

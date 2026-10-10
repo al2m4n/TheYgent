@@ -167,3 +167,59 @@ def test_real_llama_server_output_is_readable_from_its_log(tmp_path) -> None:
         text = "\n".join(body["lines"])
         assert "starting:" in text and "llama" in text.lower()
         assert "n_ctx" in text  # llama-server's own load log, not just our header
+
+
+@_skip
+def test_real_llama_server_registered_as_reachable_is_probed(tmp_path) -> None:
+    # A llama-server started by hand (not managed) and registered as openai-compatible reports
+    # its real context and tool calling from /props, not a confident "unsupported".
+    import subprocess
+    import time
+
+    import httpx
+
+    assert _GGUF is not None
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = subprocess.Popen(
+        [
+            LlamaCppLauncher().resolved_path or "llama-server",
+            "-m",
+            _GGUF,
+            "--port",
+            str(port),
+            "-c",
+            "8192",
+            "-np",
+            "1",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                if httpx.get(f"http://127.0.0.1:{port}/health", timeout=1).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(0.5)
+        app = create_app(enable_reaper=False)
+        with TestClient(app) as client:
+            client.put(
+                "/admin/models/byhand",
+                json={
+                    "binding": "openai-compatible",
+                    "baseUrl": f"http://127.0.0.1:{port}/v1",
+                    "model": "byhand",
+                },
+            )
+            caps = client.get("/admin/models/byhand/capabilities").json()
+            assert caps["maxContext"] == 8192, caps
+            assert caps["toolCalling"] is True
+            assert caps["approximate"] is True
+    finally:
+        server.terminate()
+        server.wait(timeout=10)

@@ -57,7 +57,9 @@ from theygent_inference_plane.launcher import (
     MlxVlmLauncher,
     WhisperCppLauncher,
     _hf_hub_dir,
+    fetch_llamacpp_props,
     launch_params_defect,
+    llamacpp_capabilities,
     locate_image_model,
 )
 from theygent_inference_plane.manager import (
@@ -547,10 +549,25 @@ def create_app(
             except _UNSERVABLE as exc:
                 return _engine_unavailable(exc)
         else:
-            # Reachable upstreams aren't probed locally; advertise the DECLARED task (the only
-            # signal there is — the chat/bench surfaces route their UI on it), all else defaults.
-            caps = Capabilities(modalities=[binding.modality])
+            caps = await _reachable_capabilities(binding)
         return JSONResponse(caps.model_dump(by_alias=True))
+
+    async def _reachable_capabilities(binding: Any) -> Capabilities:
+        """A reachable upstream's capabilities. A llama.cpp server answers ``/props``, which
+        gives its real context and template, read as for a managed llama.cpp engine (marked
+        approximate: it was started with flags this plane did not choose). Any other upstream
+        offers no probe, so only its DECLARED task is known — the chat/bench surfaces route
+        their UI on it — and every other field is unknown, reported as approximate rather than
+        as a confident "unsupported"."""
+        if binding.modality in ("chat", "vision", "embeddings"):
+            try:
+                api_key = resolve_credential(binding.credential_ref, credential_store)
+            except CredentialResolutionError:
+                api_key = None
+            root = binding.base_url.rstrip("/").removesuffix("/v1")
+            if (props := await fetch_llamacpp_props(root, api_key)) is not None:
+                return llamacpp_capabilities(props, binding.modality, approximate=True)
+        return Capabilities(modalities=[binding.modality], approximate=True)
 
     @app.post("/admin/models/{logical_id}:warm")
     async def warm_model(logical_id: str) -> Response:
