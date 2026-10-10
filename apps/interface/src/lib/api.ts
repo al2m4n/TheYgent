@@ -2380,6 +2380,13 @@ export const api = {
     request<{ developers: GatewayDeveloper[] }>(controlPlaneUrl(), "/gateway/developers").then(
       (r) => r.developers,
     ),
+  /** Who pays for a developer's traffic (admins only); gateways apply it within one key sync. */
+  setGatewayCredentialProfile: (userId: string, profile: CredentialProfile) =>
+    request<{ user_id: string; credential_profile: CredentialProfile }>(
+      controlPlaneUrl(),
+      `/gateway/developers/${encodeURIComponent(userId)}`,
+      { method: "PUT", body: JSON.stringify({ credential_profile: profile }) },
+    ),
   /** The caller's gateway keys; every developer's with ``all`` (admins only). */
   listGatewayKeys: (all = false) =>
     request<{ gateway_keys: GatewayKey[] }>(

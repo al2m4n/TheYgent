@@ -10,12 +10,14 @@
 // the control plane refuses (412) and the page says so instead of silently replacing their work.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, ServerCog, Trash2 } from "lucide-react";
+import { KeyRound, Plus, ServerCog, Trash2, Users } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  type CredentialProfile,
   type GatewayConfig,
   type GatewayCredentials,
+  type GatewayDeveloper,
   type GatewayKey,
   api,
   gatewayAdmin,
@@ -49,6 +51,7 @@ import {
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
+import { NativeSelect, NativeSelectOption } from "../ui/native-select";
 import { Skeleton } from "../ui/skeleton";
 import { TableBody, TableHeader, TableRow } from "../ui/table";
 
@@ -102,6 +105,7 @@ export function SettingsTab() {
         beforeHistory={
           <>
             <OrgKeyCard />
+            <DevelopersCard />
             <ServiceKeysCard />
           </>
         }
@@ -867,5 +871,135 @@ function CreateServiceKeyDialog({ onClose }: { onClose: () => void }) {
         </form>
       )}
     </Modal>
+  );
+}
+
+// ── developers: who pays for each one's traffic ──────────────────────────────
+
+const BILLING: Record<CredentialProfile, string> = {
+  passthrough: "Their own Claude login or API key",
+  org_key: "The organization's key",
+};
+
+function DevelopersCard() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const developers = useQuery({
+    queryKey: ["gatewayDevelopers"],
+    queryFn: () => api.listGatewayDevelopers(),
+  });
+  const [changing, setChanging] = useState<{
+    developer: GatewayDeveloper;
+    profile: CredentialProfile;
+  } | null>(null);
+  const change = useMutation({
+    mutationFn: (c: { developer: GatewayDeveloper; profile: CredentialProfile }) =>
+      api.setGatewayCredentialProfile(c.developer.user_id, c.profile),
+    onSuccess: (_saved, c) =>
+      notify.success(
+        `${c.developer.username} is billed to ${c.profile === "org_key" ? "the organization's key" : "their own credential"} — gateways apply it within one key sync`,
+      ),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["gatewayDevelopers"] });
+      qc.invalidateQueries({ queryKey: ["gatewayMe"] });
+    },
+  });
+  const list = developers.data ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Users size={16} /> Developers
+        </CardTitle>
+        <CardDescription>
+          Who pays for each developer's Claude Code traffic: their own claude.ai login or API key,
+          or the organization's key, which the gateway adds in place of theirs.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ErrorBanner error={developers.error} />
+        {developers.isPending ? (
+          <Skeleton className="h-12 rounded-lg" />
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Developers">
+            {list.map((d) => (
+              <Item key={d.user_id} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex flex-wrap items-center gap-2">
+                      {d.display_name || d.username}
+                      {d.display_name && d.display_name !== d.username && (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {d.username}
+                        </span>
+                      )}
+                      {d.user_id === user?.id && <Badge tone="slate">you</Badge>}
+                      {d.disabled && <Badge tone="slate">disabled</Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      {d.live_gateway_keys === 1
+                        ? "1 gateway key"
+                        : `${d.live_gateway_keys} gateway keys`}
+                      {d.updated_at && (
+                        <>
+                          {" "}
+                          · billing changed <TimeAgo iso={d.updated_at} />
+                        </>
+                      )}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <NativeSelect
+                      aria-label={`Billing for ${d.username}`}
+                      value={d.credential_profile}
+                      disabled={change.isPending}
+                      onChange={(e) =>
+                        setChanging({
+                          developer: d,
+                          profile: e.target.value as CredentialProfile,
+                        })
+                      }
+                    >
+                      {(Object.keys(BILLING) as CredentialProfile[]).map((p) => (
+                        <NativeSelectOption key={p} value={p}>
+                          {BILLING[p]}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </ItemActions>
+                </li>
+              </Item>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+      {changing && (
+        <ConfirmDialog
+          title={`Bill ${changing.developer.username} to ${changing.profile === "org_key" ? "the organization" : "their own credential"}?`}
+          message={
+            changing.profile === "org_key" ? (
+              <>
+                Their Claude Code traffic will reach Anthropic with the organization's key, which
+                the gateway adds in place of their own credential — so the gateway must have that
+                key (above), or their requests are refused. Their current setup keeps working.
+              </>
+            ) : (
+              <>
+                Their traffic will need their own claude.ai login or API key. A setup that carries
+                only the gateway key stops working until they copy the new one from Setup &amp;
+                keys.
+              </>
+            )
+          }
+          confirmLabel="Change billing"
+          onConfirm={() => {
+            change.mutate(changing);
+            setChanging(null);
+          }}
+          onCancel={() => setChanging(null)}
+        />
+      )}
+    </Card>
   );
 }

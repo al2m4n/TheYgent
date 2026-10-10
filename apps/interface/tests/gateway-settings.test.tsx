@@ -97,6 +97,7 @@ interface Mock {
   put?: (body: unknown) => Response;
   versions?: unknown[];
   serviceKeys?: unknown[];
+  developerProfile?: string;
   gateway?: (path: string, method: string, body: unknown) => Response;
 }
 
@@ -108,6 +109,7 @@ function mockPlanes({
     { version: 2, mode: "passthrough", created_at: HOUR_AGO, created_by: "usr_ada" },
   ],
   serviceKeys = [SERVICE_KEY],
+  developerProfile = "passthrough",
   gateway = () => json(credentials()),
 }: Mock = {}): Call[] {
   const calls: Call[] = [];
@@ -159,6 +161,9 @@ function mockPlanes({
       if (parsed.pathname.startsWith("/gateway/service-keys/") && method === "DELETE") {
         return new Response(null, { status: 204 });
       }
+      if (parsed.pathname.startsWith("/gateway/developers/") && method === "PUT") {
+        return json({ user_id: parsed.pathname.split("/").at(-1), ...(body as object) });
+      }
       if (parsed.pathname === "/gateway/developers") {
         return json({
           developers: [
@@ -167,7 +172,7 @@ function mockPlanes({
               username: "ada",
               display_name: "Ada",
               disabled: false,
-              credential_profile: "passthrough",
+              credential_profile: developerProfile,
               live_gateway_keys: 0,
               updated_at: null,
               updated_by: null,
@@ -571,5 +576,45 @@ describe("AI Gateway settings: service keys", () => {
         calls.some((c) => c.method === "DELETE" && c.path === "/gateway/service-keys/key_svc"),
       ).toBe(true),
     );
+  });
+});
+
+describe("AI Gateway settings: developers' billing", () => {
+  it("shows who pays for each developer's traffic", async () => {
+    mockPlanes();
+    renderTab();
+    const list = await screen.findByRole("list", { name: "Developers" });
+    expect(within(list).getByText("Ada")).toBeInTheDocument();
+    expect(within(list).getByLabelText("Billing for ada")).toHaveValue("passthrough");
+  });
+
+  it("bills a developer to the organization after confirmation", async () => {
+    const calls = mockPlanes();
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.selectOptions(await screen.findByLabelText("Billing for ada"), "org_key");
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/must have that key/);
+    await ui.click(within(confirm).getByRole("button", { name: "Change billing" }));
+    await waitFor(() =>
+      expect(calls.some((c) => c.path === "/gateway/developers/usr_ada")).toBe(true),
+    );
+    const put = calls.find((c) => c.path === "/gateway/developers/usr_ada");
+    expect(put?.method).toBe("PUT");
+    expect(put?.origin).toBe(CONTROL_PLANE_URL);
+    expect(put?.body).toEqual({ credential_profile: "org_key" });
+  });
+
+  it("warns that moving back to their own credential needs a new setup, and can be cancelled", async () => {
+    const calls = mockPlanes({ developerProfile: "org_key" });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.selectOptions(await screen.findByLabelText("Billing for ada"), "passthrough");
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent(/stops working until they copy the new one/);
+    await ui.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(calls.some((c) => c.path.startsWith("/gateway/developers/"))).toBe(false);
+    expect(screen.getByLabelText("Billing for ada")).toHaveValue("org_key");
   });
 });
