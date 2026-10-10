@@ -104,6 +104,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
+| `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog) |
 | `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
 | `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0018` |
@@ -132,6 +133,7 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Bench | `POST/GET /bench/suites` · `POST/GET /bench/runs` · `GET /bench/compare` · `POST/GET/DELETE /bench/presets` |
 | Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `PUT /artifacts/{ref}` (preserve-ref restore for imports) · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
 | Transfer | `POST /export` · `POST /import` — the control-plane half of the whole-install bundle, behind `transfer:export` / `transfer:import` (see [Import/export](#importexport-the-transfer-bundle)) |
+| AI gateway service | `POST /gateway/events` — AI gateways deliver `GatewayEventBatch`es and get a `GatewayEventAck`. Opened only by a gateway's own service key (`tygs_…`, `api_key.kind` `gateway_service`, held by an enabled admin). Records are stored once by id (a re-sent batch is a no-op), the records that were new are added to the per-day aggregates (`GatewayTotals`, the same sums the gateway's own report uses), and auxiliary kinds feed the fingerprint catalog. `422 invalid_event_batch` names field locations, never values; `413 event_batch_too_large` over 4 MiB |
 
 ## Postgres: schema, domain, stores
 

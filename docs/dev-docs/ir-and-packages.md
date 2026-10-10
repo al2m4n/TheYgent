@@ -143,6 +143,10 @@ The plane boundary is enforced by the types:
 - **Every record has a decision.** A request refused before the policy ran is recorded with
   `request_refused`, and one the policy failed on with `policy_error`, so the records add up to
   the traffic.
+- **One definition of the totals.** `GatewayTotals.of(record)` is a record's contribution
+  (calls, errors, tokens, cost, the cost with routing applied, calls and tokens routed, API calls
+  avoided), and totals add field by field. The gateway's own report and the control plane's
+  per-day aggregates are both sums of it, so they agree by construction.
 
 None of these models is hashed, and `packages/ir-types` does not generate them.
 

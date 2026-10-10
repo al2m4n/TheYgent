@@ -29,6 +29,7 @@ from theygent_ir.gateway import (
     GatewayKey,
     GatewayKeySet,
     GatewayRequestRecord,
+    GatewayTotals,
     ModelRates,
     PolicyConfig,
     RequestShape,
@@ -423,3 +424,91 @@ def test_an_exchange_without_a_policy_decision_still_records_one(reason: str) ->
     # failed on, is still recorded: its decision says why there was nothing to decide.
     decision = Decision.model_validate({"action": "stay", "reasons": [reason]})
     assert decision.reasons == [reason]
+
+
+# ── totals ───────────────────────────────────────────────────────────────────
+
+
+def _built(**fields: object) -> GatewayRequestRecord:
+    base: dict[str, object] = {
+        "id": "r1",
+        "gateway_id": "gw-1",
+        "started_at": "2026-10-10T09:00:00Z",
+        "endpoint": "messages",
+        "status": 200,
+        "outcome": "complete",
+        "credential_kind": "oauth",
+        "credential_profile": "passthrough",
+        "request_class": "main",
+        "decision": {"action": "stay", "reasons": ["mid_conversation"]},
+    }
+    return GatewayRequestRecord.model_validate({**base, **fields})
+
+
+def test_a_stay_costs_the_same_with_routing() -> None:
+    totals = GatewayTotals.of(
+        _built(usage={"input_tokens": 10, "cache_write_1h_tokens": 5}, cost_usd=0.5)
+    )
+    assert (totals.calls, totals.errors, totals.cost_usd, totals.with_routing_usd) == (
+        1,
+        0,
+        0.5,
+        0.5,
+    )
+    assert totals.cache_write_tokens == 5
+    assert totals.saving_usd == 0.0
+    assert totals.routed_calls == 0
+
+
+def test_a_route_costs_its_counterfactual_with_routing() -> None:
+    route = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "counterfactual_usd": 0.2,
+    }
+    totals = GatewayTotals.of(_built(usage={"output_tokens": 100}, cost_usd=0.5, decision=route))
+    assert (totals.with_routing_usd, totals.routed_calls, totals.routed_tokens) == (0.2, 1, 100)
+    assert totals.saving_usd == pytest.approx(0.3)
+    assert totals.routed_local_calls == 0
+
+
+def test_a_local_route_avoids_an_api_call() -> None:
+    local = {
+        "action": "route",
+        "target": {"kind": "local", "model": "aux-local"},
+        "reasons": ["local_candidate"],
+        "counterfactual_usd": 0.0,
+    }
+    totals = GatewayTotals.of(_built(usage={"input_tokens": 40}, cost_usd=0.01, decision=local))
+    assert (totals.routed_local_calls, totals.routed_local_tokens, totals.with_routing_usd) == (
+        1,
+        40,
+        0.0,
+    )
+
+
+def test_an_unpriced_call_is_counted_not_free() -> None:
+    totals = GatewayTotals.of(_built(usage={"output_tokens": 3}))
+    assert (totals.unpriced_calls, totals.cost_usd) == (1, 0.0)
+    assert GatewayTotals.of(_built()).unpriced_calls == 0  # nothing used, nothing to price
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome", "error"),
+    [
+        (200, "complete", 0),
+        (429, "complete", 1),
+        (200, "upstream_broke", 1),
+        (None, "transport_error", 1),
+    ],
+)
+def test_errors(status: int | None, outcome: str, error: int) -> None:
+    assert GatewayTotals.of(_built(status=status, outcome=outcome)).errors == error
+
+
+def test_totals_add_field_by_field() -> None:
+    one = GatewayTotals.of(_built(usage={"input_tokens": 1}, cost_usd=0.25))
+    total = one + one + GatewayTotals()
+    assert (total.calls, total.input_tokens, total.cost_usd) == (2, 2, 0.5)
+    assert GatewayTotals.model_validate(total.model_dump()) == total  # a valid wire value

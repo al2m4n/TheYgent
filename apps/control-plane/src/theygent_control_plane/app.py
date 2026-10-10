@@ -32,6 +32,7 @@ import re
 import shutil
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
 from urllib.parse import urljoin
@@ -63,15 +64,19 @@ from theygent_ir import (
     parse_document,
     validate_graph,
 )
+from theygent_ir.gateway import GatewayEventBatch
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
+from theygent_control_plane.ai_gateway.store import AiGatewayStore
 from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.auth import (
     API_KEY_TOKEN_PREFIX,
+    GATEWAY_SERVICE_TOKEN_PREFIX,
     MIN_PASSWORD_LENGTH,
     SESSION_TOKEN_PREFIX,
     AuthStore,
+    GatewayServiceCaller,
     OidcError,
     Role,
     StateSealer,
@@ -649,6 +654,27 @@ class UpdateProviderRequest(BaseModel):
 _ARTIFACT_REF_RE = re.compile(r"art_[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}")
 
 
+#: An AI gateway sends at most MAX_EVENT_BATCH records of a few KB each; a larger body is refused
+#: with 413, which makes the gateway send smaller batches.
+_GATEWAY_EVENTS_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _gateway_events_too_large() -> JSONResponse:
+    return _error(
+        f"event batch exceeds {_GATEWAY_EVENTS_MAX_BYTES // (1024 * 1024)} MiB; send fewer records",
+        status=413,
+        code="event_batch_too_large",
+    )
+
+
+def _validation_summary(exc: ValidationError, *, limit: int = 5) -> str:
+    """Where and why validation failed — never the offending values, which could quote content."""
+    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+    parts = [f"{'.'.join(str(p) for p in e['loc']) or 'body'}: {e['msg']}" for e in errors[:limit]]
+    more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
+    return "; ".join(parts) + more
+
+
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "code": code}
     body: dict[str, Any] = {"error": error}
@@ -787,6 +813,7 @@ def create_app(
     triggers = TriggerStore()
     bench = BenchStore()  # saved benchmark results + suites/cases + param presets
     rag_store = RagStore()  # retrieval sources/documents/chunks + hybrid search
+    ai_gateway_store = AiGatewayStore()  # the AI gateway's records, usage, configs, catalog
     # The tool/MCP auth seam. ``connections`` persists the (non-secret) bindings the IR's
     # ``tools`` block references by id; ``secrets`` encrypts the material behind each ``secret_ref``
     # (resolved server-side, inside the step — never in the IR/span/journal). Keys come from
@@ -1158,6 +1185,19 @@ def create_app(
                     if await auth_store.resolve_api_key(session, presented) is not None:
                         return
         raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
+
+    async def require_gateway_service(
+        authorization: str | None = Header(default=None),
+    ) -> GatewayServiceCaller:
+        # The AI gateway's service surface (/gateway/*). Only a gateway's own service key opens
+        # it: no session bearer, no personal API key, no developer's gateway key.
+        presented = _bearer_token(authorization)
+        if presented is not None and presented.startswith(GATEWAY_SERVICE_TOKEN_PREFIX):
+            async with tx() as session:
+                caller = await auth_store.resolve_gateway_service_key(session, presented)
+            if caller is not None:
+                return caller
+        raise AuthError("a gateway service key is required (Authorization: Bearer tygs_…)")
 
     async def get_session() -> AsyncIterator[AsyncSession]:
         # Request-scoped session for read handlers. Writes that outlive the handler
@@ -5335,6 +5375,35 @@ def create_app(
         if user is None:  # the session was revoked between mint and redeem
             raise AuthError("invalid or expired sign-in code — start the sign-in again")
         return {"token": bearer, "user": _user_payload(user)}
+
+    # ── AI gateway service surface: /gateway/* ───────────────────────────
+    # Called by AI gateways (apps/ai-gateway) with their service key, never by the interface.
+    # Every body is the gateway's wire types (theygent_ir.gateway), which refuse free text; a
+    # rejection names field locations, never the values, which could quote content.
+
+    @app.post("/gateway/events")
+    async def ingest_gateway_events(
+        request: Request, caller: GatewayServiceCaller = Depends(require_gateway_service)
+    ) -> Any:
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > _GATEWAY_EVENTS_MAX_BYTES:
+            return _gateway_events_too_large()
+        data = await request.body()
+        if len(data) > _GATEWAY_EVENTS_MAX_BYTES:
+            return _gateway_events_too_large()
+        try:
+            batch = GatewayEventBatch.model_validate_json(data)
+        except ValidationError as exc:
+            return _error(
+                f"invalid event batch: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_event_batch",
+            )
+        async with tx() as session:
+            ack = await ai_gateway_store.ingest(
+                session, batch, service_key_id=caller.key_id, received_at=datetime.now(UTC)
+            )
+        return ack.model_dump(mode="json")
 
     # ── liveness / readiness ─────────────────────────────────────────────
 

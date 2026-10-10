@@ -284,6 +284,88 @@ class GatewayEventAck(_GatewayWire):
     duplicates: int = Field(ge=0)
 
 
+class GatewayTotals(_GatewayWire):
+    """What records add up to. One definition, so the gateway's own report and the control
+    plane's aggregates agree by construction.
+
+    "With routing" counts a record's counterfactual where its decision was to route and its
+    actual cost otherwise. A call to a model with no known price adds tokens but no cost, and is
+    counted in ``unpriced_calls`` instead of passing as free."""
+
+    calls: int = Field(default=0, ge=0)
+    #: Exchanges that did not complete with a 2xx/3xx answer.
+    errors: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_5m_tokens: int = Field(default=0, ge=0)
+    cache_write_1h_tokens: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0)
+    unpriced_calls: int = Field(default=0, ge=0)
+    with_routing_usd: float = Field(default=0.0, ge=0)
+    routed_calls: int = Field(default=0, ge=0)
+    routed_tokens: int = Field(default=0, ge=0)
+    #: Calls a local model would have answered: API calls that would not have been made.
+    routed_local_calls: int = Field(default=0, ge=0)
+    routed_local_tokens: int = Field(default=0, ge=0)
+
+    @property
+    def cache_write_tokens(self) -> int:
+        return self.cache_write_5m_tokens + self.cache_write_1h_tokens
+
+    @property
+    def saving_usd(self) -> float:
+        return self.cost_usd - self.with_routing_usd
+
+    @classmethod
+    def of(cls, record: GatewayRequestRecord) -> GatewayTotals:
+        """One record's contribution."""
+        usage = record.usage
+        tokens = (
+            usage.input_tokens
+            + usage.output_tokens
+            + usage.cache_read_tokens
+            + usage.cache_write_5m_tokens
+            + usage.cache_write_1h_tokens
+        )
+        actual = record.cost_usd
+        decision = record.decision
+        target = decision.target if decision.action == "route" else None
+        with_routing = (
+            decision.counterfactual_usd
+            if target is not None and decision.counterfactual_usd is not None
+            else actual or 0.0
+        )
+        local = target is not None and target.kind == "local"
+        failed = record.outcome != "complete" or (
+            record.status is not None and record.status >= 400
+        )
+        return cls.model_construct(
+            calls=1,
+            errors=int(failed),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cache_read_tokens=usage.cache_read_tokens,
+            cache_write_5m_tokens=usage.cache_write_5m_tokens,
+            cache_write_1h_tokens=usage.cache_write_1h_tokens,
+            cost_usd=actual or 0.0,
+            unpriced_calls=int(actual is None and tokens > 0),
+            with_routing_usd=with_routing,
+            routed_calls=int(target is not None),
+            routed_tokens=tokens if target is not None else 0,
+            routed_local_calls=int(local),
+            routed_local_tokens=tokens if local else 0,
+        )
+
+    def __add__(self, other: GatewayTotals) -> GatewayTotals:
+        return GatewayTotals.model_construct(
+            **{
+                name: getattr(self, name) + getattr(other, name)
+                for name in GatewayTotals.model_fields
+            }
+        )
+
+
 class ModelRates(_GatewayWire):
     """USD per million tokens, for contracted rates that differ from list price."""
 

@@ -28,7 +28,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from pydantic import ValidationError
-from theygent_ir.gateway import GatewayRequestRecord, SeatAllowance
+from theygent_ir.gateway import GatewayRequestRecord, GatewayTotals, SeatAllowance
 
 from theygent_ai_gateway.costs import utilization_change
 
@@ -55,80 +55,12 @@ DIMENSIONS: dict[str, Callable[[GatewayRequestRecord], str | None]] = {
 DEFAULT_DIMENSIONS = ("class", "client", "model")
 
 
-def _tokens(r: GatewayRequestRecord) -> int:
-    u = r.usage
-    return (
-        u.input_tokens
-        + u.output_tokens
-        + u.cache_read_tokens
-        + u.cache_write_5m_tokens
-        + u.cache_write_1h_tokens
-    )
-
-
-@dataclass
-class Totals:
-    calls: int = 0
-    #: Exchanges that did not complete with a 2xx/3xx answer.
-    errors: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_5m_tokens: int = 0
-    cache_write_1h_tokens: int = 0
-    #: What the traffic cost (list price unless the config set contracted rates).
-    cost_usd: float = 0.0
-    #: Calls that used tokens on a model with no known price; their cost is not in ``cost_usd``.
-    unpriced_calls: int = 0
-    #: What it would have cost with every decision applied.
-    with_routing_usd: float = 0.0
-    routed_calls: int = 0
-    routed_tokens: int = 0
-    #: Calls a local model would have answered: API calls that would not have been made.
-    routed_local_calls: int = 0
-    routed_local_tokens: int = 0
-
-    @property
-    def saving_usd(self) -> float:
-        return self.cost_usd - self.with_routing_usd
-
-    @property
-    def cache_write_tokens(self) -> int:
-        return self.cache_write_5m_tokens + self.cache_write_1h_tokens
-
-    def add(self, r: GatewayRequestRecord) -> None:
-        self.calls += 1
-        if r.outcome != "complete" or (r.status is not None and r.status >= 400):
-            self.errors += 1
-        u = r.usage
-        self.input_tokens += u.input_tokens
-        self.output_tokens += u.output_tokens
-        self.cache_read_tokens += u.cache_read_tokens
-        self.cache_write_5m_tokens += u.cache_write_5m_tokens
-        self.cache_write_1h_tokens += u.cache_write_1h_tokens
-        actual = r.cost_usd
-        if actual is None and _tokens(r):
-            self.unpriced_calls += 1
-        self.cost_usd += actual or 0.0
-        decision = r.decision
-        routed = decision.action == "route" and decision.target is not None
-        if routed and decision.counterfactual_usd is not None:
-            self.with_routing_usd += decision.counterfactual_usd
-        else:
-            self.with_routing_usd += actual or 0.0
-        if routed and decision.target is not None:
-            self.routed_calls += 1
-            self.routed_tokens += _tokens(r)
-            if decision.target.kind == "local":
-                self.routed_local_calls += 1
-                self.routed_local_tokens += _tokens(r)
-
-    def to_json(self) -> dict[str, object]:
-        return {
-            **asdict(self),
-            "cache_write_tokens": self.cache_write_tokens,
-            "saving_usd": self.saving_usd,
-        }
+def totals_json(totals: GatewayTotals) -> dict[str, object]:
+    return {
+        **totals.model_dump(),
+        "cache_write_tokens": totals.cache_write_tokens,
+        "saving_usd": totals.saving_usd,
+    }
 
 
 @dataclass(frozen=True)
@@ -155,8 +87,8 @@ class Report:
     until: datetime | None
     first: datetime | None = None
     last: datetime | None = None
-    total: Totals = field(default_factory=Totals)
-    groups: dict[str, dict[str, Totals]] = field(default_factory=dict)
+    total: GatewayTotals = field(default_factory=GatewayTotals)
+    groups: dict[str, dict[str, GatewayTotals]] = field(default_factory=dict)
     seats: dict[str, SeatUse] = field(default_factory=dict)
     warnings: list[SetupWarning] = field(default_factory=list)
     pricing_versions: set[str] = field(default_factory=set)
@@ -173,9 +105,9 @@ class Report:
             "until": when(self.until),
             "first": when(self.first),
             "last": when(self.last),
-            "total": self.total.to_json(),
+            "total": totals_json(self.total),
             "groups": {
-                dimension: {key: totals.to_json() for key, totals in rows.items()}
+                dimension: {key: totals_json(totals) for key, totals in rows.items()}
                 for dimension, rows in self.groups.items()
             },
             "seats": {
@@ -242,15 +174,17 @@ def build_report(
             continue
         report.first = r.started_at if report.first is None else min(report.first, r.started_at)
         report.last = r.started_at if report.last is None else max(report.last, r.started_at)
-        report.total.add(r)
+        contribution = GatewayTotals.of(r)
+        report.total = report.total + contribution
         for dimension in chosen:
             key = DIMENSIONS[dimension](r) or NONE_KEY
-            report.groups[dimension].setdefault(key, Totals()).add(r)
+            rows = report.groups[dimension]
+            rows[key] = rows.get(key, GatewayTotals()) + contribution
         if r.pricing_version:
             report.pricing_versions.add(r.pricing_version)
         if r.served_model and r.requested_model and r.served_model != r.requested_model:
             report.served_differs = True
-        if r.cost_usd is None and _tokens(r):
+        if contribution.unpriced_calls:
             unpriced_models.add(r.served_model or r.requested_model or NONE_KEY)
         if r.endpoint == "messages":
             shape = r.shape
