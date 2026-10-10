@@ -44,7 +44,7 @@ A **crawl** source ingests a website — point it at a docs root and TheYgent wa
 | **Max pages** | The crawl budget (default 200). The crawl stops when it runs out, whatever is left. |
 | **Render JavaScript** | Off by default. Turn it on for script-rendered sites; it uses a headless browser, which needs a one-time `playwright install chromium` on the machine running the control plane. Most docs sites don't need it. |
 
-The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Click **Crawl** to start (creating the source starts the first crawl automatically) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
+The crawler respects `robots.txt`, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Click **Crawl** to start (creating the source in the UI starts the first crawl automatically; over the API, call [`POST /rag/sources/{id}:ingest`](../reference/api.md) after creating it) and **Re-crawl** any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.
 
 ## Watching an ingest
 

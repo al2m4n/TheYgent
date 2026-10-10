@@ -183,6 +183,14 @@ def test_ingest_endpoint_is_crawl_only(client: TestClient) -> None:
     assert resp.json()["error"]["code"] == "invalid_rag_source"
 
 
+def test_creating_a_crawl_source_does_not_start_the_crawl(client: TestClient) -> None:
+    # The documented API contract: create stores the source, `:ingest` starts the crawl (the
+    # interface calls both). An unreachable root proves nothing was fetched in between.
+    source = _create_source(client, kind="crawl", root_url="http://127.0.0.1:9/docs/")
+    time.sleep(0.2)
+    assert client.get(f"/rag/sources/{source['id']}").json()["status"] == "empty"
+
+
 def test_query_before_any_ingest_is_a_clean_400(client: TestClient) -> None:
     source = _create_source(client)
     resp = client.post(f"/rag/sources/{source['id']}/query", json={"query": "anything"})

@@ -179,7 +179,7 @@ Retrieval collections agents search through the rag node. See [RAG sources](../r
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. |
+| POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. Creating a `crawl` source does not start the crawl — call `:ingest`. |
 | GET | `/rag/sources` | List (keyset pagination via `limit` + `before`). |
 | GET / PATCH / DELETE | `/rag/sources/{id}` | Read (status + live ingest `progress`) / rename or edit crawl config / delete with all documents and vectors. |
 | GET | `/rag/sources/{id}/documents` | The source's documents with per-document status, chunk counts, and errors. |
