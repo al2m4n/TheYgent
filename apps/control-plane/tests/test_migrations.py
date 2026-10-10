@@ -413,3 +413,39 @@ def test_key_set_trigger_migration_single_step_down_up(pg_url: str) -> None:
         else:
             os.environ["DATABASE_URL"] = previous
         asyncio.run(_drop_scratch(pg_url))
+
+
+async def _catalog_columns(url: str) -> set[str]:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        rows = await conn.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'ai_gateway_fingerprint'"
+        )
+        return {r["column_name"] for r in rows}
+    finally:
+        await conn.close()
+
+
+def test_catalog_stats_migration_single_step_down_up(pg_url: str) -> None:
+    # 0022 moves review status out of the catalog (the config holds it); a downgrade restores
+    # the columns, with every kind unreviewed.
+    review = {"status", "label", "reviewed_at", "reviewed_by"}
+    scratch = _scratch_url(pg_url)
+    asyncio.run(_recreate_scratch(pg_url))
+    previous = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = scratch
+        cfg = Config(str(_ALEMBIC_INI))
+        command.upgrade(cfg, "0022_ai_gateway_catalog_stats")
+        assert asyncio.run(_catalog_columns(scratch)).isdisjoint(review)
+        command.downgrade(cfg, "0021_ai_gateway_key_set")
+        assert review <= asyncio.run(_catalog_columns(scratch))
+        command.upgrade(cfg, "head")
+        assert asyncio.run(_catalog_columns(scratch)).isdisjoint(review)
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+        asyncio.run(_drop_scratch(pg_url))

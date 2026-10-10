@@ -67,13 +67,14 @@ from theygent_ir import (
 from theygent_ir.gateway import (
     CredentialProfile,
     GatewayEventBatch,
+    GatewayHeartbeat,
     GatewayTokenCheck,
     GatewayTokenCheckResult,
 )
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
-from theygent_control_plane.ai_gateway.store import AiGatewayStore
+from theygent_control_plane.ai_gateway.store import AiGatewayStore, ConfigDraft
 from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.auth import (
     API_KEY_TOKEN_PREFIX,
@@ -603,6 +604,19 @@ class SetCredentialProfileRequest(BaseModel):
     credential_profile: CredentialProfile
 
 
+def _etag(version: int) -> str:
+    return f'"{version}"'
+
+
+def _etag_matches(header: str | None, version: int | None) -> bool:
+    """Whether an ``If-None-Match``/``If-Match`` value names ``version`` (weak tags count; ``*``
+    matches any existing version)."""
+    if header is None or version is None:
+        return False
+    tags = {tag.strip().removeprefix("W/") for tag in header.split(",")}
+    return "*" in tags or _etag(version) in tags
+
+
 def _gateway_key_payload(key: ApiKey) -> dict[str, Any]:
     """A gateway or service key's public shape. Gateway keys carry no role: they open a gateway,
     never this API."""
@@ -689,10 +703,22 @@ def _gateway_events_too_large() -> JSONResponse:
     )
 
 
+#: A location step shown as-is: a list index, or a snake_case name like every wire field's.
+_SAFE_LOC = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
 def _validation_summary(exc: ValidationError, *, limit: int = 5) -> str:
-    """Where and why validation failed — never the offending values, which could quote content."""
+    """Where and why validation failed — never the offending values, which could quote content.
+    A location step that is not an index or a field-like name (a caller's dictionary key) reads
+    ``<key>``: keys are caller text too."""
+
+    def step(part: object) -> str:
+        if isinstance(part, int) or (isinstance(part, str) and _SAFE_LOC.fullmatch(part)):
+            return str(part)
+        return "<key>"
+
     errors = exc.errors(include_input=False, include_url=False, include_context=False)
-    parts = [f"{'.'.join(str(p) for p in e['loc']) or 'body'}: {e['msg']}" for e in errors[:limit]]
+    parts = [f"{'.'.join(step(p) for p in e['loc']) or 'body'}: {e['msg']}" for e in errors[:limit]]
     more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
     return "; ".join(parts) + more
 
@@ -1220,6 +1246,16 @@ def create_app(
             if caller is not None:
                 return caller
         raise AuthError("a gateway service key is required (Authorization: Bearer tygs_…)")
+
+    async def require_reader_or_gateway(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> Principal | GatewayServiceCaller:
+        # What both audiences read (the gateway config): a gateway with its service key, or any
+        # signed-in user.
+        presented = _bearer_token(authorization)
+        if presented is not None and presented.startswith(GATEWAY_SERVICE_TOKEN_PREFIX):
+            return await require_gateway_service(authorization)
+        return await require_auth(request, authorization)
 
     async def get_session() -> AsyncIterator[AsyncSession]:
         # Request-scoped session for read handlers. Writes that outlive the handler
@@ -5453,6 +5489,110 @@ def create_app(
                     key_user, role = resolved
                     result = GatewayTokenCheckResult(active=True, user_id=key_user.id, role=role)
         return result.model_dump(mode="json")
+
+    # -- config: immutable versions; the version is the ETag --
+
+    @app.get("/gateway/config", dependencies=[Depends(require_reader_or_gateway)])
+    async def get_gateway_config(
+        if_none_match: str | None = Header(default=None),
+    ) -> Any:
+        async with tx() as session:
+            config = await ai_gateway_store.latest_config(session)
+        if config is None:
+            return _error(
+                "no gateway config has been saved yet", status=404, code="gateway_config_not_found"
+            )
+        headers = {"ETag": _etag(config.version)}
+        if _etag_matches(if_none_match, config.version):
+            return Response(status_code=304, headers=headers)
+        return JSONResponse(config.model_dump(mode="json"), headers=headers)
+
+    @app.put("/gateway/config")
+    async def put_gateway_config(
+        request: Request,
+        if_match: str | None = Header(default=None),
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        try:
+            draft = ConfigDraft.model_validate_json(await request.body())
+        except ValidationError as exc:
+            return _error(
+                f"invalid gateway config: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_gateway_config",
+            )
+        async with tx() as session:
+            if if_match is not None:
+                # Lost-update guard: the write applies only on top of the version it was read at.
+                latest = await ai_gateway_store.latest_config_version(session)
+                if not _etag_matches(if_match, latest):
+                    return _error(
+                        f"the gateway config is now at version {latest}; reload and retry",
+                        status=412,
+                        code="config_version_conflict",
+                    )
+            try:
+                config = await ai_gateway_store.save_config(
+                    session, draft, by=principal.id, now=datetime.now(UTC)
+                )
+            except ValidationError as exc:
+                return _error(
+                    f"invalid gateway config: {_validation_summary(exc)}",
+                    status=422,
+                    code="invalid_gateway_config",
+                )
+        logger.info(
+            "ai_gateway.config_saved", extra={"version": config.version, "mode": config.mode}
+        )
+        return JSONResponse(
+            config.model_dump(mode="json"),
+            status_code=201,
+            headers={"ETag": _etag(config.version)},
+        )
+
+    @app.get("/gateway/config/versions", dependencies=[Depends(require_auth)])
+    async def list_gateway_config_versions() -> Any:
+        async with tx() as session:
+            versions = await ai_gateway_store.config_versions(session)
+        return {"versions": [v.model_dump(mode="json") for v in versions]}
+
+    @app.get("/gateway/config/versions/{version}", dependencies=[Depends(require_auth)])
+    async def get_gateway_config_version(version: int) -> Any:
+        async with tx() as session:
+            config = await ai_gateway_store.config(session, version)
+        if config is None:
+            return _error(
+                f"no gateway config version {version}",
+                status=404,
+                code="gateway_config_not_found",
+            )
+        return JSONResponse(config.model_dump(mode="json"), headers={"ETag": _etag(version)})
+
+    # -- instances: each gateway reports itself; the acknowledgement names what is current --
+
+    @app.post("/gateway/heartbeat")
+    async def gateway_heartbeat(
+        request: Request, caller: GatewayServiceCaller = Depends(require_gateway_service)
+    ) -> Any:
+        try:
+            beat = GatewayHeartbeat.model_validate_json(await request.body())
+        except ValidationError as exc:
+            return _error(
+                f"invalid heartbeat: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_heartbeat",
+            )
+        async with tx() as session:
+            ack = await ai_gateway_store.record_heartbeat(
+                session, beat, service_key_id=caller.key_id, now=datetime.now(UTC)
+            )
+        return ack.model_dump(mode="json")
+
+    @app.get("/gateway/instances", dependencies=[Depends(require_auth)])
+    async def list_gateway_instances() -> Any:
+        async with tx() as session:
+            instances = await ai_gateway_store.instances(session, now=datetime.now(UTC))
+        return {"instances": [i.model_dump(mode="json") for i in instances]}
 
     # -- developers' gateway keys: a developer mints and revokes their own; admins see all --
 

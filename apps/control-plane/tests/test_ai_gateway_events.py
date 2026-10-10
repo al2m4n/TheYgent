@@ -7,7 +7,7 @@ What must hold:
 * a re-sent batch is a no-op, and two deliveries of one batch racing each other count once;
 * the per-day aggregates are ``GatewayTotals`` summed over the records that were new, so they
   never double-count and agree with the gateway's own report;
-* auxiliary request kinds feed the fingerprint catalog; a new kind is ``unreviewed``;
+* auxiliary request kinds feed the fingerprint catalog's stats;
 * anything that is not a valid batch (free text included) is refused with 422 without the
   refusal echoing what was sent, and an oversized body is a 413 the gateway answers by sending
   smaller batches.
@@ -252,7 +252,6 @@ def test_auxiliary_kinds_feed_the_catalog(
     post(client, service_key, batch(rec(9, **aux, client_version="2.1.285")))
     [entry] = rows(pg_url, "SELECT * FROM ai_gateway_fingerprint")
     assert entry["fingerprint"] == fingerprint
-    assert entry["status"] == "unreviewed"
     assert entry["request_count"] == 3
     assert json.loads(entry["client_versions"]) == ["2.1.285", "2.1.290"]
     assert (entry["first_seen_at"], entry["last_seen_at"]) == (
@@ -337,6 +336,7 @@ def test_a_revoked_key_or_a_lapsed_owner_is_refused(client: TestClient, pg_url: 
     "body",
     [
         pytest.param(batch(rec(1, prompt_text=CANARY)), id="unknown-field"),
+        pytest.param(batch(rec(1, **{f"Field {CANARY}": 1})), id="unknown-field-named-in-text"),
         pytest.param(batch(rec(1, client=f"cli {CANARY} free text")), id="free-text"),
         pytest.param(batch(rec(1, usage={"input_tokens": 1, "text": CANARY})), id="nested"),
         pytest.param(batch(*(rec(n) for n in range(501))), id="too-many-records"),

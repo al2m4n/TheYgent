@@ -968,22 +968,19 @@ class AiGatewayConfigRow(Base):
 
 
 class AiGatewayFingerprintRow(Base):
-    """One kind of auxiliary request in the catalog, with what has been observed of it. A kind
-    nobody has reviewed is ``unreviewed``, which the policy passes through."""
+    """What has been observed of one kind of auxiliary request. Its review status and label are
+    rules in the gateway config (the versioned document decisions are made under), never a
+    second copy here; a kind with no rule is ``unreviewed``, which the policy passes through."""
 
     __tablename__ = "ai_gateway_fingerprint"
 
     fingerprint: Mapped[str] = mapped_column(String, primary_key=True)
-    status: Mapped[str] = mapped_column(String)
-    label: Mapped[str | None] = mapped_column(String, nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(_TZ)
     last_seen_at: Mapped[datetime] = mapped_column(_TZ)
     request_count: Mapped[int] = mapped_column(BigInteger)
     client_versions: Mapped[list] = mapped_column(JSONB)
     shape: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
     shares_main_prefix: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    reviewed_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
-    reviewed_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class AiGatewayDeveloperRow(Base):
