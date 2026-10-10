@@ -153,6 +153,7 @@ each gates on its prerequisites, skipping clean when they are absent:
 |------|---------|
 | `THEYGENT_GGUF_PATH` + `llama-server` on PATH | Real llama.cpp chat loop |
 | `THEYGENT_MLX_MODEL` + `mlx_lm.server` on PATH | Real MLX chat (Apple Silicon) |
+| `THEYGENT_MLX_REASONING_MODEL` (a think-token model, e.g. `mlx-community/Qwen3-0.6B-4bit`) + `mlx_lm.server` on PATH | Real MLX reasoning: thinking reaches the caller as `reasoning_content`, streamed live, kept on a tool-call turn |
 | `THEYGENT_VLLM_CUDA=1` (or `nvidia-smi`) + `THEYGENT_VLLM_MODEL` | vLLM on a real CUDA host (still unverified — no CUDA runner) |
 | `DATABASE_URL` | Control-plane integration (real Postgres, no testcontainers) |
 

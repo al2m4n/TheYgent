@@ -8,7 +8,7 @@ dependencies = [
     "theygent-ir",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
-    "litellm>=1.40",
+    "litellm>=1.89.7",
     "httpx>=0.27",
     # the /v1/audio/transcriptions endpoint parses a multipart upload via request.form().
     "python-multipart>=0.0.9",

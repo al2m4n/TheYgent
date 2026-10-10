@@ -9,11 +9,13 @@ the full-text leg (tsvector) catches exact terms/identifiers vector similarity f
 reciprocal rank fusion combines them without score calibration. One SQL statement, no second
 search engine. The query always filters ``dim`` and casts ``embedding::vector(<dim>)`` — the
 exact expression of the per-dimension partial HNSW index, so it is used when present and the
-scan is merely exact (correct, slower) when not.
+scan is merely exact (correct, slower) when not. That index is shared by every source of the
+dimension, so the vector leg scans it iteratively (see ``search``).
 """
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel
@@ -33,6 +35,33 @@ RagSourceStatus = Literal["empty", "ingesting", "ready", "failed", "cancelled"]
 #: Reciprocal-rank-fusion constant (the standard 60) and the per-leg candidate pool.
 _RRF_K = 60
 _POOL = 50
+#: The HNSW candidate list per scan step. pgvector's default (40) is below the pool, which
+#: alone would cap the vector leg at 40 rows for a source holding thousands.
+_EF_SEARCH = 2 * _POOL
+#: The first pgvector release with iterative index scans (``hnsw.iterative_scan``).
+_ITERATIVE_SCAN_VERSION = (0, 8, 0)
+
+
+#: At most this many query terms go into the any-term keyword query.
+_MAX_ANY_TERMS = 32
+_TERM = re.compile(r"[^\W_]+")
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    parts: list[int] = []
+    for piece in version.split("."):
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
+
+
+def _any_terms_query(query_text: str) -> str:
+    """The query's words OR-ed together, as ``to_tsquery`` input. Only letter/digit runs are
+    kept (so no operator or quote reaches the tsquery parser), and an underscore splits a
+    word (``Function_FIELDQTY`` → ``Function | FIELDQTY``) because the text-search parser
+    splits it there too, and a split operand would turn back into an all-terms match."""
+    terms = list(dict.fromkeys(_TERM.findall(query_text)))[:_MAX_ANY_TERMS]
+    return " | ".join(terms)
 
 
 def new_rag_source_id() -> str:
@@ -114,6 +143,10 @@ def _source_domain(row: RagSourceRow, *, documents: int = 0, chunks: int = 0) ->
 
 class RagStore:
     """CRUD + ingest bookkeeping + hybrid search for retrieval sources."""
+
+    def __init__(self) -> None:
+        # Whether the database's pgvector has iterative index scans; read once, on first search.
+        self._iterative_scan: bool | None = None
 
     # ── sources ──────────────────────────────────────────────────────────
 
@@ -461,6 +494,18 @@ class RagStore:
             )
         )
 
+    async def _supports_iterative_scan(self, session: AsyncSession) -> bool:
+        if self._iterative_scan is None:
+            version = (
+                await session.execute(
+                    text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+                )
+            ).scalar_one_or_none()
+            self._iterative_scan = (
+                version is not None and _version_tuple(version) >= _ITERATIVE_SCAN_VERSION
+            )
+        return self._iterative_scan
+
     async def search(
         self,
         session: AsyncSession,
@@ -475,31 +520,63 @@ class RagStore:
         """Hybrid retrieval: top-``_POOL`` by cosine distance, top-``_POOL`` by full-text rank,
         fused with RRF, top-``top_k`` returned. ``min_similarity`` gates the vector leg only —
         a keyword-only hit has no similarity to gate on and exact-term matches are precisely
-        what that leg exists to keep."""
+        what that leg exists to keep.
+
+        Every source of one dimension shares one HNSW index, and an HNSW scan yields only its
+        candidate list before the ``source_id`` filter applies — so a query landing among
+        another source's chunks would find nothing of this one. The vector leg therefore runs
+        as an iterative index scan (it keeps scanning until the pool fills with this source's
+        chunks), re-ranked exactly; a pgvector without iterative scans gets an exact scan of
+        the source instead. The keyword leg matches every query term first and, when no chunk
+        holds them all (a term that lives only in a heading, say), any of them."""
         dim = int(dim)  # typmod can't be a bind parameter; everything else is bound
         qvec = "[" + ",".join(str(float(v)) for v in query_vector) + "]"
+        iterative = await self._supports_iterative_scan(session)
+        if iterative:
+            await session.execute(
+                text(
+                    "SELECT set_config('hnsw.iterative_scan', 'relaxed_order', true), "
+                    "set_config('hnsw.ef_search', :ef_search, true)"
+                ),
+                {"ef_search": str(_EF_SEARCH)},
+            )
+        # ``+ 0`` keeps the planner off the index: without iterative scans an index scan can
+        # come back short, and an exact scan of one source is the correct answer.
+        distance = f"(embedding::vector({dim})) <=> (:qvec)::vector({dim})"
+        vec_order = distance if iterative else f"({distance}) + 0"
         stmt = text(
             f"""
-            WITH vec AS (
-                SELECT id,
-                       (embedding::vector({dim})) <=> (:qvec)::vector({dim}) AS distance,
-                       row_number() OVER (
-                           ORDER BY (embedding::vector({dim})) <=> (:qvec)::vector({dim})
-                       ) AS rank
+            WITH vec_scan AS MATERIALIZED (
+                SELECT id, {distance} AS distance
                 FROM rag_chunk
                 WHERE source_id = :source_id AND dim = {dim}
-                ORDER BY distance
+                ORDER BY {vec_order}
                 LIMIT :pool
             ),
-            fts AS (
-                SELECT id,
-                       row_number() OVER (
-                           ORDER BY ts_rank_cd(tsv, websearch_to_tsquery('english', :query)) DESC
-                       ) AS rank
+            vec AS (
+                SELECT id, distance, row_number() OVER (ORDER BY distance, id) AS rank
+                FROM vec_scan
+            ),
+            fts_all AS MATERIALIZED (
+                SELECT id, ts_rank_cd(tsv, websearch_to_tsquery('english', :query)) AS score
                 FROM rag_chunk
                 WHERE source_id = :source_id AND dim = {dim}
                   AND tsv @@ websearch_to_tsquery('english', :query)
+                ORDER BY score DESC, id
                 LIMIT :pool
+            ),
+            fts_any AS (
+                SELECT id, ts_rank_cd(tsv, to_tsquery('english', :any_terms)) AS score
+                FROM rag_chunk
+                WHERE NOT EXISTS (SELECT 1 FROM fts_all)
+                  AND source_id = :source_id AND dim = {dim}
+                  AND tsv @@ to_tsquery('english', :any_terms)
+                ORDER BY score DESC, id
+                LIMIT :pool
+            ),
+            fts AS (
+                SELECT id, row_number() OVER (ORDER BY score DESC, id) AS rank
+                FROM (SELECT id, score FROM fts_all UNION ALL SELECT id, score FROM fts_any) hits
             ),
             fused AS (
                 SELECT COALESCE(vec.id, fts.id) AS id,
@@ -524,6 +601,7 @@ class RagStore:
                     "qvec": qvec,
                     "source_id": source_id,
                     "query": query_text,
+                    "any_terms": _any_terms_query(query_text),
                     "pool": _POOL,
                     "rrf_k": _RRF_K,
                     "top_k": top_k,

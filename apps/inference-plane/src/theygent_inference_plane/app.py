@@ -12,11 +12,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
+from collections.abc import Coroutine
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
@@ -45,6 +47,7 @@ from theygent_inference_plane.gateway import Gateway, merge_params
 from theygent_inference_plane.installs import InstallStore
 from theygent_inference_plane.launcher import (
     EngineLauncher,
+    EngineLogs,
     EngineUnavailableError,
     ImageServerLauncher,
     LlamaCppLauncher,
@@ -54,9 +57,13 @@ from theygent_inference_plane.launcher import (
     MlxVlmLauncher,
     WhisperCppLauncher,
     _hf_hub_dir,
+    fetch_llamacpp_props,
+    launch_params_defect,
+    llamacpp_capabilities,
     locate_image_model,
 )
 from theygent_inference_plane.manager import (
+    EngineFailedError,
     EngineManager,
     NoCapacityError,
     NotManagedError,
@@ -74,6 +81,8 @@ from theygent_inference_plane.settings import (
 from theygent_inference_plane.transfer import ImportBundle, apply_import, build_export
 from theygent_inference_plane.vllm_engine import VllmLauncher
 from theygent_inference_plane.weights import IncompleteWeights
+
+logger = logging.getLogger(__name__)
 
 _REAP_INTERVAL_SEC = 30.0
 
@@ -158,6 +167,21 @@ def _engine_unavailable(exc: Exception) -> JSONResponse:
     return _openai_error(str(exc), status=503, type_="server_error", code=code)
 
 
+#: What llama.cpp answers once its compute backend has failed — on Metal, after a command buffer
+#: ran out of GPU memory, the backend stays in that error state and fails every later request.
+_COMPUTE_ERROR = "compute error"
+
+
+def _engine_failure_reason(exc: Exception) -> str | None:
+    """Why ``exc`` means the engine itself is unusable (rather than this request being bad), or
+    ``None``. Only a new engine process recovers from such a failure."""
+    status = getattr(exc, "status_code", None)
+    message = str(getattr(exc, "message", None) or exc).lower()
+    if isinstance(status, int) and status >= 500 and _COMPUTE_ERROR in message:
+        return "GPU compute error — usually the model ran out of GPU memory"
+    return None
+
+
 def _image_weights_defect(binding: Binding) -> str | None:
     """Why a registration cannot ever render, checked before it is stored.
 
@@ -182,20 +206,24 @@ def _image_weights_defect(binding: Binding) -> str | None:
     return None
 
 
-async def _guarded_sse(lines: Any, model: str, close: Any = None):
+async def _guarded_sse(lines: Any, model: str, close: Any = None, on_error: Any = None):
     """Relay SSE lines, converting a mid-stream failure into a final structured error
     frame. Once the body runs, the 200 header is committed — raising here can only tear
     the connection, and the caller would see a transport error ("incomplete chunked
     read") with the real cause lost. An OpenAI-style ``{"error": ...}`` data frame
     instead ends the stream honestly: SDK clients raise it as an API error carrying the
     upstream's message. ``close`` releases the engine lease (managed bindings) and runs
-    even when the client disconnects mid-stream."""
+    even when the client disconnects mid-stream; ``on_error`` (managed bindings) sees the
+    failure first, so an engine that failed mid-stream is replaced, and may supply the
+    message the frame carries."""
     try:
         async for line in lines:
             yield line
     except Exception as exc:
         status = getattr(exc, "status_code", None)
         message = getattr(exc, "message", None) or str(exc)
+        if on_error is not None and (explained := await on_error(exc)) is not None:
+            message = explained
         kind = (
             "invalid_request_error"
             if isinstance(status, int) and 400 <= status < 500
@@ -212,6 +240,59 @@ async def _guarded_sse(lines: Any, model: str, close: Any = None):
     finally:
         if close is not None:
             await close()
+
+
+# Ends the ASGI cycle of a non-streaming call whose client hung up. No client ever reads it
+# (the connection is already gone), so it adds nothing to the /v1/* wire shapes; it only
+# spares the server an error log for a request that had nobody left to answer.
+_CLIENT_CLOSED_REQUEST = 499
+
+
+class ClientDisconnected(Exception):
+    """The client went away before a non-streaming upstream call finished."""
+
+
+async def _client_disconnected(request: Request) -> None:
+    """Return once the client has gone away.
+
+    The request body is fully read before the race starts — FastAPI reads a JSON body before
+    the handler runs, and the transcription handler parses its whole multipart form first —
+    so the next ASGI message is ``http.disconnect``. Awaiting it (the same way a streaming
+    response listens for a dropped client) notices the hang-up at once, with no polling
+    interval."""
+    while (await request.receive())["type"] != "http.disconnect":
+        pass
+
+
+async def _unless_client_disconnects[T](request: Request, call: Coroutine[Any, Any, T]) -> T:
+    """Await a non-streaming upstream call, cancelling it if the client disconnects first.
+
+    The server never cancels a non-streaming handler when its client hangs up, so without
+    this an abandoned request keeps its upstream call open: the engine keeps working on it,
+    holding its slot, and the lease's inflight count stays raised — which blocks eviction
+    and draining — until the engine finishes. Cancelling the call closes its connection
+    to the upstream, the only signal an OpenAI-compatible server gets that the request was
+    abandoned. ``ClientDisconnected`` is raised only once the cancelled call has fully
+    unwound, so the caller's lease releases (once, on its normal exit path) with no upstream
+    call still open behind it."""
+    work = asyncio.create_task(call)
+    gone = asyncio.create_task(_client_disconnected(request))
+    try:
+        await asyncio.wait((work, gone), return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        # The handler itself was cancelled (server shutdown): the upstream call goes with it.
+        work.cancel()
+        gone.cancel()
+        await asyncio.gather(work, gone, return_exceptions=True)
+        raise
+    if work.done():
+        gone.cancel()
+        await asyncio.gather(gone, return_exceptions=True)
+        return work.result()
+    work.cancel()
+    await asyncio.gather(work, return_exceptions=True)
+    gone.result()  # a failed listener raises here instead of passing for a disconnect
+    raise ClientDisconnected
 
 
 def _cockpit_cors_origins() -> list[str]:
@@ -278,7 +359,10 @@ def create_app(
     # changes). Tests inject a single fake launcher that serves every binding. llama.cpp serves
     # chat + embeddings from the SAME llama-server (one instance, flags differ — two keys); MLX chat
     # (mlx_lm.server) and vision (mlx_vlm.server) are distinct programs.
-    _llamacpp = LlamaCppLauncher()
+    # Engine logs: one named file per (engine, model, modality) under the state dir's logs/, so
+    # a failure long after startup can be read; anonymous when there is no state dir.
+    engine_logs = EngineLogs(state_path.with_name("logs") if state_path is not None else None)
+    _llamacpp = LlamaCppLauncher(logs=engine_logs)
     engine_launcher = launcher or ManagedLauncherSet(
         {
             ("llamacpp", "chat"): _llamacpp,
@@ -289,18 +373,18 @@ def create_app(
             ("llamacpp", "vision"): _llamacpp,
             # Speech-to-text is the ggml family's OTHER program (whisper-server), dispatched by
             # the modality key exactly like mlx vision — same engine name, different server.
-            ("llamacpp", "audio.transcription"): WhisperCppLauncher(),
+            ("llamacpp", "audio.transcription"): WhisperCppLauncher(logs=engine_logs),
             # Image generation is the one modality with no ready OpenAI server — the local diffusion
             # generators are CLIs. A bundled wrapper server shells out to stable-diffusion.cpp's
             # sd-cli (the ggml family, under the llamacpp engine).
-            ("llamacpp", "images.generation"): ImageServerLauncher("sdcpp"),
-            ("mlx", "chat"): MlxLauncher(),
-            ("mlx", "vision"): MlxVlmLauncher(),
+            ("llamacpp", "images.generation"): ImageServerLauncher("sdcpp", logs=engine_logs),
+            ("mlx", "chat"): MlxLauncher(logs=engine_logs),
+            ("mlx", "vision"): MlxVlmLauncher(logs=engine_logs),
             # Text-to-speech is MLX's other program (mlx_audio.server), same dispatch pattern.
-            ("mlx", "audio.speech"): MlxAudioLauncher(),
+            ("mlx", "audio.speech"): MlxAudioLauncher(logs=engine_logs),
             # Image generation on Apple Silicon is mflux (FLUX), wrapped the same way as sd-cli.
-            ("mlx", "images.generation"): ImageServerLauncher("mflux"),
-            ("vllm", "chat"): VllmLauncher(),
+            ("mlx", "images.generation"): ImageServerLauncher("mflux", logs=engine_logs),
+            ("vllm", "chat"): VllmLauncher(logs=engine_logs),
         }
     )
     manager = EngineManager(
@@ -396,6 +480,10 @@ def create_app(
             return _openai_error(
                 defect, status=422, type_="invalid_request_error", code="incomplete_weights"
             )
+        if defect := launch_params_defect(binding):
+            return _openai_error(
+                defect, status=422, type_="invalid_request_error", code="invalid_binding"
+            )
         registry.put(logical_id, binding)
         # A manual registration severs catalog provenance: the binding no longer points at
         # the sidecar's recorded install, and a stale record would make /admin/export pair
@@ -461,10 +549,25 @@ def create_app(
             except _UNSERVABLE as exc:
                 return _engine_unavailable(exc)
         else:
-            # Reachable upstreams aren't probed locally; advertise the DECLARED task (the only
-            # signal there is — the chat/bench surfaces route their UI on it), all else defaults.
-            caps = Capabilities(modalities=[binding.modality])
+            caps = await _reachable_capabilities(binding)
         return JSONResponse(caps.model_dump(by_alias=True))
+
+    async def _reachable_capabilities(binding: Any) -> Capabilities:
+        """A reachable upstream's capabilities. A llama.cpp server answers ``/props``, which
+        gives its real context and template, read as for a managed llama.cpp engine (marked
+        approximate: it was started with flags this plane did not choose). Any other upstream
+        offers no probe, so only its DECLARED task is known — the chat/bench surfaces route
+        their UI on it — and every other field is unknown, reported as approximate rather than
+        as a confident "unsupported"."""
+        if binding.modality in ("chat", "vision", "embeddings"):
+            try:
+                api_key = resolve_credential(binding.credential_ref, credential_store)
+            except CredentialResolutionError:
+                api_key = None
+            root = binding.base_url.rstrip("/").removesuffix("/v1")
+            if (props := await fetch_llamacpp_props(root, api_key)) is not None:
+                return llamacpp_capabilities(props, binding.modality, approximate=True)
+        return Capabilities(modalities=[binding.modality], approximate=True)
 
     @app.post("/admin/models/{logical_id}:warm")
     async def warm_model(logical_id: str) -> Response:
@@ -496,6 +599,39 @@ def create_app(
             )
         await manager.evict(logical_id)
         return JSONResponse(_model_view(logical_id))
+
+    @app.get("/admin/models/{logical_id}/logs")
+    async def model_logs(
+        logical_id: str, lines: int = Query(default=200, ge=1, le=5000)
+    ) -> Response:
+        # The tail of the model's engine log — named per (engine, model, modality) under the
+        # state dir, kept across restarts, so the reason an engine failed stays readable after it
+        # is replaced. A named additive extension of the management plane.
+        binding = registry.get(logical_id)
+        if binding is None:
+            return _openai_error(
+                f"unknown logical id {logical_id!r}",
+                status=404,
+                type_="invalid_request_error",
+                code="model_not_found",
+            )
+        tail = (
+            engine_logs.read(binding, lines=lines) if isinstance(binding, ManagedBinding) else None
+        )
+        if tail is None:
+            reason = (
+                "a reachable binding runs elsewhere and has no local engine log"
+                if not isinstance(binding, ManagedBinding)
+                else "its engine has not run since engine logs were kept"
+            )
+            return _openai_error(
+                f"no engine log for {logical_id!r}: {reason}",
+                status=404,
+                type_="invalid_request_error",
+                code="engine_log_not_found",
+            )
+        path = engine_logs.path_for(binding) if isinstance(binding, ManagedBinding) else None
+        return JSONResponse({"logicalId": logical_id, "path": str(path), "lines": tail})
 
     # ── management plane: /admin/settings + /admin/diagnostics ──────────
     # The settings resource carries ONLY settable knobs (read-write symmetric: everything in a
@@ -832,7 +968,7 @@ def create_app(
         }
 
     @app.post("/v1/chat/completions")
-    async def chat_completions(req: ChatRequest) -> Response:
+    async def chat_completions(req: ChatRequest, request: Request) -> Response:
         # The `model` field is a LOGICAL id. An engine name (e.g. "llamacpp") is
         # simply not a registered id -> model_not_found. Engine names never reach here.
         try:
@@ -858,15 +994,20 @@ def create_app(
         # (see _guarded_sse).
         try:
             if isinstance(binding, ManagedBinding):
-                return await _serve_managed(req, params)
-            return await _serve_reachable(binding, req, params)
+                return await _serve_managed(req, params, request)
+            return await _serve_reachable(binding, req, params, request)
+        except ClientDisconnected:
+            # The upstream call is already cancelled and any lease released.
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
-            mapped = _data_plane_error(exc, req.model)
+            mapped = await _data_plane_failure(exc, req.model)
             if mapped is None:
                 raise
             return mapped
 
-    async def _serve_managed(req: ChatRequest, params: dict[str, Any]) -> Response:
+    async def _serve_managed(
+        req: ChatRequest, params: dict[str, Any], request: Request
+    ) -> Response:
         # Spawn + resolve capacity BEFORE committing to a response. For a stream,
         # the 200/text-event-stream status flushes before the body generator runs,
         # so a spawn/capacity failure must surface here as a clean error, not as a
@@ -901,16 +1042,28 @@ def create_app(
                 await stack.aclose()
                 raise
             return StreamingResponse(
-                _guarded_sse(lines, req.model, close=stack.aclose),
+                _guarded_sse(
+                    lines,
+                    req.model,
+                    close=stack.aclose,
+                    on_error=lambda exc: _note_engine_failure(exc, req.model),
+                ),
                 media_type="text/event-stream",
                 background=BackgroundTask(stack.aclose),
             )
 
+        # A client that hangs up mid-completion cancels the upstream call, so an abandoned
+        # request stops occupying the engine and its lease releases at once instead of
+        # blocking eviction and draining until the generation finishes.
         async with manager.lease(req.model) as upstream:
-            result = await gateway.complete(upstream, req.messages, params)
+            result = await _unless_client_disconnects(
+                request, gateway.complete(upstream, req.messages, params)
+            )
         return JSONResponse(result)
 
-    async def _serve_reachable(binding: Any, req: ChatRequest, params: dict[str, Any]) -> Response:
+    async def _serve_reachable(
+        binding: Any, req: ChatRequest, params: dict[str, Any], request: Request
+    ) -> Response:
         try:
             api_key = resolve_credential(binding.credential_ref, credential_store) or "sk-noauth"
         except CredentialResolutionError as exc:
@@ -924,7 +1077,9 @@ def create_app(
             # mapping with its real message instead of tearing an already-started stream.
             lines = await gateway.stream(upstream, req.messages, params)
             return StreamingResponse(_guarded_sse(lines, req.model), media_type="text/event-stream")
-        result = await gateway.complete(upstream, req.messages, params)
+        result = await _unless_client_disconnects(
+            request, gateway.complete(upstream, req.messages, params)
+        )
         return JSONResponse(result)
 
     # ── data plane: embeddings + audio ──────────────────────────────────
@@ -932,7 +1087,10 @@ def create_app(
     # helper. The `model` field is a LOGICAL id on these too — an engine name is simply not a
     # registered id (model_not_found), never rewritten onto the wire. These are non-streaming
     # awaited calls, so a spawn/capacity failure surfaces as a clean error before the response is
-    # built (no pre-commit dance needed).
+    # built (no pre-commit dance needed). Like a non-streaming chat completion, each upstream call
+    # is raced against its client: a hang-up cancels it (closing the upstream connection) before
+    # the lease releases, so an abandoned embedding, transcription, synthesis or minutes-long
+    # render stops holding the engine non-evictable and un-drainable.
 
     @contextlib.asynccontextmanager
     async def _lease_for(model: str):
@@ -978,6 +1136,33 @@ def create_app(
         kind = "invalid_request_error" if out_status < 500 else "server_error"
         return _openai_error(upstream_msg, status=out_status, type_=kind, code="upstream_error")
 
+    def _engine_failed_message(model: str, reason: str) -> str:
+        binding = registry.get(model)
+        path = engine_logs.path_for(binding) if isinstance(binding, ManagedBinding) else None
+        log = f" Engine log: {path}" if path is not None else ""
+        return (
+            f"the engine serving {model!r} failed ({reason}). It is restarted for the next "
+            "request — retry. If it keeps failing, lower the model's ctxSize launch setting."
+            f"{log}"
+        )
+
+    async def _note_engine_failure(exc: Exception, model: str) -> str | None:
+        """When ``exc`` says the managed engine itself is unusable, retire it (the next request
+        launches a replacement) and return the message to report; ``None`` otherwise."""
+        reason = _engine_failure_reason(exc)
+        if reason is None or not isinstance(registry.get(model), ManagedBinding):
+            return None
+        logger.warning("engine.failed", extra={"logical_id": model, "reason": reason})
+        await manager.mark_failed(model, reason)
+        return _engine_failed_message(model, reason)
+
+    async def _data_plane_failure(exc: Exception, model: str) -> JSONResponse | None:
+        if isinstance(exc, EngineFailedError):
+            return _openai_error(str(exc), status=503, type_="server_error", code="engine_failed")
+        if (message := await _note_engine_failure(exc, model)) is not None:
+            return _openai_error(message, status=503, type_="server_error", code="engine_failed")
+        return _data_plane_error(exc, model)
+
     def _data_plane_error(exc: Exception, model: str) -> JSONResponse | None:
         if isinstance(exc, UnknownLogicalId):
             return _openai_error(
@@ -999,21 +1184,27 @@ def create_app(
         return _upstream_error(exc, model)
 
     @app.post("/v1/embeddings")
-    async def embeddings(req: EmbeddingsRequest) -> Response:
+    async def embeddings(req: EmbeddingsRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 params = merge_params(binding.params, req.model_dump())
                 params.pop("input", None)
-                result = await gateway.embed(upstream, req.input, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.embed(upstream, req.input, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
-            mapped = _data_plane_error(exc, req.model)
+            mapped = await _data_plane_failure(exc, req.model)
             if mapped is None:
                 raise
             return mapped
 
     @app.post("/v1/audio/transcriptions")
     async def transcriptions(request: Request) -> Response:
+        # Parsing the form drains the whole multipart body, so once the upload is validated the
+        # client's next ASGI message can only be its disconnect (see _client_disconnected).
         form = await request.form()
         model = form.get("model")
         upload = form.get("file")
@@ -1043,16 +1234,20 @@ def create_app(
         try:
             async with _lease_for(model) as (binding, upstream):
                 params = merge_params(binding.params, extra)
-                result = await gateway.transcribe(upstream, file_tuple, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.transcribe(upstream, file_tuple, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
-            mapped = _data_plane_error(exc, model)
+            mapped = await _data_plane_failure(exc, model)
             if mapped is None:
                 raise
             return mapped
 
     @app.post("/v1/audio/speech")
-    async def speech(req: SpeechRequest) -> Response:
+    async def speech(req: SpeechRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 # exclude_none: an omitted voice must not shadow the binding's registered default.
@@ -1061,27 +1256,35 @@ def create_app(
                 # engine-specific; nothing here invents one).
                 params = merge_params(binding.params, req.model_dump(exclude_none=True))
                 params.pop("input", None)
-                audio = await gateway.speak(upstream, req.input, params)
+                audio = await _unless_client_disconnects(
+                    request, gateway.speak(upstream, req.input, params)
+                )
             fmt = str(params.get("response_format", "mp3"))
             return Response(
                 content=audio, media_type=_AUDIO_MIME.get(fmt, "application/octet-stream")
             )
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
-            mapped = _data_plane_error(exc, req.model)
+            mapped = await _data_plane_failure(exc, req.model)
             if mapped is None:
                 raise
             return mapped
 
     @app.post("/v1/images/generations")
-    async def images_generations(req: ImagesRequest) -> Response:
+    async def images_generations(req: ImagesRequest, request: Request) -> Response:
         try:
             async with _lease_for(req.model) as (binding, upstream):
                 params = merge_params(binding.params, req.model_dump())
                 params.pop("prompt", None)
-                result = await gateway.generate_image(upstream, req.prompt, params)
+                result = await _unless_client_disconnects(
+                    request, gateway.generate_image(upstream, req.prompt, params)
+                )
             return JSONResponse(result)
+        except ClientDisconnected:
+            return Response(status_code=_CLIENT_CLOSED_REQUEST)
         except Exception as exc:
-            mapped = _data_plane_error(exc, req.model)
+            mapped = await _data_plane_failure(exc, req.model)
             if mapped is None:
                 raise
             return mapped
