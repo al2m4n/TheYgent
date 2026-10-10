@@ -5899,6 +5899,15 @@ def create_app(
         logger.info("ai_gateway.service_key_revoked", extra={"key_id": key_id})
         return Response(status_code=204)
 
+    @app.get("/gateway/me")
+    async def get_gateway_developer_me(principal: Principal = Depends(require_auth)) -> Any:
+        # The caller's own billing profile and key count: what their setup snippets depend on.
+        async with tx() as session:
+            me = await ai_gateway_store.developer(session, principal.id or "")
+        if me is None:
+            return _error("no account behind this credential", status=404, code="user_not_found")
+        return me.model_dump(mode="json")
+
     @app.get("/gateway/developers", dependencies=[Depends(require_admin)])
     async def list_gateway_developers() -> Any:
         async with tx() as session:

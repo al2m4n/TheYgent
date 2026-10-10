@@ -263,6 +263,22 @@ def test_admins_set_how_a_developer_is_billed(client: TestClient, service_key: s
     assert developers["dev"]["updated_by"] is not None
 
 
+def test_every_developer_reads_their_own_profile(client: TestClient) -> None:
+    dev_id, dev = make_user(client, "dev", "viewer")
+    mine = client.get("/gateway/me", headers=bearer(dev)).json()
+    assert (mine["user_id"], mine["credential_profile"], mine["live_gateway_keys"]) == (
+        dev_id,
+        "passthrough",
+        0,
+    )
+    mint(client, dev)
+    client.put(f"/gateway/developers/{dev_id}", json={"credential_profile": "org_key"})
+    mine = client.get("/gateway/me", headers=bearer(dev)).json()
+    assert (mine["credential_profile"], mine["live_gateway_keys"]) == ("org_key", 1)
+    gateway_key = mint(client, dev)["token"]
+    assert client.get("/gateway/me", headers=bearer(gateway_key)).status_code == 401
+
+
 def test_profile_changes_are_admin_only_and_checked(client: TestClient) -> None:
     dev_id, dev = make_user(client, "dev")
     body = {"credential_profile": "org_key"}

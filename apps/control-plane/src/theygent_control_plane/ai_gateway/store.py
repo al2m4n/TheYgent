@@ -416,6 +416,9 @@ class AiGatewayStore:
             for user, profile, keys in result.all()
         ]
 
+    async def developer(self, session: AsyncSession, user_id: str) -> Developer | None:
+        return next((d for d in await self.developers(session) if d.user_id == user_id), None)
+
     async def set_credential_profile(
         self,
         session: AsyncSession,

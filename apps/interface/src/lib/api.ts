@@ -32,16 +32,24 @@ export const INFERENCE_URL =
   (import.meta.env.VITE_INFERENCE_URL as string | undefined)?.replace(/\/$/, "") ??
   "http://localhost:8081";
 
+// The AI gateway Claude Code is pointed at. The interface reaches its admin surface directly (a
+// separate trust domain: the org key is written straight to it, never through the control plane),
+// and setup snippets name it as ANTHROPIC_BASE_URL.
+export const AI_GATEWAY_URL =
+  (import.meta.env.VITE_AI_GATEWAY_URL as string | undefined)?.replace(/\/$/, "") ??
+  "http://localhost:8082";
+
 // ── browser-local endpoint overrides ─────────────────────────────────────────
 // One SPA build can point at another install: the Settings page stores per-plane base-URL
 // overrides in localStorage ("this browser only" — never a server-side setting). Resolution per
 // call: override > VITE_* env value > localhost default. Guarded for non-DOM (test) environments.
 
-export type Plane = "control" | "inference";
+export type Plane = "control" | "inference" | "gateway";
 
 const OVERRIDE_KEYS: Record<Plane, string> = {
   control: "theygent.url.control",
   inference: "theygent.url.inference",
+  gateway: "theygent.url.gateway",
 };
 
 function readOverride(plane: Plane): string | null {
@@ -57,7 +65,11 @@ function readOverride(plane: Plane): string | null {
 
 /** The stored overrides (null = none). For the Settings editor's inputs. */
 export function getEndpointOverrides(): Record<Plane, string | null> {
-  return { control: readOverride("control"), inference: readOverride("inference") };
+  return {
+    control: readOverride("control"),
+    inference: readOverride("inference"),
+    gateway: readOverride("gateway"),
+  };
 }
 
 /** Set (or clear, with null/empty) one plane's browser-local base-URL override. */
@@ -79,6 +91,11 @@ export function controlPlaneUrl(): string {
 /** The EFFECTIVE inference-plane base URL for a call being made right now. */
 export function inferenceUrl(): string {
   return readOverride("inference") ?? INFERENCE_URL;
+}
+
+/** The EFFECTIVE AI gateway base URL for a call (or a setup snippet) being made right now. */
+export function gatewayUrl(): string {
+  return readOverride("gateway") ?? AI_GATEWAY_URL;
 }
 
 // ── the session bearer ───────────────────────────────────────────────────────
@@ -1109,6 +1126,33 @@ export interface GatewayConfig {
   updated_by: string | null;
 }
 
+/** A developer's gateway key. The token itself is returned once, at creation. Gateway keys carry
+ *  no role: they open a gateway, never this API. */
+export interface GatewayKey {
+  id: string;
+  user_id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** How a developer's gateway traffic is billed: their own claude.ai login or API key
+ *  (``passthrough``), or the organization's key, which the gateway swaps in (``org_key``). */
+export type CredentialProfile = "passthrough" | "org_key";
+
+export interface GatewayDeveloper {
+  user_id: string;
+  username: string;
+  display_name: string;
+  disabled: boolean;
+  credential_profile: CredentialProfile;
+  live_gateway_keys: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
 /** A gateway instance as its latest heartbeat described it. */
 export interface GatewayInstance {
   gateway_id: string;
@@ -2031,6 +2075,29 @@ export const api = {
     request<{ instances: GatewayInstance[] }>(controlPlaneUrl(), "/gateway/instances").then(
       (r) => r.instances,
     ),
+  /** The caller's billing profile and live key count. */
+  getGatewayMe: () => request<GatewayDeveloper>(controlPlaneUrl(), "/gateway/me"),
+  /** Every account with its billing profile (admins only). */
+  listGatewayDevelopers: () =>
+    request<{ developers: GatewayDeveloper[] }>(controlPlaneUrl(), "/gateway/developers").then(
+      (r) => r.developers,
+    ),
+  /** The caller's gateway keys; every developer's with ``all`` (admins only). */
+  listGatewayKeys: (all = false) =>
+    request<{ gateway_keys: GatewayKey[] }>(
+      controlPlaneUrl(),
+      all ? "/gateway/keys?all=true" : "/gateway/keys",
+    ).then((r) => r.gateway_keys),
+  /** Mint a key for the caller. The raw token is in THIS response only. */
+  createGatewayKey: (name: string) =>
+    request<{ token: string; gateway_key: GatewayKey }>(controlPlaneUrl(), "/gateway/keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeGatewayKey: (keyId: string) =>
+    request<void>(controlPlaneUrl(), `/gateway/keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
 };
 
 /** Where the control plane should send the browser to begin an OIDC sign-in — a NAVIGATION

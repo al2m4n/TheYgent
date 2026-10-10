@@ -4,10 +4,14 @@
 // behaves are the admin's.
 
 import { OverviewTab } from "../components/gateway/OverviewTab";
+import { SetupTab } from "../components/gateway/SetupTab";
 import { Page } from "../components/ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 
-const TABS = [{ value: "overview", label: "Overview" }] as const;
+const TABS = [
+  { value: "overview", label: "Overview" },
+  { value: "setup", label: "Setup & keys" },
+] as const;
 
 export function Gateway() {
   return (
@@ -30,6 +34,9 @@ export function Gateway() {
         </TabsList>
         <TabsContent value="overview">
           <OverviewTab />
+        </TabsContent>
+        <TabsContent value="setup">
+          <SetupTab />
         </TabsContent>
       </Tabs>
     </Page>

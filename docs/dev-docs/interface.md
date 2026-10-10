@@ -34,7 +34,7 @@ Invariants a change must not break:
 | `/registries` | Installed models (register/warm/evict/delete, capability badges) plus catalog browse with fit badges sized against available RAM and tracked downloads. |
 | `/mcp` | Unified MCP page: stdio registrations, connections (encrypted auth, OAuth), hub installs, OpenAPI/GraphQL-generated servers, per-tool runner. |
 | `/rag` | Retrieval sources: upload/crawl, background ingest, per-source documents, inline query tester. |
-| `/gateway` | The AI Gateway, open to every signed-in user (admin-only tabs check the role). Overview: mode and config version (`GET /gateway/config`; a 404 means not configured, so gateways record nothing), each instance's latest heartbeat (`GET /gateway/instances`: online, whether it runs the latest config, upstream reachable, records waiting to export), polled every 15 s. |
+| `/gateway` | The AI Gateway, open to every signed-in user (admin-only tabs check the role). Overview: mode and config version (`GET /gateway/config`; a 404 means not configured, so gateways record nothing), each instance's latest heartbeat (`GET /gateway/instances`: online, whether it runs the latest config, upstream reachable, records waiting to export), polled every 15 s. Setup & keys: the caller's billing profile (`GET /gateway/me`), their gateway keys (admins can list everyone's), a create flow that shows the raw key once — in the dialog, with setups that already carry it — and copy-ready setups per client built by `lib/gatewaySetup.ts`: shell exports, the `settings.json` `env` block, the desktop app's third-party inference values (org-billed developers only), and, for admins, managed settings with no key. Every Claude Code setup turns on the routing hints and tool search. |
 | `/settings` | Tabbed platform settings; the Inference tab talks to the inference plane directly; the Import / Export tab builds and applies whole-install transfer bundles. |
 
 ## Layout
@@ -101,9 +101,9 @@ See [./ir-and-packages.md](./ir-and-packages.md) for the generator's backend sid
 
 `src/lib/api.ts` resolves base URLs **per call**, in priority order:
 
-1. `localStorage` override — `theygent.url.control` / `theygent.url.inference`
-2. Build-time env — `VITE_CONTROL_PLANE_URL` / `VITE_INFERENCE_URL`
-3. Defaults — `http://localhost:8080` (control) / `http://localhost:8081` (inference)
+1. `localStorage` override — `theygent.url.control` / `theygent.url.inference` / `theygent.url.gateway`
+2. Build-time env — `VITE_CONTROL_PLANE_URL` / `VITE_INFERENCE_URL` / `VITE_AI_GATEWAY_URL`
+3. Defaults — `http://localhost:8080` (control) / `http://localhost:8081` (inference) / `http://localhost:8082` (AI gateway)
 
 Auth is `Authorization: Bearer <localStorage theygent.token || "dev-local">` in one function; swapping in real auth is a one-function change. Streaming rides fetch + `ReadableStream` rather than `EventSource` because the composer creates and streams from the same POST, needs custom headers, and needs programmatic abort.
 
@@ -187,8 +187,9 @@ Four cooperating surfaces around the one `IRDocument`:
 |----------------------|---------|---------|
 | `VITE_CONTROL_PLANE_URL` | `http://localhost:8080` | Control-plane base URL baked into the bundle. |
 | `VITE_INFERENCE_URL` | `http://localhost:8081` | Inference-plane base URL baked into the bundle. |
+| `VITE_AI_GATEWAY_URL` | `http://localhost:8082` | The AI gateway's address: named in setup snippets as `ANTHROPIC_BASE_URL`, and where the browser reaches the gateway's admin surface. |
 
-`localStorage` keys: `theygent.token` (dev bearer), `theygent.url.control` / `theygent.url.inference` (per-browser endpoint overrides that beat the env vars), `theygent.theme`, and UI prefs (`theygent.ui.navCollapsed`, `theygent.ui.runsOpen`, `theygent.ui.chatsOpen`, `theygent.view.<page>`). The `@/` import alias maps to `src/`.
+`localStorage` keys: `theygent.token` (dev bearer), `theygent.url.control` / `theygent.url.inference` / `theygent.url.gateway` (per-browser endpoint overrides that beat the env vars), `theygent.theme`, and UI prefs (`theygent.ui.navCollapsed`, `theygent.ui.runsOpen`, `theygent.ui.chatsOpen`, `theygent.view.<page>`). The `@/` import alias maps to `src/`.
 
 ## Testing
 

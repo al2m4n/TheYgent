@@ -7,6 +7,7 @@ import { Cpu, Server } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
+  AI_GATEWAY_URL,
   CONTROL_PLANE_URL,
   INFERENCE_URL,
   type Plane,
@@ -177,19 +178,21 @@ function InferencePlaneCard() {
 const PLANES: { plane: Plane; label: string; fallback: string }[] = [
   { plane: "control", label: "Control plane URL", fallback: CONTROL_PLANE_URL },
   { plane: "inference", label: "Inference plane URL", fallback: INFERENCE_URL },
+  { plane: "gateway", label: "AI gateway URL", fallback: AI_GATEWAY_URL },
 ];
 
 function EndpointOverrides() {
   const qc = useQueryClient();
   const [values, setValues] = useState<Record<Plane, string>>(() => {
     const o = getEndpointOverrides();
-    return { control: o.control ?? "", inference: o.inference ?? "" };
+    return { control: o.control ?? "", inference: o.inference ?? "", gateway: o.gateway ?? "" };
   });
 
   const apply = async (plane: Plane, value: string | null) => {
     setEndpointOverride(plane, value);
     setValues((prev) => ({ ...prev, [plane]: getEndpointOverrides()[plane] ?? "" }));
-    notify.success(value ? `${plane} plane override applied` : `${plane} plane override cleared`);
+    const label = PLANES.find((p) => p.plane === plane)?.label ?? plane;
+    notify.success(value ? `${label} override applied` : `${label} override cleared`);
     // Everything cached was fetched from the OLD base — abort anything mid-retry against it,
     // then refetch the world against the new one.
     await qc.cancelQueries();
