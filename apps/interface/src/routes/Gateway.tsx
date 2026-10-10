@@ -5,6 +5,7 @@
 
 import { OverviewTab } from "../components/gateway/OverviewTab";
 import { ReportTab } from "../components/gateway/ReportTab";
+import { SessionsTab } from "../components/gateway/SessionsTab";
 import { SetupTab } from "../components/gateway/SetupTab";
 import { Page } from "../components/ui";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
@@ -12,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs"
 const TABS = [
   { value: "overview", label: "Overview" },
   { value: "report", label: "Report" },
+  { value: "sessions", label: "Sessions" },
   { value: "setup", label: "Setup & keys" },
 ] as const;
 
@@ -39,6 +41,9 @@ export function Gateway() {
         </TabsContent>
         <TabsContent value="report">
           <ReportTab />
+        </TabsContent>
+        <TabsContent value="sessions">
+          <SessionsTab />
         </TabsContent>
         <TabsContent value="setup">
           <SetupTab />

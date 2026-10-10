@@ -1223,6 +1223,86 @@ export interface GatewayReport {
   seats: GatewaySeatUse[];
 }
 
+/** Why the routing policy decided what it did — a closed vocabulary (theygent_ir.gateway). */
+export type GatewayReasonCode =
+  | "mode_passthrough"
+  | "request_refused"
+  | "policy_error"
+  | "not_a_message_request"
+  | "safety_check"
+  | "unlabeled_request"
+  | "unrecognized_request_class"
+  | "compaction"
+  | "quota_check"
+  | "shares_main_prefix"
+  | "fingerprint_unreviewed"
+  | "fingerprint_observe_only"
+  | "fingerprint_never_route"
+  | "fingerprint_allow_cheaper"
+  | "local_candidate"
+  | "subagent_at_spawn"
+  | "mid_conversation"
+  | "cold_cache_boundary"
+  | "warm_cache_switch_cost"
+  | "target_rejects_request_shape"
+  | "context_exceeds_target"
+  | "already_on_target"
+  | "no_target_configured";
+
+export interface GatewaySessionSummary {
+  session_id: string;
+  developer_id: string | null;
+  client: string | null;
+  first_at: string;
+  last_at: string;
+  totals: GatewayTotals;
+}
+
+/** One exchange in a session, with what the policy would have done (never applied in observer
+ *  mode). */
+export interface GatewayTimelineEntry {
+  id: string;
+  started_at: string;
+  request_class: string;
+  agent_id: string | null;
+  agent_type: string | null;
+  prompt_id: string | null;
+  endpoint: string;
+  status: number | null;
+  outcome: string;
+  error_type: string | null;
+  requested_model: string | null;
+  served_model: string | null;
+  stop_reason: string | null;
+  compaction: string | null;
+  shares_main_prefix: boolean | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_5m_tokens: number;
+    cache_write_1h_tokens: number;
+  };
+  cost_usd: number | null;
+  timing: { headers_ms?: number | null; first_byte_ms?: number | null; total_ms?: number | null };
+  decision: {
+    action: "stay" | "route";
+    target: { kind: "anthropic" | "local"; model: string } | null;
+    reasons: GatewayReasonCode[];
+    counterfactual_usd: number | null;
+    applied: boolean;
+  };
+}
+
+export interface GatewaySessionDetail {
+  session_id: string;
+  developer_id: string | null;
+  totals: GatewayTotals;
+  requests: GatewayTimelineEntry[];
+  /** More requests follow: ask again with ``after`` set to the last one's id. */
+  truncated: boolean;
+}
+
 /** A gateway instance as its latest heartbeat described it. */
 export interface GatewayInstance {
   gateway_id: string;
@@ -2159,6 +2239,35 @@ export const api = {
     if (params.scope) q.set("scope", params.scope);
     if (params.developerId) q.set("developer_id", params.developerId);
     return request<GatewayReport>(controlPlaneUrl(), `/gateway/report?${q.toString()}`);
+  },
+  /** Sessions active in a range, the most recently active first; ``before`` pages back. */
+  listGatewaySessions: (params: {
+    since: string;
+    until?: string;
+    before?: string;
+    limit?: number;
+    scope?: "mine" | "org";
+  }) => {
+    const q = new URLSearchParams({ since: params.since });
+    if (params.until) q.set("until", params.until);
+    if (params.before) q.set("before", params.before);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.scope) q.set("scope", params.scope);
+    return request<{ sessions: GatewaySessionSummary[] }>(
+      controlPlaneUrl(),
+      `/gateway/sessions?${q.toString()}`,
+    ).then((r) => r.sessions);
+  },
+  /** A session's requests in the order they started; ``after`` continues past a request id. */
+  getGatewaySession: (sessionId: string, params: { after?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.after) q.set("after", params.after);
+    if (params.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return request<GatewaySessionDetail>(
+      controlPlaneUrl(),
+      `/gateway/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ""}`,
+    );
   },
   /** The caller's billing profile and live key count. */
   getGatewayMe: () => request<GatewayDeveloper>(controlPlaneUrl(), "/gateway/me"),

@@ -24,7 +24,7 @@ import { TimeAgo } from "../TimeAgo";
 import { Badge, ConfirmDialog, ErrorBanner, Field, Input, Modal, NoteBanner } from "../ui";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemTitle } from "../ui/item";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -187,41 +187,43 @@ function KeysCard({ address, profile }: { address: string; profile: CredentialPr
             No keys yet. Create one, then copy a setup below.
           </p>
         ) : (
-          <ItemGroup className="gap-2" aria-label="Gateway keys">
+          <ul className="flex flex-col gap-2" aria-label="Gateway keys">
             {(keys.data ?? []).map((key) => (
-              <Item key={key.id} variant="outline" size="sm">
-                <ItemContent>
-                  <ItemTitle className="flex flex-wrap items-center gap-2">
-                    <KeyRound size={13} className="opacity-60" />
-                    {key.name}
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {key.token_prefix}…
-                    </span>
-                    {key.revoked_at && <Badge tone="slate">revoked</Badge>}
-                    {everyone && (
-                      <Badge tone="slate">{names.get(key.user_id) ?? key.user_id}</Badge>
-                    )}
-                  </ItemTitle>
-                  <ItemDescription>
-                    created <TimeAgo iso={key.created_at} />
-                    {key.revoked_at && (
-                      <>
-                        {" "}
-                        · revoked <TimeAgo iso={key.revoked_at} />
-                      </>
-                    )}
-                  </ItemDescription>
-                </ItemContent>
-                {!key.revoked_at && (
-                  <ItemActions>
-                    <Button variant="outline" size="sm" onClick={() => setRevoking(key)}>
-                      Revoke
-                    </Button>
-                  </ItemActions>
-                )}
+              <Item key={key.id} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex flex-wrap items-center gap-2">
+                      <KeyRound size={13} className="opacity-60" />
+                      {key.name}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {key.token_prefix}…
+                      </span>
+                      {key.revoked_at && <Badge tone="slate">revoked</Badge>}
+                      {everyone && (
+                        <Badge tone="slate">{names.get(key.user_id) ?? key.user_id}</Badge>
+                      )}
+                    </ItemTitle>
+                    <ItemDescription>
+                      created <TimeAgo iso={key.created_at} />
+                      {key.revoked_at && (
+                        <>
+                          {" "}
+                          · revoked <TimeAgo iso={key.revoked_at} />
+                        </>
+                      )}
+                    </ItemDescription>
+                  </ItemContent>
+                  {!key.revoked_at && (
+                    <ItemActions>
+                      <Button variant="outline" size="sm" onClick={() => setRevoking(key)}>
+                        Revoke
+                      </Button>
+                    </ItemActions>
+                  )}
+                </li>
               </Item>
             ))}
-          </ItemGroup>
+          </ul>
         )}
       </CardContent>
       {creating && (

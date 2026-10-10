@@ -9,7 +9,7 @@ import { toneOf } from "../../lib/categories";
 import { TimeAgo } from "../TimeAgo";
 import { Badge, ErrorBanner, NoteBanner } from "../ui";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "../ui/item";
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "../ui/item";
 import { Skeleton } from "../ui/skeleton";
 import { StatTile } from "./StatTile";
 
@@ -126,11 +126,11 @@ function InstanceList({
     );
   }
   return (
-    <ItemGroup className="gap-2" aria-label="Gateway instances">
+    <ul className="flex flex-col gap-2" aria-label="Gateway instances">
       {instances.map((instance) => (
         <InstanceRow key={instance.gateway_id} instance={instance} latest={latest} />
       ))}
-    </ItemGroup>
+    </ul>
   );
 }
 
@@ -138,38 +138,42 @@ function InstanceRow({ instance, latest }: { instance: GatewayInstance; latest: 
   const configLabel =
     instance.config_version === null ? "no config" : `config v${instance.config_version}`;
   return (
-    <Item variant="outline" size="sm" data-testid={`gateway-${instance.gateway_id}`}>
-      <ItemMedia>
-        <span
-          className={`inline-block size-2.5 rounded-full ${toneOf(instance.online ? "green" : "slate").dot}`}
-          aria-hidden
-        />
-      </ItemMedia>
-      <ItemContent>
-        <ItemTitle className="flex flex-wrap items-center gap-2">
-          <span className="font-mono">{instance.gateway_id}</span>
-          <Badge tone={instance.online ? "green" : "slate"}>
-            {instance.online ? "online" : "offline"}
-          </Badge>
-          <Badge tone={instance.mode === "observer" ? "blue" : "slate"}>{instance.mode}</Badge>
-          <Badge tone={instance.config_current ? "slate" : "amber"}>
-            {configLabel}
-            {!instance.config_current && latest !== null && ` · latest v${latest}`}
-          </Badge>
-          {instance.upstream_reachable === false && <Badge tone="red">upstream unreachable</Badge>}
-        </ItemTitle>
-        <ItemDescription className="flex flex-wrap gap-x-4 gap-y-1">
-          <span>version {instance.software_version}</span>
-          {instance.key_set_version !== null && <span>keys v{instance.key_set_version}</span>}
-          <span>{instance.spool_backlog.toLocaleString()} waiting to export</span>
-          <span>
-            last heartbeat <TimeAgo iso={instance.last_seen_at} />
-          </span>
-          <span>
-            up since <TimeAgo iso={instance.started_at} />
-          </span>
-        </ItemDescription>
-      </ItemContent>
+    <Item variant="outline" size="sm" asChild>
+      <li data-testid={`gateway-${instance.gateway_id}`}>
+        <ItemMedia>
+          <span
+            className={`inline-block size-2.5 rounded-full ${toneOf(instance.online ? "green" : "slate").dot}`}
+            aria-hidden
+          />
+        </ItemMedia>
+        <ItemContent>
+          <ItemTitle className="flex flex-wrap items-center gap-2">
+            <span className="font-mono">{instance.gateway_id}</span>
+            <Badge tone={instance.online ? "green" : "slate"}>
+              {instance.online ? "online" : "offline"}
+            </Badge>
+            <Badge tone={instance.mode === "observer" ? "blue" : "slate"}>{instance.mode}</Badge>
+            <Badge tone={instance.config_current ? "slate" : "amber"}>
+              {configLabel}
+              {!instance.config_current && latest !== null && ` · latest v${latest}`}
+            </Badge>
+            {instance.upstream_reachable === false && (
+              <Badge tone="red">upstream unreachable</Badge>
+            )}
+          </ItemTitle>
+          <ItemDescription className="flex flex-wrap gap-x-4 gap-y-1">
+            <span>version {instance.software_version}</span>
+            {instance.key_set_version !== null && <span>keys v{instance.key_set_version}</span>}
+            <span>{instance.spool_backlog.toLocaleString()} waiting to export</span>
+            <span>
+              last heartbeat <TimeAgo iso={instance.last_seen_at} />
+            </span>
+            <span>
+              up since <TimeAgo iso={instance.started_at} />
+            </span>
+          </ItemDescription>
+        </ItemContent>
+      </li>
     </Item>
   );
 }

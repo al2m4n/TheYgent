@@ -584,3 +584,18 @@ def test_the_setup_warning_vocabulary_is_closed() -> None:
         "unpriced_models",
     }
     assert TOOL_SEARCH_OFF_MIN_TOOLS == 30
+
+
+def test_every_reason_code_is_explained_in_the_interface() -> None:
+    # The interface's gateway types are hand-written: its explanation table must cover every
+    # reason the gateway can record, or a session timeline shows a bare code.
+    from pathlib import Path
+    from typing import get_args
+
+    from theygent_ir.gateway import ReasonCode
+
+    explained = Path(__file__).resolve().parents[3] / "apps/interface/src/lib/gatewayReasons.ts"
+    if not explained.exists():
+        pytest.skip("the interface is not part of this checkout")
+    text = explained.read_text()
+    assert [code for code in get_args(ReasonCode) if f"  {code}: {{" not in text] == []
