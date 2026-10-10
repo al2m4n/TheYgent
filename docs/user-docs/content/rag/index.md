@@ -63,7 +63,7 @@ Expand a source row (click its name) to see every document with its status, chun
 Every source row has a **Query** button — an inline search box that runs *exactly* the retrieval a rag node would run, so you can check what an agent would see before wiring anything:
 
 - Each match shows its score, the document it came from, its heading path (e.g. `Install > macOS`), and the passage text.
-- **sim** is the semantic (cosine) similarity when the vector leg matched. Search is **hybrid**: meaning-based similarity is fused with keyword full-text search, so paraphrases *and* exact identifiers both rank.
+- **sim** is the semantic (cosine) similarity when the vector leg matched. Search is **hybrid**: meaning-based similarity is fused with keyword full-text search, so paraphrases *and* exact identifiers both rank. The keyword half prefers passages containing every word of the query; when none does (a word that only appears in a heading, say), it ranks passages by how many of the words they contain.
 
 If the results look wrong, that's a signal to fix the source (crawl scope, missing documents) — not the agent.
 

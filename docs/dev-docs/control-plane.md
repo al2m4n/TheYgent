@@ -234,7 +234,12 @@ chunker, then embed in batches through `GatewayClient.embed` with the source's p
 Each source's embedding dimension is discovered from the first response and claimed
 first-writer-wins; queries filter on dimension and cast to `vector(dim)`, matching the
 per-dimension partial HNSW index created at ingest time. Retrieval is one SQL statement:
-cosine top-k fused with full-text search via reciprocal rank fusion. Document replacement
+cosine top-k fused with full-text search via reciprocal rank fusion. The HNSW index is shared
+by every source of a dimension, so the vector leg runs as an iterative index scan (pgvector
+0.8+; an older pgvector gets an exact scan of the source) — a plain scan stops at its
+candidate list before the source filter applies and can come back empty. The keyword leg
+requires every query term, falling back to any term when no chunk holds them all (headings
+are not in the indexed text). Document replacement
 is atomic — old chunks are deleted only in the same transaction that inserts their
 successors, so a mid-ingest failure degrades to stale content, never data loss. Graphs
 reference sources by stable id, so re-ingesting content never bumps an agent's

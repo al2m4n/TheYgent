@@ -565,6 +565,130 @@ def test_crawl_ingests_a_real_local_site(client: TestClient, local_site: str) ->
     assert top["uri"].startswith("http://127.0.0.1")
 
 
+# ── vector leg with many sources sharing one dimension ──────────────────────
+
+
+async def _seed_source(
+    sm: Any,
+    store: Any,
+    name: str,
+    vectors: list[list[float]],
+    texts: list[tuple[str | None, str]] | None = None,
+) -> str:
+    from theygent_control_plane.rag.chunking import Chunk
+
+    texts = texts or [(None, f"{name} chunk {i}") for i in range(len(vectors))]
+
+    async with sm() as session, session.begin():
+        source = await store.create_source(
+            session, name=name, kind="upload", config={}, embedding_model="embed-small"
+        )
+        await store.claim_embedding_dim(session, source.id, len(vectors[0]))
+        await store.replace_document(
+            session,
+            source_id=source.id,
+            uri=f"{name}.md",
+            title=name,
+            content_hash=f"sha256:{name}",
+            chars=1,
+            dim=len(vectors[0]),
+            chunks=[
+                Chunk(text=body, heading=heading, position=i)
+                for i, (heading, body) in enumerate(texts)
+            ],
+            embeddings=vectors,
+        )
+    return source.id
+
+
+@pytest.mark.parametrize("iterative", [True, False], ids=["iterative-scan", "exact-scan"])
+async def test_vector_leg_finds_a_source_whose_neighbours_belong_to_another(
+    pg_url: str, iterative: bool
+) -> None:
+    # Every source of one dimension shares one HNSW index, and an HNSW scan only yields its
+    # candidate list (hnsw.ef_search, 40 by default) before the source filter applies. When a
+    # query lands in another source's neighbourhood, a plain index scan finds nothing of the
+    # queried source — although an exact scan of it has an obvious best match. A pgvector
+    # without iterative scans (``exact-scan``) must get the right answer from an exact scan.
+    import random
+
+    from sqlalchemy import text as text_sql
+    from theygent_control_plane import db
+    from theygent_control_plane.rag.store import RagStore
+
+    rng = random.Random(7)
+
+    def near(axis: int) -> list[float]:
+        vec = [rng.uniform(-0.05, 0.05) for _ in range(8)]
+        vec[axis] = 1.0
+        return vec
+
+    engine = db.create_engine(pg_url)
+    sm = db.create_sessionmaker(engine)
+    store = RagStore()
+    if not iterative:
+        store._iterative_scan = False  # as if the database's pgvector predates 0.8
+    try:
+        # The crowd sits right next to the query; the queried source sits on another axis,
+        # except one chunk leaning towards the query — its exact best match.
+        await _seed_source(sm, store, "crowd", [near(0) for _ in range(1500)])
+        target_vectors = [near(1) for _ in range(1499)] + [[0.5, 1.0, 0, 0, 0, 0, 0, 0]]
+        target = await _seed_source(sm, store, "target", target_vectors)
+        async with sm() as session, session.begin():
+            await store.ensure_dim_index(session, 8)
+            await session.execute(text_sql("ANALYZE rag_chunk"))
+
+        async with sm() as session:
+            matches = await store.search(
+                session,
+                source_id=target,
+                dim=8,
+                query_text="nothing in the corpus says this",  # keyword leg finds nothing
+                query_vector=[1.0, 0, 0, 0, 0, 0, 0, 0],
+                top_k=3,
+            )
+        assert matches, "the vector leg returned nothing for a source that has matches"
+        assert matches[0].text == "target chunk 1499"
+    finally:
+        await engine.dispose()
+
+
+async def test_keyword_leg_falls_back_to_any_term(pg_url: str) -> None:
+    # Chunks split at headings, so a query mixing a function name with its section heading
+    # ("… Synopsis") has no chunk holding every term. The keyword leg then matches any term,
+    # which ranks the function's own chunk first even when its vector is not the nearest.
+    from theygent_control_plane import db
+    from theygent_control_plane.rag.store import RagStore
+
+    engine = db.create_engine(pg_url)
+    sm = db.create_sessionmaker(engine)
+    store = RagStore()
+    try:
+        source = await _seed_source(
+            sm,
+            store,
+            "dialplan",
+            [[1.0, 0, 0, 0], [0.9, 0.1, 0, 0], [0.2, 1.0, 0, 0]],
+            texts=[
+                ("Functions > CUT > Synopsis", "Splits a variable's contents by a delimiter."),
+                ("Functions > LEN > Synopsis", "Returns the length of a string."),
+                ("Functions > FIELDQTY > Synopsis", "FIELDQTY(varname,delim) counts fields."),
+            ],
+        )
+        async with sm() as session:
+            matches = await store.search(
+                session,
+                source_id=source,
+                dim=4,
+                query_text="FIELDQTY(varname,delim) Synopsis",
+                query_vector=[1.0, 0, 0, 0],  # nearest to CUT, not to FIELDQTY
+                top_k=3,
+            )
+        assert matches[0].text.startswith("FIELDQTY(varname,delim)"), matches
+    finally:
+        await engine.dispose()
+
+
 # ── restart honesty ──────────────────────────────────────────────────────────
 
 
