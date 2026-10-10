@@ -75,7 +75,7 @@ def test_asgi_module_builds_an_app_from_the_environment(
 def test_main_exits_loudly_on_bad_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv(ENV_HOST, "0.0.0.0")  # personal mode on a public address
     with pytest.raises(SystemExit) as exit_info:
-        entrypoint.main()
+        entrypoint.main([])
     assert "loopback" in str(exit_info.value)
 
 
@@ -87,6 +87,6 @@ def test_main_serves_on_the_configured_address(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setenv(ENV_PORT, "9123")
     monkeypatch.setattr(entrypoint.uvicorn, "run", fake_run)
-    entrypoint.main()
+    entrypoint.main([])
     assert calls["host"] == "127.0.0.1"
     assert calls["port"] == 9123

@@ -179,9 +179,15 @@ def _read_int(env: Mapping[str, str], name: str) -> int | None:
         raise SettingsError(f"{name} must be an integer, got {raw!r}") from None
 
 
+def state_dir_from(env: Mapping[str, str]) -> Path:
+    """Where the gateway keeps its state, from the environment alone (the report reads the log
+    without the rest of the server's settings)."""
+    state_dir = _read(env, ENV_STATE_DIR)
+    return (Path(state_dir) if state_dir else _default_state_dir()).expanduser()
+
+
 def load_settings(env: Mapping[str, str]) -> GatewaySettings:
     """Build settings from an environment mapping (normally ``os.environ``)."""
-    state_dir = _read(env, ENV_STATE_DIR)
     port = _read_int(env, ENV_PORT)
     return GatewaySettings(
         host=_read(env, ENV_HOST) or "127.0.0.1",
@@ -191,7 +197,7 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
         control_plane_url=_read(env, ENV_CONTROL_PLANE_URL),
         # Checked against the AuthMode vocabulary on construction.
         auth_mode=cast(AuthMode, _read(env, ENV_AUTH_MODE) or "personal"),
-        state_dir=Path(state_dir) if state_dir else _default_state_dir(),
+        state_dir=state_dir_from(env),
         gateway_id=_read(env, ENV_GATEWAY_ID) or _default_gateway_id(),
         service_key=_read(env, ENV_SERVICE_KEY),
         org_api_key=_read(env, ENV_ORG_API_KEY),

@@ -101,7 +101,11 @@ prose, and any new fixture must pass it.
 
 ```bash
 uv run --package theygent-ai-gateway pytest   # fast suite: the real app, no network
+uv run --package theygent-ai-gateway theygent-ai-gateway report --since 24h   # the observer report
 ```
+
+The report reads the records as written and never re-prices them, so a figure in it is the figure
+the control plane receives.
 
 The fast suite injects the upstream transport (`create_app(upstream_transport=…)`) and must run on
 any machine offline. Tests against the real Anthropic API or a real Claude Code are opt-in and
