@@ -44,6 +44,17 @@ The rules that follow:
 - Never buffer a stream. Forward `ping` events. Relay through `message_delta` and `message_stop`.
 - A client disconnect cancels the upstream call.
 
+## Configuration
+
+- **One snapshot per exchange.** An exchange reads the config, mode and prices once, when it
+  starts; a config applied mid-request never mixes in, and the record names the version it was
+  decided under.
+- **Versions only move forward**, and the last known good config is kept on disk, so a restart
+  with the control plane down serves under the same config.
+- **Attached to a control plane, an unconfigured gateway records nothing** (passthrough): an
+  organization's traffic is recorded only once an admin has chosen observer mode. A standalone
+  personal gateway observes from the start.
+
 ## The request log
 
 - **Recording never blocks a request.** The observe hook only queues the observation; a writer

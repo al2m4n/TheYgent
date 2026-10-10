@@ -12,6 +12,7 @@ from theygent_ai_gateway.settings import (
     ENV_AUTH_MODE,
     ENV_CONTROL_PLANE_URL,
     ENV_GATEWAY_ID,
+    ENV_HEARTBEAT_SECONDS,
     ENV_HOST,
     ENV_KEY_SYNC_SECONDS,
     ENV_ORG_API_KEY,
@@ -28,6 +29,7 @@ ALL_VARS = [
     ENV_SERVICE_KEY,
     ENV_ORG_API_KEY,
     ENV_KEY_SYNC_SECONDS,
+    ENV_HEARTBEAT_SECONDS,
     ENV_HOST,
     ENV_PORT,
     ENV_UPSTREAM_URL,
@@ -47,6 +49,7 @@ def test_defaults_with_an_empty_environment() -> None:
     assert settings.control_plane_url is None
     assert settings.state_dir == Path.home() / ".theygent" / "ai-gateway"
     assert settings.gateway_id.startswith("gw-")
+    assert settings.heartbeat_seconds == 30.0
 
 
 def test_empty_values_mean_unset() -> None:
@@ -68,6 +71,7 @@ def test_values_are_read(tmp_path: Path) -> None:
             ENV_SERVICE_KEY: "tys_service_example",
             ENV_ORG_API_KEY: "sk-ant-api03-org-example",
             ENV_KEY_SYNC_SECONDS: "5",
+            ENV_HEARTBEAT_SECONDS: "12.5",
         }
     )
     assert settings.host == "0.0.0.0"
@@ -80,6 +84,7 @@ def test_values_are_read(tmp_path: Path) -> None:
     assert settings.service_key == "tys_service_example"
     assert settings.org_api_key == "sk-ant-api03-org-example"
     assert settings.key_sync_seconds == 5.0
+    assert settings.heartbeat_seconds == 12.5
 
 
 def test_state_dir_expands_the_home_directory() -> None:
@@ -131,15 +136,17 @@ def test_personal_mode_refuses_an_org_key() -> None:
         load_settings({ENV_ORG_API_KEY: "sk-ant-api03-org"})
 
 
+@pytest.mark.parametrize("name", [ENV_KEY_SYNC_SECONDS, ENV_HEARTBEAT_SECONDS])
 @pytest.mark.parametrize("value", ["0", "0.5", "7200"])
-def test_key_sync_interval_is_bounded(value: str) -> None:
-    with pytest.raises(SettingsError, match=ENV_KEY_SYNC_SECONDS):
-        load_settings({ENV_KEY_SYNC_SECONDS: value})
+def test_sync_intervals_are_bounded(name: str, value: str) -> None:
+    with pytest.raises(SettingsError, match=name):
+        load_settings({name: value})
 
 
-def test_a_non_numeric_key_sync_interval_fails_by_name() -> None:
-    with pytest.raises(SettingsError, match=ENV_KEY_SYNC_SECONDS):
-        load_settings({ENV_KEY_SYNC_SECONDS: "often"})
+@pytest.mark.parametrize("name", [ENV_KEY_SYNC_SECONDS, ENV_HEARTBEAT_SECONDS])
+def test_a_non_numeric_sync_interval_fails_by_name(name: str) -> None:
+    with pytest.raises(SettingsError, match=name):
+        load_settings({name: "often"})
 
 
 def test_secrets_never_appear_in_repr() -> None:

@@ -35,6 +35,7 @@ ENV_SERVICE_KEY = "THEYGENT_AI_GATEWAY_SERVICE_KEY"
 #: deployment secret; it never transits the control plane.
 ENV_ORG_API_KEY = "THEYGENT_AI_GATEWAY_ORG_API_KEY"
 ENV_KEY_SYNC_SECONDS = "THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS"
+ENV_HEARTBEAT_SECONDS = "THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS"
 #: Read by every service that reaches the control plane, as THEYGENT_INFERENCE_PLANE_URL is for
 #: the inference plane.
 ENV_CONTROL_PLANE_URL = "THEYGENT_CONTROL_PLANE_URL"
@@ -42,6 +43,9 @@ ENV_CONTROL_PLANE_URL = "THEYGENT_CONTROL_PLANE_URL"
 DEFAULT_PORT = 8082
 #: How often team mode re-syncs developer keys; a revoked key is refused within one interval.
 DEFAULT_KEY_SYNC_SECONDS = 30.0
+#: How often the gateway reports to the control plane and checks for a new config; a config change
+#: applies within one interval.
+DEFAULT_HEARTBEAT_SECONDS = 30.0
 DEFAULT_UPSTREAM_URL = "https://api.anthropic.com"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -77,6 +81,7 @@ class GatewaySettings:
     service_key: str | None = field(default=None, repr=False)
     org_api_key: str | None = field(default=None, repr=False)
     key_sync_seconds: float = DEFAULT_KEY_SYNC_SECONDS
+    heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS
 
     def __post_init__(self) -> None:
         if not 1 <= self.port <= 65535:
@@ -110,6 +115,10 @@ class GatewaySettings:
         if not 1 <= self.key_sync_seconds <= 3600:
             raise SettingsError(
                 f"{ENV_KEY_SYNC_SECONDS} must be between 1 and 3600, got {self.key_sync_seconds}"
+            )
+        if not 1 <= self.heartbeat_seconds <= 3600:
+            raise SettingsError(
+                f"{ENV_HEARTBEAT_SECONDS} must be between 1 and 3600, got {self.heartbeat_seconds}"
             )
         object.__setattr__(self, "upstream_url", _http_url(ENV_UPSTREAM_URL, self.upstream_url))
         if self.control_plane_url is not None:
@@ -190,5 +199,10 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
             DEFAULT_KEY_SYNC_SECONDS
             if (sync := _read_float(env, ENV_KEY_SYNC_SECONDS)) is None
             else sync
+        ),
+        heartbeat_seconds=(
+            DEFAULT_HEARTBEAT_SECONDS
+            if (beat := _read_float(env, ENV_HEARTBEAT_SECONDS)) is None
+            else beat
         ),
     )

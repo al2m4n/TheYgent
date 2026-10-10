@@ -262,6 +262,21 @@ class Spool:
                 handle.write(json.dumps({"segment": cursor.segment, "offset": cursor.offset}))
             temporary.replace(path)
 
+    def backlog(self) -> int:
+        """Lines written past the export cursor: the records waiting to be exported (a line torn
+        by a crash counts too, so it can overstate by one per crash)."""
+        with self._lock:
+            cursor = self._cursor()
+            count = 0
+            for segment in self.segments():
+                if segment < cursor.segment:
+                    continue
+                with self._path(segment).open("rb") as handle:
+                    handle.seek(cursor.offset if segment == cursor.segment else 0)
+                    while chunk := handle.read(READ_BYTES):
+                        count += chunk.count(b"\n")
+            return count
+
     def read(self, limit: int) -> list[tuple[bytes, Cursor]]:
         """Up to ``limit`` complete lines from the export cursor, each with the cursor just past
         it. A segment that a later one follows is finished: a torn tail there is skipped."""

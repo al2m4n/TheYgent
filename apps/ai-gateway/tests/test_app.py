@@ -27,6 +27,8 @@ def test_readyz_reports_the_gateway(client: TestClient) -> None:
         "ready": True,
         "gatewayId": "gw-test",
         "authMode": "personal",
+        "mode": "observer",  # standalone: nobody to configure it, so it observes from the start
+        "configVersion": None,
         "upstreamUrl": "https://api.anthropic.com",
         "controlPlaneUrl": None,
     }

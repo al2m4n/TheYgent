@@ -41,12 +41,14 @@ from theygent_ir.gateway import (
     Decision,
     Endpoint,
     GatewayConfig,
+    GatewayMode,
     Outcome,
     ReasonCode,
     SeatAllowance,
     Timing,
 )
 
+from theygent_ai_gateway.configsync import ConfigState
 from theygent_ai_gateway.conversations import ConversationTracker, Position
 from theygent_ai_gateway.costs import PriceBook
 from theygent_ai_gateway.identity import (
@@ -232,9 +234,13 @@ class _Exchange:
         self._done = False
         self.identity: Identity | None = None
         self._tracker: ConversationTracker | None = getattr(request.app.state, "tracker", None)
-        self._prices: PriceBook | None = getattr(request.app.state, "prices", None)
         self._policy: Policy | None = getattr(request.app.state, "policy", None)
-        self._config: GatewayConfig | None = getattr(request.app.state, "config", None)
+        # One snapshot for the whole exchange: a config applied mid-request never mixes in.
+        config_state: ConfigState | None = getattr(request.app.state, "config_state", None)
+        snapshot = config_state.current if config_state is not None else None
+        self._config: GatewayConfig | None = snapshot.config if snapshot else None
+        self._mode: GatewayMode = snapshot.mode if snapshot else "observer"
+        self._prices: PriceBook | None = snapshot.prices if snapshot else None
         self.plan: Plan | None = None
         self.position: Position | None = None
 
@@ -246,7 +252,10 @@ class _Exchange:
                 self.position = self._tracker.begin(self._signals, self.identity)
             except Exception as exc:
                 log.error("could not place the request: %s", type(exc).__name__)
-        if self._policy is not None:
+        if self._mode == "passthrough":
+            # Covers a gateway that has never been configured, which has no config to decide on.
+            self.plan = Plan.stay("mode_passthrough")
+        elif self._policy is not None:
             try:
                 self.plan = self._policy.decide(
                     self._signals,
@@ -346,7 +355,7 @@ class _Exchange:
                 pricing_version=pricing_version,
                 decision=decision,
                 config_version=self._config.version if self._config else None,
-                mode=self._config.mode if self._config else "observer",
+                mode=self._mode,
             )
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)
