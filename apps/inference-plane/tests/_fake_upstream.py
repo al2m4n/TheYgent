@@ -34,6 +34,21 @@ FAKE_TRANSCRIPT = "the quick brown fox"
 FAKE_AUDIO = b"ID3fake-audio-bytes"
 FAKE_IMAGE_B64 = "iVBORw0KGgo="  # the PNG signature, base64
 
+# A gpt-oss reply in its harmony format, as mlx_lm.server returns it (verbatim, unparsed):
+# reasoning on the analysis channel, then a call to the offered function. Sent back when the
+# last message is HARMONY_TOOL_TURN; HARMONY_ANSWER_TURN gets reasoning and a final answer.
+HARMONY_TOOL_TURN = "__harmony_tool_turn__"
+HARMONY_ANSWER_TURN = "__harmony_answer_turn__"
+HARMONY_TOOL_REPLY = (
+    "<|channel|>analysis<|message|>We need to search RFC 3261 for Timer B. Use function.<|end|>"
+    "<|start|>assistant<|channel|>commentary to=functions.rfc3261_search <|constrain|>json"
+    '<|message|>{"query":"Timer B INVITE client transaction RFC 3261"}'
+)
+HARMONY_ANSWER_REPLY = (
+    "<|channel|>analysis<|message|>Timer B is 64*T1.<|end|>"
+    "<|start|>assistant<|channel|>final<|message|>Timer B is 32 seconds by default."
+)
+
 # A non-streaming call that never finishes on its own, like an engine still chewing on an
 # oversized prompt or a minutes-long render: only the caller closing the connection ends it (or
 # the safety cap below, which keeps a broken test from wedging the server). Sent as the chat
@@ -104,6 +119,49 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
         if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
             if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
                 return abandoned
+        harmony = {HARMONY_TOOL_TURN: HARMONY_TOOL_REPLY, HARMONY_ANSWER_TURN: HARMONY_ANSWER_REPLY}
+        reply_text = harmony.get(last_content) if isinstance(last_content, str) else None
+        if reply_text is not None and body.get("stream"):
+
+            async def harmony_stream():
+                # Seven-character pieces, so special tokens arrive split across chunks.
+                for i in range(0, len(reply_text), 7):
+                    delta = {"content": reply_text[i : i + 7]}
+                    chunk = {
+                        "id": "chatcmpl-fake",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": model,
+                        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
+                    }
+                    yield f"data: {_dumps(chunk)}\n\n"
+                final = {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {_dumps(final)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(harmony_stream(), media_type="text/event-stream")
+        if reply_text is not None:
+            return JSONResponse(
+                {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": reply_text},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
         if body.get("stream"):
             # A stream that fails AFTER chunks started flowing — by then the 200 is
             # committed on every hop. Real engines report this as an in-band SSE error

@@ -104,12 +104,12 @@ class Gateway:
             **_chat_params(upstream, params),
         )
         result = _to_dict(resp)
-        # MLX-chat tool-call normalization: mlx_lm.server returns Llama's text tool
-        # call as content, not structured tool_calls — rewrite it so the (engine-agnostic) control
-        # plane sees the OpenAI shape. Gated to the MLX path + a tools-bearing request; a no-match
-        # leaves the response byte-identical (see tool_parse).
-        if upstream.needs_tool_parse and tool_parse.has_tools(params):
-            return tool_parse.normalize_completion_dict(
+        # MLX-chat normalization: mlx_lm.server passes a model's own text formats through as
+        # content — a harmony reply (gpt-oss reasoning, answer and tool calls) or Llama's text
+        # tool call — so rewrite them into the OpenAI shape the (engine-agnostic) control plane
+        # reads. Gated to the MLX path; a reply in neither format is returned unchanged.
+        if upstream.needs_tool_parse:
+            return tool_parse.normalize_mlx_completion(
                 result, tool_parse.offered_tool_names(params)
             )
         return result
@@ -136,11 +136,11 @@ class Gateway:
     async def _sse_lines(
         self, resp: Any, upstream: Upstream, params: dict[str, Any]
     ) -> AsyncIterator[str]:
-        if upstream.needs_tool_parse and tool_parse.has_tools(params):
-            # Buffer + rewrite the MLX text tool call into synthetic structured tool_calls chunks;
-            # a normal answer still streams (the rewriter flushes once it can't be a tool call).
+        if upstream.needs_tool_parse:
+            # Rewrite a harmony reply or an MLX text tool call into OpenAI chunks; a normal
+            # answer still streams (the rewriters hold only what may still be one of those).
             names = tool_parse.offered_tool_names(params)
-            async for chunk in tool_parse.rewrite_mlx_tool_stream(resp, names, _to_dict):
+            async for chunk in tool_parse.normalize_mlx_stream(resp, names, _to_dict):
                 yield f"data: {json.dumps(chunk)}\n\n"
             yield "data: [DONE]\n\n"
             return

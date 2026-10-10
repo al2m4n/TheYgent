@@ -146,6 +146,7 @@ A few things follow from wiring a capability:
 - When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls) and **max tool iterations** (the round limit, default 8).
 - The model runs a **bounded loop**: it answers or calls a tool; each tool result is fed back; it calls again until it answers or hits the iteration limit.
 - There is deliberately no compile-time capability check. A model that does not support tool-calling simply returns a plain answer and ignores the tools.
+- Local models that write tool calls as text work too: Llama-style calls and gpt-oss's own reply format on MLX are turned into real tool calls, and gpt-oss's reasoning is kept out of the answer (it arrives as the reasoning stream).
 
 A tool node is *either* a capability (wired to an llm's `tools` port, the model supplies its arguments) *or* a plain pipeline step (wired with data edges, you template its arguments) — never both. See [Tools](tools.md).
 

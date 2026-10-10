@@ -28,7 +28,7 @@ These are the invariants a change must not break:
 | Path (under `apps/inference-plane/src/theygent_inference_plane/`) | Role |
 |---|---|
 | `app.py` | `create_app` factory: both HTTP surfaces, all injectable seams, the launcher-set wiring, OpenAI-style error mapping, guarded SSE, client-disconnect cancellation of non-streaming data-plane calls, CORS, the 30s reaper loop |
-| `manager.py` | `EngineManager`: lazy spawn on first use, lease/inflight tracking, draining, idle reap, admission-time eviction, live ceiling enforcement; hands the gateway an `Upstream` (`api_base`, `model`, `api_key`, `needs_tool_parse`) |
+| `manager.py` | `EngineManager`: lazy spawn on first use, lease/inflight tracking, draining, idle reap, admission-time eviction, live ceiling enforcement; hands the gateway an `Upstream` (`api_base`, `model`, `api_key`, `needs_tool_parse`, `effort_in_template`) |
 | `launcher.py` | `EngineLauncher`/`EngineHandle` protocols, the shared spawn → health-poll → terminate lifecycle, the llama.cpp / MLX / MLX-VLM / whisper.cpp / audio / image launchers, `ManagedLauncherSet` dispatch keyed on exact `(engine, modality)`, per-engine capability probes |
 | `vllm_engine.py` | `vllm serve` on a CUDA host — interface-only, unproven; every CUDA/VRAM assumption is confined here by rule |
 | `gateway.py` | L0 gateway: LiteLLM-backed engine-agnostic dispatch (complete/stream/embed/transcribe), SSE re-encoding, param merging; speech and image generation as direct HTTP POSTs |
@@ -45,6 +45,7 @@ These are the invariants a change must not break:
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
 | `tool_parse.py` | Normalizes MLX's textual tool-call output into structured OpenAI `tool_calls`; gated, false-positive-safe, designed to be deleted |
+| `harmony.py` | Parses gpt-oss's harmony replies (which `mlx_lm.server` returns verbatim) into `reasoning_content`, `content`, and `tool_calls`, incrementally for streams; used from `tool_parse` on the gated MLX chat path |
 | `clock.py` | Injectable time seam (`RealClock`/`ManualClock`) for deterministic eviction tests |
 | `__main__.py` / `asgi.py` | Dev entrypoint (env parsing, state-dir resolution, uvicorn) / production ASGI module kept separate so importing `create_app` has no side effects |
 
