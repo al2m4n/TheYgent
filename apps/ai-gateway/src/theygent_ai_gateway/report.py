@@ -26,17 +26,21 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from typing import Literal
 
 from pydantic import ValidationError
-from theygent_ir.gateway import GatewayRequestRecord, GatewayTotals, SeatAllowance
+from theygent_ir.gateway import (
+    TOOL_SEARCH_OFF_MIN_TOOLS,
+    GatewayRequestRecord,
+    GatewayTotals,
+    SeatAllowance,
+    SetupWarningCode,
+)
 
 from theygent_ai_gateway.costs import utilization_change
 
 #: How a group key reads when the record has no value for it.
 NONE_KEY = "(none)"
-#: Claude Code sends about a dozen built-in tools, one of them deferred. Dozens of tools with none
-#: deferred means every MCP tool schema went upfront: tool search is off.
-TOOL_SEARCH_OFF_MIN_TOOLS = 30
 
 DIMENSIONS: dict[str, Callable[[GatewayRequestRecord], str | None]] = {
     "class": lambda r: r.request_class,
@@ -65,7 +69,7 @@ def totals_json(totals: GatewayTotals) -> dict[str, object]:
 
 @dataclass(frozen=True)
 class SetupWarning:
-    code: str
+    code: SetupWarningCode | Literal["unreadable_lines"]
     message: str
     calls: int
 

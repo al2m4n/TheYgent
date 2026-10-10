@@ -225,13 +225,14 @@ def test_seat_use_is_read_per_developer_and_never_across_a_reset() -> None:
     records = [
         rec(1, developer_id="usr_a", seat_allowance=seat(0.10, 0.02, window_1)),
         rec(2, developer_id="usr_a", seat_allowance=seat(0.25, 0.03, window_1)),
-        rec(3, developer_id="usr_a", seat_allowance=seat(0.05, 0.04, window_2)),  # reset
-        rec(4, developer_id="usr_a", seat_allowance=seat(0.07, 0.05, window_2)),
+        # The 5-hour window reset: 0.25 → 0.30 is a new window, not 0.05 of use.
+        rec(3, developer_id="usr_a", seat_allowance=seat(0.30, 0.04, window_2)),
+        rec(4, developer_id="usr_a", seat_allowance=seat(0.32, 0.05, window_2)),
         rec(5, developer_id="usr_b", seat_allowance=seat(0.50, 0.20, window_1)),
     ]
     seats = build_report(records).seats
     a, b = seats["usr_a"], seats["usr_b"]
-    assert a.latest.five_hour_utilization == 0.07
+    assert a.latest.five_hour_utilization == 0.32
     assert a.five_hour_used == pytest.approx(0.15 + 0.02)
     assert a.seven_day_used == pytest.approx(0.03)
     assert (b.five_hour_used, b.seven_day_used) == (0.0, 0.0)

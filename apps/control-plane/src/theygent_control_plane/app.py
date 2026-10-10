@@ -5706,7 +5706,13 @@ def create_app(
             )
         async with tx() as session:
             report = await gateway_reports.build_report(
-                session, scope=reader, since=window[0], until=window[1], dimensions=dimensions
+                session,
+                scope=reader,
+                since=window[0],
+                until=window[1],
+                dimensions=dimensions,
+                # A seat belongs to one person: listed only where individuals may be seen.
+                include_seats=_identifying_allowed(principal, reader),
             )
         return report.model_dump(mode="json")
 

@@ -408,3 +408,78 @@ def test_a_long_timeline_pages_without_skipping_ties(client: TestClient) -> None
         after = page["requests"][-1]["id"]
     assert sorted(seen) == [f"rec_{n:05d}" for n in range(1, 6)]
     assert len(seen) == len(set(seen))
+
+
+# ── setup warnings and seats ─────────────────────────────────────────────────
+
+
+def test_setup_problems_are_flagged_by_the_gateways_own_rules(client: TestClient) -> None:
+    seed(
+        client,
+        [
+            record(1, shape={"tool_count": 201, "deferred_tool_count": 0}),
+            record(2, shape={"tool_count": 30, "deferred_tool_count": 0}),
+            record(3, shape={"tool_count": 11, "deferred_tool_count": 1}),  # tool search on
+            record(4, shape={"tool_count": 14, "deferred_tool_count": 0}),  # too few to tell
+            record(5, request_class="unlabeled", client_version="2.1.285"),
+            record(6, request_class="unlabeled", client="python-httpx"),  # not Claude Code
+            record(7, request_class="unrecognized", request_class_raw="speculative"),
+            record(8, served_model="claude-imaginary-9", cost_usd=None),
+            record(9, status=429, usage={}, cost_usd=None),  # nothing used: nothing to price
+        ],
+    )
+    warnings = {w["code"]: w for w in report(client)["warnings"]}
+    assert set(warnings) == {
+        "tool_search_off",
+        "hint_headers_off",
+        "unrecognized_request_class",
+        "unpriced_models",
+    }
+    assert warnings["tool_search_off"]["calls"] == 2
+    assert warnings["hint_headers_off"]["calls"] == 1
+    assert warnings["unrecognized_request_class"]["values"] == ["speculative"]
+    assert (warnings["unpriced_models"]["calls"], warnings["unpriced_models"]["values"]) == (
+        1,
+        ["claude-imaginary-9"],
+    )
+
+
+def test_a_clean_setup_has_no_warnings(client: TestClient) -> None:
+    seed(client, [record(1, shape={"tool_count": 11, "deferred_tool_count": 1})])
+    assert report(client)["warnings"] == []
+
+
+def seat(five: float, seven: float, reset_5h: datetime) -> dict[str, Any]:
+    return {
+        "five_hour_utilization": five,
+        "seven_day_utilization": seven,
+        "five_hour_resets_at": reset_5h.isoformat(),
+        "seven_day_resets_at": (T0 + timedelta(days=5)).isoformat(),
+    }
+
+
+def test_seat_use_is_read_per_developer_and_never_across_a_reset(
+    client: TestClient, team: dict[str, tuple[str, str]]
+) -> None:
+    ada, bob = team["ada"][0], team["bob"][0]
+    window_1, window_2 = T0 + timedelta(hours=2), T0 + timedelta(hours=7)
+    seed(
+        client,
+        [
+            record(101, developer_id=ada, seat_allowance=seat(0.10, 0.02, window_1)),
+            record(102, developer_id=ada, seat_allowance=seat(0.25, 0.03, window_1)),
+            # The 5-hour window reset: 0.25 → 0.30 is a new window, not 0.05 of use.
+            record(103, developer_id=ada, seat_allowance=seat(0.30, 0.04, window_2)),
+            record(104, developer_id=ada, seat_allowance=seat(0.32, 0.05, window_2)),
+            record(105, developer_id=bob, seat_allowance=seat(0.50, 0.20, window_1)),
+        ],
+    )
+    seats = {s["developer_id"]: s for s in report(client)["seats"]}
+    assert set(seats) == {ada, bob}
+    assert seats[ada]["five_hour_utilization"] == 0.32
+    assert seats[ada]["five_hour_used"] == pytest.approx(0.15 + 0.02)
+    assert seats[ada]["seven_day_used"] == pytest.approx(0.03)
+    assert (seats[bob]["five_hour_used"], seats[bob]["seven_day_used"]) == (0, 0)
+    # A developer reads their own seat; at organization scope a non-admin sees none.
+    assert [s["developer_id"] for s in report(client, team["ada"][1])["seats"]] == [ada]
+    assert report(client, team["vic"][1], scope="org")["seats"] == []

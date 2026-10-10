@@ -149,6 +149,9 @@ The plane boundary is enforced by the types:
 - **Catalog suggestions are not decisions.** A `FingerprintEntry` carries the kind's status from
   the config (the only home of routing rules) and, separately, a `known_kind` recognised by shape
   with the `suggested_status` that kind's evidence supports.
+- **One vocabulary of setup warnings.** `SetupWarningCode` and `TOOL_SEARCH_OFF_MIN_TOOLS` are
+  shared, so the gateway's own report and the control plane's flag the same problems by the same
+  rule.
 - **One definition of the totals.** `GatewayTotals.of(record)` is a record's contribution
   (calls, errors, tokens, cost, the cost with routing applied, calls and tokens routed, API calls
   avoided), and totals add field by field. The gateway's own report and the control plane's

@@ -570,3 +570,17 @@ def test_a_suggestion_is_a_known_kind_and_a_status() -> None:
         FingerprintEntry.model_validate(
             {"fingerprint": "0123456789abcdef", "status": "unreviewed", "known_kind": "other"}
         )
+
+
+def test_the_setup_warning_vocabulary_is_closed() -> None:
+    from typing import get_args
+
+    from theygent_ir.gateway import TOOL_SEARCH_OFF_MIN_TOOLS, SetupWarningCode
+
+    assert set(get_args(SetupWarningCode)) == {
+        "tool_search_off",
+        "hint_headers_off",
+        "unrecognized_request_class",
+        "unpriced_models",
+    }
+    assert TOOL_SEARCH_OFF_MIN_TOOLS == 30

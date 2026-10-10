@@ -1,0 +1,285 @@
+// Tests for the AI Gateway page's Report tab (RTL over a mocked control plane): the headline
+// figures, setup warnings, spend by day, the breakdown and its grouping, subscription seats, who
+// sees what (own records vs the organization), the default window, and the empty state.
+
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ReportTab } from "../src/components/gateway/ReportTab";
+import { AuthProvider } from "../src/lib/auth";
+
+const HOUR_AGO = new Date(Date.now() - 3_600_000).toISOString();
+
+function totals(over: Record<string, number> = {}) {
+  return {
+    calls: 0,
+    errors: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_5m_tokens: 0,
+    cache_write_1h_tokens: 0,
+    cache_write_tokens: 0,
+    cost_usd: 0,
+    unpriced_calls: 0,
+    with_routing_usd: 0,
+    saving_usd: 0,
+    routed_calls: 0,
+    routed_tokens: 0,
+    routed_local_calls: 0,
+    routed_local_tokens: 0,
+    ...over,
+  };
+}
+
+const TOTAL = totals({
+  calls: 25,
+  errors: 2,
+  input_tokens: 3_462,
+  output_tokens: 4_563,
+  cache_read_tokens: 309_161,
+  cache_write_tokens: 336_279,
+  cost_usd: 2.6274,
+  with_routing_usd: 2.5512,
+  saving_usd: 0.0762,
+  routed_calls: 11,
+  routed_local_calls: 1,
+});
+
+function reportBody(over: Record<string, unknown> = {}) {
+  return {
+    since: HOUR_AGO,
+    until: new Date().toISOString(),
+    developer_id: null,
+    first: HOUR_AGO,
+    last: HOUR_AGO,
+    total: TOTAL,
+    groups: {
+      day: [
+        {
+          key: "2026-10-05",
+          ...totals({ calls: 5, cost_usd: 1, with_routing_usd: 0.5, saving_usd: 0.5 }),
+        },
+        { key: "2026-10-06", ...totals({ calls: 20, cost_usd: 1.6274, with_routing_usd: 2.0512 }) },
+      ],
+      class: [
+        {
+          key: "subagent",
+          ...totals({ calls: 11, cost_usd: 0.2457, with_routing_usd: 0.1695, saving_usd: 0.0762 }),
+        },
+        { key: "main", ...totals({ calls: 10, cost_usd: 2.3269, with_routing_usd: 2.3269 }) },
+      ],
+      client: [{ key: "cli", ...totals({ calls: 25, cost_usd: 2.6274 }) }],
+      model: [{ key: "claude-opus-5-5", ...totals({ calls: 25, cost_usd: 2.6274 }) }],
+    },
+    pricing_versions: ["2026-09-25"],
+    served_differs: true,
+    warnings: [{ code: "tool_search_off", calls: 2, values: [] }],
+    seats: [],
+    ...over,
+  };
+}
+
+function user(role: string) {
+  return {
+    id: "usr_dev",
+    username: "dev",
+    display_name: "Dev",
+    email: null,
+    role,
+    disabled: false,
+    has_password: true,
+    avatar_url: null,
+    created_at: HOUR_AGO,
+    updated_at: HOUR_AGO,
+    last_login_at: null,
+  };
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function mockControlPlane(role: string, report: () => Response): URL[] {
+  const asked: URL[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === "/auth/status") {
+        return json({ setup_required: false, user: user(role), providers: [] });
+      }
+      if (parsed.pathname === "/gateway/developers") {
+        return json({
+          developers: [
+            {
+              user_id: "usr_ada",
+              username: "ada",
+              display_name: "Ada",
+              disabled: false,
+              credential_profile: "passthrough",
+              live_gateway_keys: 1,
+              updated_at: null,
+              updated_by: null,
+            },
+          ],
+        });
+      }
+      if (parsed.pathname === "/gateway/report") {
+        asked.push(parsed);
+        return report();
+      }
+      return json({});
+    }),
+  );
+  return asked;
+}
+
+function renderTab() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <AuthProvider>
+        <ReportTab />
+      </AuthProvider>
+    </QueryClientProvider>,
+  );
+}
+
+function tile(name: string): HTMLElement {
+  return screen.getByRole("region", { name });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("AI Gateway report", () => {
+  it("shows spend, what routing would have cost, and the saving", async () => {
+    mockControlPlane("admin", () => json(reportBody()));
+    renderTab();
+    expect(await screen.findByRole("region", { name: "Spend" })).toHaveTextContent("$2.63");
+    expect(tile("With routing")).toHaveTextContent("$2.55");
+    expect(tile("Saving")).toHaveTextContent("$0.0762");
+    expect(tile("Saving")).toHaveTextContent("2.9% of spend");
+    expect(tile("Calls")).toHaveTextContent("25");
+    expect(tile("Calls")).toHaveTextContent("11 would route · 1 would not reach the API");
+  });
+
+  it("flags setup problems with their fix", async () => {
+    mockControlPlane("editor", () => json(reportBody()));
+    renderTab();
+    expect(await screen.findByText(/tool search is off/)).toBeInTheDocument();
+    expect(screen.getByText("ENABLE_TOOL_SEARCH=true")).toBeInTheDocument();
+  });
+
+  it("draws each day's spend against what routing would have cost", async () => {
+    mockControlPlane("admin", () => json(reportBody()));
+    renderTab();
+    const days = await screen.findByRole("list", { name: "Spend by day" });
+    expect(
+      within(days).getByLabelText("2026-10-05: $1.00 spent, $0.5000 with routing"),
+    ).toBeTruthy();
+    expect(within(days).getAllByRole("listitem")).toHaveLength(2);
+  });
+
+  it("groups the breakdown by the chosen dimension", async () => {
+    const asked = mockControlPlane("admin", () => json(reportBody()));
+    const ui = userEvent.setup();
+    renderTab();
+    const byClass = await screen.findByRole("table", { name: "By request class" });
+    expect(within(byClass).getByText("subagent")).toBeInTheDocument();
+    expect(asked[0].searchParams.get("by")).toBe("day,class");
+
+    await ui.selectOptions(screen.getByLabelText("Group by"), "model");
+    await screen.findByRole("table", { name: "By model requested" });
+    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,model");
+    expect(screen.getByText(/Grouped by the model Claude Code requested/)).toBeInTheDocument();
+  });
+
+  it("starts admins on everyone and others on their own records", async () => {
+    const adminAsked = mockControlPlane("admin", () => json(reportBody()));
+    const first = renderTab();
+    await screen.findByRole("region", { name: "Spend" });
+    await waitFor(() => expect(adminAsked.at(-1)?.searchParams.get("scope")).toBe("org"));
+    first.unmount();
+
+    const devAsked = mockControlPlane("editor", () => json(reportBody()));
+    renderTab();
+    await screen.findByRole("region", { name: "Spend" });
+    await waitFor(() => expect(devAsked.at(-1)?.searchParams.get("scope")).toBe("mine"));
+  });
+
+  it("keeps people out of the organization view below admin", async () => {
+    const asked = mockControlPlane("editor", () => json(reportBody()));
+    const ui = userEvent.setup();
+    renderTab();
+    await screen.findByRole("region", { name: "Spend" });
+    const groupBy = screen.getByLabelText("Group by");
+    expect(within(groupBy).getByRole("option", { name: "Developer" })).toBeInTheDocument();
+    await ui.selectOptions(groupBy, "developer");
+
+    await ui.selectOptions(screen.getByLabelText("Whose usage"), "org");
+    await waitFor(() => expect(asked.at(-1)?.searchParams.get("scope")).toBe("org"));
+    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,class"); // never by developer
+    const orgGroupBy = screen.getByLabelText("Group by");
+    expect(within(orgGroupBy).queryByRole("option", { name: "Developer" })).toBeNull();
+    expect(within(orgGroupBy).queryByRole("option", { name: "Session" })).toBeNull();
+  });
+
+  it("covers the last week unless asked otherwise", async () => {
+    const asked = mockControlPlane("admin", () => json(reportBody()));
+    renderTab();
+    await screen.findByRole("region", { name: "Spend" });
+    const since = Date.parse(asked[0].searchParams.get("since") ?? "");
+    expect(Math.abs(Date.now() - 7 * 86_400_000 - since)).toBeLessThan(60_000);
+  });
+
+  it("lists subscription seats when there are some", async () => {
+    mockControlPlane("admin", () =>
+      json(
+        reportBody({
+          seats: [
+            {
+              developer_id: "usr_ada",
+              latest_at: HOUR_AGO,
+              five_hour_utilization: 0.32,
+              seven_day_utilization: 0.05,
+              five_hour_resets_at: null,
+              seven_day_resets_at: null,
+              five_hour_used: 0.17,
+              seven_day_used: 0.03,
+            },
+          ],
+        }),
+      ),
+    );
+    renderTab();
+    const seats = await screen.findByRole("table", { name: "Subscription seats" });
+    // An admin sees the developer's username rather than their account id.
+    expect(await within(seats).findByText("ada")).toBeInTheDocument();
+    expect(within(seats).getByText("+17% / +3%")).toBeInTheDocument();
+  });
+
+  it("says so when the range has no traffic", async () => {
+    mockControlPlane("admin", () =>
+      json(reportBody({ total: totals(), groups: {}, warnings: [] })),
+    );
+    renderTab();
+    expect(await screen.findByText("No traffic recorded in this range")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Spend" })).not.toBeInTheDocument();
+  });
+
+  it("shows the control plane's error", async () => {
+    mockControlPlane("admin", () =>
+      json({ error: { message: "report unavailable", code: "db_down" } }, 503),
+    );
+    renderTab();
+    expect(await screen.findByText("report unavailable")).toBeInTheDocument();
+  });
+});

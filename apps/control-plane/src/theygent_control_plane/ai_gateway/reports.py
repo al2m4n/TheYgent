@@ -16,11 +16,11 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Select, and_, case, func, literal, or_, select
+from sqlalchemy import Select, and_, case, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import QueryableAttribute
 from sqlalchemy.sql.elements import ColumnElement
-from theygent_ir.gateway import GatewayTotals
+from theygent_ir.gateway import TOOL_SEARCH_OFF_MIN_TOOLS, GatewayTotals, SetupWarningCode
 
 from theygent_control_plane.models import AiGatewayRequestRow as R
 
@@ -104,6 +104,27 @@ def _where(stmt: Select[Any], scope: Scope, since: datetime, until: datetime) ->
     return stmt
 
 
+class SetupWarning(BaseModel):
+    code: SetupWarningCode
+    calls: int
+    #: What the warning names: the unrecognized request classes, or the unpriced models.
+    values: list[str] = []
+
+
+class SeatUse(BaseModel):
+    """A developer's subscription seat: the latest plan-window reading, and how much of each window
+    was used within the report (never read across a window reset)."""
+
+    developer_id: str | None
+    latest_at: datetime
+    five_hour_utilization: float | None
+    seven_day_utilization: float | None
+    five_hour_resets_at: str | None
+    seven_day_resets_at: str | None
+    five_hour_used: float
+    seven_day_used: float
+
+
 class Report(BaseModel):
     since: datetime
     until: datetime
@@ -117,6 +138,9 @@ class Report(BaseModel):
     #: Some records were served by a model other than the one requested (Claude Code files
     #: tokens under the requested one).
     served_differs: bool
+    warnings: list[SetupWarning]
+    #: Per developer; empty when the reader may not see individuals.
+    seats: list[SeatUse]
 
 
 async def build_report(
@@ -126,6 +150,7 @@ async def build_report(
     since: datetime,
     until: datetime,
     dimensions: Sequence[str],
+    include_seats: bool = True,
 ) -> Report:
     total_row = (
         await session.execute(
@@ -177,7 +202,131 @@ async def build_report(
         groups=groups,
         pricing_versions=sorted(v for (v,) in versions),
         served_differs=bool(total_row.served_differs),
+        warnings=await _warnings(session, scope, since, until),
+        seats=await _seats(session, scope, since, until) if include_seats else [],
     )
+
+
+async def _warnings(
+    session: AsyncSession, scope: Scope, since: datetime, until: datetime
+) -> list[SetupWarning]:
+    """The same setup problems the gateway's own report detects, by the same rules."""
+    tool_count = func.coalesce(R.shape["tool_count"].as_integer(), 0)
+    deferred = func.coalesce(R.shape["deferred_tool_count"].as_integer(), 0)
+    messages = R.endpoint == "messages"
+    row = (
+        await session.execute(
+            _where(
+                select(
+                    func.count()
+                    .filter(messages, deferred == 0, tool_count >= TOOL_SEARCH_OFF_MIN_TOOLS)
+                    .label("tool_search_off"),
+                    func.count()
+                    .filter(messages, R.request_class == "unlabeled", R.client_version.is_not(None))
+                    .label("hint_headers_off"),
+                    func.count()
+                    .filter(R.request_class == "unrecognized", R.request_class_raw.is_not(None))
+                    .label("unrecognized"),
+                    func.array_agg(R.request_class_raw.distinct())
+                    .filter(R.request_class == "unrecognized", R.request_class_raw.is_not(None))
+                    .label("unrecognized_values"),
+                    func.count().filter(R.cost_usd.is_(None), _TOKENS > 0).label("unpriced"),
+                    func.array_agg(
+                        func.coalesce(R.served_model, R.requested_model, NONE_KEY).distinct()
+                    )
+                    .filter(R.cost_usd.is_(None), _TOKENS > 0)
+                    .label("unpriced_values"),
+                ),
+                scope,
+                since,
+                until,
+            )
+        )
+    ).one()
+    found: list[SetupWarning] = []
+    if row.tool_search_off:
+        found.append(SetupWarning(code="tool_search_off", calls=row.tool_search_off))
+    if row.hint_headers_off:
+        found.append(SetupWarning(code="hint_headers_off", calls=row.hint_headers_off))
+    if row.unrecognized:
+        found.append(
+            SetupWarning(
+                code="unrecognized_request_class",
+                calls=row.unrecognized,
+                values=sorted(row.unrecognized_values or []),
+            )
+        )
+    if row.unpriced:
+        found.append(
+            SetupWarning(
+                code="unpriced_models", calls=row.unpriced, values=sorted(row.unpriced_values or [])
+            )
+        )
+    return found
+
+
+#: Seat readings in order per developer: the latest one, and each window's increases between
+#: consecutive readings that share a reset time (a reset makes them incomparable).
+_SEATS = text(
+    """
+    WITH readings AS (
+        SELECT developer_id, started_at, id,
+               (seat_allowance->>'five_hour_utilization')::float AS u5,
+               (seat_allowance->>'seven_day_utilization')::float AS u7,
+               seat_allowance->>'five_hour_resets_at' AS r5,
+               seat_allowance->>'seven_day_resets_at' AS r7
+        FROM ai_gateway_request
+        WHERE seat_allowance IS NOT NULL
+          AND started_at >= :since AND started_at < :until
+          AND (CAST(:developer AS text) IS NULL OR developer_id = :developer)
+    ), paired AS (
+        SELECT *,
+               LAG(u5) OVER w AS p5, LAG(r5) OVER w AS pr5,
+               LAG(u7) OVER w AS p7, LAG(r7) OVER w AS pr7,
+               ROW_NUMBER() OVER (
+                   PARTITION BY developer_id ORDER BY started_at DESC, id DESC
+               ) AS newest
+        FROM readings
+        WINDOW w AS (PARTITION BY developer_id ORDER BY started_at, id)
+    )
+    SELECT developer_id,
+           MAX(started_at) FILTER (WHERE newest = 1) AS latest_at,
+           MAX(u5) FILTER (WHERE newest = 1) AS u5,
+           MAX(u7) FILTER (WHERE newest = 1) AS u7,
+           MAX(r5) FILTER (WHERE newest = 1) AS r5,
+           MAX(r7) FILTER (WHERE newest = 1) AS r7,
+           COALESCE(SUM(GREATEST(u5 - p5, 0)) FILTER (
+               WHERE u5 IS NOT NULL AND p5 IS NOT NULL AND pr5 IS NOT NULL AND r5 = pr5
+           ), 0) AS used5,
+           COALESCE(SUM(GREATEST(u7 - p7, 0)) FILTER (
+               WHERE u7 IS NOT NULL AND p7 IS NOT NULL AND pr7 IS NOT NULL AND r7 = pr7
+           ), 0) AS used7
+    FROM paired
+    GROUP BY developer_id
+    ORDER BY developer_id NULLS LAST
+    """
+)
+
+
+async def _seats(
+    session: AsyncSession, scope: Scope, since: datetime, until: datetime
+) -> list[SeatUse]:
+    rows = await session.execute(
+        _SEATS, {"since": since, "until": until, "developer": scope.developer_id}
+    )
+    return [
+        SeatUse(
+            developer_id=row.developer_id,
+            latest_at=row.latest_at,
+            five_hour_utilization=row.u5,
+            seven_day_utilization=row.u7,
+            five_hour_resets_at=row.r5,
+            seven_day_resets_at=row.r7,
+            five_hour_used=row.used5,
+            seven_day_used=row.used7,
+        )
+        for row in rows
+    ]
 
 
 class SessionSummary(BaseModel):

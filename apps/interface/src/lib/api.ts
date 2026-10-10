@@ -1153,6 +1153,76 @@ export interface GatewayDeveloper {
   updated_by: string | null;
 }
 
+/** What records add up to (the control plane's sums of the shared definition). On a subscription
+ *  the dollar figures are API-equivalent value, not a bill. */
+export interface GatewayTotals {
+  calls: number;
+  errors: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_5m_tokens: number;
+  cache_write_1h_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+  /** Calls on a model with no known price: tokens counted, dollars not. */
+  unpriced_calls: number;
+  /** What it would have cost with every decision applied. */
+  with_routing_usd: number;
+  saving_usd: number;
+  routed_calls: number;
+  routed_tokens: number;
+  /** API calls a local model would have answered. */
+  routed_local_calls: number;
+  routed_local_tokens: number;
+}
+
+export type GatewayDimension =
+  | "class"
+  | "client"
+  | "session"
+  | "model"
+  | "served-model"
+  | "developer"
+  | "decision"
+  | "reason"
+  | "day";
+
+export type GatewaySetupWarningCode =
+  | "tool_search_off"
+  | "hint_headers_off"
+  | "unrecognized_request_class"
+  | "unpriced_models";
+
+export interface GatewaySeatUse {
+  developer_id: string | null;
+  latest_at: string;
+  five_hour_utilization: number | null;
+  seven_day_utilization: number | null;
+  five_hour_resets_at: string | null;
+  seven_day_resets_at: string | null;
+  /** How much of each plan window was used within the report (never across a reset). */
+  five_hour_used: number;
+  seven_day_used: number;
+}
+
+export interface GatewayReport {
+  since: string;
+  until: string;
+  developer_id: string | null;
+  first: string | null;
+  last: string | null;
+  total: GatewayTotals;
+  /** Per dimension, rows ordered by spend, most first. */
+  groups: Partial<Record<GatewayDimension, ({ key: string } & GatewayTotals)[]>>;
+  pricing_versions: string[];
+  /** Some calls were served by a model other than the one Claude Code requested. */
+  served_differs: boolean;
+  warnings: { code: GatewaySetupWarningCode; calls: number; values: string[] }[];
+  /** Per developer; empty where individuals may not be seen. */
+  seats: GatewaySeatUse[];
+}
+
 /** A gateway instance as its latest heartbeat described it. */
 export interface GatewayInstance {
   gateway_id: string;
@@ -2075,6 +2145,21 @@ export const api = {
     request<{ instances: GatewayInstance[] }>(controlPlaneUrl(), "/gateway/instances").then(
       (r) => r.instances,
     ),
+  /** Totals and groupings for a time range. ``scope`` "mine" is the caller's own records; "org"
+   *  is everyone's (totals and non-identifying groupings below admin). */
+  getGatewayReport: (params: {
+    since: string;
+    until?: string;
+    by: GatewayDimension[];
+    scope?: "mine" | "org";
+    developerId?: string;
+  }) => {
+    const q = new URLSearchParams({ since: params.since, by: params.by.join(",") });
+    if (params.until) q.set("until", params.until);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.developerId) q.set("developer_id", params.developerId);
+    return request<GatewayReport>(controlPlaneUrl(), `/gateway/report?${q.toString()}`);
+  },
   /** The caller's billing profile and live key count. */
   getGatewayMe: () => request<GatewayDeveloper>(controlPlaneUrl(), "/gateway/me"),
   /** Every account with its billing profile (admins only). */

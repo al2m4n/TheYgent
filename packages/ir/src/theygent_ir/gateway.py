@@ -286,6 +286,23 @@ class GatewayEventAck(_GatewayWire):
     duplicates: int = Field(ge=0)
 
 
+#: Setup problems a report detects from what was recorded:
+#:
+#: * ``tool_search_off`` — dozens of tools sent with none deferred: the client sends every tool's
+#:   schema on every request (a custom base URL turns Claude Code's MCP tool search off unless
+#:   ENABLE_TOOL_SEARCH=true);
+#: * ``hint_headers_off`` — Claude Code traffic without request labels, so nothing is a routing
+#:   candidate (CLAUDE_CODE_GATEWAY_HINT_HEADERS=1);
+#: * ``unrecognized_request_class`` — a request class this gateway does not know;
+#: * ``unpriced_models`` — calls on models with no known price, left out of the dollar figures.
+SetupWarningCode = Literal[
+    "tool_search_off", "hint_headers_off", "unrecognized_request_class", "unpriced_models"
+]
+#: Claude Code sends about a dozen built-in tools, one of them deferred; this many with none
+#: deferred means every MCP tool schema went upfront.
+TOOL_SEARCH_OFF_MIN_TOOLS = 30
+
+
 class GatewayTotals(_GatewayWire):
     """What records add up to. One definition, so the gateway's own report and the control
     plane's aggregates agree by construction.

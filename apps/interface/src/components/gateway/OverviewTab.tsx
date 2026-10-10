@@ -3,9 +3,7 @@
 // traffic content — the gateway never sends any to the control plane.
 
 import { useQuery } from "@tanstack/react-query";
-import type { LucideIcon } from "lucide-react";
 import { Activity, Inbox, Server, SlidersHorizontal } from "lucide-react";
-import type { ReactNode } from "react";
 import { type GatewayConfig, type GatewayInstance, api } from "../../lib/api";
 import { toneOf } from "../../lib/categories";
 import { TimeAgo } from "../TimeAgo";
@@ -13,6 +11,7 @@ import { Badge, ErrorBanner, NoteBanner } from "../ui";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "../ui/item";
 import { Skeleton } from "../ui/skeleton";
+import { StatTile } from "./StatTile";
 
 /** Heartbeats arrive every 30 s by default; polling a little faster keeps "online" honest. */
 const REFRESH_MS = 15_000;
@@ -69,7 +68,7 @@ function Summary({
   const backlog = instances.reduce((sum, i) => sum + i.spool_backlog, 0);
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <Tile
+      <StatTile
         icon={SlidersHorizontal}
         label="Mode"
         value={config ? config.mode : "passthrough"}
@@ -81,48 +80,25 @@ function Summary({
               : "forwards without recording"
         }
       />
-      <Tile
+      <StatTile
         icon={Activity}
         label="Config"
         value={config ? `v${config.version}` : "—"}
         hint={config ? <TimeAgo iso={config.updated_at} /> : "none saved yet"}
       />
-      <Tile
+      <StatTile
         icon={Server}
         label="Gateways online"
         value={`${online} / ${instances.length}`}
         hint={instances.length === 0 ? "none reported yet" : "by their latest heartbeat"}
       />
-      <Tile
+      <StatTile
         icon={Inbox}
         label="Waiting to export"
         value={backlog.toLocaleString()}
         hint="records in the gateways' local logs"
       />
     </div>
-  );
-}
-
-function Tile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: ReactNode;
-  hint: ReactNode;
-}) {
-  return (
-    <section aria-label={label} className="rounded-lg border bg-card p-3">
-      <div className="flex items-center justify-between text-muted-foreground">
-        <span className="text-[11px] font-medium uppercase tracking-wide">{label}</span>
-        <Icon size={15} className="opacity-70" />
-      </div>
-      <div className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{value}</div>
-      <div className="text-[11px] text-muted-foreground">{hint}</div>
-    </section>
   );
 }
 
