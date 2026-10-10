@@ -53,6 +53,11 @@ class Upstream:
     # *behaviour*, set by the manager from the binding — it carries no engine NAME onto
     # `/v1/*` (the logical-id rule holds).
     needs_tool_parse: bool = False
+    # A local engine renders its chat template itself, and templates that honour a reasoning
+    # effort (gpt-oss) read it as the template variable ``reasoning_effort`` — the top-level
+    # OpenAI field alone never reaches them. Set for managed chat engines; a reachable upstream
+    # (often a hosted API that rejects unknown fields) gets the OpenAI field only.
+    effort_in_template: bool = False
 
 
 @dataclass
@@ -355,4 +360,5 @@ class EngineManager:
             model=eng.binding.model,
             api_key="sk-noauth",
             needs_tool_parse=needs_tool_parse,
+            effort_in_template=eng.binding.modality in ("chat", "vision"),
         )

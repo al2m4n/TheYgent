@@ -95,3 +95,28 @@ def test_real_llama_server_full_loop() -> None:
         assert client.post("/admin/models/local:evict").status_code == 200
         assert app.state.manager.state("local")["resident"] is False
         assert _port_is_closed(port)
+
+
+@_skip
+def test_real_llama_server_accepts_reasoning_effort() -> None:
+    # The dispatch layer used to reject reasoning_effort for any model it doesn't know by name
+    # (a local file path always), failing the run before the engine saw the request.
+    assert _GGUF is not None
+    app = create_app(launcher=LlamaCppLauncher(), max_resident=1, enable_reaper=False)
+    with TestClient(app) as client:
+        client.put(
+            "/admin/models/local",
+            json={
+                "binding": "llamacpp",
+                "source": "local-path",
+                "model": _GGUF,
+                "params": {"maxTokens": 16, "reasoning_effort": "low"},
+            },
+        )
+        r = client.post(
+            "/v1/chat/completions",
+            json={"model": "local", "messages": [{"role": "user", "content": "Say hello."}]},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["choices"][0]["message"]["content"].strip()
+        client.post("/admin/models/local:evict")

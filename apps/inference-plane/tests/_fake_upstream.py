@@ -49,6 +49,7 @@ class _Captured:
     the server thread when a held call arrives / its caller hangs up on it."""
 
     authorization: str | None = None
+    chat_body: dict | None = None
     hold_started: threading.Event = field(default_factory=threading.Event)
     hold_abandoned: threading.Event = field(default_factory=threading.Event)
 
@@ -85,6 +86,7 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
     async def chat(request: Request):
         captured.authorization = request.headers.get("authorization")
         body = await request.json()
+        captured.chat_body = body
         model = body.get("model", "fake")
         last_content = (body.get("messages") or [{}])[-1].get("content")
         # A provider that rejects the request outright (e.g. an unsupported generation
@@ -287,6 +289,11 @@ class FakeUpstreamHandle:
     def last_authorization(self) -> object:
         """The Authorization header this upstream last received (None if none)."""
         return self._captured.authorization
+
+    @property
+    def last_chat_body(self) -> dict | None:
+        """The JSON body this upstream's chat endpoint last received (None if none)."""
+        return self._captured.chat_body
 
     @property
     def hold_started(self) -> threading.Event:

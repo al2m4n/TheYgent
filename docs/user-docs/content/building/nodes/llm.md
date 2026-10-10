@@ -62,7 +62,7 @@ The **Model parameters** section edits the generation params stored on the bindi
 
 Each field has a **?** help tooltip. The last two are **capability-gated** — the editor hides them unless the model reports it supports them, so you never set a switch the model will ignore.
 
-The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`.
+The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`. A local model (llama.cpp, MLX) also receives the effort as the chat-template variable `chat_template_kwargs.reasoning_effort`, which is where templates such as gpt-oss read it; a model reached by URL receives only the `reasoning_effort` field.
 
 ```json
 "models": {

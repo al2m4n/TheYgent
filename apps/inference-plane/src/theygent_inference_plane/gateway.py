@@ -43,6 +43,30 @@ def merge_params(binding_params: dict[str, Any], request: dict[str, Any]) -> dic
     return merged
 
 
+def _chat_params(upstream: Upstream, params: dict[str, Any]) -> dict[str, Any]:
+    """The params a chat dispatch sends, with ``reasoning_effort`` made deliverable.
+
+    The dispatch layer checks ``reasoning_effort`` against its own list of model names and
+    rejects it for any other — and a local engine's model is a file path or repo id, a hosted
+    one any name a provider chose. ``allowed_openai_params`` tells it to forward the field as
+    is; the upstream decides what it means. A managed engine also gets the effort as a chat
+    template variable (``Upstream.effort_in_template``), where an explicit
+    ``chat_template_kwargs.reasoning_effort`` from the caller wins."""
+    effort = params.get("reasoning_effort")
+    if effort is None:
+        return params
+    out = dict(params)
+    allowed = list(out.get("allowed_openai_params") or [])
+    out["allowed_openai_params"] = [*allowed, "reasoning_effort"]
+    if upstream.effort_in_template:
+        kwargs = out.get("chat_template_kwargs")
+        out["chat_template_kwargs"] = {
+            "reasoning_effort": effort,
+            **(kwargs if isinstance(kwargs, dict) else {}),
+        }
+    return out
+
+
 def _voice_hint(params: dict[str, Any]) -> str:
     """Name the voice a failed synthesis actually asked for.
 
@@ -77,7 +101,7 @@ class Gateway:
             api_base=upstream.api_base,
             api_key=upstream.api_key,
             messages=messages,
-            **params,
+            **_chat_params(upstream, params),
         )
         result = _to_dict(resp)
         # MLX-chat tool-call normalization: mlx_lm.server returns Llama's text tool
@@ -105,7 +129,7 @@ class Gateway:
             api_key=upstream.api_key,
             messages=messages,
             stream=True,
-            **params,
+            **_chat_params(upstream, params),
         )
         return self._sse_lines(resp, upstream, params)
 
