@@ -83,8 +83,8 @@ Status: `todo` · `doing` · `done`.
 
 | ID | Task | Depends | Done when | Status |
 |---|---|---|---|---|
-| E1 | Makefile start/stop/status on :8082; Dockerfile; Compose service; Kubernetes Deployment, Service and autoscaler; org key as a Kubernetes Secret; `.env.example` | A10 | Deploy guards (ports, env names, services, image tags) updated in the same change and green | todo |
-| E2 | Dev docs (`ai-gateway.md`; architecture and deployment updated to four processes); user-docs AI Gateway page with nav (CLI/IDE/desktop setup, the tool-search note, the cost-display note); env reference | all | `make docs-build` strict passes | todo |
+| E1 | Makefile start/stop/status on :8082; Dockerfile; Compose service; Kubernetes Deployment, Service and autoscaler; org key as a Kubernetes Secret; `.env.example` | A10 | Deploy guards (ports, env names, services, image tags) updated in the same change and green. `make up` starts the gateway as `.env` describes (a standalone personal gateway by default). The image runs team mode only (personal mode is loopback-only); the Compose service is opt-in (`--profile gateway`) because it needs a service key, and keeps a fixed id and a state volume. Kubernetes runs a StatefulSet rather than a Deployment — per-replica volumes keep unexported records and the last known config and keys, and stable names keep one instance per replica on the AI Gateway page — with an autoscaler, a 300 s grace period for open streams, and its Secret (service key required, org key optional); the pod waits until the Secret exists. Extends the gateway's settings and admin surface (named): `THEYGENT_AI_GATEWAY_STORE_ORG_KEY` (off in Kubernetes: replicas would each keep their own copy, so the org key comes from the deployment only) and `orgApiKey.readOnly` (`env`, `personal_mode`, `deployment_only`) with the `org_key_deployment_only` refusal. The interface gains the admin Service keys card (mint once, with `.env` and `kubectl` lines; revoke), and bakes `VITE_AI_GATEWAY_URL` | done |
+| E2 | Dev docs (`ai-gateway.md`; architecture and deployment updated to four processes); user-docs AI Gateway page with nav (CLI/IDE/desktop setup, the tool-search note, the cost-display note); env reference (every `THEYGENT_AI_GATEWAY_*` incl. `STORE_ORG_KEY`, `THEYGENT_CONTROL_PLANE_URL`, `VITE_AI_GATEWAY_URL`) | all | `make docs-build` strict passes | todo |
 | E3 | End-to-end harness (opt-in, env-gated): the Agent SDK drives headless Claude Code through the gateway in both modes | A11, C5 | Gateway totals equal Claude Code's per-model usage; skips cleanly without credentials | todo |
 
 ## Order
@@ -106,5 +106,7 @@ Each one is deliberate, named here, and covered by tests:
 - The control plane's `/gateway/*` API (snake_case) and its tables.
 - `api_key.kind`.
 - New `THEYGENT_AI_GATEWAY_*` environment variables.
+- A fifth image, `theygent/ai-gateway`, with a Compose service (profile `gateway`) and a
+  Kubernetes StatefulSet.
 
 The binding enum, the IR, and the inference plane's `/v1/*` are unchanged.

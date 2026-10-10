@@ -8,7 +8,8 @@ What must hold:
 * answers are cached briefly by the bearer's digest;
 * no response or log line carries a secret;
 * a single-instance org key applies at once, survives a restart, and can be cleared; a key the
-  deployment set cannot be replaced; personal mode has no org key;
+  deployment set cannot be replaced; a replicated gateway takes it from its deployment only;
+  personal mode has no org key;
 * browsers get CORS on ``/admin/*`` from the interface's origins only, never on proxied paths.
 """
 
@@ -81,13 +82,16 @@ def key_set_with_org_developer() -> GatewayKeySet:
     return GatewayKeySet(version=1, generated_at=keys.generated_at, keys=[*keys.keys, org])
 
 
-def team_settings(tmp_path: Path, upstream: str, org_key: str | None = None) -> GatewaySettings:
+def team_settings(
+    tmp_path: Path, upstream: str, org_key: str | None = None, *, store_org_key: bool = True
+) -> GatewaySettings:
     return GatewaySettings(
         upstream_url=upstream,
         auth_mode="team",
         control_plane_url="http://127.0.0.1:1",
         service_key=SERVICE_KEY,
         org_api_key=org_key,
+        store_org_key=store_org_key,
         gateway_id="gw-team",
         state_dir=tmp_path,
     )
@@ -130,7 +134,13 @@ def test_a_standalone_personal_gateway_is_open(tmp_path: Path) -> None:
         assert body["keySet"] is None and body["configVersion"] is None
         assert body["requestLog"]["backlog"] == 0 and body["startedAt"] is not None
         assert body["credentials"] == {
-            "orgApiKey": {"set": False, "source": None, "updatedAt": None, "writable": False},
+            "orgApiKey": {
+                "set": False,
+                "source": None,
+                "updatedAt": None,
+                "writable": False,
+                "readOnly": "personal_mode",
+            },
             "serviceKey": {"set": False},
         }
         refused = client.put("/admin/credentials/org-api-key", json={"api_key": ORG_KEY})
@@ -226,6 +236,7 @@ def test_a_stored_org_key_applies_at_once_and_survives_a_restart(
             "source": None,
             "updatedAt": None,
             "writable": True,
+            "readOnly": None,
         }
         assert (
             org_request(client).headers.get("x-theygent-gateway-error") == "org_key_not_configured"
@@ -268,6 +279,7 @@ def test_a_key_the_deployment_set_cannot_be_replaced(
             "source": "env",
             "updatedAt": None,
             "writable": False,
+            "readOnly": "env",
         }
         assert view["serviceKey"] == {"set": True}
         for call in (
@@ -280,6 +292,53 @@ def test_a_key_the_deployment_set_cannot_be_replaced(
         ):
             refused = call()
             assert (refused.status_code, refused.json()["error"]["code"]) == (409, "org_key_pinned")
+        assert org_request(client).status_code == 200
+        assert upstream.last().header("x-api-key") == [ORG_KEY]
+
+
+def test_a_replicated_gateway_takes_the_key_from_its_deployment_only(
+    tmp_path: Path, upstream: FakeAnthropic, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A copy one instance stored before storing was turned off.
+    stored = team_settings(tmp_path, upstream.base_url)
+    with TestClient(team_app(stored, FakeCheck())) as client:
+        client.put(
+            "/admin/credentials/org-api-key", json={"api_key": ORG_KEY}, headers=bearer(ADMIN)
+        )
+    assert (tmp_path / ORG_KEY_FILE).exists()
+
+    settings = team_settings(tmp_path, upstream.base_url, store_org_key=False)
+    with caplog.at_level(logging.WARNING), TestClient(team_app(settings, FakeCheck())) as client:
+        view = client.get("/admin/credentials", headers=bearer(ADMIN)).json()
+        assert view["orgApiKey"] == {
+            "set": False,
+            "source": None,
+            "updatedAt": None,
+            "writable": False,
+            "readOnly": "deployment_only",
+        }
+        # The left-over copy never applies: one instance's key would split the replicas.
+        assert (
+            org_request(client).headers.get("x-theygent-gateway-error") == "org_key_not_configured"
+        )
+        for call in (
+            lambda: client.put(
+                "/admin/credentials/org-api-key", json={"api_key": ORG_KEY}, headers=bearer(ADMIN)
+            ),
+            lambda: client.delete("/admin/credentials/org-api-key", headers=bearer(ADMIN)),
+        ):
+            refused = call()
+            assert (refused.status_code, refused.json()["error"]["code"]) == (
+                409,
+                "org_key_deployment_only",
+            )
+            assert ORG_KEY not in refused.text
+    assert "takes it from its deployment" in caplog.text and ORG_KEY not in caplog.text
+
+    deployed = team_settings(tmp_path, upstream.base_url, org_key=ORG_KEY, store_org_key=False)
+    with TestClient(team_app(deployed, FakeCheck())) as client:
+        view = client.get("/admin/credentials", headers=bearer(ADMIN)).json()
+        assert (view["orgApiKey"]["source"], view["orgApiKey"]["readOnly"]) == ("env", "env")
         assert org_request(client).status_code == 200
         assert upstream.last().header("x-api-key") == [ORG_KEY]
 

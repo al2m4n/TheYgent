@@ -64,7 +64,9 @@ The rules that follow:
   response, repr or log line carries a key or a bearer. Cached answers are keyed by the bearer's
   digest.
 - **A key the deployment set wins.** The admin surface writes the org key only for
-  single-instance installs; an environment-provided key cannot be replaced from it.
+  single-instance installs; an environment-provided key cannot be replaced from it, and a
+  replicated gateway (`THEYGENT_AI_GATEWAY_STORE_ORG_KEY=0`) neither stores nor adopts one —
+  each instance would hold its own copy.
 - **Browsers reach `/admin/*` only.** CORS is answered there, for the interface's origins, and
   never on a proxied path.
 

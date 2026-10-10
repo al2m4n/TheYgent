@@ -16,6 +16,7 @@ DOCKERFILES = {
     "inference-plane": REPO / "apps/inference-plane/Dockerfile",
     "worker": REPO / "apps/worker/Dockerfile",
     "interface": REPO / "apps/interface/Dockerfile",
+    "ai-gateway": REPO / "apps/ai-gateway/Dockerfile",
 }
 
 COMPOSE_FILE = REPO / "docker-compose.yml"

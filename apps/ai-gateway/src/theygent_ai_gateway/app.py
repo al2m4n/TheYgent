@@ -133,6 +133,7 @@ def create_app(
         env_value=settings.org_api_key,
         state_dir=settings.state_dir,
         applicable=settings.auth_mode == "team",
+        storable=settings.store_org_key,
     )
     org_key.load()
 

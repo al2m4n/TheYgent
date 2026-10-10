@@ -118,8 +118,8 @@ function InstanceList({
           </EmptyMedia>
           <EmptyTitle>No gateway has reported in</EmptyTitle>
           <EmptyDescription>
-            Start a gateway with <code>THEYGENT_CONTROL_PLANE_URL</code> and a service key; it
-            appears here within one heartbeat.
+            Start a gateway with <code>THEYGENT_CONTROL_PLANE_URL</code> and a service key (an admin
+            mints one under Settings → Service keys); it appears here within one heartbeat.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>

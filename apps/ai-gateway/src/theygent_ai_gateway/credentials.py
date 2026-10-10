@@ -4,6 +4,8 @@ The key is a deployment secret: normally ``THEYGENT_AI_GATEWAY_ORG_API_KEY`` (a 
 Secret, or the environment). A single-instance install may instead write it through the gateway's
 admin surface; it is then kept in the gateway's state directory (``0600``), never in the control
 plane, and applies at once. A key the deployment set wins: the admin surface cannot replace it.
+A replicated gateway turns storing off (``THEYGENT_AI_GATEWAY_STORE_ORG_KEY=0``): each instance
+would keep its own copy, so only the deployment's key may apply.
 
 Nothing here logs, returns or reprs the key; ``status`` says only whether it is set and where it
 came from.
@@ -27,6 +29,9 @@ ORG_KEY_FILE = "org-api-key.json"
 _KEY = re.compile(r"[\x21-\x7e]{16,512}")
 
 KeySource = Literal["env", "stored"]
+#: Why the admin surface cannot write the key: the deployment set it, personal mode uses none, or
+#: this gateway takes it from its deployment only.
+ReadOnly = Literal["env", "personal_mode", "deployment_only"]
 
 
 class OrgKeyError(Exception):
@@ -43,16 +48,27 @@ class OrgKeyStatus:
     set: bool
     source: KeySource | None
     updated_at: datetime | None
-    #: Whether the admin surface may write it: a key from the deployment cannot be replaced, and
-    #: personal mode forwards the caller's own credential.
-    writable: bool
+    #: Why the admin surface may not write it, or ``None`` when it may.
+    read_only: ReadOnly | None
+
+    @property
+    def writable(self) -> bool:
+        return self.read_only is None
 
 
 class OrgKey:
-    def __init__(self, *, env_value: str | None, state_dir: Path | None, applicable: bool) -> None:
+    def __init__(
+        self,
+        *,
+        env_value: str | None,
+        state_dir: Path | None,
+        applicable: bool,
+        storable: bool = True,
+    ) -> None:
         self._env = env_value
         self._path = state_dir / ORG_KEY_FILE if state_dir is not None else None
         self._applicable = applicable
+        self._storable = storable
         self._stored: str | None = None
         self._updated_at: datetime | None = None
 
@@ -72,12 +88,25 @@ class OrgKey:
             set=source is not None,
             source=source,
             updated_at=self._updated_at if source == "stored" else None,
-            writable=self._applicable and self._env is None,
+            read_only=self._read_only(),
         )
+
+    def _read_only(self) -> ReadOnly | None:
+        if not self._applicable:
+            return "personal_mode"
+        if self._env is not None:
+            return "env"
+        if not self._storable:
+            return "deployment_only"
+        return None
 
     def load(self) -> None:
         """Adopt the stored key, if any. An unreadable file is no key, never a crash."""
         if self._path is None or not self._path.exists():
+            return
+        if not self._storable:
+            # One instance's copy, left from before storing was turned off: never applies.
+            log.warning("ignoring the stored org key: this gateway takes it from its deployment")
             return
         try:
             data = json.loads(self._path.read_text())
@@ -89,17 +118,26 @@ class OrgKey:
             self._stored, self._updated_at = key, updated
 
     def _writable(self) -> None:
-        if not self._applicable:
-            raise OrgKeyError(
-                "org_key_not_applicable",
-                "personal mode forwards the caller's own credential; it uses no org key",
-            )
-        if self._env is not None:
-            raise OrgKeyError(
-                "org_key_pinned",
-                "the org key is set by the deployment (THEYGENT_AI_GATEWAY_ORG_API_KEY); "
-                "change it there",
-            )
+        match self._read_only():
+            case "personal_mode":
+                raise OrgKeyError(
+                    "org_key_not_applicable",
+                    "personal mode forwards the caller's own credential; it uses no org key",
+                )
+            case "env":
+                raise OrgKeyError(
+                    "org_key_pinned",
+                    "the org key is set by the deployment (THEYGENT_AI_GATEWAY_ORG_API_KEY); "
+                    "change it there",
+                )
+            case "deployment_only":
+                raise OrgKeyError(
+                    "org_key_deployment_only",
+                    "this gateway takes the org key from its deployment only "
+                    "(THEYGENT_AI_GATEWAY_ORG_API_KEY); set it there",
+                )
+            case None:
+                pass
 
     def set(self, key: str, *, now: datetime | None = None) -> None:
         self._writable()

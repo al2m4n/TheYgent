@@ -10,12 +10,13 @@
 // the control plane refuses (412) and the page says so instead of silently replacing their work.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Trash2 } from "lucide-react";
+import { KeyRound, Plus, ServerCog, Trash2 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type GatewayConfig,
   type GatewayCredentials,
+  type GatewayKey,
   api,
   gatewayAdmin,
   gatewayUrl,
@@ -31,8 +32,20 @@ import {
   formOf,
 } from "../../lib/gatewayConfig";
 import { notify } from "../../lib/notify";
+import { CopySnippet } from "../CopySnippet";
 import { TimeAgo } from "../TimeAgo";
-import { Badge, ConfirmDialog, ErrorBanner, Field, Input, NoteBanner, Table, Td, Th } from "../ui";
+import {
+  Badge,
+  ConfirmDialog,
+  ErrorBanner,
+  Field,
+  Input,
+  Modal,
+  NoteBanner,
+  Table,
+  Td,
+  Th,
+} from "../ui";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
@@ -85,7 +98,14 @@ export function SettingsTab() {
   return (
     <div className="space-y-4">
       {/* The history grows with every Catalog review, so it comes last. */}
-      <ConfigEditor beforeHistory={<OrgKeyCard />} />
+      <ConfigEditor
+        beforeHistory={
+          <>
+            <OrgKeyCard />
+            <ServiceKeysCard />
+          </>
+        }
+      />
     </div>
   );
 }
@@ -588,7 +608,7 @@ function OrgKeyCard() {
           <>
             <div className="flex flex-wrap items-center gap-2 text-sm">
               {org.set ? <Badge tone="green">set</Badge> : <Badge tone="amber">not set</Badge>}
-              {org.source === "env" && (
+              {org.readOnly === "env" && (
                 <span className="text-xs text-muted-foreground">
                   by the deployment (THEYGENT_AI_GATEWAY_ORG_API_KEY); change it there.
                 </span>
@@ -604,10 +624,18 @@ function OrgKeyCard() {
                 </span>
               )}
             </div>
-            {!org.writable && org.source !== "env" && (
+            {org.readOnly === "personal_mode" && (
               <p className="text-xs text-muted-foreground">
                 This gateway runs in personal mode: each developer's own Claude login or API key
                 reaches Anthropic, so there is no organization key.
+              </p>
+            )}
+            {org.readOnly === "deployment_only" && (
+              <p className="text-xs text-muted-foreground">
+                This gateway takes the key from its deployment only: it can run as several replicas,
+                and each would keep its own copy of a key saved here. Set{" "}
+                <code>THEYGENT_AI_GATEWAY_ORG_API_KEY</code> there — in Kubernetes, in the{" "}
+                <code>theygent-ai-gateway</code> Secret.
               </p>
             )}
             {org.writable && (
@@ -663,5 +691,181 @@ function OrgKeyCard() {
         />
       )}
     </Card>
+  );
+}
+
+// ── service keys: a gateway's credential towards this control plane ─────────
+
+function ServiceKeysCard() {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [revoking, setRevoking] = useState<GatewayKey | null>(null);
+  const keys = useQuery({
+    queryKey: ["gatewayServiceKeys"],
+    queryFn: () => api.listGatewayServiceKeys(),
+  });
+  const revoke = useMutation({
+    mutationFn: (key: GatewayKey) => api.revokeGatewayServiceKey(key.id),
+    onSuccess: () => notify.success("Service key revoked — gateways using it are refused at once"),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["gatewayServiceKeys"] }),
+  });
+  const list = keys.data ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <ServerCog size={16} /> Service keys
+            </CardTitle>
+            <CardDescription>
+              What a gateway presents to this control plane to fetch developers' keys and its
+              config, and to send its records. One per deployment; it opens nothing else.
+            </CardDescription>
+          </div>
+          <Button className="shrink-0" onClick={() => setCreating(true)}>
+            <Plus size={14} /> New service key
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ErrorBanner error={keys.error} />
+        {keys.isPending ? (
+          <Skeleton className="h-12 rounded-lg" />
+        ) : list.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            None yet. A gateway attached to this control plane needs one.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Service keys">
+            {list.map((key) => (
+              <Item key={key.id} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex flex-wrap items-center gap-2">
+                      {key.name}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {key.token_prefix}…
+                      </span>
+                      {key.revoked_at && <Badge tone="slate">revoked</Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      created <TimeAgo iso={key.created_at} />
+                      {key.last_used_at && (
+                        <>
+                          {" "}
+                          · last used <TimeAgo iso={key.last_used_at} />
+                        </>
+                      )}
+                      {key.revoked_at && (
+                        <>
+                          {" "}
+                          · revoked <TimeAgo iso={key.revoked_at} />
+                        </>
+                      )}
+                    </ItemDescription>
+                  </ItemContent>
+                  {!key.revoked_at && (
+                    <ItemActions>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRevoking(key)}
+                        aria-label={`Revoke ${key.name}`}
+                      >
+                        Revoke
+                      </Button>
+                    </ItemActions>
+                  )}
+                </li>
+              </Item>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+      {creating && (
+        <CreateServiceKeyDialog
+          onClose={() => {
+            setCreating(false);
+            qc.invalidateQueries({ queryKey: ["gatewayServiceKeys"] });
+          }}
+        />
+      )}
+      {revoking && (
+        <ConfirmDialog
+          title="Revoke this service key?"
+          message={
+            <>
+              Gateways using <b>{revoking.name}</b> lose their keys, config and record export until
+              they get a new one. This cannot be undone.
+            </>
+          }
+          confirmLabel="Revoke"
+          onConfirm={() => {
+            revoke.mutate(revoking);
+            setRevoking(null);
+          }}
+          onCancel={() => setRevoking(null)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function CreateServiceKeyDialog({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: (keyName: string) => api.createGatewayServiceKey(keyName),
+  });
+  const token = create.data?.token ?? null;
+  return (
+    <Modal title={token ? "Your new service key" : "New service key"} onClose={onClose}>
+      {token ? (
+        <div className="space-y-4">
+          <NoteBanner>Copy it now — it is shown only once.</NoteBanner>
+          <CopySnippet label="service key" code={token} />
+          <p className="text-xs text-muted-foreground">
+            On a machine (<code>make up</code>) or with Docker Compose, in <code>.env</code>:
+          </p>
+          <CopySnippet label=".env" code={`THEYGENT_AI_GATEWAY_SERVICE_KEY=${token}`} />
+          <p className="text-xs text-muted-foreground">In Kubernetes, as the gateway's Secret:</p>
+          <CopySnippet
+            label="kubectl"
+            code={`kubectl -n theygent create secret generic theygent-ai-gateway \\\n  --from-literal=THEYGENT_AI_GATEWAY_SERVICE_KEY=${token}`}
+          />
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) create.mutate(name.trim());
+          }}
+        >
+          <Field label="Name — which deployment it is for">
+            <Input
+              aria-label="Service key name"
+              value={name}
+              placeholder="team gateway"
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <ErrorBanner error={create.error} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || create.isPending}>
+              Create key
+            </Button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }

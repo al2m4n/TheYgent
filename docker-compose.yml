@@ -1,17 +1,19 @@
 # theygent — the containerized bring-up. The SECOND way of running the stack; `make up`
 # (bare-metal processes) remains the first, and both stay supported.
 #
-#   docker compose up -d --build          postgres + migrations + all three planes
-#   docker compose --profile worker up -d …the same plus the standalone durable worker
-#   docker compose down                   stop (add -v to also drop the data volumes)
+#   docker compose up -d --build           postgres + migrations + all three planes
+#   docker compose --profile worker up -d  …the same plus the standalone durable worker
+#   docker compose --profile gateway up -d …the same plus the AI gateway (see its service)
+#   docker compose down                    stop (add -v to also drop the data volumes)
 #
 # Apple-Silicon note (MLX): MLX only runs bare-metal on macOS. To keep local MLX inference
 # while everything else is containerized, run the inference plane on the host and layer the
 # override on top:
 #   docker compose -f docker-compose.yml -f docker-compose.host-inference.yml up -d
 #
-# Ports mirror the Makefile stack (control-plane :8080, inference :8081, interface :5174) so
-# the interface's baked-in localhost URLs and the CORS defaults hold in both ways of running.
+# Ports mirror the Makefile stack (control-plane :8080, inference :8081, interface :5174, AI
+# gateway :8082) so the interface's baked-in localhost URLs and the CORS defaults hold in both
+# ways of running.
 # Postgres publishes on :5433, clear of a local Postgres already holding :5432. To let this
 # compose Postgres back the bare-metal stack too (one database for both ways of running),
 # remap it to "127.0.0.1:5432:5432" after stopping whatever holds :5432.
@@ -143,16 +145,62 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The AI gateway between Claude Code and its models, in team mode (a container cannot serve
+  # personal mode, which is loopback-only). Opt-in, because it starts only with a gateway
+  # service key: bring the stack up, mint one as an admin (AI Gateway → Settings → Service
+  # keys), put it in .env as THEYGENT_AI_GATEWAY_SERVICE_KEY, then
+  #   docker compose --profile gateway up -d
+  # Developers point Claude Code at http://<this host>:8082 with their own gateway keys.
+  ai-gateway:
+    image: theygent/ai-gateway:dev
+    build:
+      context: .
+      dockerfile: apps/ai-gateway/Dockerfile
+    profiles: ["gateway"]
+    restart: unless-stopped
+    environment:
+      THEYGENT_CONTROL_PLANE_URL: http://control-plane:8080
+      THEYGENT_AI_GATEWAY_SERVICE_KEY: ${THEYGENT_AI_GATEWAY_SERVICE_KEY:-}
+      # Optional: the organization's Anthropic key, for developers billed to it. One instance,
+      # so an admin may instead set it from the AI Gateway page (kept on the volume below).
+      THEYGENT_AI_GATEWAY_ORG_API_KEY: ${THEYGENT_AI_GATEWAY_ORG_API_KEY:-}
+      # A container's hostname changes with every recreate; a fixed id keeps one instance on
+      # the AI Gateway page instead of a new one per `up`.
+      THEYGENT_AI_GATEWAY_ID: ${THEYGENT_AI_GATEWAY_ID:-gw-compose}
+    ports:
+      - "8082:8082"
+    volumes:
+      # The request-log spool, the last known config and key set, a stored org key.
+      - ai-gateway-data:/data
+    # A Claude Code turn can stream for minutes; stopping waits for open streams to finish.
+    stop_grace_period: 5m
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8082/healthz', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
   interface:
     image: theygent/interface:dev
     build:
       context: .
       dockerfile: apps/interface/Dockerfile
-      # Baked at build time (Vite inlines them). Blank = the SPA's own localhost:8080/8081
+      # Baked at build time (Vite inlines them). Blank = the SPA's own localhost:8080/8081/8082
       # fallbacks, which match the published ports above.
       args:
         VITE_CONTROL_PLANE_URL: ${VITE_CONTROL_PLANE_URL:-}
         VITE_INFERENCE_URL: ${VITE_INFERENCE_URL:-}
+        VITE_AI_GATEWAY_URL: ${VITE_AI_GATEWAY_URL:-}
     restart: unless-stopped
     ports:
       - "5174:80"
@@ -168,3 +216,4 @@ volumes:
   pgdata:
   inference-data:
   theygent-data:
+  ai-gateway-data:

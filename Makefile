@@ -1,7 +1,7 @@
 # theygent dev Makefile — one-command bring-up / tear-down of the local processes.
 #
 #   make up       install deps, start Postgres (docker), run migrations, then spin up
-#                 inference-plane + control-plane + interface
+#                 inference-plane + control-plane + interface + ai-gateway
 #   make restart  stop the app services and start them again (picks up backend code changes;
 #                 Postgres keeps running — only `make down` stops it)
 #   make down     stop everything started by `make up`, including the Postgres container
@@ -12,7 +12,7 @@
 # resolve the live process via `lsof` on the port and are robust to stale/missing pidfiles.
 #
 # Mirrors the planned topology (CLAUDE.md): inference plane (8081), control-plane API (8080),
-# and the visual interface SPA (5174). They run as detached background
+# the visual interface SPA (5174), and the AI gateway (8082). They run as detached background
 # processes; PIDs and logs land under .run/ (gitignored). Config is read from .env (see
 # .env.example); this Makefile sources it for the recipes that need DATABASE_URL / host+port.
 #
@@ -49,6 +49,7 @@ PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane apps/ai-gate
 INFERENCE_PORT := $(or $(THEYGENT_INFERENCE_PLANE_PORT),8081)
 CONTROL_PLANE_PORT := $(or $(THEYGENT_CONTROL_PLANE_PORT),8080)
 INTERFACE_PORT := $(or $(THEYGENT_INTERFACE_PORT),5174)
+AI_GATEWAY_PORT := $(or $(THEYGENT_AI_GATEWAY_PORT),8082)
 
 # The marketing site (apps/web) is static — a plain file server is the whole story, but it must be
 # a server (not file://) because the page uses root-relative /styles.css and /assets/... paths.
@@ -165,7 +166,10 @@ pg-down: ## Stop the dev Postgres container (data survives in its volume)
 # skipped LOUDLY instead of silently failing to bind and leaving the OLD process serving (the trap
 # that hid stale code). $$! (the uv/pnpm wrapper pid) is recorded only as a hint; `down` resolves the
 # real server by port.
-start: pg-up ## Start inference-plane + control-plane + interface as background processes
+# The AI gateway starts as whatever .env describes: by default a personal gateway on loopback
+# that records locally (`uv run --package theygent-ai-gateway theygent-ai-gateway report`); with
+# THEYGENT_CONTROL_PLANE_URL and a service key it reports to the control plane (see .env.example).
+start: pg-up ## Start inference-plane + control-plane + interface + ai-gateway as background processes
 	@mkdir -p $(RUN_DIR)
 	@if lsof -ti tcp:$(INFERENCE_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
 		echo "==> inference-plane already on :$(INFERENCE_PORT) — skipping (use 'make restart')"; \
@@ -188,8 +192,15 @@ start: pg-up ## Start inference-plane + control-plane + interface as background 
 		nohup pnpm --filter @theygent/interface dev > $(RUN_DIR)/interface.log 2>&1 & \
 		echo $$! > $(RUN_DIR)/interface.pid; \
 	fi
+	@if lsof -ti tcp:$(AI_GATEWAY_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "==> ai-gateway already on :$(AI_GATEWAY_PORT) — skipping (use 'make restart')"; \
+	else \
+		echo "==> starting ai-gateway (:$(AI_GATEWAY_PORT))"; \
+		nohup uv run --package theygent-ai-gateway theygent-ai-gateway > $(RUN_DIR)/ai-gateway.log 2>&1 & \
+		echo $$! > $(RUN_DIR)/ai-gateway.pid; \
+	fi
 	@echo ""
-	@echo "Started (inference-plane :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT))."
+	@echo "Started (inference-plane :$(INFERENCE_PORT) · control-plane :$(CONTROL_PLANE_PORT) · interface :$(INTERFACE_PORT) · ai-gateway :$(AI_GATEWAY_PORT))."
 	@echo "Logs: make logs  |  Status: make status  |  Stop: make down  |  Restart: make restart"
 
 # The compose stack publishes the SAME host ports, and on macOS/Linux those are LISTENed by
@@ -199,7 +210,7 @@ start: pg-up ## Start inference-plane + control-plane + interface as background 
 down: down-apps pg-down ## Stop all bare-metal services AND the dev Postgres container
 
 down-apps: ## Stop the app services only (resolved by PORT; never touches docker stacks or Postgres)
-	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)" "ai-gateway:$(AI_GATEWAY_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; pidfile=$(RUN_DIR)/$$name.pid; \
 		recorded=""; if [ -f "$$pidfile" ]; then recorded=$$(cat "$$pidfile" 2>/dev/null); fi; \
 		listeners=""; docker_owned=""; \
@@ -237,7 +248,7 @@ status: ## Show whether each service (and the dev Postgres) is running
 	else \
 		echo "  postgres: stopped"; \
 	fi
-	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)"; do \
+	@for svc in "inference-plane:$(INFERENCE_PORT)" "control-plane:$(CONTROL_PLANE_PORT)" "interface:$(INTERFACE_PORT)" "ai-gateway:$(AI_GATEWAY_PORT)"; do \
 		name=$${svc%%:*}; port=$${svc##*:}; \
 		pid=$$(lsof -ti tcp:$$port -sTCP:LISTEN 2>/dev/null | head -1 || true); \
 		if [ -z "$$pid" ]; then echo "  $$name: stopped"; continue; fi; \
@@ -274,7 +285,7 @@ smoke-interface: ## Hand-drive smoke for apps/interface vs the LIVE control-plan
 	uv run --package theygent-control-plane python apps/interface/tests/smoke/hand_drive.py
 
 logs: ## Tail the logs of all services
-	@tail -n +1 -f $(RUN_DIR)/inference-plane.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log
+	@tail -n +1 -f $(RUN_DIR)/inference-plane.log $(RUN_DIR)/control-plane.log $(RUN_DIR)/interface.log $(RUN_DIR)/ai-gateway.log
 
 # ── The SECOND way of running the stack: containers. `make up` (bare-metal) stays the
 # first; both are supported. Postgres comes with the compose stack (pgvector image) on host
@@ -282,17 +293,18 @@ logs: ## Tail the logs of all services
 # inference plane on the host and use the docker-compose.host-inference.yml overlay (see
 # that file's header).
 
-docker-build: ## Build all container images (incl. the worker)
-	docker compose --profile worker build
+docker-build: ## Build all container images (incl. the worker and the AI gateway)
+	docker compose --profile worker --profile gateway build
 
 docker-up: ## Bring up the containerized stack (postgres + migrate + planes + interface)
 	docker compose up -d --build
 	@echo ""
 	@echo "control-plane http://localhost:8080 · inference http://localhost:8081 · interface http://localhost:5174"
 	@echo "Worker (durable): THEYGENT_DURABLE=1 docker compose --profile worker up -d"
+	@echo "AI gateway (needs THEYGENT_AI_GATEWAY_SERVICE_KEY in .env): docker compose --profile gateway up -d"
 
 docker-down: ## Stop the containerized stack (data volumes survive; drop them with `docker compose down -v`)
-	docker compose --profile worker down
+	docker compose --profile worker --profile gateway down
 
 docker-logs: ## Tail logs of the containerized stack
 	docker compose logs -f
@@ -319,7 +331,7 @@ otel-logs: ## Tail the sample OTel stack (the collector's debug exporter prints 
 # ── Kubernetes (deploy/k8s) — dev flow against minikube. The images are built locally by
 # compose and side-loaded; imagePullPolicy stays IfNotPresent.
 
-K8S_IMAGES := theygent/control-plane:dev theygent/inference-plane:dev theygent/worker:dev theygent/interface:dev
+K8S_IMAGES := theygent/control-plane:dev theygent/inference-plane:dev theygent/worker:dev theygent/interface:dev theygent/ai-gateway:dev
 K8S_DEPLOYS := control-plane inference-plane worker interface
 
 # NOT `minikube image load`: with the docker driver it silently keeps an EXISTING same-tag
@@ -342,39 +354,48 @@ k8s-load: docker-build ## Build images and load them into minikube (force-replac
 # Depends on k8s-load so an apply always ships freshly built images. `apply -k` alone is a
 # no-op when the manifests are unchanged (same :dev tag, imagePullPolicy IfNotPresent), so a
 # reloaded image would never reach running pods — `rollout restart` is what rebinds them.
+# The AI gateway is restarted but not waited for: it starts only once its Secret exists
+# (deploy/k8s/ai-gateway.yaml says how), which a fresh cluster does not have yet.
 k8s-apply: k8s-load ## Build+load latest images, apply manifests, and roll pods onto them
 	kubectl apply -k deploy/k8s
 	kubectl -n theygent rollout restart deployment $(K8S_DEPLOYS)
+	kubectl -n theygent rollout restart statefulset ai-gateway
 	@for d in $(K8S_DEPLOYS); do \
 		echo "==> waiting for rollout: $$d"; \
 		kubectl -n theygent rollout status deployment/$$d --timeout=180s; \
 	done
+	@if kubectl -n theygent get secret theygent-ai-gateway >/dev/null 2>&1; then \
+		echo "==> ai-gateway: rolling (kubectl -n theygent rollout status statefulset/ai-gateway)"; \
+	else \
+		echo "==> ai-gateway: waits for its Secret — see deploy/k8s/ai-gateway.yaml"; \
+	fi
 
 # One-shot dev flow: build → load → deploy → refresh pods → port-forward. ClusterIP services
 # are unreachable from the host, so the forward is what actually makes the stack usable.
 k8s-up: k8s-apply k8s-forward ## Deploy latest images to minikube and port-forward the stack
 
-# Host ports mirror the make/compose contract (control 8080, inference 8081, interface 5174)
-# so the interface image's baked-in localhost URLs resolve. The interface Service listens on
-# :80, hence 5174:80. `trap 'kill 0'` tears down all three forwards on Ctrl-C — but only this
+# Host ports mirror the make/compose contract (control 8080, inference 8081, interface 5174, AI
+# gateway 8082) so the interface image's baked-in localhost URLs resolve. The interface Service
+# listens on :80, hence 5174:80. `trap 'kill 0'` tears down all the forwards on Ctrl-C — but only this
 # invocation's group, so an ORPHANED forward from a crashed/prior run keeps holding a port and
 # the next start dies with "address already in use". k8s-forward-stop reaps any such strays
 # first (matched by the namespace flag, so only our forwards are touched, never other kubectl).
-k8s-forward: k8s-forward-stop ## Port-forward control-plane:8080, inference:8081, interface:5174 (Ctrl-C to stop)
-	@echo "port-forwarding — control http://localhost:8080  inference http://localhost:8081  interface http://localhost:5174"
+k8s-forward: k8s-forward-stop ## Port-forward control-plane:8080, inference:8081, interface:5174, ai-gateway:8082 (Ctrl-C to stop)
+	@echo "port-forwarding — control http://localhost:8080  inference http://localhost:8081  interface http://localhost:5174  ai-gateway http://localhost:8082"
 	@echo "(Ctrl-C to stop)"
 	@trap 'kill 0' INT TERM EXIT; \
 	kubectl -n theygent port-forward svc/control-plane 8080:8080 & \
 	kubectl -n theygent port-forward svc/inference-plane 8081:8081 & \
 	kubectl -n theygent port-forward svc/interface 5174:80 & \
+	kubectl -n theygent port-forward svc/ai-gateway 8082:8082 & \
 	wait
 
-k8s-forward-stop: ## Kill any lingering theygent port-forwards (frees 8080/8081/5174)
+k8s-forward-stop: ## Kill any lingering theygent port-forwards (frees 8080/8081/5174/8082)
 	@pkill -f 'kubectl -n theygent port-forward' 2>/dev/null && echo "stopped stray port-forwards" || echo "no port-forwards running"
 
-# Full teardown: `delete -k` removes every listed manifest — the namespace and all three PVCs
-# (theygent-data, inference-data, pgdata), so registry, weights, artifacts, and the Postgres
-# volume all go with it. --ignore-not-found makes a re-run (or a partial cluster) a clean no-op.
+# Full teardown: `delete -k` removes every listed manifest — the namespace and every PVC in it
+# (theygent-data, inference-data, pgdata, the AI gateway's per-replica volumes), so registry,
+# weights, artifacts, the Postgres volume and unexported gateway records all go with it. --ignore-not-found makes a re-run (or a partial cluster) a clean no-op.
 # Also reaps port-forwards (host processes, not cluster resources — a delete alone leaves them
 # looping, retrying against a namespace that no longer exists and holding the host ports).
 k8s-down: k8s-forward-stop ## Tear down everything in the cluster, PVC data included (namespace, planes, Postgres, volumes)

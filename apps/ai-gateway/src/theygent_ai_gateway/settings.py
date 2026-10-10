@@ -34,6 +34,10 @@ ENV_SERVICE_KEY = "THEYGENT_AI_GATEWAY_SERVICE_KEY"
 #: The organization's Anthropic API key, injected for developers on the org_key profile. A
 #: deployment secret; it never transits the control plane.
 ENV_ORG_API_KEY = "THEYGENT_AI_GATEWAY_ORG_API_KEY"
+#: Whether an admin may set the org key from the AI Gateway page, kept in this instance's state
+#: directory. Off for a replicated gateway: each instance would keep its own copy, so only the
+#: deployment's key can apply to all of them.
+ENV_STORE_ORG_KEY = "THEYGENT_AI_GATEWAY_STORE_ORG_KEY"
 ENV_KEY_SYNC_SECONDS = "THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS"
 ENV_HEARTBEAT_SECONDS = "THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS"
 #: Browser origins allowed to call the gateway's admin surface (comma-separated): the interface.
@@ -84,6 +88,7 @@ class GatewaySettings:
     gateway_id: str = field(default_factory=_default_gateway_id)
     service_key: str | None = field(default=None, repr=False)
     org_api_key: str | None = field(default=None, repr=False)
+    store_org_key: bool = True
     key_sync_seconds: float = DEFAULT_KEY_SYNC_SECONDS
     heartbeat_seconds: float = DEFAULT_HEARTBEAT_SECONDS
     admin_origins: tuple[str, ...] = DEFAULT_ADMIN_ORIGINS
@@ -116,6 +121,10 @@ class GatewaySettings:
             raise SettingsError(
                 f"{ENV_ORG_API_KEY} is for team mode's org_key profile; personal mode forwards "
                 "the caller's own credential"
+            )
+        if self.auth_mode == "personal" and not self.store_org_key:
+            raise SettingsError(
+                f"{ENV_STORE_ORG_KEY} governs team mode's org key; personal mode has none"
             )
         if not 1 <= self.key_sync_seconds <= 3600:
             raise SettingsError(
@@ -179,6 +188,17 @@ def _read_float(env: Mapping[str, str], name: str) -> float | None:
         raise SettingsError(f"{name} must be a number, got {raw!r}") from None
 
 
+def _read_bool(env: Mapping[str, str], name: str) -> bool | None:
+    raw = _read(env, name)
+    if raw is None:
+        return None
+    if raw.lower() in ("1", "true", "yes", "on"):
+        return True
+    if raw.lower() in ("0", "false", "no", "off"):
+        return False
+    raise SettingsError(f"{name} must be 1 or 0 (true/false, yes/no, on/off), got {raw!r}")
+
+
 def _read_int(env: Mapping[str, str], name: str) -> int | None:
     raw = _read(env, name)
     if raw is None:
@@ -211,6 +231,7 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
         gateway_id=_read(env, ENV_GATEWAY_ID) or _default_gateway_id(),
         service_key=_read(env, ENV_SERVICE_KEY),
         org_api_key=_read(env, ENV_ORG_API_KEY),
+        store_org_key=store if (store := _read_bool(env, ENV_STORE_ORG_KEY)) is not None else True,
         key_sync_seconds=(
             DEFAULT_KEY_SYNC_SECONDS
             if (sync := _read_float(env, ENV_KEY_SYNC_SECONDS)) is None

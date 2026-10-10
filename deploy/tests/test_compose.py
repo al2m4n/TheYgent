@@ -22,6 +22,7 @@ EXPECTED_SERVICES = {
     "control-plane",
     "worker",
     "interface",
+    "ai-gateway",
 }
 
 
@@ -76,6 +77,7 @@ def test_ports_mirror_the_make_stack(compose: dict) -> None:
     assert "8080:8080" in services["control-plane"]["ports"]
     assert "8081:8081" in services["inference-plane"]["ports"]
     assert "5174:80" in services["interface"]["ports"]
+    assert "8082:8082" in services["ai-gateway"]["ports"]
     # The compose Postgres publishes a host port for debugging; an exact-match assertion so
     # remapping it (e.g. onto :5432 to also back the bare-metal stack) is an explicit,
     # test-acknowledged change rather than silent drift.
@@ -105,6 +107,30 @@ def test_worker_is_profiled_and_wired_like_the_control_plane(compose: dict) -> N
         worker["environment"]["DATABASE_URL"]
         == (compose["services"]["control-plane"]["environment"]["DATABASE_URL"])
     )
+
+
+def test_ai_gateway_is_profiled_and_attached_to_the_control_plane(compose: dict) -> None:
+    gateway = compose["services"]["ai-gateway"]
+    assert "gateway" in gateway.get("profiles", []), (
+        "the gateway starts only with a service key an admin mints first — it stays opt-in"
+    )
+    env = gateway["environment"]
+    assert env["THEYGENT_CONTROL_PLANE_URL"] == "http://control-plane:8080"
+    # Secrets pass through from the shell/.env, empty meaning unset — never a literal value.
+    for secret in ("THEYGENT_AI_GATEWAY_SERVICE_KEY", "THEYGENT_AI_GATEWAY_ORG_API_KEY"):
+        assert env[secret] == f"${{{secret}:-}}", f"ai-gateway: {secret} must pass through"
+    # A container's hostname changes per recreate; the id must not, or every `up` adds an
+    # instance to the AI Gateway page.
+    assert env["THEYGENT_AI_GATEWAY_ID"].endswith(":-gw-compose}")
+    assert any(v.endswith(":/data") for v in gateway["volumes"]), (
+        "the request-log spool and the last known config/keys must survive a recreate"
+    )
+    assert gateway["depends_on"]["control-plane"]["condition"] == "service_healthy"
+
+
+def test_interface_build_bakes_the_gateway_url(compose: dict) -> None:
+    args = compose["services"]["interface"]["build"]["args"]
+    assert args["VITE_AI_GATEWAY_URL"] == "${VITE_AI_GATEWAY_URL:-}"
 
 
 def test_artifact_volume_is_shared_between_api_and_worker(compose: dict) -> None:
@@ -151,7 +177,7 @@ def test_compose_config_validates(files: list) -> None:
     cmd = ["docker", "compose"]
     for f in files:
         cmd += ["-f", str(f)]
-    cmd += ["--profile", "worker", "config", "--quiet"]
+    cmd += ["--profile", "worker", "--profile", "gateway", "config", "--quiet"]
     proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=60)
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout + proc.stderr)

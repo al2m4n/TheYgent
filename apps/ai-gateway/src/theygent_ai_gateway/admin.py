@@ -5,7 +5,9 @@
 * ``GET /admin/credentials`` — whether each credential is set and where it came from, never a
   value;
 * ``PUT``/``DELETE /admin/credentials/org-api-key`` — a single-instance install's org key, kept
-  by the gateway (never by the control plane).
+  by the gateway (never by the control plane). ``readOnly`` says why a gateway refuses: the
+  deployment set the key, personal mode uses none, or a replicated gateway takes it from its
+  deployment only.
 
 Callers present their TheYgent bearer (a session or a personal API key). The gateway asks the
 control plane whether it is live and an admin's (``POST /gateway/introspect`` with its service
@@ -184,6 +186,7 @@ def _org_key_view(status: OrgKeyStatus) -> dict[str, Any]:
         "source": status.source,
         "updatedAt": _when(status.updated_at),
         "writable": status.writable,
+        "readOnly": status.read_only,
     }
 
 

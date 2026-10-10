@@ -1343,8 +1343,10 @@ export interface GatewayCredentials {
     set: boolean;
     source: "env" | "stored" | null;
     updatedAt: string | null;
-    /** False when the deployment set it, or in personal mode (no org key there). */
     writable: boolean;
+    /** Why this page may not write it: the deployment set it, personal mode uses none, or a
+     *  replicated gateway takes it from its deployment only. Null when writable. */
+    readOnly: "env" | "personal_mode" | "deployment_only" | null;
   };
   serviceKey: { set: boolean };
 }
@@ -2392,6 +2394,22 @@ export const api = {
     }),
   revokeGatewayKey: (keyId: string) =>
     request<void>(controlPlaneUrl(), `/gateway/keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
+  // A gateway's own credential towards this API (admins): key sync, config, records. Same shape
+  // as a developer's key; the raw token is in the create response only.
+  listGatewayServiceKeys: () =>
+    request<{ service_keys: GatewayKey[] }>(controlPlaneUrl(), "/gateway/service-keys").then(
+      (r) => r.service_keys,
+    ),
+  createGatewayServiceKey: (name: string) =>
+    request<{ token: string; service_key: GatewayKey }>(
+      controlPlaneUrl(),
+      "/gateway/service-keys",
+      { method: "POST", body: JSON.stringify({ name }) },
+    ),
+  revokeGatewayServiceKey: (keyId: string) =>
+    request<void>(controlPlaneUrl(), `/gateway/service-keys/${encodeURIComponent(keyId)}`, {
       method: "DELETE",
     }),
 };

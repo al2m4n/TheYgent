@@ -23,6 +23,7 @@ THEYGENT_IMAGES = {
     "theygent/inference-plane:dev",
     "theygent/worker:dev",
     "theygent/interface:dev",
+    "theygent/ai-gateway:dev",
 }
 
 
@@ -58,7 +59,7 @@ def test_expected_workloads(k8s_docs: list[dict]) -> None:
         "worker",
         "interface",
     }
-    assert set(_by_kind(k8s_docs, "StatefulSet")) == {"postgres"}
+    assert set(_by_kind(k8s_docs, "StatefulSet")) == {"postgres", "ai-gateway"}
 
 
 def test_images_are_the_compose_built_tags(k8s_docs: list[dict], compose: dict) -> None:
@@ -92,7 +93,7 @@ def test_workloads_declare_resources(k8s_docs: list[dict]) -> None:
 
 def test_http_services_have_probes(k8s_docs: list[dict]) -> None:
     # The worker is a queue consumer with no HTTP surface — exempt by design.
-    needs_probes = {"control-plane", "inference-plane", "interface", "postgres"}
+    needs_probes = {"control-plane", "inference-plane", "interface", "postgres", "ai-gateway"}
     for kind in ("Deployment", "StatefulSet"):
         for name, doc in _by_kind(k8s_docs, kind).items():
             if name not in needs_probes:
@@ -115,15 +116,15 @@ def test_services_select_existing_workloads(k8s_docs: list[dict]) -> None:
         ), f"Service {name}: selector {selector} matches no workload pod template"
 
 
-def test_hpas_target_existing_deployments(k8s_docs: list[dict]) -> None:
-    deployments = set(_by_kind(k8s_docs, "Deployment"))
+def test_hpas_target_existing_workloads(k8s_docs: list[dict]) -> None:
     hpas = _by_kind(k8s_docs, "HorizontalPodAutoscaler")
-    # The scalable planes stay scalable — removing an HPA must be an explicit change.
-    assert {"control-plane", "worker"} <= set(hpas)
+    # The scalable processes stay scalable — removing an HPA must be an explicit change.
+    assert {"control-plane", "worker", "ai-gateway"} <= set(hpas)
     for name, hpa in hpas.items():
         ref = hpa["spec"]["scaleTargetRef"]
-        assert ref["kind"] == "Deployment" and ref["name"] in deployments, (
-            f"HPA {name}: targets missing deployment {ref['name']!r}"
+        assert ref["kind"] in ("Deployment", "StatefulSet"), f"HPA {name}: {ref['kind']}"
+        assert ref["name"] in _by_kind(k8s_docs, ref["kind"]), (
+            f"HPA {name}: targets missing {ref['kind']} {ref['name']!r}"
         )
         assert hpa["spec"]["minReplicas"] >= 1
 
@@ -155,6 +156,50 @@ def test_durable_mode_is_on_for_horizontal_scale(k8s_docs: list[dict]) -> None:
         assert "theygent-config" in env_from, (
             f"{name}: must envFrom the theygent-config ConfigMap or its keys never apply"
         )
+
+
+def _gateway_env(k8s_docs: list[dict]) -> dict[str, dict]:
+    gateway = _by_kind(k8s_docs, "StatefulSet")["ai-gateway"]
+    (container,) = pod_spec_of(gateway)["containers"]
+    return {e["name"]: e for e in container.get("env", [])}
+
+
+def test_ai_gateway_secrets_come_from_its_secret(k8s_docs: list[dict]) -> None:
+    """The service key is required (the pod waits until an admin has minted it and created
+    the Secret); the org key is optional. Neither is ever a literal in a manifest."""
+    env = _gateway_env(k8s_docs)
+    service = env["THEYGENT_AI_GATEWAY_SERVICE_KEY"]["valueFrom"]["secretKeyRef"]
+    assert service["name"] == "theygent-ai-gateway" and not service.get("optional", False)
+    org = env["THEYGENT_AI_GATEWAY_ORG_API_KEY"]["valueFrom"]["secretKeyRef"]
+    assert org["name"] == "theygent-ai-gateway" and org.get("optional") is True
+    for name in ("THEYGENT_AI_GATEWAY_SERVICE_KEY", "THEYGENT_AI_GATEWAY_ORG_API_KEY"):
+        assert "value" not in env[name], f"ai-gateway: {name} must come from a Secret"
+    assert env["THEYGENT_CONTROL_PLANE_URL"]["value"] == "http://control-plane:8080"
+
+
+def test_a_scalable_ai_gateway_never_stores_an_org_key(k8s_docs: list[dict]) -> None:
+    """Each replica keeps its own state, so a key set from the AI Gateway page would reach one
+    of them; with more than one replica possible, only the Secret's key may apply."""
+    hpa = _by_kind(k8s_docs, "HorizontalPodAutoscaler")["ai-gateway"]
+    assert hpa["spec"]["scaleTargetRef"]["kind"] == "StatefulSet"
+    if hpa["spec"]["maxReplicas"] > 1:
+        assert _gateway_env(k8s_docs)["THEYGENT_AI_GATEWAY_STORE_ORG_KEY"]["value"] == "0"
+
+
+def test_ai_gateway_replicas_keep_their_own_state(k8s_docs: list[dict]) -> None:
+    """Per-replica volumes keep the records not yet exported and the last known config/keys
+    across restarts; the image's uid must own them; streams get time to finish on a stop."""
+    gateway = _by_kind(k8s_docs, "StatefulSet")["ai-gateway"]
+    claims = {t["metadata"]["name"] for t in gateway["spec"]["volumeClaimTemplates"]}
+    (container,) = pod_spec_of(gateway)["containers"]
+    mounts = {m["name"]: m["mountPath"] for m in container["volumeMounts"]}
+    assert mounts.get("data") == "/data" and "data" in claims
+    sc = pod_spec_of(gateway)["securityContext"]
+    assert sc.get("fsGroup") == 10001 and sc.get("runAsUser") == 10001
+    assert pod_spec_of(gateway)["terminationGracePeriodSeconds"] >= 60
+    services = _by_kind(k8s_docs, "Service")
+    assert services["ai-gateway"]["spec"]["ports"][0]["port"] == 8082
+    assert services[gateway["spec"]["serviceName"]]["spec"].get("clusterIP") == "None"
 
 
 def test_postgres_uses_pg18_volume_layout(k8s_docs: list[dict]) -> None:

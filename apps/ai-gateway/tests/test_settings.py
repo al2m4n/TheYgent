@@ -19,6 +19,7 @@ from theygent_ai_gateway.settings import (
     ENV_PORT,
     ENV_SERVICE_KEY,
     ENV_STATE_DIR,
+    ENV_STORE_ORG_KEY,
     ENV_UPSTREAM_URL,
     GatewaySettings,
     SettingsError,
@@ -28,6 +29,7 @@ from theygent_ai_gateway.settings import (
 ALL_VARS = [
     ENV_SERVICE_KEY,
     ENV_ORG_API_KEY,
+    ENV_STORE_ORG_KEY,
     ENV_KEY_SYNC_SECONDS,
     ENV_HEARTBEAT_SECONDS,
     ENV_HOST,
@@ -50,6 +52,7 @@ def test_defaults_with_an_empty_environment() -> None:
     assert settings.state_dir == Path.home() / ".theygent" / "ai-gateway"
     assert settings.gateway_id.startswith("gw-")
     assert settings.heartbeat_seconds == 30.0
+    assert settings.store_org_key is True
 
 
 def test_empty_values_mean_unset() -> None:
@@ -70,6 +73,7 @@ def test_values_are_read(tmp_path: Path) -> None:
             ENV_GATEWAY_ID: "gw-cluster-1",
             ENV_SERVICE_KEY: "tygs_service_example",
             ENV_ORG_API_KEY: "sk-ant-api03-org-example",
+            ENV_STORE_ORG_KEY: "0",
             ENV_KEY_SYNC_SECONDS: "5",
             ENV_HEARTBEAT_SECONDS: "12.5",
         }
@@ -83,8 +87,34 @@ def test_values_are_read(tmp_path: Path) -> None:
     assert settings.gateway_id == "gw-cluster-1"
     assert settings.service_key == "tygs_service_example"
     assert settings.org_api_key == "sk-ant-api03-org-example"
+    assert settings.store_org_key is False
     assert settings.key_sync_seconds == 5.0
     assert settings.heartbeat_seconds == 12.5
+
+
+TEAM = {
+    ENV_AUTH_MODE: "team",
+    ENV_CONTROL_PLANE_URL: "http://control-plane:8080",
+    ENV_SERVICE_KEY: "tygs_service_example",
+}
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("1", True), ("true", True), ("On", True), ("0", False), ("false", False), ("no", False)],
+)
+def test_storing_the_org_key_reads_a_flag(value: str, expected: bool) -> None:
+    assert load_settings({**TEAM, ENV_STORE_ORG_KEY: value}).store_org_key is expected
+
+
+def test_a_bad_flag_fails_by_name() -> None:
+    with pytest.raises(SettingsError, match=ENV_STORE_ORG_KEY):
+        load_settings({**TEAM, ENV_STORE_ORG_KEY: "maybe"})
+
+
+def test_personal_mode_refuses_to_govern_an_org_key() -> None:
+    with pytest.raises(SettingsError, match=ENV_STORE_ORG_KEY):
+        load_settings({ENV_STORE_ORG_KEY: "0"})
 
 
 def test_state_dir_expands_the_home_directory() -> None:

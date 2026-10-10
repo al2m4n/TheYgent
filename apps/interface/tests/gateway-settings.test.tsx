@@ -44,11 +44,23 @@ function config(version: number, over: Record<string, unknown> = {}) {
 }
 
 function credentials(over: Record<string, unknown> = {}) {
+  const org = { set: false, source: null, updatedAt: null, readOnly: null, ...over };
   return {
-    orgApiKey: { set: false, source: null, updatedAt: null, writable: true, ...over },
+    orgApiKey: { ...org, writable: org.readOnly === null },
     serviceKey: { set: true },
   };
 }
+
+const SERVICE_TOKEN = "tygs_brand-new-service-token";
+const SERVICE_KEY = {
+  id: "key_svc",
+  user_id: "usr_admin",
+  name: "team gateway",
+  token_prefix: "tygs_abcdefg",
+  created_at: HOUR_AGO,
+  last_used_at: HOUR_AGO,
+  revoked_at: null,
+};
 
 const admin = {
   id: "usr_admin",
@@ -84,6 +96,7 @@ interface Mock {
   latest?: () => Response;
   put?: (body: unknown) => Response;
   versions?: unknown[];
+  serviceKeys?: unknown[];
   gateway?: (path: string, method: string, body: unknown) => Response;
 }
 
@@ -94,6 +107,7 @@ function mockPlanes({
     { version: 3, mode: "observer", created_at: HOUR_AGO, created_by: "usr_admin" },
     { version: 2, mode: "passthrough", created_at: HOUR_AGO, created_by: "usr_ada" },
   ],
+  serviceKeys = [SERVICE_KEY],
   gateway = () => json(credentials()),
 }: Mock = {}): Call[] {
   const calls: Call[] = [];
@@ -132,6 +146,18 @@ function mockPlanes({
             pricing_overrides: {},
           }),
         );
+      }
+      if (parsed.pathname === "/gateway/service-keys" && method === "GET") {
+        return json({ service_keys: serviceKeys });
+      }
+      if (parsed.pathname === "/gateway/service-keys" && method === "POST") {
+        return json(
+          { token: SERVICE_TOKEN, service_key: { ...SERVICE_KEY, id: "key_svc2", name: "k8s" } },
+          201,
+        );
+      }
+      if (parsed.pathname.startsWith("/gateway/service-keys/") && method === "DELETE") {
+        return new Response(null, { status: 204 });
       }
       if (parsed.pathname === "/gateway/developers") {
         return json({
@@ -430,7 +456,7 @@ describe("AI Gateway settings: the org key", () => {
 
   it("points to the deployment when the deployment set the key", async () => {
     mockPlanes({
-      gateway: () => json(credentials({ set: true, source: "env", writable: false })),
+      gateway: () => json(credentials({ set: true, source: "env", readOnly: "env" })),
     });
     renderTab();
     expect(await screen.findByText(/by the deployment/)).toBeInTheDocument();
@@ -439,10 +465,20 @@ describe("AI Gateway settings: the org key", () => {
   });
 
   it("explains that a personal gateway has no org key", async () => {
-    mockPlanes({ gateway: () => json(credentials({ writable: false })) });
+    mockPlanes({ gateway: () => json(credentials({ readOnly: "personal_mode" })) });
     renderTab();
     expect(await screen.findByText(/runs in personal mode/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+    expect(screen.queryByText(/takes the key from its deployment/)).toBeNull();
+  });
+
+  it("sends a replicated gateway's key to its deployment", async () => {
+    mockPlanes({ gateway: () => json(credentials({ readOnly: "deployment_only" })) });
+    renderTab();
+    expect(await screen.findByText(/takes the key from its deployment only/)).toBeInTheDocument();
+    expect(screen.getByText("not set")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Anthropic API key")).toBeNull();
+    expect(screen.queryByText(/runs in personal mode/)).toBeNull();
   });
 
   it("shows the gateway's refusal and drops the typed key", async () => {
@@ -486,5 +522,54 @@ describe("AI Gateway settings: the org key", () => {
     renderTab();
     expect(await screen.findByText(/Can't reach the gateway at/)).toBeInTheDocument();
     expect(screen.getByText(/Setup & keys tab/)).toBeInTheDocument();
+  });
+});
+
+describe("AI Gateway settings: service keys", () => {
+  it("lists the gateways' service keys", async () => {
+    mockPlanes();
+    renderTab();
+    const list = await screen.findByRole("list", { name: "Service keys" });
+    expect(within(list).getByText("team gateway")).toBeInTheDocument();
+    expect(within(list).getByText("tygs_abcdefg…")).toBeInTheDocument();
+    expect(within(list).getByText(/last used/)).toBeInTheDocument();
+  });
+
+  it("shows a new service key once, ready for .env and Kubernetes", async () => {
+    const calls = mockPlanes();
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: /New service key/ }));
+    await ui.type(screen.getByLabelText("Service key name"), "k8s");
+    await ui.click(screen.getByRole("button", { name: "Create key" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Your new service key" });
+    expect(within(dialog).getByText(/shown only once/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(`THEYGENT_AI_GATEWAY_SERVICE_KEY=${SERVICE_TOKEN}`),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/create secret generic theygent-ai-gateway/)).toHaveTextContent(
+      `--from-literal=THEYGENT_AI_GATEWAY_SERVICE_KEY=${SERVICE_TOKEN}`,
+    );
+    const created = calls.find((c) => c.path === "/gateway/service-keys" && c.method === "POST");
+    expect(created?.origin).toBe(CONTROL_PLANE_URL);
+    expect(created?.body).toEqual({ name: "k8s" });
+
+    await ui.click(within(dialog).getByRole("button", { name: "Done" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByText(new RegExp(SERVICE_TOKEN))).not.toBeInTheDocument();
+  });
+
+  it("revokes a service key after confirmation", async () => {
+    const calls = mockPlanes();
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: "Revoke team gateway" }));
+    await ui.click(await screen.findByRole("button", { name: "Revoke" }));
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "DELETE" && c.path === "/gateway/service-keys/key_svc"),
+      ).toBe(true),
+    );
   });
 });
