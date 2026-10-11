@@ -2,7 +2,8 @@
 
 Rules specific to `apps/ai-gateway`. The repo-wide rules in the root [AGENTS.md](../../AGENTS.md)
 apply first. The evidence behind these rules is in [spike/FINDINGS.md](spike/FINDINGS.md); the
-current work plan is [PHASE1.md](PHASE1.md).
+current work plan is [PHASE3.md](PHASE3.md) (earlier: [PHASE1.md](PHASE1.md),
+[PHASE2.md](PHASE2.md)).
 
 The gateway sits on a coding agent's model path (Claude Code → the Anthropic Messages API). A
 mistake here breaks developers' everyday tool, leaks their code, or quietly makes every request
