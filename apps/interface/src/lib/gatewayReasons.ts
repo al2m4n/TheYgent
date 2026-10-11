@@ -105,6 +105,11 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
     detail:
       "This conversation is in the share of its kind that the configuration sends to a local model.",
   },
+  outgrew_local_model: {
+    label: "outgrew local model",
+    detail:
+      "The conversation grew past its local model's context: it moved to a larger listed local model, or to Anthropic when none can take it.",
+  },
   no_local_model_fits: {
     label: "no local model fits",
     detail:

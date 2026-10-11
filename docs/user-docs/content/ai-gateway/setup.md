@@ -89,6 +89,11 @@ it the way you distribute Claude Code's managed settings today.
   conversation, a subagent, compaction, a side request, and the session and agent it belongs
   to. Without the labels the gateway cannot tell those apart, so no request is a routing
   candidate. The Report warns when they are missing.
+- **`CLAUDE_CODE_AUTO_COMPACT_WINDOW`** (in a shell) or **`autoCompactWindow`** (in a settings
+  file) appears only when the gateway serves main conversations on a local model. Claude Code
+  compacts by the context window of the model it asked for, 1 million tokens for current models;
+  this tells it to compact while the conversation still fits the local model. See
+  [Local models](local-models.md#5-for-the-main-conversation-update-claude-codes-setup).
 - **`ENABLE_TOOL_SEARCH=true`** keeps MCP tool search on. Claude Code turns it **off for any
   custom base URL**, and then every request carries the full definition of every connected tool.
   In one measurement with many connectors loaded, a one-line prompt went from about 28,000 to

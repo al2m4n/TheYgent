@@ -106,7 +106,8 @@ Router mode applies the policy's decisions; observer mode only records them.
   the main conversation): a share, sampled per conversation and applied at cold boundaries only,
   served by a listed local model that can take the request (tool calls, images, prompt size).
   Agent-turn shares start at zero and are raised on shadow evidence; a side request goes local
-  only for a kind the review allows (`allow_local`). A dial's trial — the conversations just above
+  only for a kind the review allows (`allow_local`). A conversation that outgrows its local model
+  moves to a larger listed one, never a smaller one, and to Anthropic only when none can take it. A dial's trial — the conversations just above
   its share — is answered by Anthropic and then tried on the local model, in either mode.
 - **A local route always streams from the engine.** A client that leaves must stop the model, and
   a non-streaming request would hold the engine to the end. A prompt larger than the model's

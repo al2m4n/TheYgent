@@ -17,7 +17,8 @@ import {
   setEndpointOverride,
 } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
-import { type Setup, setupFor } from "../../lib/gatewaySetup";
+import { draftOf } from "../../lib/gatewayConfig";
+import { type CompactWindow, type Setup, compactWindowFor, setupFor } from "../../lib/gatewaySetup";
 import { notify } from "../../lib/notify";
 import { CopySnippet } from "../CopySnippet";
 import { TimeAgo } from "../TimeAgo";
@@ -44,11 +45,28 @@ const PROFILE_TEXT: Record<CredentialProfile, { badge: string; detail: string }>
   },
 };
 
+/** The auto-compact window the gateway's configuration asks of Claude Code, if any. */
+function useCompactWindow(): CompactWindow | null {
+  const config = useQuery({ queryKey: ["gatewayConfig"], queryFn: () => api.getGatewayConfig() });
+  // A configuration this page can't read leaves Claude Code's default: setting up a key matters more.
+  return config.data?.policy ? compactWindowFor(draftOf(config.data).policy) : null;
+}
+
+function windowOf(compact: CompactWindow | null): number | null {
+  return compact !== null && "window" in compact ? compact.window : null;
+}
+
 export function SetupTab() {
   const me = useQuery({ queryKey: ["gatewayMe"], queryFn: () => api.getGatewayMe() });
   const [address, setAddress] = useState(() => gatewayUrl());
   const profile: CredentialProfile = me.data?.credential_profile ?? "passthrough";
-  const setup = setupFor({ gatewayUrl: address, profile, key: null });
+  const compact = useCompactWindow();
+  const setup = setupFor({
+    gatewayUrl: address,
+    profile,
+    key: null,
+    autoCompactWindow: windowOf(compact),
+  });
 
   return (
     <div className="space-y-4">
@@ -74,7 +92,7 @@ export function SetupTab() {
         </CardContent>
       </Card>
       <KeysCard address={address} profile={profile} />
-      <SetupCard setup={setup} profile={profile} />
+      <SetupCard setup={setup} profile={profile} compact={compact} />
     </div>
   );
 }
@@ -269,6 +287,7 @@ function CreateKeyDialog({
 }) {
   const [name, setName] = useState("");
   const create = useMutation({ mutationFn: (keyName: string) => api.createGatewayKey(keyName) });
+  const compact = useCompactWindow();
   const token = create.data?.token ?? null;
   return (
     <Modal title={token ? "Your new gateway key" : "New gateway key"} onClose={onClose}>
@@ -279,7 +298,12 @@ function CreateKeyDialog({
           </NoteBanner>
           <CopySnippet label="gateway key" code={token} />
           <SetupSnippets
-            setup={setupFor({ gatewayUrl: address, profile, key: token })}
+            setup={setupFor({
+              gatewayUrl: address,
+              profile,
+              key: token,
+              autoCompactWindow: windowOf(compact),
+            })}
             profile={profile}
           />
           <div className="flex justify-end">
@@ -320,7 +344,15 @@ function CreateKeyDialog({
 
 // ── setup per client ─────────────────────────────────────────────────────────
 
-function SetupCard({ setup, profile }: { setup: Setup; profile: CredentialProfile }) {
+function SetupCard({
+  setup,
+  profile,
+  compact,
+}: {
+  setup: Setup;
+  profile: CredentialProfile;
+  compact: CompactWindow | null;
+}) {
   return (
     <Card>
       <CardHeader className="border-b">
@@ -329,9 +361,27 @@ function SetupCard({ setup, profile }: { setup: Setup; profile: CredentialProfil
           The key appears here as a placeholder — paste yours, or create a key to get these filled
           in. The routing hints and tool search are always on: without tool search, Claude Code
           sends every tool's schema on every request through any gateway.
+          {compact !== null && "window" in compact && (
+            <>
+              {" "}
+              Main conversations are served by local models here, so the setup also tells Claude
+              Code to compact at {compact.window.toLocaleString()} tokens — while a conversation
+              still fits <code>{compact.model}</code>'s {compact.context.toLocaleString()}.
+              {compact.tight &&
+                " That is as early as Claude Code compacts, with little room to spare: a very long turn can still outgrow the model."}
+            </>
+          )}
         </CardDescription>
       </CardHeader>
-      <CardContent className="pt-4">
+      <CardContent className="space-y-3 pt-4">
+        {compact !== null && "tooSmall" in compact && (
+          <NoteBanner>
+            Main conversations are served by local models here, but the largest one they can reach,{" "}
+            <code>{compact.model}</code>, holds {compact.context.toLocaleString()} tokens. Claude
+            Code compacts no earlier than 100,000, so long conversations will outgrow it and go to
+            Anthropic. An admin can list a model with a larger context.
+          </NoteBanner>
+        )}
         <SetupSnippets setup={setup} profile={profile} />
       </CardContent>
     </Card>

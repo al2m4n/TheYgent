@@ -289,3 +289,11 @@ def test_headers_without_a_body_endpoint_still_yield_signals() -> None:
     assert signals.parse_errors == ()
     assert signals.client.client == "cli"
     assert signals.hints.request_class == "main"
+
+
+def test_a_prompts_size_is_estimated_at_claude_codes_bytes_per_token() -> None:
+    from theygent_ai_gateway.signals import estimated_tokens
+
+    # Real Claude Code requests run 2.8 to 3.0 bytes a token; the estimate errs high.
+    assert estimated_tokens(2_750) == 1_000
+    assert estimated_tokens(int(128_000 * 2.9)) > 128_000

@@ -44,6 +44,16 @@ _ATTRIBUTION_PREFIX = "x-anthropic-billing-header:"
 _MCP_PREFIX = "mcp__"
 
 
+#: Claude Code's requests run about three bytes a token (JSON-escaped text and tool schemas): 2.8
+#: to 3.0 measured on real sessions. A little under that keeps a size estimate on the high side.
+BYTES_PER_TOKEN = 2.75
+
+
+def estimated_tokens(body_bytes: int) -> int:
+    """A request's prompt size in tokens, estimated from its body's size."""
+    return int(body_bytes / BYTES_PER_TOKEN)
+
+
 def token_or_none(value: str | None) -> str | None:
     """``value`` if it may leave the gateway as a wire token, else ``None``."""
     if value is None:

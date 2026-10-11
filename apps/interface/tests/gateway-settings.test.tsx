@@ -923,6 +923,24 @@ describe("AI Gateway settings: developers' billing", () => {
       expect(sent.policy.local_models[0]).toMatchObject({ max_output_tokens: 16384, rates: null });
     });
 
+    it("says when Claude Code will compact for a locally served main conversation", async () => {
+      mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      await ui.click(await screen.findByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "coder-small");
+      await ui.click(screen.getByRole("checkbox", { name: "Follows tool calls (row 1)" }));
+      const share = screen.getByLabelText("Main conversation share");
+      await ui.clear(share);
+      await ui.type(share, "50");
+      // 32,768 tokens: Claude Code can't compact early enough.
+      expect(screen.getByText(/long conversations will outgrow it/)).toBeInTheDocument();
+      const context = screen.getByLabelText("Context (row 1)");
+      await ui.clear(context);
+      await ui.type(context, "262144");
+      expect(screen.getByText(/compact at 196,000\s+tokens/)).toBeInTheDocument();
+    });
+
     it("prices a model only with both of its rates", async () => {
       const calls = mockPlanes();
       const ui = userEvent.setup();

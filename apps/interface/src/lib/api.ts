@@ -1351,7 +1351,8 @@ export type GatewayReasonCode =
   | "pinned_after_refusal"
   | "target_not_cheaper"
   | "local_share"
-  | "no_local_model_fits";
+  | "no_local_model_fits"
+  | "outgrew_local_model";
 
 export interface GatewaySessionSummary {
   session_id: string;

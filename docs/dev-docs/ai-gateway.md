@@ -176,7 +176,7 @@ faithfully or not at all:
 The answer comes back through a writer that turns OpenAI chunks into Anthropic events. Text
 streams as deltas; each tool call is emitted as one whole `tool_use` block (input in a single
 `input_json_delta`) once its arguments are complete. A local `toolu_local_…` id replaces the
-model's own, and the stop reason is `tool_use` when it called one. A prompt over 32K tokens (at about four bytes a token) is
+model's own, and the stop reason is `tool_use` when it called one. A prompt over the model's context (estimated from its size) is
 never sent.
 
 The gateway always streams from the engine, so a client that hangs up closes the stream and the
@@ -227,8 +227,23 @@ model or "the smallest that fits", and for subagents an optional agent-type filt
   then holds across the tool loop, and a warm prompt stays where its cache is. Moving to a local
   model mid-cache is never priced as paying.
 - **Choosing the model (`local_model_for`).** An agent turn needs a model that follows tool calls,
-  with the prompt (about four bytes a token) within its context. When nothing fits, the request
-  takes Anthropic's decision with `no_local_model_fits` added.
+  with the prompt within its context: the dial's model if it can take it, else the first larger
+  listed one that can (never a smaller one), or with no model chosen the smallest that can. When
+  nothing fits, the request takes Anthropic's decision with `no_local_model_fits` added. Prompt
+  sizes are estimated from the body (`signals.estimated_tokens`, 2.75 bytes a token: Claude Code's
+  requests measure 2.8 to 3.0, so the estimate errs high).
+- **Outgrowing a model (`Policy._fit_local`).** A conversation held on a local model whose prompt no
+  longer fits it moves at once — inside a tool loop too, since no other model holds its cache — to
+  the next larger listed model that can take it (`outgrew_local_model`), else to Anthropic's side
+  (`outgrew_local_model` and the cold-boundary decision there, priced cold), and stays until its
+  next cold boundary. A compaction too large for its local model goes the same way, to the main
+  target on Anthropic's side when there is one.
+- **Compacting in time.** Claude Code compacts by the context window of the model it asked for (1M
+  for current models behind a gateway). When the main dial has a share, the interface's setups
+  (`lib/gatewaySetup.ts`, `compactWindowFor`) set Claude Code's auto-compact window to three
+  quarters of the largest local model a main conversation can reach, floored at the 100,000
+  Claude Code accepts, and warn when that model holds less than 125,000. The gateway can't set it:
+  it is the client's setting.
 - **Side requests.** They keep their Catalog review. A Phase 2 config's `local_target` stays their
   model, and their dial starts at 100%.
 - **The trial (`LocalShare.trial`, `policy.in_trial`).** The conversations whose hash falls in

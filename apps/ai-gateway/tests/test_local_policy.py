@@ -36,7 +36,7 @@ from _prices import FROZEN_PRICES
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.conversations import ConversationTracker
 from theygent_ai_gateway.observe import Observation, ResponseObserver
-from theygent_ai_gateway.policy import Plan, Policy, in_share, in_trial
+from theygent_ai_gateway.policy import Plan, Policy, in_share, in_trial, local_model_for
 from theygent_ai_gateway.requestlog import to_record
 from theygent_ai_gateway.routing import with_model
 from theygent_ai_gateway.settings import GatewaySettings
@@ -574,3 +574,98 @@ def test_a_model_without_rates_still_costs_nothing(tmp_path: Path) -> None:
         gw.send(MAIN)
         gw.send(SPAWN)
     assert gw.seen[-1].cost_usd == 0.0
+
+
+# ── a conversation that outgrows its local model ─────────────────────────────
+
+#: Takes the Explore subagent's first turn (about 2,700 tokens) but not its second (about 2,900).
+SMALL_TOOLS = {"model": "coder-small", "context_tokens": 2_800, "tools": True}
+LARGE = {"model": "coder-large", "context_tokens": 262_144, "tools": True}
+LOCAL_SMALL = Target(kind="local", model="coder-small")
+LOCAL_LARGE = Target(kind="local", model="coder-large")
+
+
+def test_a_model_that_cannot_take_the_prompt_gives_way_to_a_larger_one() -> None:
+    no_tools = {"model": "vision-large", "context_tokens": 262_144, "images": True}
+    policy = PolicyConfig.model_validate({"local_models": [SMALL_TOOLS, no_tools, LARGE]})
+    signals = read_request(dict(LOOP.request_headers), LOOP.request_bytes(), has_messages_body=True)
+    spawn = read_request(dict(SPAWN.request_headers), SPAWN.request_bytes(), has_messages_body=True)
+    pick = local_model_for
+    assert pick(policy, "coder-small", spawn, tools=True).model == "coder-small"  # type: ignore[union-attr]
+    # Too large for the chosen model: the first larger one that follows tool calls.
+    assert pick(policy, "coder-small", signals, tools=True).model == "coder-large"  # type: ignore[union-attr]
+    assert pick(policy, None, signals, tools=True).model == "coder-large"  # type: ignore[union-attr]
+    # Never a smaller one than the chosen model, and nothing for a model not listed.
+    assert pick(policy, "coder-large", spawn, tools=True).model == "coder-large"  # type: ignore[union-attr]
+    assert pick(policy, "unlisted", spawn, tools=True) is None
+    # A chosen model that can't take it (no tool calls) passes to a larger one, though a smaller
+    # one could take it.
+    assert pick(policy, "vision-large", spawn, tools=True).model == "coder-large"  # type: ignore[union-attr]
+
+
+def test_a_local_conversation_that_outgrows_its_model_moves_to_a_larger_one() -> None:
+    run = Run(config(models=[SMALL_TOOLS, LARGE], subagents={"share": 1.0, "model": "coder-small"}))
+    run(MAIN)
+    spawn, _ = run(SPAWN)
+    grown, _ = run(LOOP)
+    after, _ = run(LOOP)
+    assert spawn.target == LOCAL_SMALL
+    assert (grown.target, grown.reasons) == (LOCAL_LARGE, ("outgrew_local_model",))
+    # It stays on the larger model for the rest of its loop.
+    assert (after.target, after.reasons) == (
+        LOCAL_LARGE,
+        ("mid_conversation", "outgrew_local_model"),
+    )
+
+
+def test_a_conversation_no_listed_model_can_hold_goes_to_anthropics_side() -> None:
+    run = Run(config(models=[SMALL_TOOLS], subagents={"share": 1.0}))
+    run(MAIN)
+    spawn, _ = run(SPAWN)
+    grown, _ = run(LOOP)
+    after, _ = run(LOOP)
+    assert spawn.target == LOCAL_SMALL
+    # The cheaper Anthropic target, which holds nothing of the conversation yet.
+    assert grown.target == Target(kind="anthropic", model=SONNET)
+    assert grown.reasons[0] == "outgrew_local_model" and grown.cold
+    assert after.target == Target(kind="anthropic", model=SONNET)  # and it stays there
+
+
+def test_a_compaction_too_large_for_its_local_model_goes_to_a_larger_one_or_anthropic() -> None:
+    small = {
+        "model": "coder-small",
+        "context_tokens": 3_000,
+        "tools": True,
+    }  # the turn, not its compaction
+    for models, main_target, target, reasons in (
+        ([small, LARGE], None, LOCAL_LARGE, ("compaction", "outgrew_local_model")),
+        (
+            [small],
+            SONNET,
+            Target(kind="anthropic", model=SONNET),
+            ("compaction", "outgrew_local_model"),
+        ),
+        ([small], None, None, ("compaction", "outgrew_local_model", "no_target_configured")),
+    ):
+        run = Run(
+            config(
+                models=models, main={"share": 1.0, "model": "coder-small"}, main_target=main_target
+            )
+        )
+        turn, _ = run(BUGFIX)
+        assert turn.target == Target(kind="local", model="coder-small")
+        plan, _ = run(COMPACTION)
+        assert (plan.target, plan.reasons) == (target, reasons), models
+
+
+def test_through_the_gateway_the_larger_model_answers(tmp_path: Path) -> None:
+    cfg = config(models=[SMALL_TOOLS, LARGE], subagents={"share": 1.0, "model": "coder-small"})
+    with gateway(tmp_path, cfg) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+        gw.send(LOOP)
+    assert [r["model"] for r in gw.inference.requests] == ["coder-small", "coder-large"]
+    grown = gw.seen[-1]
+    assert grown.decision.applied and grown.decision.target == LOCAL_LARGE
+    assert grown.decision.reasons == ["outgrew_local_model"]

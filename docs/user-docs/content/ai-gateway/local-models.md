@@ -39,10 +39,15 @@ Each dial has three settings:
   request. A subagent or main-conversation turn needs a model that follows tool calls. A request
   with images needs one that takes images. Every model needs the prompt to fit within its context.
 
-When a local model can't take a request, Anthropic answers it before Claude Code sees anything.
-That covers an error, no answer in time, an answer that isn't usable, or a prompt that doesn't fit.
-The request is marked *target refused*, and the conversation stays with Anthropic until its next
-cold point.
+**A conversation that outgrows its model moves up.** When a conversation's prompt no longer fits
+its local model, it moves to the next larger listed model that can take it, marked *outgrew local
+model*, and stays there. Only when no listed model can take it does it go to Anthropic, which reads
+the whole history without a cache, and stays there until its next cold point.
+
+When a local model can't take a request for another reason, Anthropic answers it before Claude
+Code sees anything. That covers an error, no answer in time, or an answer that isn't usable. The
+request is marked *target refused*, and the conversation stays with Anthropic until its next cold
+point.
 
 ## Set it up
 
@@ -101,6 +106,22 @@ trial 20%** serves the conversations you measured and starts measuring the next 
 step by step. The Report then counts what the local model served as routed, at no API spend, and
 shows it against what the same work would have cost on the model Claude Code asked for.
 
+### 5. For the main conversation: update Claude Code's setup
+
+Claude Code decides when to compact a conversation from the context window of the model it asked
+for, which is 1 million tokens for current models behind a gateway. A local model holds far less,
+so left alone, a long conversation would outgrow it. Once the **Main conversation** dial has a
+share, the setups on **Setup & keys** also tell Claude Code to compact sooner: at three quarters of
+the context of the largest local model a main conversation can reach (for example 196,000 tokens
+for a 262,144-token model). The compaction then runs on the local model too, and the conversation
+never has to leave it. The Settings tab shows the value under the dial.
+
+Developers pick it up by copying their setup again (it adds `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to
+the shell setup, and `autoCompactWindow` to `settings.json`), or from the managed settings an admin
+distributes. Claude Code compacts no earlier than 100,000 tokens, so a model for the main
+conversation needs about 125,000 tokens of context or more; the Setup & keys and Settings tabs say
+when the listed ones fall short.
+
 ## What always stays with Anthropic
 
 Some requests never go to a local model, whatever the dials say:
@@ -128,10 +149,12 @@ replace it.
   checked whole, so it must be complete within 30 seconds plus the reading time.
 - **Answers have length limits.** A subagent or main-conversation turn can write up to the model's
   **max output** (16,384 tokens unless you raise it), and a side request up to 4,096.
-- **Claude Code compacts by the model it asked for.** It knows its model's context window (200,000
-  tokens or more), not the local model's. A conversation that outgrows the local model goes to
-  Anthropic, which reads the whole history without a cache: that request costs more than a cached
-  one would.
+- **Claude Code compacts by the model it asked for**, unless its setup says otherwise: see
+  [step 5](#5-for-the-main-conversation-update-claude-codes-setup). A developer still on an older
+  setup compacts late, and their long conversations move to larger models, or to Anthropic.
+- **Prompt sizes are estimated.** The gateway counts about 2.75 bytes of Claude Code's request per
+  token, a little more than real sessions use, so it moves a conversation slightly before its model
+  is full rather than after.
 - **Local compute is priced only if you price it.** Without a **cost**, the Report counts a local
   answer as costing nothing, and the saving it shows is larger than your real saving if your
   models run on hardware you pay for. With one, local answers, trials and what routing would cost
@@ -148,16 +171,18 @@ replace it.
 For a team running a large model on its own servers:
 
 1. Register it on the inference plane as a remote model, and list it with its real context and
-   **Tool calls** ticked.
+   **Tool calls** ticked. Give the main conversation a model with a large context: 128K tokens
+   at the very least, more is better.
 2. Measure it first: a trial on **Subagents**, then on **Main conversation**.
 3. Set **Subagents** and **Main conversation** to a 100% share, and review the side-request kinds
    you want local as *local model* in the Catalog.
-4. Run in **Router** mode.
+4. Run in **Router** mode, and have every developer take the updated setup from **Setup & keys**
+   (or distribute the managed settings), so Claude Code compacts while conversations still fit.
 
 Every subagent and main-conversation turn then goes to the local model, except what [stays with
 Anthropic](#what-always-stays-with-anthropic) and what falls back under the
-[limits above](#limits-to-know). Watch **Report → Calls** and the *target refused* reason on the
-Sessions tab to see how much still reaches Anthropic, and why.
+[limits above](#limits-to-know). Watch **Report → Calls**, and the *outgrew local model* and
+*target refused* reasons on the Sessions tab, to see how much still reaches Anthropic, and why.
 
 ## Related pages
 

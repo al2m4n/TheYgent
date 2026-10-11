@@ -116,6 +116,7 @@ ReasonCode = Literal[
     "target_not_cheaper",
     "local_share",
     "no_local_model_fits",
+    "outgrew_local_model",
 ]
 
 

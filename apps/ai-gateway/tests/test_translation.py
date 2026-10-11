@@ -24,6 +24,7 @@ from _fake_inference import fake_inference
 from _fixtures import Exchange, all_exchanges, load
 from theygent_ai_gateway import local
 from theygent_ai_gateway.local import LocalAnswer, LocalRoute, LocalStream
+from theygent_ai_gateway.signals import estimated_tokens
 from theygent_ai_gateway.translation import translate
 
 LOCAL = "coder-medium"
@@ -376,7 +377,7 @@ async def test_a_large_prompt_earns_reading_time_before_the_first_output(
 ) -> None:
     # A model reads the whole prompt before it writes: the first-output deadline grows with it.
     monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 0.3)
-    reading = len(LOOP.request_bytes()) / 4 / local.MIN_PROMPT_TOKENS_PER_SECOND
+    reading = estimated_tokens(len(LOOP.request_bytes())) / local.MIN_PROMPT_TOKENS_PER_SECOND
     assert reading > 1.0  # this prompt earns over a second
     with fake_inference() as fake:
         fake.pieces = ["Reading."]

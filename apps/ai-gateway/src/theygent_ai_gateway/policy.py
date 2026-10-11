@@ -48,7 +48,7 @@ from theygent_ir.gateway import (
 
 from theygent_ai_gateway.conversations import ConversationKey, Position
 from theygent_ai_gateway.costs import PriceBook, base_model, local_cost, ttl_for
-from theygent_ai_gateway.signals import RequestSignals
+from theygent_ai_gateway.signals import RequestSignals, estimated_tokens
 
 #: The dry-run defaults when no config has arrived: the measured subagent candidate, nothing else.
 #: Observer mode never applies a decision, so a default target only shapes the report.
@@ -122,12 +122,12 @@ def accepts(target_model: str, signals: RequestSignals) -> bool:
 
 def fits(target_model: str, signals: RequestSignals, position: Position | None) -> bool:
     """Whether the request's context fits the target's window (estimated: what the conversation
-    has cached, else ~4 bytes per token of body)."""
+    has cached, else from the body's size)."""
     capabilities = CAPABILITIES.get(base_model(target_model))
     if capabilities is None:
         return False
     cached = position.cached_prefix_tokens if position else 0
-    size = signals.body.shape.body_bytes // 4 if signals.body else 0
+    size = estimated_tokens(signals.body.shape.body_bytes) if signals.body else 0
     return max(cached, size) <= capabilities.context_tokens
 
 
@@ -178,17 +178,25 @@ class Policy:
         if body is not None and body.safeguards:
             return Plan.stay("safety_check")
         if request_class == "compaction":
-            return self._compaction(signals, position)
+            return self._compaction(signals, position, policy, prices)
         if body is not None and body.is_quota_probe:
             return Plan.stay("quota_check")
         if request_class == "auxiliary":
             return self._side_request(signals, position, policy, rules, prices)
         return self._conversation(signals, position, policy, prices)
 
-    def _compaction(self, signals: RequestSignals, position: Position | None) -> Plan:
+    def _compaction(
+        self,
+        signals: RequestSignals,
+        position: Position | None,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
+    ) -> Plan:
         """Compaction reads the conversation's cache, so it runs where the conversation runs: on
         the model its decision serves now (a cheaper one, or a local one), else the one asked
-        for. Moving it anywhere else would rebuild the whole conversation's cache."""
+        for. Moving it anywhere else would rebuild the whole conversation's cache. A compaction
+        larger than its local model goes to a larger listed one, else to Anthropic: to the main
+        target where there is one, since nothing is cached on Anthropic's side either way."""
         held = self._held.get(position.key) if position and position.key else None
         requested = signals.body.model if signals.body else None
         if held is None or held.requested != requested:
@@ -198,6 +206,21 @@ class Policy:
             return Plan.stay("compaction")
         if target.kind == "anthropic" and not accepts(target.model, signals):
             return Plan.stay("compaction", "target_rejects_request_shape")
+        if target.kind == "local":
+            fitting = local_model_for(policy, target.model, signals, tools=True)
+            if fitting is None:
+                cloud = self._anthropic_target(
+                    signals,
+                    position,
+                    policy.main_target,
+                    ("compaction", "outgrew_local_model"),
+                    prices,
+                )
+                return replace(cloud, cold=cloud.action == "route")
+            if fitting.model != target.model:
+                return Plan.route(
+                    Target(kind="local", model=fitting.model), "compaction", "outgrew_local_model"
+                )
         return Plan.route(target, "compaction", "follows_warm_cache")
 
     def _side_request(
@@ -257,9 +280,14 @@ class Policy:
         elif position.boundary == "continuation":
             if held is None:
                 return Plan.stay("mid_conversation")
-            return held.plan.because("mid_conversation", *held.plan.reasons)
+            plan = held.plan.because("mid_conversation", *held.plan.reasons)
+            grown = self._fit_local(plan, signals, position, policy, prices)
+            if grown is plan:
+                return plan
+            plan = grown
         elif position.boundary == "new_prompt" and held is not None:
             plan = self._warm_prompt(signals, position, policy, prices, held, requested)
+            plan = self._fit_local(plan, signals, position, policy, prices)
         elif position.boundary == "new_prompt":
             # What the conversation was decided under is forgotten: its cache is on the model it
             # asked for, and leaving it would rebuild that.
@@ -268,6 +296,29 @@ class Policy:
             plan = self._at_cold_boundary(signals, position, policy, prices)
         self._remember(position.key, _Held(plan, requested))
         return plan
+
+    def _fit_local(
+        self,
+        plan: Plan,
+        signals: RequestSignals,
+        position: Position,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
+    ) -> Plan:
+        """A conversation that outgrew its local model moves on: to a larger listed local model
+        that can take it, else to Anthropic's side. Nothing there holds its cache either way, so
+        it moves at once, inside a tool loop too, and stays until its next cold boundary."""
+        target = plan.target
+        if target is None or target.kind != "local":
+            return plan
+        if _prompt_tokens(signals) <= capabilities_of(policy, target.model).context_tokens:
+            return plan
+        larger = local_model_for(policy, target.model, signals, tools=True)
+        if larger is not None:
+            return Plan.route(Target(kind="local", model=larger.model), "outgrew_local_model")
+        cloud = self._at_cold_boundary(signals, position, policy, prices, local=False)
+        cloud = cloud.because("outgrew_local_model", *cloud.reasons)
+        return replace(cloud, cold=cloud.action == "route")
 
     def _at_cold_boundary(
         self,
@@ -427,18 +478,23 @@ def in_trial(key: object, dial: LocalShare) -> bool:
 
 
 def _prompt_tokens(signals: RequestSignals) -> int:
-    return signals.body.shape.body_bytes // 4 if signals.body else 0
+    return estimated_tokens(signals.body.shape.body_bytes) if signals.body else 0
 
 
 def local_model_for(
     policy: PolicyConfig, chosen: str | None, signals: RequestSignals, *, tools: bool
 ) -> LocalModel | None:
     """The listed local model a request goes to: the chosen one if it can take it, else the
-    smallest listed that can (the list is small to large)."""
+    first larger listed one that can (the list is small to large); with none chosen, the smallest
+    listed that can. A chosen model that is not listed takes nothing."""
     size = _prompt_tokens(signals)
-    for model in policy.local_models:
-        if chosen is not None and model.model != chosen:
-            continue
+    models = policy.local_models
+    if chosen is not None:
+        names = [m.model for m in models]
+        if chosen not in names:
+            return None
+        models = models[names.index(chosen) :]
+    for model in models:
         if tools and not model.tools:
             continue
         if size > model.context_tokens:

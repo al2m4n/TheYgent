@@ -72,6 +72,7 @@ them:
 | unreviewed kind | A side request whose kind an admin has not reviewed in the Catalog |
 | local share | The conversation is in the share its kind sends to a [local model](local-models.md) |
 | no local model fits | In the local share, but no listed local model can take this request (tool calls, images or prompt size) |
+| outgrew local model | The conversation grew past its local model: it moved to a larger listed one, or to Anthropic when none can take it |
 | target refused | The target, or the local model, could not take the request: it went to the model Claude Code asked for, unseen |
 
 ## How the policy decides

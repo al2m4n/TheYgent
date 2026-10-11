@@ -38,6 +38,7 @@ import {
   draftOf,
   formOf,
 } from "../../lib/gatewayConfig";
+import { compactWindowFor } from "../../lib/gatewaySetup";
 import { notify } from "../../lib/notify";
 import { saveBlob } from "../../lib/transfer";
 import { CopySnippet } from "../CopySnippet";
@@ -1249,6 +1250,9 @@ function LocalModels({
 }) {
   const evidence = useLocalEvidence();
   const rows = form.localModels;
+  // The window the setups would hand out for the configuration as edited (nothing while invalid).
+  const edited = draftFromForm(form, []).draft;
+  const compact = edited ? compactWindowFor(edited.policy) : null;
   const setRow = (i: number, patch: Partial<LocalModelRow>) =>
     onChange({ localModels: rows.map((row, j) => (j === i ? { ...row, ...patch } : row)) });
   const setDial = (kind: DialKind, patch: Partial<DialRow>) =>
@@ -1476,6 +1480,29 @@ function LocalModels({
                     />
                   </Field>
                 </div>
+              )}
+              {kind === "main" && compact !== null && (
+                <p
+                  className={`text-xs md:col-span-4 ${"tooSmall" in compact ? "text-destructive" : "text-muted-foreground"}`}
+                >
+                  {"tooSmall" in compact ? (
+                    <>
+                      The largest model these conversations can reach, <code>{compact.model}</code>,
+                      holds {compact.context.toLocaleString()} tokens. Claude Code compacts no
+                      earlier than 100,000, so long conversations will outgrow it and go to
+                      Anthropic: list one with 125,000 tokens of context or more.
+                    </>
+                  ) : (
+                    <>
+                      Claude Code compacts by the model it asked for, not the local one: the setups
+                      on Setup &amp; keys tell it to compact at {compact.window.toLocaleString()}{" "}
+                      tokens, while a conversation still fits <code>{compact.model}</code>'s{" "}
+                      {compact.context.toLocaleString()}.
+                      {compact.tight &&
+                        " That is as early as Claude Code compacts, with little room to spare."}
+                    </>
+                  )}
+                </p>
               )}
             </div>
           );

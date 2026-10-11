@@ -40,6 +40,7 @@ import anyio
 from theygent_gateway_client import GatewayClient
 from theygent_ir.gateway import ShadowOutcome, Usage
 
+from theygent_ai_gateway.signals import estimated_tokens
 from theygent_ai_gateway.translation import (
     LOCAL_AGENT_MAX_TOKENS,
     LOCAL_MAX_TOKENS,
@@ -85,7 +86,8 @@ MIN_PROMPT_TOKENS_PER_SECOND = 200
 CLIENT_TIMEOUT_SECONDS = 600.0
 #: A keep-alive ping while the local model is quiet, as the Anthropic API sends them.
 PING_SECONDS = 5.0
-#: A prompt larger than this, at about four bytes a token, is never sent to a local model.
+#: A prompt larger than this (estimated from its size) is never sent to a local model without a
+#: listed context.
 LOCAL_MAX_PROMPT_TOKENS = 32_768
 SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
 
@@ -387,12 +389,12 @@ class _Writer:
 
 def _reading_seconds(body: bytes) -> float:
     """How long reading this prompt may take, at the slowest speed allowed for."""
-    return (len(body) / 4) / MIN_PROMPT_TOKENS_PER_SECOND
+    return estimated_tokens(len(body)) / MIN_PROMPT_TOKENS_PER_SECOND
 
 
 def _too_large(body: bytes, context_tokens: int | None) -> bool:
     limit = LOCAL_MAX_PROMPT_TOKENS if context_tokens is None else context_tokens
-    return len(body) // 4 > limit
+    return estimated_tokens(len(body)) > limit
 
 
 class LocalRoute:

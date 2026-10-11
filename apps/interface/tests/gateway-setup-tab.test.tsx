@@ -56,7 +56,13 @@ function mockControlPlane({
   role = "editor",
   profile = "passthrough",
   keys = [KEY],
-}: { role?: string; profile?: string; keys?: unknown[] } = {}): Call[] {
+  config = null,
+}: {
+  role?: string;
+  profile?: string;
+  keys?: unknown[];
+  config?: Record<string, unknown> | null;
+} = {}): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -97,6 +103,11 @@ function mockControlPlane({
       }
       if (parsed.pathname === "/gateway/developers") {
         return json({ developers: [] });
+      }
+      if (parsed.pathname === "/gateway/config") {
+        return config === null
+          ? json({ error: { message: "no gateway config", code: "gateway_config_not_found" } }, 404)
+          : json(config);
       }
       return json({});
     }),
@@ -227,5 +238,65 @@ describe("AI Gateway setup & keys", () => {
     await screen.findByText("your own Claude login or API key");
     expect(screen.queryByRole("tab", { name: "Managed settings" })).not.toBeInTheDocument();
     expect(screen.queryByRole("switch", { name: "Everyone's keys" })).not.toBeInTheDocument();
+  });
+
+  describe("the auto-compact window", () => {
+    const configWith = (models: unknown[], main: Record<string, unknown>) => ({
+      version: 4,
+      mode: "router",
+      policy: {
+        subagent_target: null,
+        main_target: null,
+        local_target: null,
+        warm_switch_margin: 1.5,
+        shadow_local: true,
+        shadow_cloud: false,
+        shadow_cloud_daily_usd: 1,
+        local_models: models,
+        local_routing: {
+          side_requests: { share: 1, trial: 0, model: null, agent_types: [] },
+          subagents: { share: 0, trial: 0, model: null, agent_types: [] },
+          main: { share: 0, trial: 0, model: null, agent_types: [], ...main },
+        },
+      },
+      fingerprints: [],
+      pricing_overrides: {},
+      updated_at: "2026-10-11T00:00:00Z",
+      updated_by: null,
+    });
+    const medium = { model: "coder-medium", context_tokens: 131072, tools: true, images: false };
+    const large = { model: "coder-large", context_tokens: 262144, tools: true, images: false };
+
+    it("asks Claude Code to compact within the largest local model main conversations reach", async () => {
+      mockControlPlane({ config: configWith([medium, large], { share: 0.5 }) });
+      const ui = userEvent.setup();
+      renderTab();
+      await screen.findByLabelText("Copy shell setup");
+      // Three quarters of coder-large's 262,144, in every Claude Code setup.
+      await waitFor(() =>
+        expect(screen.getByText(/compact at 196,000 tokens/)).toBeInTheDocument(),
+      );
+      expect(document.body.textContent).toContain("CLAUDE_CODE_AUTO_COMPACT_WINDOW='196000'");
+      await ui.click(screen.getByRole("tab", { name: "settings.json" }));
+      expect(document.body.textContent).toContain('"autoCompactWindow": 196000');
+    });
+
+    it("sets nothing when main conversations stay with Anthropic", async () => {
+      mockControlPlane({ config: configWith([large], { share: 0, trial: 0.5 }) });
+      renderTab();
+      await screen.findByLabelText("Copy shell setup");
+      await waitFor(() => expect(document.body.textContent).toContain("ENABLE_TOOL_SEARCH"));
+      expect(document.body.textContent).not.toContain("AUTO_COMPACT");
+    });
+
+    it("warns when no local model for the main conversation holds enough", async () => {
+      const small = { model: "coder-small", context_tokens: 32768, tools: true, images: false };
+      mockControlPlane({ config: configWith([small], { share: 1 }) });
+      renderTab();
+      expect(
+        await screen.findByText(/long conversations will outgrow it and go to Anthropic/),
+      ).toBeInTheDocument();
+      expect(document.body.textContent).not.toContain("AUTO_COMPACT");
+    });
   });
 });
