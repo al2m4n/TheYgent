@@ -4,19 +4,24 @@ MLX is "supported" only because this runs green. Skipped by
 default (`-m 'not integration'`) and skips clean when prerequisites are absent. Run::
 
     THEYGENT_MLX_MODEL=mlx-community/Qwen2.5-0.5B-Instruct-4bit \
-        uv run pytest -m integration apps/inference-plane/tests/test_integration_mlx.py
+    THEYGENT_MLX_REASONING_MODEL=mlx-community/Qwen3-0.6B-4bit \
+        uv run pytest -m integration apps/inference-plane/tests/test_integration_mlx.py -n0
 
-Prereqs: `mlx_lm.server` resolvable (PATH or THEYGENT_MLX_BIN) + the model cached.
+Prereqs: `mlx_lm.server` resolvable (PATH or THEYGENT_MLX_BIN) + the models cached. The
+reasoning model must have think tokens (Qwen3); each test skips clean when its model is unset.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import socket
+import time
 
+import httpx
 import pytest
-from _fake_upstream import FakeUpstreamHandle
+from _fake_upstream import FakeUpstreamHandle, serve_on_uvicorn
 from _payloads import reachable_payload
 from fastapi.testclient import TestClient
 from theygent_inference_plane.app import create_app
@@ -26,11 +31,17 @@ from theygent_ir import Capabilities
 pytestmark = pytest.mark.integration
 
 _MLX_MODEL = os.environ.get("THEYGENT_MLX_MODEL")
+_MLX_REASONING_MODEL = os.environ.get("THEYGENT_MLX_REASONING_MODEL")
 _HAVE_MLX = MlxLauncher().ready
 
 _skip = pytest.mark.skipif(
     not _MLX_MODEL or not _HAVE_MLX,
     reason="needs THEYGENT_MLX_MODEL set and mlx_lm.server on PATH/THEYGENT_MLX_BIN",
+)
+_skip_reasoning = pytest.mark.skipif(
+    not _MLX_REASONING_MODEL or not _HAVE_MLX,
+    reason="needs THEYGENT_MLX_REASONING_MODEL (a think-token model, e.g. Qwen3) and "
+    "mlx_lm.server on PATH/THEYGENT_MLX_BIN",
 )
 
 
@@ -157,3 +168,71 @@ def test_real_cross_plane_mlx_calls_hosted() -> None:
     finally:
         os.environ.pop("HOSTED_KEY", None)
         asyncio.run(hosted.terminate())
+
+
+def _timed_deltas(client: httpx.Client, body: dict) -> list[tuple[float, dict]]:
+    """Each streamed delta with its arrival time, read off a real socket — a TestClient buffers
+    the whole response, which would hide when each delta arrived."""
+    out: list[tuple[float, dict]] = []
+    t0 = time.monotonic()
+    with client.stream("POST", "/v1/chat/completions", json={**body, "stream": True}) as resp:
+        assert resp.status_code == 200
+        for line in resp.iter_lines():
+            if not line.startswith("data:") or line.endswith("[DONE]"):
+                continue
+            for choice in json.loads(line[len("data:") :]).get("choices") or []:
+                out.append((time.monotonic() - t0, choice.get("delta") or {}))
+    return out
+
+
+@_skip_reasoning
+def test_real_mlx_reasoning_reaches_the_caller_as_reasoning_content() -> None:
+    # mlx_lm.server sends a think-token model's thinking as `reasoning`. Through the plane it is
+    # `reasoning_content` — the field the control plane reads — streamed as the engine produces
+    # it, and kept on a turn that ends in a tool call.
+    app = create_app(max_resident=2, enable_reaper=False)
+    payload = {**_mlx_payload(), "model": _MLX_REASONING_MODEL, "params": {"maxTokens": 1024}}
+    question = [{"role": "user", "content": "In two sentences, why is the sky blue?"}]
+    with serve_on_uvicorn(app) as base, httpx.Client(base_url=base, timeout=300) as client:
+        assert client.put("/admin/models/thinker", json=payload).status_code == 200
+        try:
+            # Non-streaming (this call also spawns and warms the engine).
+            r = client.post("/v1/chat/completions", json={"model": "thinker", "messages": question})
+            assert r.status_code == 200, r.text
+            message = r.json()["choices"][0]["message"]
+            assert message.get("reasoning_content"), "the thinking was not reasoning_content"
+            assert "<think>" not in (message.get("content") or "")
+
+            deltas = _timed_deltas(client, {"model": "thinker", "messages": question})
+            thinking = [t for t, d in deltas if d.get("reasoning_content")]
+            answer = [t for t, d in deltas if (d.get("content") or "").strip()]
+            assert thinking and answer
+            # Streamed live: the thinking began arriving well before the first answer token. A
+            # stream held for the answer releases both in the same instant.
+            assert answer[0] - thinking[0] > 0.1, (thinking[0], answer[0])
+
+            tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Current weather for a city",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"city": {"type": "string"}},
+                            "required": ["city"],
+                        },
+                    },
+                }
+            ]
+            ask = [{"role": "user", "content": "What is the weather in Paris? Use the tool."}]
+            deltas = _timed_deltas(client, {"model": "thinker", "messages": ask, "tools": tools})
+            assert any(d.get("reasoning_content") for _, d in deltas)
+            names = [
+                (tc.get("function") or {}).get("name")
+                for _, d in deltas
+                for tc in d.get("tool_calls") or []
+            ]
+            assert "get_weather" in names
+        finally:
+            client.post("/admin/models/thinker:evict")

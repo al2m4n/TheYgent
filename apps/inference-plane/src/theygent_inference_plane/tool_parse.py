@@ -17,6 +17,13 @@ text), which ``mlx_lm.server`` also passes through verbatim; ``normalize_mlx_com
 reasoning must not reach the answer either way — and every other reply through the Llama-format
 rewrite below when tools were offered.
 
+REASONING THE ENGINE SEPARATED STREAMS LIVE. For a model whose tokenizer has think tokens
+(Qwen3's ``<think>``), ``mlx_lm.server`` splits the thinking off itself and sends it in a field
+named ``reasoning``; the dispatch layer renames that to ``reasoning_content`` before a chunk reaches
+this module (a fast-suite test pins the rename). Every rewriter here decides on ``content`` alone,
+so a reasoning delta is emitted the moment it arrives instead of being held while they buffer — a
+long thinking phase streams live, and a reply that turns into a tool call keeps its reasoning.
+
 REMOVABLE BY DESIGN. This is a named adapter
 gated to the MLX chat path (``Upstream.needs_tool_parse``); when a tool-aware MLX server ships
 (emitting native ``tool_calls``), flip the gate off for it and delete this module. It NEVER runs for
@@ -246,13 +253,47 @@ def _synthetic_tool_call_chunks(
     ]
 
 
+def _split_reasoning(
+    d: dict[str, Any],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Split a chunk's engine-separated reasoning from the rest: ``(live, rest)``. ``live`` carries
+    the ``reasoning_content`` to emit now; ``rest`` is what a rewriter holds or decides on, None
+    when nothing remains. A chunk without reasoning is all ``rest`` and a reasoning-only chunk all
+    ``live``, both unchanged; only a chunk mixing reasoning with content, a tool call, a finish or
+    usage is cut in two."""
+    choices = d.get("choices") or []
+    if len(choices) != 1:
+        return None, d
+    choice = choices[0]
+    delta = choice.get("delta") or {}
+    reasoning = delta.get("reasoning_content")
+    if not reasoning:
+        return None, d
+    rest_delta = {k: v for k, v in delta.items() if k != "reasoning_content"}
+    if not (
+        rest_delta.get("content")
+        or rest_delta.get("tool_calls")
+        or rest_delta.get("function_call")
+        or choice.get("finish_reason")
+        or d.get("usage")
+    ):
+        return d, None
+    live_delta: dict[str, Any] = {"reasoning_content": reasoning}
+    if delta.get("role"):
+        live_delta["role"] = delta["role"]
+    live = {k: v for k, v in d.items() if k != "usage"}
+    live["choices"] = [{**choice, "delta": live_delta, "finish_reason": None}]
+    return live, {**d, "choices": [{**choice, "delta": rest_delta}]}
+
+
 async def rewrite_mlx_tool_stream(
     chunks: AsyncIterator[Any], valid_names: set[str], to_dict: Any
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream rewriter for the gated MLX chat path. Buffers leading content while it could be a tool
     call; if the full buffered content normalizes to offered tool calls, emit synthetic
     ``tool_calls`` chunk(s); otherwise flush the buffered (and subsequent) chunks UNCHANGED so a
-    normal answer still streams. ``to_dict`` turns an engine chunk into a plain dict.
+    normal answer still streams. Reasoning is never buffered: it streams as it arrives, so a reply
+    that becomes a tool call keeps it. ``to_dict`` turns an engine chunk into a plain dict.
 
     Yields plain chunk dicts (the caller SSE-encodes them)."""
     buffering = True
@@ -267,6 +308,12 @@ async def rewrite_mlx_tool_stream(
         if not buffering:
             yield d
             continue
+        live, rest = _split_reasoning(d)
+        if live is not None:
+            yield live
+        if rest is None:
+            continue
+        d = rest
         choice = (d.get("choices") or [{}])[0]
         delta = choice.get("delta") or {}
         if delta.get("tool_calls"):
@@ -366,7 +413,8 @@ async def _rewrite_harmony_stream(
 ) -> AsyncIterator[dict[str, Any]]:
     """Re-emit a harmony stream as OpenAI deltas: reasoning and answer text stream live as
     ``reasoning_content`` / ``content``; tool calls are emitted whole once the reply ends,
-    followed by ``finish_reason: tool_calls``. Usage-only chunks pass through."""
+    followed by ``finish_reason: tool_calls``. Usage-only chunks pass through, and so does a
+    reasoning delta the engine already separated."""
     parser = harmony.HarmonyStream(offered=offered)
     template: dict[str, Any] | None = None
     finish: dict[str, Any] | None = None
@@ -386,9 +434,14 @@ async def _rewrite_harmony_stream(
             out.append(_delta_chunk(template or {}, delta))
         return out
 
-    async for d in chunks:
+    async for chunk in chunks:
         if template is None:
-            template = d
+            template = chunk
+        live, d = _split_reasoning(chunk)
+        if live is not None:
+            yield live
+        if d is None:
+            continue
         choice = (d.get("choices") or [{}])[0]
         piece = (choice.get("delta") or {}).get("content")
         if isinstance(piece, str) and piece:
@@ -416,13 +469,18 @@ async def normalize_mlx_stream(
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming MLX chat reply → OpenAI chunks. Holds the opening chunks only until the reply
     shows whether it is harmony; a harmony reply is rewritten, any other goes to the Llama
-    text-call rewriter when tools were offered, or passes through unchanged."""
+    text-call rewriter when tools were offered, or passes through unchanged. Reasoning the engine
+    separated is not part of that decision, so it streams while the opening is held."""
     held: list[dict[str, Any]] = []
     content = ""
     decided: bool | None = None
     stream = aiter(chunks)
     async for chunk in stream:
-        d = to_dict(chunk)
+        live, d = _split_reasoning(to_dict(chunk))
+        if live is not None:
+            yield live
+        if d is None:
+            continue
         held.append(d)
         delta = ((d.get("choices") or [{}])[0].get("delta")) or {}
         if delta.get("tool_calls"):

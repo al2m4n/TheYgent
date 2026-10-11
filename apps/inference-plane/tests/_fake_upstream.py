@@ -49,6 +49,19 @@ HARMONY_ANSWER_REPLY = (
     "<|start|>assistant<|channel|>final<|message|>Timer B is 32 seconds by default."
 )
 
+# A thinking model's reply as mlx_lm.server 0.31.3 sends it (recorded from
+# mlx-community/Qwen3-0.6B-4bit): the engine splits the thinking off itself into a field named
+# `reasoning` — not `reasoning_content` — and repeats `role` on every delta. MLX_REASONING_TURN
+# then answers in content; MLX_REASONING_TOOL_TURN answers with Qwen3's text tool call, as a
+# server with no tool parser for the model's template passes it through.
+MLX_REASONING_TURN = "__mlx_reasoning_turn__"
+MLX_REASONING_TOOL_TURN = "__mlx_reasoning_tool_turn__"
+MLX_REASONING = "The user asks about Timer B. RFC 3261 sets it to 64*T1."
+MLX_REASONING_ANSWER = "Timer B is 32 seconds by default."
+MLX_REASONING_TOOL_CALL = (
+    '<tool_call>\n{"name": "rfc3261_search", "arguments": {"query": "Timer B"}}\n</tool_call>'
+)
+
 # Sent as the chat message: the engine answers the way a llama-server with a failed GPU backend
 # does (COMPUTE_ERROR), or with an ordinary per-request server error (SERVER_ERROR).
 COMPUTE_ERROR = "__compute_error__"
@@ -147,6 +160,66 @@ def _build_fake_app() -> tuple[FastAPI, _Captured]:
         if last_content == HOLD_UNTIL_DISCONNECT and not body.get("stream"):
             if (abandoned := await hold_until_caller_hangs_up(request)) is not None:
                 return abandoned
+        thinking = {
+            MLX_REASONING_TURN: MLX_REASONING_ANSWER,
+            MLX_REASONING_TOOL_TURN: MLX_REASONING_TOOL_CALL,
+        }
+        answer = thinking.get(last_content) if isinstance(last_content, str) else None
+        if answer is not None and body.get("stream"):
+
+            async def thinking_stream():
+                pieces: list[dict[str, str]] = [
+                    {"reasoning": MLX_REASONING[i : i + 8]} for i in range(0, len(MLX_REASONING), 8)
+                ]
+                pieces.append({"content": answer})
+                for delta in pieces:
+                    chunk = {
+                        "id": "chatcmpl-fake",
+                        "object": "chat.completion.chunk",
+                        "created": 0,
+                        "model": model,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", **delta},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                    yield f"data: {_dumps(chunk)}\n\n"
+                final = {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion.chunk",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {"index": 0, "delta": {"role": "assistant"}, "finish_reason": "stop"}
+                    ],
+                }
+                yield f"data: {_dumps(final)}\n\n"
+                yield "data: [DONE]\n\n"
+
+            return StreamingResponse(thinking_stream(), media_type="text/event-stream")
+        if answer is not None:
+            return JSONResponse(
+                {
+                    "id": "chatcmpl-fake",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": answer,
+                                "reasoning": MLX_REASONING,
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
         harmony = {HARMONY_TOOL_TURN: HARMONY_TOOL_REPLY, HARMONY_ANSWER_TURN: HARMONY_ANSWER_REPLY}
         reply_text = harmony.get(last_content) if isinstance(last_content, str) else None
         if reply_text is not None and body.get("stream"):
