@@ -17,20 +17,31 @@ error.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import secrets
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 from theygent_gateway_client import GatewayClient
 from theygent_ir.gateway import ShadowOutcome, Usage
 
 log = logging.getLogger(__name__)
 
-#: Side requests are small; a local model that runs on is not answering one.
+#: An answer checked before Claude Code sees it (structured output) is read whole within this.
 LOCAL_TIMEOUT_SECONDS = 30.0
+#: A relayed answer must start within this, or the request goes to Anthropic (a model still loading
+#: takes about a minute; the cloud answers meanwhile).
+FIRST_TOKEN_SECONDS = 15.0
+#: A keep-alive ping while the local model is quiet, as the Anthropic API sends them.
+PING_SECONDS = 5.0
+#: A prompt larger than this, at about four bytes a token, is never sent to a local model.
+LOCAL_MAX_PROMPT_TOKENS = 32_768
+SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
 #: Claude Code asks for 128K output on every request; a side request's answer is a few tokens.
 LOCAL_MAX_TOKENS = 4096
 #: Claude Code's first system block is billing attribution for Anthropic, nothing a model reads.
@@ -248,38 +259,152 @@ def as_stream(message: dict[str, Any]) -> bytes:
     )
 
 
+@dataclass
+class LocalStream:
+    """A local answer relayed as the model writes it: Anthropic server-sent events. ``close``
+    ends the engine's stream (a client that hung up stops the model)."""
+
+    events: AsyncIterator[bytes]
+    close: Callable[[], Awaitable[None]]
+    content_type: str = SSE_CONTENT_TYPE
+
+
+@dataclass
+class _Written:
+    """What a local model wrote, read whole: its text, usage and why it stopped."""
+
+    text: str = ""
+    usage: Usage = field(default_factory=Usage)
+    finish_reason: str | None = None
+
+
+def _too_large(body: bytes) -> bool:
+    return len(body) // 4 > LOCAL_MAX_PROMPT_TOKENS
+
+
+def _usage_of(chunk: Any) -> Usage | None:
+    usage = getattr(chunk, "usage", None)
+    if usage is None:
+        return None
+    return Usage(
+        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+    )
+
+
+def _delta_text(chunk: Any) -> tuple[str, str | None]:
+    """A chunk's visible text and finish reason (reasoning is not part of the answer)."""
+    choices = getattr(chunk, "choices", None) or []
+    if not choices:
+        return "", None
+    choice = choices[0]
+    delta = getattr(choice, "delta", None)
+    return (getattr(delta, "content", None) or ""), getattr(choice, "finish_reason", None)
+
+
+class _ThinkFilter:
+    """Drops a leading ``<think>…</think>`` block, and the blank space after it, from text that
+    arrives in pieces."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._open = True  # still deciding whether the answer starts with a reasoning block
+        self._trim = False  # just past a reasoning block: drop leading blank space
+
+    def feed(self, piece: str) -> str:
+        if not self._open:
+            return self._trimmed(piece)
+        self._buffer += piece
+        stripped = self._buffer.lstrip()
+        if not stripped or ("<think>".startswith(stripped) and len(stripped) < 7):
+            return ""  # nothing yet, or what could still become "<think>"
+        if not stripped.startswith("<think>"):
+            self._open = False
+            return self._buffer
+        end = stripped.find("</think>")
+        if end < 0:
+            return ""
+        self._open, self._trim = False, True
+        return self._trimmed(stripped[end + len("</think>") :])
+
+    def _trimmed(self, piece: str) -> str:
+        if self._trim:
+            piece = piece.lstrip()
+            self._trim = not piece
+        return piece
+
+
 class LocalRoute:
-    """Answers translatable side requests with a model on the inference plane."""
+    """Answers translatable requests with a model on the inference plane, streaming from it."""
 
-    def __init__(self, base_url: str, *, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        timeout: float | None = None,
+        first_token_seconds: float | None = None,
+    ) -> None:
         # No retries: the fallback for a failure is the Anthropic API, not a second local attempt.
-        self._client = GatewayClient(
-            base_url,
-            timeout=timeout if timeout is not None else LOCAL_TIMEOUT_SECONDS,
-            max_retries=0,
+        self._timeout = timeout if timeout is not None else LOCAL_TIMEOUT_SECONDS
+        self._first_token = (
+            first_token_seconds if first_token_seconds is not None else FIRST_TOKEN_SECONDS
         )
+        self._client = GatewayClient(base_url, timeout=self._timeout, max_retries=0)
 
-    async def answer(self, model: str, body: bytes) -> LocalAnswer | None:
-        """The answer Claude Code gets, or ``None`` when the request goes upstream instead."""
-        return (await self.attempt(model, body)).answer
-
-    async def attempt(self, model: str, body: bytes) -> LocalAttempt:
-        translated = translate(body)
-        if translated is None:
-            return LocalAttempt("untranslatable")
+    async def _open(self, model: str, translated: Translated) -> Any | None:
         try:
-            completion = await self._client.complete(
-                model=model, messages=list(translated.messages), params=translated.params
+            return await self._client.open_stream(
+                model=model,
+                messages=list(translated.messages),
+                params=translated.params,
+                include_usage=True,
             )
         except Exception as exc:
             log.warning("the local model did not answer: %s", type(exc).__name__)
+            return None
+
+    async def answer(self, model: str, body: bytes) -> LocalAnswer | LocalStream | None:
+        """What Claude Code gets, or ``None`` when the request goes upstream instead. An answer that
+        must be checked first (structured output, or a client that did not stream) is read whole;
+        any other is relayed as it is written, once the model has started within the first-token
+        time."""
+        translated = translate(body)
+        if translated is None or _too_large(body):
+            return None
+        if translated.stream and translated.schema is None:
+            return await self._relay(model, translated)
+        return (await self._checked(model, translated)).answer
+
+    async def attempt(self, model: str, body: bytes) -> LocalAttempt:
+        """How the local model does on this request, read whole and checked (a shadow run)."""
+        translated = translate(body)
+        if translated is None or _too_large(body):
+            return LocalAttempt("untranslatable")
+        return await self._checked(model, translated)
+
+    async def _read_whole(self, stream: Any) -> _Written:
+        written = _Written()
+        async for chunk in stream:
+            text, finish = _delta_text(chunk)
+            written.text += text
+            written.finish_reason = finish or written.finish_reason
+            written.usage = _usage_of(chunk) or written.usage
+        return written
+
+    async def _checked(self, model: str, translated: Translated) -> LocalAttempt:
+        stream = await self._open(model, translated)
+        if stream is None:
             return LocalAttempt("failed")
-        usage = Usage(
-            input_tokens=completion.usage.prompt_tokens if completion.usage else 0,
-            output_tokens=completion.usage.completion_tokens if completion.usage else 0,
-        )
-        choice = completion.choices[0] if completion.choices else None
-        text = answer_text(choice.message.content) if choice is not None else ""
+        try:
+            written = await asyncio.wait_for(self._read_whole(stream), self._timeout)
+        except Exception as exc:
+            log.warning("the local model did not finish: %s", type(exc).__name__)
+            return LocalAttempt("failed")
+        finally:
+            with anyio.CancelScope(shield=True):
+                await _close(stream)
+        usage = written.usage
+        text = answer_text(written.text)
         if not text:
             log.warning("the local model's answer is empty")
             return LocalAttempt("unusable", usage=usage)
@@ -292,15 +417,132 @@ class LocalRoute:
             if not fits(parsed, translated.schema):
                 log.warning("the local model's answer does not fit the schema")
                 return LocalAttempt("unusable", usage=usage)
-        cut_short = choice is not None and choice.finish_reason == "length"
+        cut_short = written.finish_reason == "length"
         message = _message(text, model, usage, "max_tokens" if cut_short else "end_turn")
         if translated.stream:
-            answer = LocalAnswer(as_stream(message), "text/event-stream; charset=utf-8")
+            answer = LocalAnswer(as_stream(message), SSE_CONTENT_TYPE)
         else:
             answer = LocalAnswer(
                 json.dumps(message, ensure_ascii=False).encode(), "application/json"
             )
         return LocalAttempt("answered", answer, usage)
 
+    async def _relay(self, model: str, translated: Translated) -> LocalStream | None:
+        opened: list[Any] = []
+        thinking = _ThinkFilter()
+        state = _Written()
+
+        async def start() -> tuple[Any, AsyncIterator[Any], str]:
+            # Opening the stream and the first visible text share one deadline: a server slow to
+            # answer at all is as late as a model slow to start.
+            stream = await self._client.open_stream(
+                model=model,
+                messages=list(translated.messages),
+                params=translated.params,
+                include_usage=True,
+            )
+            opened.append(stream)
+            chunks = stream.__aiter__()
+            while True:
+                chunk = await chunks.__anext__()
+                text, finish = _delta_text(chunk)
+                state.usage = _usage_of(chunk) or state.usage
+                state.finish_reason = finish or state.finish_reason
+                if visible := thinking.feed(text):
+                    return stream, chunks, visible
+                if finish is not None:
+                    raise StopAsyncIteration
+
+        try:
+            stream, chunks, first = await asyncio.wait_for(start(), self._first_token)
+        except (Exception, StopAsyncIteration) as exc:
+            log.warning("the local model did not start answering: %s", type(exc).__name__)
+            with anyio.CancelScope(shield=True):
+                for stream in opened:
+                    await _close(stream)
+            return None
+
+        async def events() -> AsyncIterator[bytes]:
+            message_id = f"msg_local_{secrets.token_hex(12)}"
+            start = {
+                "id": message_id,
+                "type": "message",
+                "role": "assistant",
+                "model": model,
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 0, "output_tokens": 0},
+            }
+            yield _event("message_start", {"type": "message_start", "message": start})
+            yield _event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            )
+            yield _text_delta(first)
+            pending: asyncio.Future[Any] | None = None
+            try:
+                while True:
+                    pending = pending or asyncio.ensure_future(chunks.__anext__())
+                    done, _ = await asyncio.wait({pending}, timeout=PING_SECONDS)
+                    if not done:
+                        yield _event("ping", {"type": "ping"})
+                        continue
+                    try:
+                        chunk = pending.result()
+                    except StopAsyncIteration:
+                        break
+                    finally:
+                        pending = None
+                    text, finish = _delta_text(chunk)
+                    state.usage = _usage_of(chunk) or state.usage
+                    state.finish_reason = finish or state.finish_reason
+                    if visible := thinking.feed(text):
+                        yield _text_delta(visible)
+            finally:
+                if pending is not None:
+                    pending.cancel()
+                with anyio.CancelScope(shield=True):
+                    await _close(stream)
+            yield _event("content_block_stop", {"type": "content_block_stop", "index": 0})
+            stop = "max_tokens" if state.finish_reason == "length" else "end_turn"
+            yield _event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop, "stop_sequence": None},
+                    "usage": {
+                        "input_tokens": state.usage.input_tokens,
+                        "output_tokens": state.usage.output_tokens,
+                    },
+                },
+            )
+            yield _event("message_stop", {"type": "message_stop"})
+
+        async def close() -> None:
+            with anyio.CancelScope(shield=True):
+                await _close(stream)
+
+        return LocalStream(events(), close)
+
     async def aclose(self) -> None:
         await self._client.aclose()
+
+
+def _text_delta(text: str) -> bytes:
+    return _event(
+        "content_block_delta",
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}},
+    )
+
+
+async def _close(stream: Any) -> None:
+    """Close the engine's stream; the inference plane then stops the model."""
+    try:
+        await stream.close()
+    except Exception as exc:
+        log.warning("could not close the local stream: %s", type(exc).__name__)

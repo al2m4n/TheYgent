@@ -63,7 +63,7 @@ from theygent_ai_gateway.identity import (
     KeyRing,
     presented_gateway_key,
 )
-from theygent_ai_gateway.local import LocalAnswer, LocalRoute
+from theygent_ai_gateway.local import LocalAnswer, LocalRoute, LocalStream
 from theygent_ai_gateway.observe import (
     Observation,
     ObserveHook,
@@ -312,8 +312,9 @@ class _Exchange:
         body, path, headers = kept
         return ShadowJob(plan.target, body, path, headers, fast=self._signals.fast)
 
-    def served_locally(self, answer: LocalAnswer) -> None:
-        """The local model answered: the exchange is that answer, read like an upstream one."""
+    def served_locally(self, answer: LocalAnswer | LocalStream) -> None:
+        """The local model answers: the exchange is that answer, read like an upstream one (a
+        relayed answer's bytes follow through ``chunk``)."""
         self._applied = self._local = True
         self._status = 200
         self._headers_ms = self._ms()
@@ -321,7 +322,8 @@ class _Exchange:
             self._observer = ResponseObserver(answer.content_type, None)
         except Exception as exc:
             log.error("could not start reading the response: %s", type(exc).__name__)
-        self.chunk(answer.body)
+        if isinstance(answer, LocalAnswer):
+            self.chunk(answer.body)
 
     def local_failed(self) -> None:
         """The local model could not answer; the request goes to the requested model. Unlike a
@@ -523,6 +525,32 @@ async def _relay(upstream: httpx.Response, exchange: _Exchange) -> AsyncIterator
         exchange.finish(outcome)
 
 
+async def _relay_local(answer: LocalStream, exchange: _Exchange) -> AsyncIterator[bytes]:
+    """Relay a local model's answer as it is written. A client that hangs up cancels this, which
+    closes the engine's stream (the model stops); a model that breaks off ends the response
+    abruptly, as an upstream that breaks would."""
+    outcome: Outcome = "complete"
+    try:
+        async for chunk in answer.events:
+            exchange.chunk(chunk)
+            yield chunk
+    except (asyncio.CancelledError, GeneratorExit):
+        outcome = "client_disconnected"
+        raise
+    except BaseException:
+        outcome = "upstream_broke"
+        raise
+    finally:
+        await answer.close()
+        exchange.finish(outcome)
+
+
+async def _close_local(answer: LocalStream, exchange: _Exchange) -> None:
+    """Runs after the response: covers a client that left before the answer was relayed."""
+    await answer.close()
+    exchange.finish("client_disconnected")
+
+
 async def _close_unrelayed(upstream: httpx.Response, exchange: _Exchange) -> None:
     """Runs after the response: covers a client that left before the body was ever iterated,
     so ``_relay``'s own cleanup never ran. Both steps are idempotent."""
@@ -654,7 +682,7 @@ async def forward(request: Request) -> Response:
     local_model = exchange.local_route()
     if local_model is not None:
         local: LocalRoute | None = getattr(request.app.state, "local", None)
-        answered: LocalAnswer | None = None
+        answered: LocalAnswer | LocalStream | None = None
         if local is not None:
             try:
                 answered = await _unless_client_disconnects(
@@ -663,6 +691,13 @@ async def forward(request: Request) -> Response:
             except ClientDisconnected:
                 exchange.finish("client_disconnected")
                 return Response(status_code=CLIENT_CLOSED_REQUEST)
+        if isinstance(answered, LocalStream):
+            exchange.served_locally(answered)
+            relayed = StreamingResponse(
+                _relay_local(answered, exchange), status_code=200, media_type=answered.content_type
+            )
+            relayed.background = BackgroundTask(_close_local, answered, exchange)
+            return relayed
         if answered is not None:
             exchange.served_locally(answered)
             exchange.finish("complete")

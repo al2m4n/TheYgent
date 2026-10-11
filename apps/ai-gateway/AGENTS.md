@@ -102,6 +102,10 @@ Router mode applies the policy's decisions; observer mode only records them.
   refusal before the answer starts (400, 404, 413, 422, 429, 529) sends the original bytes to the
   requested model and pins the conversation there until its next cold boundary; 401/403 are
   credential problems and are not retried. A mid-stream error cannot be retried — bytes are out.
+- **A local route always streams from the engine.** A client that leaves must stop the model, and
+  a non-streaming request would hold the engine to the end. A prompt larger than the model's
+  budget is never sent, and a model that has not started within the first-token deadline hands
+  the request to Anthropic before any byte is out.
 - **A local route answers only what translates faithfully, and only once the answer is checked.**
   An `allow_local` side request goes to the inference plane as a chat completion when it is text
   only (no tools, images or documents). The answer must be text, and JSON that fits the schema

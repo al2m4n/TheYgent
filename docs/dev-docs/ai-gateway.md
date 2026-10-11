@@ -152,12 +152,25 @@ by the inference plane instead (`local.py`, at `THEYGENT_INFERENCE_PLANE_URL` th
 `packages/gateway-client`). Only what translates faithfully goes: text system blocks less the
 billing attribution, text messages, sampling settings and the output schema (as a `json_schema`
 response format, thinking off, the output budget capped at 4,096). Tools, images, documents or any
-other block stay with the Anthropic API. The answer is checked before Claude Code sees it — text,
-and JSON that fits the schema (reasoning blocks and code fences stripped) — and returned as the
-Anthropic message Claude Code asked for, as server-sent events when it streamed. Anything else — a
-request that does not translate, no inference plane, an error, 30 seconds without an answer, an
-answer that does not fit — sends the original bytes upstream and records `target_refused`, without
-pinning anything (a side request holds no conversation cache). A local answer is recorded as
+other block stay with the Anthropic API. A prompt over 32K tokens (at about four bytes a token) is
+never sent.
+
+The gateway always streams from the engine, so a client that hangs up closes the stream and the
+model stops; a non-streaming request would hold the engine to the end. What happens next depends
+on the request:
+
+- **Structured output, or a client that did not stream.** The answer is read whole and checked —
+  text, and JSON that fits the schema, with reasoning blocks and code fences stripped. It is
+  returned as the Anthropic message Claude Code asked for.
+- **Any other request.** The answer is relayed as Anthropic server-sent events as it is written,
+  with pings while the model is quiet and a leading reasoning block dropped. It is relayed only
+  once the first visible text arrives within 15 seconds: opening the stream and the first token
+  share that deadline.
+
+Anything that fails before an answer is committed sends the original bytes upstream and records
+`target_refused`, without pinning anything (a side request holds no conversation cache). That
+covers a request that does not translate, no inference plane, an error, no first token in time, a
+checked answer over 30 seconds or one that does not fit. A local answer is recorded as
 applied, served by the logical id, `cost_usd` 0.0 (no API spend; local compute is not priced) and
 `baseline_usd` priced on the requested model with the local model's token counts — a different
 tokenizer, so an estimate. Claude Code sends side requests only in interactive sessions, so its

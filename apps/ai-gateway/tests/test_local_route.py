@@ -16,6 +16,7 @@ What must hold:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import time
@@ -284,7 +285,9 @@ def test_a_session_title_is_answered_locally(tmp_path: Path) -> None:
     observed = gw.seen[-1]
     assert gw.upstream.requests == []  # the Anthropic API never saw it
     [asked] = gw.inference.requests
-    assert asked["model"] == LOCAL and asked["stream"] is False
+    # Streamed from the engine (a client that leaves then stops it), with usage reported.
+    assert asked["model"] == LOCAL and asked["stream"] is True
+    assert asked["stream_options"] == {"include_usage": True}
     assert asked["response_format"]["json_schema"]["schema"] == TITLE_SCHEMA
     assert not any("x-anthropic-billing-header" in m["content"] for m in asked["messages"])
     # Claude Code reads its title from the stream, as it would from Anthropic's.
@@ -445,3 +448,186 @@ def test_a_client_that_hangs_up_cancels_the_local_call(tmp_path: Path) -> None:
         observed = gw.wait_for(1)
     assert observed.outcome == "client_disconnected"
     assert gw.upstream.requests == []  # nothing fell back for a client that left
+
+
+# ── streaming a free-form answer ─────────────────────────────────────────────
+
+#: The title request without its output schema: a free-form answer, relayed as it is written.
+FREE = title_with(output_config=None)
+
+
+def stream_events(response_bytes: bytes) -> list[tuple[str, dict[str, Any]]]:
+    out = []
+    for block in response_bytes.decode().split("\n\n"):
+        lines = block.strip().split("\n")
+        if len(lines) == 2 and lines[0].startswith("event: "):
+            out.append((lines[0][7:], json.loads(lines[1][6:])))
+    return out
+
+
+def free_rule() -> FingerprintRule:
+    signals = read_request(dict(FREE.request_headers), FREE.request_bytes(), has_messages_body=True)
+    assert signals.body is not None and signals.body.fingerprint is not None
+    return FingerprintRule(fingerprint=signals.body.fingerprint, status="allow_local")
+
+
+@contextmanager
+def free_gateway(tmp_path: Path) -> Iterator[Gateway]:
+    seen: list[Observation] = []
+    with fake_anthropic() as upstream, fake_inference() as fake:
+        settings = GatewaySettings(
+            upstream_url=upstream.base_url,
+            inference_plane_url=fake.base_url,
+            gateway_id="gw",
+            state_dir=tmp_path,
+        )
+        cfg = GatewayConfig(
+            version=1,
+            mode="router",
+            policy=PolicyConfig(local_target=LOCAL, shadow_local=False),
+            fingerprints=[free_rule()],
+            updated_at=datetime(2026, 10, 11, tzinfo=UTC),
+        )
+        with serve(create_app(settings, observe=seen.append, config=cfg)) as url:
+            yield Gateway(url, upstream, fake, seen)
+
+
+def test_a_free_answer_reaches_the_client_as_it_is_written(tmp_path: Path) -> None:
+    with free_gateway(tmp_path) as gw:
+        gw.inference.pieces = ["Fixing", " the", " parser", " now"]
+        gw.inference.piece_delay = 0.4
+        first_seen_after: int | None = None
+        body = b""
+        with httpx.stream(
+            "POST",
+            f"{gw.url}{FREE.target}",
+            content=FREE.request_bytes(),
+            headers=[*FREE.request_headers, ("x-fake-fixture", FREE.name)],
+            timeout=10,
+        ) as response:
+            assert response.headers["content-type"].startswith("text/event-stream")
+            for piece in response.iter_bytes():
+                body += piece
+                if first_seen_after is None and b"text_delta" in body:
+                    first_seen_after = gw.inference.sent_pieces
+        observed = gw.wait_for(1)
+    # The first words were relayed while the model was still writing the rest.
+    assert first_seen_after is not None and first_seen_after < 4
+    events = stream_events(body)
+    names = [name for name, _ in events if name != "ping"]
+    assert names[0] == "message_start" and names[-1] == "message_stop"
+    text = "".join(d["delta"]["text"] for n, d in events if n == "content_block_delta")
+    assert text == "Fixing the parser now"
+    [delta] = [d for n, d in events if n == "message_delta"]
+    assert delta["delta"]["stop_reason"] == "end_turn"
+    assert delta["usage"] == {"input_tokens": 812, "output_tokens": 9}
+    assert gw.upstream.requests == []
+    assert observed.decision.applied and observed.response.model == LOCAL
+    assert (observed.outcome, observed.cost_usd) == ("complete", 0.0)
+    assert (observed.response.usage.input_tokens, observed.response.usage.output_tokens) == (812, 9)
+
+
+@pytest.mark.parametrize("slow", ["headers", "first piece"])
+def test_a_model_slow_to_start_hands_the_request_to_anthropic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, slow: str
+) -> None:
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 0.3)
+    with free_gateway(tmp_path) as gw:
+        if slow == "headers":
+            gw.inference.delay = 2
+        else:
+            gw.inference.piece_delay = 2
+        started = time.monotonic()
+        response = gw.send(FREE)
+        elapsed = time.monotonic() - started
+    assert elapsed < 1.8
+    [received] = gw.upstream.requests
+    assert received.body == FREE.request_bytes()
+    assert response.content == FREE.response_bytes()
+    assert gw.seen[-1].decision.reasons[0] == "target_refused"
+
+
+def test_a_client_that_leaves_stops_the_model(tmp_path: Path) -> None:
+    with free_gateway(tmp_path) as gw:
+        gw.inference.pieces = [f"word{i} " for i in range(40)]
+        gw.inference.piece_delay = 0.2
+        with httpx.stream(
+            "POST",
+            f"{gw.url}{FREE.target}",
+            content=FREE.request_bytes(),
+            headers=[*FREE.request_headers, ("x-fake-fixture", FREE.name)],
+            timeout=10,
+        ) as response:
+            for piece in response.iter_bytes():
+                if b"text_delta" in piece:
+                    break  # the client hangs up after the first words
+        assert gw.inference.abandoned.wait(5), "the engine's stream was not closed"
+        observed = gw.wait_for(1)
+    assert gw.inference.sent_pieces < 40
+    assert observed.outcome == "client_disconnected"
+
+
+def test_a_quiet_model_keeps_the_stream_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(local, "PING_SECONDS", 0.1)
+    with free_gateway(tmp_path) as gw:
+        gw.inference.pieces = ["one", " two"]
+        gw.inference.piece_delay = 0.5
+        response = gw.send(FREE)
+    events = [name for name, _ in stream_events(response.content)]
+    assert "ping" in events[events.index("content_block_start") :]
+
+
+def test_a_reasoning_block_is_not_relayed(tmp_path: Path) -> None:
+    with free_gateway(tmp_path) as gw:
+        gw.inference.pieces = ["<thi", "nk>Let me", " think.</th", "ink>\n", "Fix", " it"]
+        response = gw.send(FREE)
+    text = "".join(
+        d["delta"]["text"] for n, d in stream_events(response.content) if n == "content_block_delta"
+    )
+    assert text == "Fix it"
+
+
+def test_a_prompt_too_large_is_never_sent(tmp_path: Path) -> None:
+    huge = title_with(
+        output_config=None,
+        messages=[{"role": "user", "content": [{"type": "text", "text": "x" * 200_000}]}],
+    )
+    with free_gateway(tmp_path) as gw:
+        response = gw.send(huge)
+    assert gw.inference.requests == []
+    assert response.status_code == 200 and gw.upstream.requests[0].body == huge.request_bytes()
+
+
+@pytest.mark.parametrize(
+    ("pieces", "visible"),
+    [
+        (["Hello"], "Hello"),
+        (["<think>x</think>", "Hi"], "Hi"),
+        (["<", "think>", "a", "</think>", " Hi"], "Hi"),
+        (["  ", "<thi"], ""),  # still undecided
+        (["<thinking about it"], "<thinking about it"),
+        (["<b>bold</b>"], "<b>bold</b>"),
+    ],
+)
+def test_the_reasoning_filter(pieces: list[str], visible: str) -> None:
+    flt = local._ThinkFilter()
+    assert "".join(flt.feed(p) for p in pieces) == visible
+
+
+async def test_closing_an_answer_never_read_stops_the_model() -> None:
+    # A client that leaves before the answer is relayed: no read is pending, so only closing the
+    # answer reaches the engine.
+    with fake_inference() as fake:
+        fake.pieces = [f"word{i} " for i in range(40)]
+        fake.piece_delay = 0.2
+        route = local.LocalRoute(fake.base_url)
+        try:
+            answer = await route.answer(LOCAL, FREE.request_bytes())
+            assert isinstance(answer, local.LocalStream)
+            await answer.close()
+            assert await asyncio.to_thread(fake.abandoned.wait, 5)
+        finally:
+            await route.aclose()
+    assert fake.sent_pieces < 40
