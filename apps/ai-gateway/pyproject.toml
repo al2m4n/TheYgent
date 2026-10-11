@@ -1,6 +1,6 @@
 [project]
 name = "theygent-ai-gateway"
-version = "0.1.0"
+version = "1.0.0"
 description = "TheYgent AI gateway — an Anthropic-Messages proxy between coding agents and their models (observer + router)"
 requires-python = ">=3.12"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }

@@ -18,6 +18,7 @@ import dataclasses
 import stat
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from importlib import metadata
 from pathlib import Path
 
 import httpx
@@ -412,7 +413,7 @@ def test_the_heartbeat_reports_the_gateway(tmp_path: Path) -> None:
             wait_for(lambda: bool(source.beats) and source.beats[-1].spool_backlog == 2, "a beat")
     last = source.beats[-1]
     assert (last.gateway_id, last.mode, last.config_version) == ("gw-test", "observer", 1)
-    assert last.software_version == "0.1.0"
+    assert last.software_version == metadata.version("theygent-ai-gateway")  # as installed
     assert last.key_set_version == 1
     assert last.upstream_reachable is True
     assert last.started_at.tzinfo is not None

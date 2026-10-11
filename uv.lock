@@ -3538,7 +3538,7 @@ wheels = [
 
 [[package]]
 name = "theygent-ai-gateway"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "apps/ai-gateway" }
 dependencies = [
     { name = "fastapi" },
@@ -3579,7 +3579,7 @@ dev = [
 
 [[package]]
 name = "theygent-control-plane"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "apps/control-plane" }
 dependencies = [
     { name = "alembic" },
@@ -3661,7 +3661,7 @@ dev = [
 
 [[package]]
 name = "theygent-gateway-client"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/gateway-client" }
 dependencies = [
     { name = "httpx" },
@@ -3692,7 +3692,7 @@ dev = [
 
 [[package]]
 name = "theygent-inference-plane"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "apps/inference-plane" }
 dependencies = [
     { name = "fastapi" },
@@ -3737,7 +3737,7 @@ dev = [
 
 [[package]]
 name = "theygent-ir"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "packages/ir" }
 dependencies = [
     { name = "pydantic" },
@@ -3764,7 +3764,7 @@ dev = [
 
 [[package]]
 name = "theygent-worker"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "apps/worker" }
 dependencies = [
     { name = "dbos" },

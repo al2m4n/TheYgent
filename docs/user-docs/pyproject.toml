@@ -3,7 +3,7 @@
 # the application dependency graph.
 [project]
 name = "theygent-user-docs"
-version = "0.1.0"
+version = "1.0.0"
 description = "TheYgent user documentation site (MkDocs Material, versioned with mike)"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
 requires-python = ">=3.12"

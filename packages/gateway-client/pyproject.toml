@@ -1,6 +1,6 @@
 [project]
 name = "theygent-gateway-client"
-version = "0.1.0"
+version = "1.0.0"
 description = "Thin, stateless OpenAI-compatible async client for the inference-plane seam"
 requires-python = ">=3.12"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
