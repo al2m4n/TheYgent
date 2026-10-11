@@ -102,6 +102,10 @@ The policy governing whether a run's per-node input/output payloads are recorded
 
 The category of a [node](#node): `activity`, `orchestration`, or `boundary`. Every node type has exactly one correct kind (the `guardrail` is the one exception, whose kind follows its check type). See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
 
+### Local trial
+
+A slice of conversations, just above a local dial's share, that the [AI gateway](#ai-gateway) still sends to Anthropic and then tries on the local model, recording whether it picked the same next action. It measures a model before it serves. See [Local models](../ai-gateway/local-models.md).
+
 ### Logical model id
 
 The name you give a model when you register it (for example `triage-fast`) and the only thing you ever put in a `model` field. It hides the engine and weights behind it, so swapping a local model for a hosted one is one registration change with no graph edits. See [Models & engines](../concepts/models-and-engines.md).
@@ -125,7 +129,8 @@ The [AI gateway](#ai-gateway) mode that records every exchange — its cost and 
 ### Router mode
 
 The [AI gateway](#ai-gateway) mode that applies the routing decisions observer mode only records: a
-routed request runs on the target model, with nothing else changed. See
+routed request runs on the target model — a cheaper Anthropic model, with nothing else changed, or
+a [local model](../ai-gateway/local-models.md). See
 [AI Gateway](../ai-gateway/index.md#observer-router-and-passthrough).
 
 ### Orchestration
@@ -151,6 +156,14 @@ One execution of an agent or graph. It moves through statuses `created → strea
 ### Service key
 
 An [AI gateway](#ai-gateway)'s credential towards the control plane (`tygs_…`), minted by an admin under **AI Gateway → Settings → Service keys**. It lets the gateway fetch its configuration and developers' keys and deliver its records. See [Running the gateway](../ai-gateway/running.md#attach-it-to-the-control-plane).
+
+### Shadow run
+
+A copy of a request the [AI gateway](#ai-gateway) sends, after the real exchange, to a model that did not answer it — the target routing would have used, or a local model on [trial](#local-trial) — to measure it. Claude Code never sees it. See [Reports & policy](../ai-gateway/reports.md#the-report-tab).
+
+### Side request
+
+A small request Claude Code sends besides the conversation itself — a session title, a suggestion, a check. The [AI gateway](#ai-gateway)'s Catalog lists each kind it has seen and what routing may do with it. See [Reports & policy](../ai-gateway/reports.md#catalog-admins).
 
 ### Session
 

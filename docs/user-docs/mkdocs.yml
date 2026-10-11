@@ -142,6 +142,7 @@ nav:
       - ai-gateway/index.md
       - Set Up Claude Code: ai-gateway/setup.md
       - Reports & Policy: ai-gateway/reports.md
+      - Local Models: ai-gateway/local-models.md
       - Running the Gateway: ai-gateway/running.md
   - Import & Export:
       - import-export/index.md

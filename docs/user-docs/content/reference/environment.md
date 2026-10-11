@@ -96,7 +96,7 @@ Claude Code *at* the gateway.
 | `THEYGENT_AI_GATEWAY_ID` | `gw-<hostname>` | The name this gateway appears under on the Overview. |
 | `THEYGENT_AI_GATEWAY_KEY_SYNC_SECONDS` | `30` | How often team mode re-syncs developers' keys (1–3600); a revoked key is refused within one interval. |
 | `THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS` | `30` | How often the gateway reports itself and checks for a new configuration (1–3600). |
-| `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | Where router mode sends side requests the Catalog allows to run on a local model — the same variable and default as the control plane's. **Must include the `/v1` suffix.** When nothing answers there, those requests go to the Anthropic API. |
+| `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | Where the gateway reaches [local models](../ai-gateway/local-models.md): the requests a local dial sends there, trials and local shadow runs — the same variable and default as the control plane's. **Must include the `/v1` suffix.** When nothing answers there, those requests go to the Anthropic API. |
 | `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS` | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated browser origins allowed to call the gateway's admin surface — the interface's Settings tab. Add the interface's origin if you serve it elsewhere. |
 
 ## Interface (build-time)

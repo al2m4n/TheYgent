@@ -102,6 +102,7 @@ flowchart LR
   CC -->|"Anthropic Messages"| AG
   AG -->|"the same bytes"| ANT
   AG -->|"metadata only: records, heartbeats"| API
+  AG -->|"local models: shares, trials"| GW
   UI -->|"org key (admin, direct)"| AG
 ```
 
@@ -136,8 +137,9 @@ Notes on the topology:
   credentials, forwards them byte-for-byte, and sends the control plane metadata only —
   per-request records whose wire types refuse free text, and heartbeats. It records what
   each exchange cost and what a routing policy would have done, and in router mode applies
-  that policy — side requests an admin allows to run locally go to the inference plane through
-  the same shared client. The control plane holds its versioned config, developers' gateway
+  that policy: to a cheaper Anthropic model, or — in the shares an admin sets per kind of
+  request — to local models on the inference plane, reached through the same shared client like
+  any other caller of `/v1/*`. The control plane holds its versioned config, developers' gateway
   keys and the reports. See [ai-gateway.md](./ai-gateway.md).
 
 The same four process types run in every mode: `make up` on bare metal, Docker Compose,

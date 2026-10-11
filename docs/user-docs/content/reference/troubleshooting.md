@@ -278,6 +278,14 @@ A gateway appears on the **Overview** only when it is attached to the control pl
 
 The organization's key is read and written on the gateway itself, from your browser. Set the gateway's address on **Setup & keys**, and if the interface is served from another origin than `http://localhost:5174`, add that origin to `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS`.
 
+### Requests I expected on a local model went to Anthropic
+
+Open the request on the **Sessions** tab: its reasons say why. *No local model fits*: no listed model takes tool calls, images or a prompt that size — list one that does, with its real context. *Target refused*: the local model could not take it — an error, no answer in time, an unusable answer, a document or server tool it can't be given, or no inference plane at `THEYGENT_INFERENCE_PLANE_URL`; the conversation then stays with Anthropic until its next cold point. *Would route →* a local model: the gateway is in observer mode, which only records. No local reason at all: the conversation is outside the share, or it started before the share was raised and moves at its next cold point. Some requests never go local, such as compaction. See [Local models](../ai-gateway/local-models.md).
+
+### Claude Code shows a higher cost than the Report
+
+In router mode Claude Code prices every token at the model it asked for, even when a cheaper model or a local one answered. The Report prices what actually ran, and shows Claude Code's figure as *without routing*. See [Claude Code's own cost display](../ai-gateway/setup.md#claude-codes-own-cost-display).
+
 ### The Report warns that tool search is off
 
 Claude Code turns MCP tool search off for any custom base URL and then sends every tool's definition with every request. Set `ENABLE_TOOL_SEARCH=true` (the desktop app: tool search on). See [why each setting](../ai-gateway/setup.md#why-each-setting).

@@ -3,13 +3,16 @@
 `apps/ai-gateway` is an Anthropic-Messages proxy that sits between a coding agent (Claude Code:
 the CLI, IDE extensions, the desktop app) and its models. It records what every exchange cost
 and what a routing policy would have done with it, so a team can see where its model spend goes
-and what moving work to cheaper models would save — before anything is moved. It is the fourth
-process type, on :8082.
+and what moving work would save — before anything is moved. In router mode it applies the policy:
+to a cheaper Anthropic model where that is a drop-in, and to local models on the inference plane
+in the shares an admin sets. It is the fourth process type, on :8082.
 
 Not to be confused with the inference plane's OpenAI-compatible data plane (`/v1/*`, reached
 through `packages/gateway-client`): that serves TheYgent's own agents; this one serves a coding
-agent's Anthropic-format traffic. The gateway calls it in one case only: in router mode, for the
-side requests an admin allows to run on a local model (see *Router mode* below).
+agent's Anthropic-format traffic. The gateway is a client of that data plane for local models: the
+requests a local dial serves, local trials and local shadow runs (see *Local models, by share*
+and *Shadow runs* below). Users' view of the same features: the
+[AI Gateway user docs](../user-docs/content/ai-gateway/index.md).
 
 Rules for changing it live in [apps/ai-gateway/AGENTS.md](../../apps/ai-gateway/AGENTS.md); the
 measurements behind them in [apps/ai-gateway/spike/FINDINGS.md](../../apps/ai-gateway/spike/FINDINGS.md).
@@ -58,6 +61,10 @@ until an admin saves a config: an organization's traffic is recorded only once s
 | `policy.py` | The routing policy: a decision per request with reason codes, held per conversation until its next cold boundary |
 | `routing.py` | Router mode: the `model` splice, and which target answers send the request back to the requested model |
 | `costs.py` + `pricing.json` | List prices (versioned, dated) plus the config's contracted rates; actual and counterfactual cost |
+| `pricing_source.py`, `scripts/update_pricing.py` | Reading Anthropic's published pricing page into `pricing.json` (`make ai-gateway-prices`) |
+| `local.py` | The local route: streams from the inference plane, the deadlines, the fallback before commit, checked answers for shadows and structured output |
+| `translation.py` | Anthropic Messages ⇄ OpenAI chat completions, faithfully or not at all: tools, tool calls and results, images; the writer that turns OpenAI chunks into Anthropic events |
+| `shadow.py` | Shadow runs and local trials, after the exchange: local and cloud, limits, the daily cloud budget, the same-next-action verdict |
 | `configsync.py` | The config in effect (one snapshot per exchange), the last known good on disk, the heartbeat |
 | `requestlog.py` | The JSONL spool and the exporter to the control plane |
 | `report.py` | The observer report over the local log |
@@ -394,5 +401,48 @@ Code through the Agent SDK and a real gateway, four times:
 Each run requires the gateway's per-model totals (input, output, cache reads and cache writes) to
 equal Claude Code's own `modelUsage`. Claude Code files routed tokens under the model it
 requested, which is why its cost display overstates routed spend. It skips cleanly without the
-opt-in or without credentials. `THEYGENT_E2E_LOCAL_MODEL` runs the local route against a real
-model on a running inference plane, with a fake upstream.
+opt-in or without credentials.
+
+With `THEYGENT_E2E_LOCAL_MODEL` set to a logical chat model that follows tool calls (and
+`THEYGENT_E2E_INFERENCE_PLANE_URL` when the plane is not on :8081), three more runs use it:
+
+- an Explore subagent served by the local model, tool call and all;
+- a local trial in router mode: Anthropic serves the subagent, and its turns are tried locally;
+- (no local model needed) a fake local model that answers a subagent's first turn and then fails:
+  the rest of the loop goes to Anthropic with thinking on.
+
+`tests/test_e2e_local_model.py` (the same variable) drives the local route with the recorded
+session-title request against the real model and a fake upstream, so it spends nothing.
+
+## Developing
+
+- **Against real Claude Code**: `make up` runs a personal gateway on :8082. Point a Claude Code
+  shell at it (`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`,
+  `ENABLE_TOOL_SEARCH=true`) and read what it recorded with
+  `uv run --package theygent-ai-gateway theygent-ai-gateway report --since 1h`. Attach it to the
+  control plane (`THEYGENT_CONTROL_PLANE_URL` and a service key) to drive modes and policy from
+  the interface.
+- **A local model for the local route**: run an inference plane with a chat model that follows
+  tool calls, registered under a logical id. A second plane on another port with its own state
+  directory (`THEYGENT_INFERENCE_PLANE_STATE_DIR`, `THEYGENT_INFERENCE_PLANE_PORT`) keeps tests
+  away from a plane in daily use.
+- **Prices**: `make ai-gateway-prices` rewrites `pricing.json` from the published page;
+  `CHECK=1` only reports. Tests pin figures on `tests/_prices.py`, never the packaged file.
+
+## Changing it
+
+- **A new Anthropic model as a routing target**: its row in `TARGET_CAPABILITIES`
+  (`packages/ir`, shared with the control plane's save-time check) — measured, not assumed — and
+  its prices in `pricing.json` (by the update script, never by hand).
+- **A new reason code**: add it to `ReasonCode` in `packages/ir` (a deliberate contract
+  extension), produce it in `policy.py`, and give it a label and an explanation in the
+  interface's `lib/gatewayReasons.ts`; a test in `packages/ir` fails until the interface knows it.
+- **A new request class or side-request kind**: recognised in `signals.py` from what Claude Code
+  sends; an unknown class is recorded as `unrecognized` and never routed, so a newer Claude Code
+  degrades to observing.
+- **Something new the local route should carry**: translate it in `translation.py` both ways, or
+  refuse it there. A request is translated faithfully or not at all, and an untranslatable one
+  goes to Anthropic.
+- **A new field on the record or the config**: `theygent_ir.gateway` first (the wire types refuse
+  free text, so content cannot reach the control plane), then the control plane's tables and the
+  daily-aggregate key if reports group by it (a migration), then the interface's `lib/api.ts`.

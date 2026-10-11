@@ -3,7 +3,8 @@
 The AI Gateway sits between **Claude Code** — the CLI, IDE extensions, and the desktop app — and
 the Anthropic API. It records what each exchange cost, what it would have cost if subagents and
 cold-cache turns had run on a cheaper model, and why each request was or wasn't a candidate — and,
-once you choose to, it **routes** them there. You see where your team's model spend goes, per day,
+once you choose to, it **routes** them there: to a cheaper Anthropic model, or to
+[models you run yourself](local-models.md). You see where your team's model spend goes, per day,
 model, developer and session, before you move anything.
 
 !!! note "Observe first, then route"
@@ -26,6 +27,9 @@ model, developer and session, before you move anything.
   request because tool search is off, which can multiply input tokens several times.
 - **Subscription seats** — for developers on a claude.ai plan, how much of the plan's
   five-hour and weekly allowance their traffic used.
+- **Local models** — a share of the work, per kind of request, answered by models on your
+  inference plane at no API spend, each measured on your own traffic first. See
+  [Local models](local-models.md).
 
 ## What it sees, and what leaves it
 
@@ -59,7 +63,8 @@ An admin chooses the gateway's **mode** on the AI Gateway **Settings** tab:
 - **Observer** records every exchange — its cost and what routing would have done — without
   changing it.
 - **Router** records every exchange and applies the routing decisions: routed requests run on the
-  target model, with the rest of the request exactly as Claude Code sent it. A target that refuses
+  target model — a cheaper Anthropic model with the rest of the request exactly as Claude Code
+  sent it, or a [local model](local-models.md). A target that refuses
   a request sends it back to the requested model, unseen, and that conversation stays there until
   its cache goes cold. Switching back to observer stops routing within one heartbeat (30 seconds).
 - **Passthrough** forwards traffic without recording anything.
@@ -67,6 +72,32 @@ An admin chooses the gateway's **mode** on the AI Gateway **Settings** tab:
 A gateway attached to the control plane forwards in passthrough until an admin saves a
 configuration: your organization's traffic is recorded only once someone chose to record it. A
 personal gateway on its own records from the start.
+
+## Try it on your own machine
+
+A personal gateway needs no keys and no setup beyond Claude Code's settings:
+
+1. **Start TheYgent** with `make up` ([Running TheYgent](../getting-started/running.md)). The
+   gateway listens on `127.0.0.1:8082`.
+2. **Point Claude Code at it**, in the shell you start Claude Code from:
+
+    ```bash
+    export ANTHROPIC_BASE_URL='http://localhost:8082'
+    export CLAUDE_CODE_GATEWAY_HINT_HEADERS='1'
+    export ENABLE_TOOL_SEARCH='true'
+    ```
+
+3. **Work as usual.** Your own Claude login or API key goes through the gateway unchanged.
+4. **Read the report** — what your traffic cost, and what routing would save:
+
+    ```bash
+    uv run --package theygent-ai-gateway theygent-ai-gateway report --since 24h
+    ```
+
+5. **To see it on the AI Gateway page, and to route**, attach the gateway to the control plane
+   with a service key ([Running the gateway](running.md#attach-it-to-the-control-plane)). Then
+   save a configuration on **AI Gateway → Settings**: observer mode to record, router mode to
+   route.
 
 ## Getting started with a team
 
@@ -97,5 +128,6 @@ personal gateway on its own records from the start.
 
 - [Set up Claude Code](setup.md) — the settings, per client, and why each one is there.
 - [Reports & policy](reports.md) — reading the figures, and how the policy decides.
+- [Local models](local-models.md) — sending work to models you run, measured first.
 - [Running the gateway](running.md) — run modes, the organization's key, errors.
 - [Environment variables](../reference/environment.md#ai-gateway) — the gateway's settings.

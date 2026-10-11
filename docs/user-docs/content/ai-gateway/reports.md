@@ -70,6 +70,9 @@ them:
 | target can't take it | The target model would reject this request's shape |
 | target not cheaper | The target doesn't cost less than the model Claude Code asked for |
 | unreviewed kind | A side request whose kind an admin has not reviewed in the Catalog |
+| local share | The conversation is in the share its kind sends to a [local model](local-models.md) |
+| no local model fits | In the local share, but no listed local model can take this request (tool calls, images or prompt size) |
+| target refused | The target, or the local model, could not take the request: it went to the model Claude Code asked for, unseen |
 
 ## How the policy decides
 
@@ -131,15 +134,15 @@ side requests riding the main conversation's cache: *never route*; the session t
 model* — which you can apply in one click or override with **Review**. A suggestion is only that:
 the status is your decision, and saving one creates a new configuration version.
 
-In router mode, a *local model* side request goes to the inference plane, as a chat request for
-the configuration's local model. Claude Code gets the local model's answer in the form the
-Anthropic API would have given it, but only after the gateway has checked it: for a session title,
-JSON with a `title`. Only text goes. A request carrying anything else (images, documents, tools)
-stays with the Anthropic API. So does a request the local model cannot answer: an error, no answer
-within 30 seconds, an answer of the wrong shape, or no inference plane running. It goes to the
-model Claude Code asked for, marked *target refused*, and Claude Code never sees the difference. A
-local answer costs no API spend; its *without routing* figure is an estimate, counted with the
-local model's tokens.
+In router mode, a *local model* side request goes to a model on your inference plane, the
+**Side requests** dial's (see [Local models](local-models.md)). Claude Code gets the local
+model's answer in the form the Anthropic API would have given it, but only after the gateway has
+checked it: for a session title, JSON with a `title`. A request the local model cannot take goes to
+the model Claude Code asked for, marked *target refused*, and Claude Code never sees the
+difference. That covers a request carrying something that doesn't translate (a document, for
+example), an error, no answer in time, an answer of the wrong shape, or no inference plane
+running. A local answer costs no API spend; its *without routing* figure is an estimate, counted
+with the local model's tokens.
 
 ## Settings (admins)
 
@@ -152,28 +155,12 @@ local model's tokens.
   considered), and the local model for side requests the Catalog allows to run locally (a
   [logical model id](../concepts/models-and-engines.md)).
 - **Local models** — the models on your inference plane that may take Claude Code's work, listed
-  small to large. Each has a [logical model id](../concepts/models-and-engines.md), its context
-  size in tokens, and whether it follows tool calls and takes images. Beside each one is what the
-  last week shows: the requests it served, and how often its shadow runs and trials picked the
-  same next action as Claude. Then one dial per kind of request, each a **share** of
-  conversations, a **trial**, and the **model** (or "smallest that fits"):
-    - *Side requests* (100% by default): the kinds reviewed *local model* in the Catalog.
-    - *Subagents* (0% by default): a share of subagents, from their first request. You can limit
-      it to some agent types (for example `Explore`).
-    - *Main conversation* (0% by default): a share of conversations, at their start or after
-      compaction.
-
-    A conversation in the share stays on its local model for its task, and the rest go to
-    Anthropic as before. Agent turns need a model that follows tool calls. A local model that fails
-    before it starts answering hands the request to Anthropic, unseen by Claude Code.
-
-    Raise a share on evidence. The **trial** is a further slice of conversations, just above the
-    share: Anthropic still answers them, and afterwards the gateway tries each of their requests on
-    the local model and records whether it picked the same next action. It works in router mode
-    too, so you keep routing's savings while you measure; it costs no API spend, and a request the
-    local model is serving always comes first (a trial running then is dropped). Raising the share
-    by the trial serves exactly the conversations that were tried. The share and the trial
-    together are at most 100%.
+  small to large, each with its context size and whether it follows tool calls and takes images.
+  Beside each one is what the last week shows: the requests it served, and how often it picked the
+  same next action as Claude. Then one dial per kind of request (side requests, subagents, the
+  main conversation), each a **share** served locally, a **trial** measured locally while
+  Anthropic answers, and the **model** (or "smallest that fits"). How to set them, and their
+  limits: [Local models](local-models.md).
 - **Warm switch margin** — a conversation whose cache is warm moves only where staying would cost
   at least this many times rebuilding its cache on the other model (at least 1). Cache reads cost
   a fraction of cache writes, so in practice warm conversations stay put.
@@ -201,4 +188,5 @@ The same tab holds the [organization's Anthropic key](running.md#the-organizatio
 
 - [AI Gateway](index.md) — what the gateway does and what leaves it.
 - [Set up Claude Code](setup.md) — the settings the warnings refer to.
+- [Local models](local-models.md) — the local dials, trials and their limits.
 - [Running the gateway](running.md) — the command-line report for a personal gateway.
