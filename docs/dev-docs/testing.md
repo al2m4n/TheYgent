@@ -275,7 +275,8 @@ because it regenerates the TypeScript types from the Pydantic IR; on failure it 
 regenerated files in the working tree ready to commit.
 
 In CI (`.github/workflows/ci.yml`), the `fast` job is the PR gate: Ruff, `ty`
-(non-blocking), the three fast pytest suites, and the deploy guards. The `frontend` job
+(non-blocking), the four fast pytest suites (IR, inference plane, control plane, AI gateway),
+and the deploy guards. The `frontend` job
 runs the drift guard, Biome, `tsc` + build, and Vitest. The `integration` job is the
 non-blocking real-engine tier described above.
 
