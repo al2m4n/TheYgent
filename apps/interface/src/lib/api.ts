@@ -1220,6 +1220,9 @@ export interface GatewayTotals {
    *  requests: their ratio calibrates the counterfactuals' assumption of equal output. */
   shadow_output_tokens: number;
   shadowed_output_tokens: number;
+  /** Agent-turn shadows compared with the real answer, and those with the same next action. */
+  shadow_compared_calls: number;
+  shadow_agreed_calls: number;
 }
 
 /** How a shadow run ended (theygent_ir.gateway.ShadowOutcome). */
@@ -1238,6 +1241,9 @@ export interface GatewayShadowRun {
   };
   cost_usd: number | null;
   total_ms: number | null;
+  /** An agent turn's verdict: the same next action as the real answer. */
+  agreed: boolean | null;
+  first_output_ms: number | null;
 }
 
 export type GatewayDimension =

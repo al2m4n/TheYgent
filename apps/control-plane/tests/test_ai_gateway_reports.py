@@ -148,13 +148,17 @@ def shadowed(ada: str, bob: str) -> list[dict[str, Any]]:
     """Observer mode with shadow runs: answered (calibrating output), unusable and failed, on a
     cloud target and the local model."""
 
-    def shadow(target: dict[str, str], outcome: str, output: int, cost: float | None) -> dict:
+    def shadow(
+        target: dict[str, str], outcome: str, output: int, cost: float | None, agreed: Any = None
+    ) -> dict:
         return {
             "target": target,
             "outcome": outcome,
             "usage": {"input_tokens": 3, "output_tokens": output},
             "cost_usd": cost,
             "total_ms": 900,
+            "agreed": agreed,
+            "first_output_ms": 300,
         }
 
     return [
@@ -164,7 +168,7 @@ def shadowed(ada: str, bob: str) -> list[dict[str, Any]]:
             session_id="s-ada-1",
             request_class="subagent",
             decision=route(SONNET, 0.0011, "subagent_at_spawn"),
-            shadow=shadow(SONNET, "answered", 80, 0.0009),
+            shadow=shadow(SONNET, "answered", 80, 0.0009, agreed=True),
         ),
         record(
             12,
@@ -180,7 +184,7 @@ def shadowed(ada: str, bob: str) -> list[dict[str, Any]]:
             session_id="s-bob-1",
             request_class="auxiliary",
             decision=route(LOCAL, 0.0, "local_candidate"),
-            shadow=shadow(LOCAL, "answered", 9, 0.0),
+            shadow=shadow(LOCAL, "answered", 9, 0.0, agreed=False),
         ),
         record(
             14,
@@ -472,6 +476,8 @@ def test_a_timeline_entry_carries_its_shadow_run(client: TestClient) -> None:
         },
         "cost_usd": 0.0009,
         "total_ms": 900,
+        "agreed": True,
+        "first_output_ms": 300,
     }
 
 

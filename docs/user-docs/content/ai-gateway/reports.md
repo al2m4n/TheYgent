@@ -28,8 +28,10 @@ the model Claude Code asked for. Shadow runs check it. After a request that rout
 elsewhere, the gateway sends a copy to that target. Claude Code never sees the copy, and it never
 delays Claude Code's answer. The **Shadow runs** table shows, per target, how many copies ran,
 how many of their answers routing could have used, and how much the target wrote compared with
-the model Claude Code asked for. It also shows what the copies cost, which is kept apart from the
-spend above. The Sessions timeline shows the shadow run under each request that had one.
+the model Claude Code asked for. For agent turns (subagents and the main conversation) it also
+shows how often the target picked the same next action as the real reply: the same tool first, or
+the answer where the reply answered. That is the measure to watch before trusting a local model
+with agent work. It also shows what the copies cost, which is kept apart from the spend above. The Sessions timeline shows the shadow run under each request that had one.
 
 **Subscription seats.** For developers on a claude.ai plan, the dollar figures are the
 API-equivalent value of their traffic, not a bill. The seats table shows each developer's latest

@@ -243,10 +243,19 @@ usage, cost and time. If the gateway stops first, it is delivered without one.
 - **Limits.** At most one local and two cloud shadows run at once. Beyond that a shadow is skipped,
   never queued.
 
+A shadow of an agent turn (a request that offered tools) also gives a verdict, `ShadowRun.agreed`:
+did the target pick the same next action as the real answer? That means the same tool first, or
+answering where it answered. The real answer's tool names are read by the response observer, kept
+in memory only and never recorded, since a tool's name can name an organization's own MCP server.
+`first_output_ms` records when the target began.
+
 `GatewayTotals` sums them: `shadow_calls`, `shadow_answered_calls`, `shadow_cost_usd`
 (calibration spend, outside `cost_usd`), and `shadow_output_tokens` against
-`shadowed_output_tokens` (the real exchanges' output for the same answered shadows). The report
-shows that ratio per target. It does not adjust counterfactuals.
+`shadowed_output_tokens` (the real exchanges' output for the same answered shadows), and
+`shadow_compared_calls` against `shadow_agreed_calls` (migration `0026`). The report shows both
+ratios per target, and does not adjust counterfactuals. Measuring a local model this way happens
+in observer mode, where every recorded decision can be shadowed. In router mode, the local share
+is what serves, and a local failure falls back before commit.
 
 ### Auxiliary requests and the fingerprint catalog
 

@@ -347,9 +347,17 @@ function ShadowLine({ shadow, wrote }: { shadow: GatewayShadowRun; wrote: number
     shadow.outcome === "answered"
       ? ` · wrote ${shadow.usage.output_tokens.toLocaleString()} out where this wrote ${wrote.toLocaleString()}`
       : "";
+  // A shadow recorded before verdicts existed has none at all.
+  const verdict =
+    shadow.agreed == null
+      ? ""
+      : shadow.agreed
+        ? " · the same next action"
+        : " · a different next action";
   return (
     <div className="mt-1 pl-16 text-[11px] text-muted-foreground">
       Shadow run on {shadow.target.model}: {SHADOW_OUTCOME[shadow.outcome]}
+      {verdict}
       {output} · {usd(shadow.cost_usd)}
     </div>
   );

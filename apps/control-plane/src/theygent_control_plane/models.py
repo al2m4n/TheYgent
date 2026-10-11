@@ -938,6 +938,8 @@ class AiGatewayDailyUsageRow(Base):
     shadow_cost_usd: Mapped[float] = mapped_column(Float)
     shadow_output_tokens: Mapped[int] = mapped_column(BigInteger)
     shadowed_output_tokens: Mapped[int] = mapped_column(BigInteger)
+    shadow_compared_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_agreed_calls: Mapped[int] = mapped_column(BigInteger)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 
     __table_args__ = (

@@ -65,6 +65,22 @@ _PRESSURE = frozenset({429, 529})
 _LIMIT_PREFIX = "anthropic-ratelimit-"
 
 
+def next_action(tool_names: tuple[str, ...] | list[str]) -> str:
+    """What an agent turn does next: its first tool call, or answering."""
+    return tool_names[0] if tool_names else "answer"
+
+
+def agreed(
+    observation: Observation, outcome: ShadowOutcome, shadow_tools: tuple[str, ...] | list[str]
+) -> bool | None:
+    """Whether the shadow picked the real answer's next action — for an agent turn (one offered
+    tools) whose shadow answered; ``None`` otherwise."""
+    body = observation.request.body
+    if body is None or not body.shape.tool_count or outcome != "answered":
+        return None
+    return next_action(observation.response.tool_names) == next_action(shadow_tools)
+
+
 @dataclass(frozen=True)
 class ShadowJob:
     """What a shadow needs from its exchange. ``headers`` are the outbound headers, credential
@@ -177,9 +193,12 @@ class Shadows:
         result: ShadowRun | None = None
         try:
             if job.target.kind == "local":
-                result = await self._local(job)
+                result, tools = await self._local(job)
             else:
-                result = await self._cloud(job, prices)
+                result, tools = await self._cloud(job, prices)
+            result = result.model_copy(
+                update={"agreed": agreed(observation, result.outcome, tools)}
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -188,7 +207,7 @@ class Shadows:
             self._in_flight[job.target.kind] -= 1
             deliver(hook, replace(observation, shadow=result) if result else observation)
 
-    async def _local(self, job: ShadowJob) -> ShadowRun:
+    async def _local(self, job: ShadowJob) -> tuple[ShadowRun, tuple[str, ...]]:
         local = self.local
         assert local is not None
         started = time.perf_counter()
@@ -199,23 +218,28 @@ class Shadows:
             images=job.images,
             context_tokens=job.context_tokens,
         )
-        return ShadowRun(
+        run = ShadowRun(
             target=job.target,
             outcome=attempt.outcome,
             usage=attempt.usage,
             cost_usd=0.0,
             total_ms=int((time.perf_counter() - started) * 1000),
+            first_output_ms=attempt.first_output_ms,
         )
+        return run, attempt.tool_calls
 
-    async def _cloud(self, job: ShadowJob, prices: PriceBook | None) -> ShadowRun:
+    async def _cloud(
+        self, job: ShadowJob, prices: PriceBook | None
+    ) -> tuple[ShadowRun, tuple[str, ...]]:
         upstream = self.upstream
         assert upstream is not None
         body = with_model(job.body, job.target.model)
         if body is None:
-            return ShadowRun(target=job.target, outcome="untranslatable", cost_usd=0.0)
+            return ShadowRun(target=job.target, outcome="untranslatable", cost_usd=0.0), ()
         started = time.perf_counter()
         outcome: ShadowOutcome = "failed"
         observer: ResponseObserver | None = None
+        first: int | None = None
         request = upstream.build_request("POST", job.path, headers=job.headers, content=body)
         try:
             async with asyncio.timeout(CLOUD_TIMEOUT_SECONDS):
@@ -229,6 +253,8 @@ class Shadows:
                         response.headers.get("content-encoding"),
                     )
                     async for chunk in response.aiter_raw():
+                        if first is None:
+                            first = int((time.perf_counter() - started) * 1000)
                         observer.feed(chunk)
                 finally:
                     with anyio.CancelScope(shield=True):
@@ -247,13 +273,15 @@ class Shadows:
         cost = prices.cost(job.target.model, usage, fast=job.fast) if prices is not None else None
         if cost is not None:
             self._spent = self.spent_today + cost
-        return ShadowRun(
+        run = ShadowRun(
             target=job.target,
             outcome=outcome,
             usage=usage,
             cost_usd=cost,
             total_ms=int((time.perf_counter() - started) * 1000),
+            first_output_ms=first,
         )
+        return run, summary.tool_names if summary is not None else ()
 
     async def stop(self) -> None:
         """Cancel running shadows; each still delivers its exchange's record, without a shadow."""

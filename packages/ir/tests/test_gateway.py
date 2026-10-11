@@ -650,6 +650,18 @@ def test_only_an_answered_shadow_calibrates_output(outcome: str) -> None:
     assert totals.shadow_cost_usd == 0.01  # spent all the same
 
 
+@pytest.mark.parametrize(
+    ("agreed", "compared", "agreeing"), [(True, 1, 1), (False, 1, 0), (None, 0, 0)]
+)
+def test_an_agent_turns_verdict_is_counted(
+    agreed: bool | None, compared: int, agreeing: int
+) -> None:
+    totals = GatewayTotals.of(
+        _built(cost_usd=0.5, decision=SONNET_ROUTE, shadow=_shadow(agreed=agreed))
+    )
+    assert (totals.shadow_compared_calls, totals.shadow_agreed_calls) == (compared, agreeing)
+
+
 def test_a_local_shadow_costs_nothing() -> None:
     local_route = {
         "action": "route",

@@ -168,7 +168,9 @@ def test_a_cloud_shadow_measures_the_target_after_the_exchange(tmp_path: Path) -
     assert (run.target, run.outcome) == (Target(kind="anthropic", model=SONNET), "answered")
     assert run.usage.output_tokens == 40 != observed.response.usage.output_tokens
     assert run.cost_usd == pytest.approx(PRICES.cost(SONNET, run.usage))
-    assert run.total_ms is not None
+    assert run.total_ms is not None and run.first_output_ms is not None
+    # The target answered the replay with the same first tool: the same next action.
+    assert run.agreed is True
     assert gw.shadows.spent_today == pytest.approx(run.cost_usd)
     # The record carries it to the control plane.
     record = to_record(observed, record_id="greq_shadow", gateway_id="gw")
@@ -391,6 +393,7 @@ def test_a_local_shadow_says_whether_the_local_answer_would_be_used(tmp_path: Pa
         0.0,
     )
     assert (run.usage.input_tokens, run.usage.output_tokens) == (812, 9)
+    assert run.agreed is None  # a side request offers no tools: no next action to compare
 
 
 @pytest.mark.parametrize(

@@ -49,6 +49,9 @@ class ResponseSummary:
     usage: Usage = field(default_factory=Usage)
     stop_reason: str | None = None
     tool_use_count: int = 0
+    #: The tools the answer called, in order. Held in memory to compare a shadow run with; never
+    #: recorded (a tool's name can name an organization's own server).
+    tool_names: tuple[str, ...] = ()
     error_type: str | None = None
     events: int = 0
     parse_error: str | None = None
@@ -92,6 +95,7 @@ class ResponseObserver:
         self._model: str | None = None
         self._stop_reason: str | None = None
         self._tool_uses = 0
+        self._tool_names: list[str] = []
         self._error_type: str | None = None
         self._events = 0
 
@@ -145,8 +149,10 @@ class ResponseObserver:
             if reason := (data.get("delta") or {}).get("stop_reason"):
                 self._stop_reason = reason
         elif kind == "content_block_start":
-            if (data.get("content_block") or {}).get("type") in _TOOL_BLOCKS:
+            block = data.get("content_block") or {}
+            if block.get("type") in _TOOL_BLOCKS:
                 self._tool_uses += 1
+                self._tool_names.append(str(block.get("name") or ""))
         elif kind == "error":
             self._error_type = (data.get("error") or {}).get("type")
 
@@ -160,11 +166,13 @@ class ResponseObserver:
         self._model = data.get("model")
         self._usage.update(data.get("usage") or {})
         self._stop_reason = data.get("stop_reason")
-        self._tool_uses = sum(
-            1
+        tools = [
+            block
             for block in data.get("content") or []
             if isinstance(block, dict) and block.get("type") in _TOOL_BLOCKS
-        )
+        ]
+        self._tool_uses = len(tools)
+        self._tool_names = [str(block.get("name") or "") for block in tools]
 
     def finish(self) -> ResponseSummary:
         if self._failed is None and not self._sse:
@@ -183,6 +191,7 @@ class ResponseObserver:
             if isinstance(self._stop_reason, str)
             else None,
             tool_use_count=self._tool_uses,
+            tool_names=tuple(self._tool_names),
             error_type=token_or_none(self._error_type)
             if isinstance(self._error_type, str)
             else None,

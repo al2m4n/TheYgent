@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 from _fake_anthropic import FakeAnthropic, fake_anthropic, serve
 from _fake_inference import FakeInference, fake_inference
 from _fixtures import Exchange, load
@@ -310,3 +311,33 @@ def test_observer_mode_only_records_what_local_routing_would_do(tmp_path: Path) 
     decision = gw.seen[-1].decision
     assert (decision.action, decision.applied, decision.target) == ("route", False, LOCAL_MEDIUM)
     assert decision.counterfactual_usd == 0.0
+
+
+# ── measuring a local model on agent turns ───────────────────────────────────
+
+
+@pytest.mark.parametrize(("local_first", "agreed"), [("Bash", True), ("Grep", False)])
+def test_a_local_shadow_says_whether_it_picked_the_same_next_action(
+    tmp_path: Path, local_first: str, agreed: bool
+) -> None:
+    # Observer mode: the real answer to the Explore spawn called Bash first.
+    cfg = config("observer", subagents={"share": 1.0}, shadow_local=True)
+    with gateway(tmp_path, cfg) as gw:
+        gw.inference.pieces = []
+        gw.inference.tool_calls = [(local_first, ['{"command": "ls"}'])]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    run = gw.seen[-1].shadow
+    assert run is not None and run.target == LOCAL_MEDIUM and run.outcome == "answered"
+    assert run.agreed is agreed
+    assert run.first_output_ms is not None and run.cost_usd == 0.0
+
+
+def test_a_local_answer_where_the_real_one_called_a_tool_disagrees(tmp_path: Path) -> None:
+    cfg = config("observer", subagents={"share": 1.0}, shadow_local=True)
+    with gateway(tmp_path, cfg) as gw:
+        gw.inference.pieces = ["I would just answer."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    run = gw.seen[-1].shadow
+    assert run is not None and run.agreed is False

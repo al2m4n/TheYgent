@@ -383,12 +383,13 @@ def render_text(report: Report, *, top: int = 20) -> str:
         out += [
             "  " + line
             for line in _table(
-                ["target", "shadows", "usable", "output vs requested", "cost"],
+                ["target", "shadows", "usable", "same next action", "output vs requested", "cost"],
                 [
                     [
                         target,
                         _int(t.shadow_calls),
                         _int(t.shadow_answered_calls),
+                        _ratio(t.shadow_agreed_calls, t.shadow_compared_calls),
                         _ratio(t.shadow_output_tokens, t.shadowed_output_tokens),
                         _usd(t.shadow_cost_usd),
                     ]

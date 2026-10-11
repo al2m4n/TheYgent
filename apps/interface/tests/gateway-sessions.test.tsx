@@ -121,6 +121,8 @@ const TIMELINE = [
       },
       cost_usd: 0.0009,
       total_ms: 4100,
+      agreed: true,
+      first_output_ms: 900,
     },
   }),
   entry("rec_3", 95, { status: 429, error_type: "rate_limit_error", cost_usd: null }),
@@ -334,7 +336,7 @@ describe("AI Gateway sessions", () => {
     expect(within(rows[1]).getByText("would route → claude-sonnet-5-5 ($0.0011)")).toBeTruthy();
     // Its shadow run: the target answered usably, writing less than the requested model did.
     expect(rows[1]).toHaveTextContent(
-      "Shadow run on claude-sonnet-5-5: its answer would have been used · wrote 320 out where this wrote 400 · $0.0009",
+      "Shadow run on claude-sonnet-5-5: its answer would have been used · the same next action · wrote 320 out where this wrote 400 · $0.0009",
     );
     expect(rows[0]).not.toHaveTextContent("Shadow run");
     expect(
@@ -347,6 +349,38 @@ describe("AI Gateway sessions", () => {
     // A reason this interface does not know yet shows as itself rather than disappearing.
     expect(within(rows[4]).getByText("speculative_new_reason")).toBeInTheDocument();
     expect(screen.getByText(/0\.1200 saving/)).toBeInTheDocument();
+  });
+
+  it("gives no verdict for a shadow recorded before verdicts existed", async () => {
+    const legacy = {
+      target: { kind: "anthropic", model: "claude-sonnet-5-5" },
+      outcome: "answered",
+      usage: {
+        input_tokens: 2,
+        output_tokens: 10,
+        cache_read_tokens: 0,
+        cache_write_5m_tokens: 0,
+        cache_write_1h_tokens: 0,
+      },
+      cost_usd: 0.0001,
+      total_ms: 800,
+    };
+    mockControlPlane({
+      detail: () => ({
+        session_id: "aaaaaaaa-1111",
+        developer_id: "usr_dev",
+        totals: totals({ calls: 1 }),
+        requests: [entry("rec_old", 0, { shadow: legacy })],
+        truncated: false,
+        archived_requests: 0,
+      }),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: "Open session aaaaaaaa-1111" }));
+    const row = await screen.findByTestId("request-rec_old");
+    expect(row).toHaveTextContent("Shadow run on claude-sonnet-5-5");
+    expect(row).not.toHaveTextContent("next action");
   });
 
   it("says how many of a session's requests are archived", async () => {

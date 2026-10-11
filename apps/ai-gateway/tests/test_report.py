@@ -337,6 +337,7 @@ def test_shadow_runs_show_as_calibration() -> None:
             "outcome": outcome,
             "usage": {"output_tokens": output},
             "cost_usd": 0.05,
+            "agreed": None if outcome != "answered" else output == 80,
         }
 
     records = [
@@ -366,6 +367,7 @@ def test_shadow_runs_show_as_calibration() -> None:
     calibration = text.split("Calibration (shadow runs)")[1]
     # 150 written by the target where the requested model wrote 200; the failed one adds nothing.
     assert "claude-sonnet-5-5" in calibration and "75%" in calibration
+    assert "50%" in calibration  # one of the two compared turns picked the same next action
     assert json.loads(render_json(report))["shadows"]["claude-sonnet-5-5"]["shadow_calls"] == 3
     # Without shadows, no calibration.
     assert "Shadow runs" not in render_text(build_report(records[3:], dimensions=["model"]))

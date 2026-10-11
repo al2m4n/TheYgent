@@ -429,7 +429,9 @@ function ShadowRuns({ report }: { report: GatewayReport }) {
         <CardDescription>
           After a request routing would have sent elsewhere, a copy went to that target, unseen by
           Claude Code. The savings above assume a target writes as much as the model Claude Code
-          asked for; here is what the targets actually did. Shadow runs cost{" "}
+          asked for; here is what the targets actually did. On agent turns, "same next action" says
+          how often the target chose the tool, or the answer, that the real reply did: how far a
+          model, a local one above all, can be trusted with agent work. Shadow runs cost{" "}
           {usd(report.total.shadow_cost_usd)}, outside the spend above.
         </CardDescription>
       </CardHeader>
@@ -440,6 +442,7 @@ function ShadowRuns({ report }: { report: GatewayReport }) {
               <TableHead>Target</TableHead>
               <TableHead className="text-right">Shadows</TableHead>
               <TableHead className="text-right">Usable</TableHead>
+              <TableHead className="text-right">Same next action</TableHead>
               <TableHead className="text-right">Output vs requested</TableHead>
               <TableHead className="text-right">Cost</TableHead>
             </TableRow>
@@ -451,6 +454,9 @@ function ShadowRuns({ report }: { report: GatewayReport }) {
                 <TableCell className="text-right">{row.shadow_calls.toLocaleString()}</TableCell>
                 <TableCell className="text-right">
                   {percent(row.shadow_answered_calls, row.shadow_calls)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {percent(row.shadow_agreed_calls, row.shadow_compared_calls)}
                 </TableCell>
                 <TableCell className="text-right">
                   {row.shadowed_output_tokens > 0

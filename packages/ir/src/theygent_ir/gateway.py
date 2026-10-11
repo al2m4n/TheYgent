@@ -242,6 +242,12 @@ class ShadowRun(_GatewayWire):
     #: spend). Calibration spend, outside the record's ``cost_usd``.
     cost_usd: float | None = Field(default=None, ge=0)
     total_ms: int | None = Field(default=None, ge=0)
+    #: An agent turn's verdict: whether the target picked the same next action as the real answer
+    #: (the same tool first, or an answer where it answered). ``None``: not an agent turn, or the
+    #: shadow gave nothing to compare. The tools themselves never leave the gateway.
+    agreed: bool | None = None
+    #: When the target's first output (text or a tool call) began.
+    first_output_ms: int | None = Field(default=None, ge=0)
 
 
 class Timing(_GatewayWire):
@@ -436,6 +442,10 @@ class GatewayTotals(_GatewayWire):
     #: same requests. Their ratio calibrates a counterfactual's assumption of equal output.
     shadow_output_tokens: int = Field(default=0, ge=0)
     shadowed_output_tokens: int = Field(default=0, ge=0)
+    #: Agent-turn shadows compared with the real answer, and those that picked the same next
+    #: action: how far a target can be trusted with agent work.
+    shadow_compared_calls: int = Field(default=0, ge=0)
+    shadow_agreed_calls: int = Field(default=0, ge=0)
 
     @property
     def cache_write_tokens(self) -> int:
@@ -494,6 +504,8 @@ class GatewayTotals(_GatewayWire):
             shadow_cost_usd=(shadow.cost_usd or 0.0) if shadow is not None else 0.0,
             shadow_output_tokens=shadow.usage.output_tokens if answered and shadow else 0,
             shadowed_output_tokens=usage.output_tokens if answered else 0,
+            shadow_compared_calls=int(shadow is not None and shadow.agreed is not None),
+            shadow_agreed_calls=int(shadow is not None and shadow.agreed is True),
         )
 
     def __add__(self, other: GatewayTotals) -> GatewayTotals:

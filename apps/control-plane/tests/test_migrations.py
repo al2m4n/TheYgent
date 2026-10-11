@@ -569,8 +569,10 @@ def test_retention_migration_rebuilds_the_daily_aggregates_exactly(pg_url: str) 
         assert len(stored) == len(expected) == 5
         for row in stored:
             key = tuple(row[c] for c in DAILY_KEY_COLUMNS)
-            got = GatewayTotals.model_validate({f: row[f] for f in GatewayTotals.model_fields})
-            assert got.model_dump() == pytest.approx(expected[key].model_dump()), key
+            # The fields this revision has; later ones add their own columns.
+            present = [f for f in GatewayTotals.model_fields if f in row]
+            want = expected[key].model_dump()
+            assert {f: row[f] for f in present} == pytest.approx({f: want[f] for f in present})
             starts = [r.started_at for r in records if daily_key(r) == key]
             assert (row["first_at"], row["last_at"]) == (min(starts), max(starts))
         # Down a step: the narrower key, the same sums.

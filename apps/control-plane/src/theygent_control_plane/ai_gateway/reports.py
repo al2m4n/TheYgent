@@ -56,6 +56,8 @@ _FAILED = or_(R.outcome != "complete", R.status >= 400)
 _COST = func.coalesce(R.cost_usd, 0.0)
 _SHADOWED = R.shadow.is_not(None)
 _ANSWERED = R.shadow["outcome"].astext == "answered"
+_COMPARED = R.shadow["agreed"].astext.in_(("true", "false"))
+_AGREED = R.shadow["agreed"].astext == "true"
 _SHADOW_COST = func.coalesce(R.shadow["cost_usd"].astext.cast(Float), 0.0)
 _SHADOW_OUTPUT = func.coalesce(R.shadow["usage"]["output_tokens"].astext.cast(BigInteger), 0)
 
@@ -84,6 +86,8 @@ CONTRIB: dict[str, ColumnElement[Any]] = {
     "shadow_cost_usd": case((_SHADOWED, _SHADOW_COST), else_=0.0),
     "shadow_output_tokens": case((_ANSWERED, _SHADOW_OUTPUT), else_=0),
     "shadowed_output_tokens": case((_ANSWERED, R.output_tokens), else_=0),
+    "shadow_compared_calls": case((_COMPARED, 1), else_=0),
+    "shadow_agreed_calls": case((_AGREED, 1), else_=0),
 }
 _FLOATS = frozenset({"cost_usd", "baseline_usd", "with_routing_usd", "shadow_cost_usd"})
 #: The unit columns every report dimension reads, ``''`` for a missing value (as the aggregates

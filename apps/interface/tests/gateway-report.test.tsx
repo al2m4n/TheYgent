@@ -35,6 +35,8 @@ function totals(over: Record<string, number> = {}) {
     shadow_cost_usd: 0,
     shadow_output_tokens: 0,
     shadowed_output_tokens: 0,
+    shadow_compared_calls: 0,
+    shadow_agreed_calls: 0,
     ...over,
     // Without applied routes, what it would cost as requested is what it cost.
     baseline_usd: over.baseline_usd ?? over.cost_usd ?? 0,
@@ -250,7 +252,13 @@ describe("AI Gateway report", () => {
 
   it("shows what shadow runs measured, per target, only when there were any", async () => {
     const shadows = { shadow_calls: 4, shadow_answered_calls: 3, shadow_cost_usd: 0.0123 };
-    const sonnet = { ...shadows, shadow_output_tokens: 240, shadowed_output_tokens: 300 };
+    const sonnet = {
+      ...shadows,
+      shadow_output_tokens: 240,
+      shadowed_output_tokens: 300,
+      shadow_compared_calls: 3,
+      shadow_agreed_calls: 2,
+    };
     mockControlPlane("admin", () =>
       json(
         reportBody({
@@ -271,6 +279,7 @@ describe("AI Gateway report", () => {
     const sonnetRow = within(table).getByText("claude-sonnet-5-5").closest("tr");
     expect(sonnetRow?.textContent).toContain("75.0%"); // usable: 3 of 4
     expect(sonnetRow?.textContent).toContain("80.0%"); // wrote 240 where Opus wrote 300
+    expect(sonnetRow?.textContent).toContain("66.7%"); // the same next action on 2 of 3 turns
     const localRow = within(table).getByText("aux-local").closest("tr");
     expect(localRow?.textContent).toContain("—"); // nothing usable to compare
     expect(within(table).queryByText("stay")).toBeNull();
