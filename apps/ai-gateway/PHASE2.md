@@ -5,7 +5,7 @@ mode the gateway applies the policy's decisions: a subagent asking for Opus 5.5 
 Sonnet 5.5, a main conversation moves only where its cache is cold, a reviewed side request may run
 on a local model — and Claude Code never notices, because a target that rejects a request is
 retried on the original model before Claude Code sees anything. The evidence is in
-[spike/FINDINGS.md](spike/FINDINGS.md); the invariants in [AGENTS.md](AGENTS.md#routing-later-phases).
+[spike/FINDINGS.md](spike/FINDINGS.md); the invariants in [AGENTS.md](AGENTS.md#routing).
 
 ## Exit criteria
 
