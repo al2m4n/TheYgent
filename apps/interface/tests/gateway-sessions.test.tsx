@@ -84,6 +84,7 @@ function entry(id: string, seconds: number, over: Record<string, unknown> = {}) 
       counterfactual_usd: null,
       applied: false,
     },
+    shadow: null,
     ...over,
   };
 }
@@ -107,6 +108,19 @@ const TIMELINE = [
       reasons: ["subagent_at_spawn"],
       counterfactual_usd: 0.0011,
       applied: false,
+    },
+    shadow: {
+      target: { kind: "anthropic", model: "claude-sonnet-5-5" },
+      outcome: "answered",
+      usage: {
+        input_tokens: 2,
+        output_tokens: 320,
+        cache_read_tokens: 0,
+        cache_write_5m_tokens: 900,
+        cache_write_1h_tokens: 0,
+      },
+      cost_usd: 0.0009,
+      total_ms: 4100,
     },
   }),
   entry("rec_3", 95, { status: 429, error_type: "rate_limit_error", cost_usd: null }),
@@ -318,6 +332,11 @@ describe("AI Gateway sessions", () => {
     expect(rows[1]).toHaveTextContent("+0:42");
     expect(rows[1]).toHaveTextContent("Explore");
     expect(within(rows[1]).getByText("would route → claude-sonnet-5-5 ($0.0011)")).toBeTruthy();
+    // Its shadow run: the target answered usably, writing less than the requested model did.
+    expect(rows[1]).toHaveTextContent(
+      "Shadow run on claude-sonnet-5-5: its answer would have been used · wrote 320 out where this wrote 400 · $0.0009",
+    );
+    expect(rows[0]).not.toHaveTextContent("Shadow run");
     expect(
       within(rows[1]).getByLabelText(/^subagent spawn: A subagent starts with an empty cache/),
     ).toBeTruthy();

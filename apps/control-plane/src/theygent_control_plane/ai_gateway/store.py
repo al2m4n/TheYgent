@@ -196,6 +196,7 @@ def _request_row(
         "decision_reasons": list(decision.reasons),
         "counterfactual_usd": decision.counterfactual_usd,
         "decision_applied": decision.applied,
+        "shadow": record.shadow.model_dump(mode="json") if record.shadow else None,
     }
 
 

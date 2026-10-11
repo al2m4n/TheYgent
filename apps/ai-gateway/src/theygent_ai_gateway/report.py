@@ -99,6 +99,8 @@ class Report:
     #: Some records were served by a model other than the one requested.
     served_differs: bool = False
     unreadable_lines: int = 0
+    #: Records with a shadow run, by the shadow's target: what calibrates the counterfactuals.
+    shadows: dict[str, GatewayTotals] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, object]:
         def when(value: datetime | None) -> str | None:
@@ -127,6 +129,7 @@ class Report:
             "pricing_versions": sorted(self.pricing_versions),
             "served_differs": self.served_differs,
             "unreadable_lines": self.unreadable_lines,
+            "shadows": {key: totals_json(totals) for key, totals in self.shadows.items()},
         }
 
 
@@ -184,6 +187,9 @@ def build_report(
             key = DIMENSIONS[dimension](r) or NONE_KEY
             rows = report.groups[dimension]
             rows[key] = rows.get(key, GatewayTotals()) + contribution
+        if r.shadow is not None:
+            target = r.shadow.target.model
+            report.shadows[target] = report.shadows.get(target, GatewayTotals()) + contribution
         if r.pricing_version:
             report.pricing_versions.add(r.pricing_version)
         if r.served_model and r.requested_model and r.served_model != r.requested_model:
@@ -328,6 +334,11 @@ def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
     return [line(headers), *(line(row) for row in rows)]
 
 
+def _ratio(part: int, whole: int) -> str:
+    """How much the target wrote, as a share of what the requested model wrote."""
+    return f"{part / whole:.0%}" if whole else "—"
+
+
 def render_text(report: Report, *, top: int = 20) -> str:
     total = report.total
     out: list[str] = ["TheYgent AI gateway — report"]
@@ -361,6 +372,30 @@ def render_text(report: Report, *, top: int = 20) -> str:
         f"Tokens moved     {_int(total.routed_tokens)} to another model, "
         f"{_int(total.routed_local_tokens)} of them off the API",
     ]
+    if total.shadow_calls:
+        # Counterfactuals assume the target writes as much as the requested model did; shadow
+        # runs measured it.
+        out.append(
+            f"Shadow runs      {_int(total.shadow_calls)} "
+            f"({_int(total.shadow_answered_calls)} usable) · cost {_usd(total.shadow_cost_usd)}"
+        )
+        out += ["", "Calibration (shadow runs)"]
+        out += [
+            "  " + line
+            for line in _table(
+                ["target", "shadows", "usable", "output vs requested", "cost"],
+                [
+                    [
+                        target,
+                        _int(t.shadow_calls),
+                        _int(t.shadow_answered_calls),
+                        _ratio(t.shadow_output_tokens, t.shadowed_output_tokens),
+                        _usd(t.shadow_cost_usd),
+                    ]
+                    for target, t in sorted(report.shadows.items())
+                ],
+            )
+        ]
     if report.seats:
         out += ["", "Seat allowance"]
         out += [

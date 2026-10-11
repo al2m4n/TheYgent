@@ -51,6 +51,7 @@ import {
 } from "../ui";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Checkbox } from "../ui/checkbox";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
 import { Skeleton } from "../ui/skeleton";
@@ -329,6 +330,63 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
                     hint="A conversation with a warm cache moves only where staying would cost at least this many times rebuilding its cache on the other model. At least 1."
                   />
                 </div>
+              </div>
+            </fieldset>
+
+            <fieldset className="min-w-0 space-y-3">
+              <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Shadow runs
+              </legend>
+              <p className="text-xs text-muted-foreground">
+                After a request that routing would send elsewhere, a copy goes to that target, to
+                measure what the saving only estimates: whether its answer would have been used, and
+                how much it writes. Claude Code never sees a shadow; the Report shows what they
+                found.
+              </p>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox
+                  aria-label="Shadow the local model"
+                  checked={form.shadowLocal}
+                  onCheckedChange={(v) => update({ shadowLocal: v === true })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium text-foreground">Local model</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Side requests allowed to run locally. Costs no API spend.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox
+                  aria-label="Shadow cloud targets"
+                  checked={form.shadowCloud}
+                  onCheckedChange={(v) => update({ shadowCloud: v === true })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium text-foreground">Cloud targets</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Real spend, on the organization's key only (a personal gateway: your own API
+                    key) — never a subscription seat or a developer's own key. Pauses when a rate
+                    limit runs low.
+                  </span>
+                </span>
+              </label>
+              <div className="max-w-xs space-y-1">
+                <Field label="Cloud shadow budget (USD per day)">
+                  <Input
+                    value={form.shadowCap}
+                    inputMode="decimal"
+                    disabled={!form.shadowCloud}
+                    aria-invalid={errors.shadowCap ? true : undefined}
+                    onChange={(e) => update({ shadowCap: e.target.value })}
+                  />
+                </Field>
+                <FieldNote
+                  error={errors.shadowCap}
+                  hint="Per gateway instance; cloud shadows stop for the day once they have cost this much."
+                />
               </div>
             </fieldset>
 

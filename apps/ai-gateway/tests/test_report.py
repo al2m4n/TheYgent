@@ -322,6 +322,54 @@ def test_router_mode_shows_what_routing_saved() -> None:
     assert "Without routing" not in observed and "routed" not in observed.replace("would route", "")
 
 
+def test_shadow_runs_show_as_calibration() -> None:
+    route = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "counterfactual_usd": 0.2,
+    }
+
+    def shadow(outcome: str, output: int) -> dict[str, Any]:
+        return {
+            "target": route["target"],
+            "outcome": outcome,
+            "usage": {"output_tokens": output},
+            "cost_usd": 0.05,
+        }
+
+    records = [
+        rec(
+            1,
+            usage={"output_tokens": 100},
+            cost_usd=0.5,
+            decision=route,
+            shadow=shadow("answered", 80),
+        ),
+        rec(
+            2,
+            usage={"output_tokens": 100},
+            cost_usd=0.5,
+            decision=route,
+            shadow=shadow("answered", 70),
+        ),
+        rec(
+            3, usage={"output_tokens": 50}, cost_usd=0.5, decision=route, shadow=shadow("failed", 0)
+        ),
+        rec(4, usage={"output_tokens": 100}, cost_usd=0.5, decision=route),
+    ]
+    report = build_report(records, dimensions=["model"])
+    assert set(report.shadows) == {"claude-sonnet-5-5"}
+    text = render_text(report)
+    assert "Shadow runs      3 (2 usable) · cost $0.1500" in text
+    calibration = text.split("Calibration (shadow runs)")[1]
+    # 150 written by the target where the requested model wrote 200; the failed one adds nothing.
+    assert "claude-sonnet-5-5" in calibration and "75%" in calibration
+    assert json.loads(render_json(report))["shadows"]["claude-sonnet-5-5"]["shadow_calls"] == 3
+    # Without shadows, no calibration.
+    assert "Shadow runs" not in render_text(build_report(records[3:], dimensions=["model"]))
+
+
 def test_json_round_trips() -> None:
     data = json.loads(render_json(build_report([rec(1, usage={"output_tokens": 5})])))
     assert data["total"]["calls"] == 1 and data["total"]["output_tokens"] == 5

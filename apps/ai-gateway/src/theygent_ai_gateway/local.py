@@ -21,11 +21,11 @@ import json
 import logging
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from theygent_gateway_client import GatewayClient
-from theygent_ir.gateway import Usage
+from theygent_ir.gateway import ShadowOutcome, Usage
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,16 @@ class LocalAnswer:
 
     body: bytes
     content_type: str
+
+
+@dataclass(frozen=True)
+class LocalAttempt:
+    """How asking the local model went: the answer Claude Code would get (``None`` unless
+    ``answered``), and what the model used — a shadow run records both."""
+
+    outcome: ShadowOutcome
+    answer: LocalAnswer | None = None
+    usage: Usage = field(default_factory=Usage)
 
 
 def _texts(content: Any) -> str | None:
@@ -250,39 +260,47 @@ class LocalRoute:
         )
 
     async def answer(self, model: str, body: bytes) -> LocalAnswer | None:
+        """The answer Claude Code gets, or ``None`` when the request goes upstream instead."""
+        return (await self.attempt(model, body)).answer
+
+    async def attempt(self, model: str, body: bytes) -> LocalAttempt:
         translated = translate(body)
         if translated is None:
-            return None
+            return LocalAttempt("untranslatable")
         try:
             completion = await self._client.complete(
                 model=model, messages=list(translated.messages), params=translated.params
             )
         except Exception as exc:
             log.warning("the local model did not answer: %s", type(exc).__name__)
-            return None
+            return LocalAttempt("failed")
+        usage = Usage(
+            input_tokens=completion.usage.prompt_tokens if completion.usage else 0,
+            output_tokens=completion.usage.completion_tokens if completion.usage else 0,
+        )
         choice = completion.choices[0] if completion.choices else None
         text = answer_text(choice.message.content) if choice is not None else ""
         if not text:
             log.warning("the local model's answer is empty")
-            return None
+            return LocalAttempt("unusable", usage=usage)
         if translated.schema is not None:
             try:
                 parsed = json.loads(text)
             except ValueError:
                 log.warning("the local model's answer is not JSON")
-                return None
+                return LocalAttempt("unusable", usage=usage)
             if not fits(parsed, translated.schema):
                 log.warning("the local model's answer does not fit the schema")
-                return None
-        usage = Usage(
-            input_tokens=completion.usage.prompt_tokens if completion.usage else 0,
-            output_tokens=completion.usage.completion_tokens if completion.usage else 0,
-        )
+                return LocalAttempt("unusable", usage=usage)
         cut_short = choice is not None and choice.finish_reason == "length"
         message = _message(text, model, usage, "max_tokens" if cut_short else "end_turn")
         if translated.stream:
-            return LocalAnswer(as_stream(message), "text/event-stream; charset=utf-8")
-        return LocalAnswer(json.dumps(message, ensure_ascii=False).encode(), "application/json")
+            answer = LocalAnswer(as_stream(message), "text/event-stream; charset=utf-8")
+        else:
+            answer = LocalAnswer(
+                json.dumps(message, ensure_ascii=False).encode(), "application/json"
+            )
+        return LocalAttempt("answered", answer, usage)
 
     async def aclose(self) -> None:
         await self._client.aclose()

@@ -16,14 +16,12 @@ What must hold:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import socket
-import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -32,11 +30,8 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 from _fake_anthropic import FakeAnthropic, fake_anthropic, serve
+from _fake_inference import ANSWER, FakeInference, fake_inference
 from _fixtures import Exchange, load
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route
 from theygent_ai_gateway import local
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.costs import PriceBook
@@ -50,7 +45,6 @@ PRICES = PriceBook.packaged()
 LOCAL = "aux-local"
 TITLE = load("auxiliary-session-title")
 TITLE_SCHEMA = TITLE.body["output_config"]["format"]["schema"]
-ANSWER = '{"title": "Fix the parser"}'
 
 
 def title_with(**changes: Any) -> Exchange:
@@ -217,56 +211,7 @@ def read_text(stream: bytes) -> str:
     return text
 
 
-# ── a fake inference plane ───────────────────────────────────────────────────
-
-
-@dataclass
-class FakeInference:
-    """An OpenAI-compatible chat completions endpoint that records what it was asked."""
-
-    content: str | None = ANSWER
-    status: int = 200
-    delay: float = 0.0
-    finish_reason: str = "stop"
-    requests: list[dict[str, Any]] = field(default_factory=list)
-    asked: threading.Event = field(default_factory=threading.Event)
-    base_url: str = ""
-
-    async def completions(self, request: Request) -> JSONResponse:
-        body = await request.json()
-        self.requests.append(body)
-        self.asked.set()
-        await asyncio.sleep(self.delay)
-        if self.status != 200:
-            return JSONResponse(
-                {"error": {"message": "engine unavailable", "code": "engine_unavailable"}},
-                status_code=self.status,
-            )
-        return JSONResponse(
-            {
-                "id": "chatcmpl-fake",
-                "object": "chat.completion",
-                "created": 0,
-                "model": body["model"],
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": self.content},
-                        "finish_reason": self.finish_reason,
-                    }
-                ],
-                "usage": {"prompt_tokens": 812, "completion_tokens": 9, "total_tokens": 821},
-            }
-        )
-
-
-@contextmanager
-def fake_inference() -> Iterator[FakeInference]:
-    state = FakeInference()
-    app = Starlette(routes=[Route("/v1/chat/completions", state.completions, methods=["POST"])])
-    with serve(app) as url:
-        state.base_url = f"{url}/v1"
-        yield state
+# ── a gateway with a fake inference plane ────────────────────────────────────
 
 
 def title_fingerprint() -> str:
@@ -277,11 +222,11 @@ def title_fingerprint() -> str:
     return signals.body.fingerprint
 
 
-def config(mode: GatewayMode = "router") -> GatewayConfig:
+def config(mode: GatewayMode = "router", *, shadow_local: bool = True) -> GatewayConfig:
     return GatewayConfig(
         version=1,
         mode=mode,
-        policy=PolicyConfig(local_target=LOCAL),
+        policy=PolicyConfig(local_target=LOCAL, shadow_local=shadow_local),
         fingerprints=[FingerprintRule(fingerprint=title_fingerprint(), status="allow_local")],
         updated_at=datetime(2026, 10, 11, tzinfo=UTC),
     )
@@ -315,7 +260,7 @@ class Gateway:
 
 @contextmanager
 def gateway(
-    tmp_path: Path, *, mode: GatewayMode = "router", inference: bool = True
+    tmp_path: Path, *, mode: GatewayMode = "router", inference: bool = True, shadows: bool = True
 ) -> Iterator[Gateway]:
     seen: list[Observation] = []
     with fake_anthropic() as upstream, fake_inference() as fake:
@@ -325,7 +270,7 @@ def gateway(
             gateway_id="gw",
             state_dir=tmp_path,
         )
-        app = create_app(settings, observe=seen.append, config=config(mode))
+        app = create_app(settings, observe=seen.append, config=config(mode, shadow_local=shadows))
         with serve(app) as url:
             yield Gateway(url, upstream, fake, seen)
 
@@ -468,8 +413,9 @@ def test_a_request_that_does_not_translate_is_not_tried_locally(tmp_path: Path) 
     assert_fell_back(gw, response, exchange)
 
 
-def test_observer_mode_never_asks_the_local_model(tmp_path: Path) -> None:
-    with gateway(tmp_path, mode="observer") as gw:
+def test_observer_mode_never_answers_with_the_local_model(tmp_path: Path) -> None:
+    # Shadows off: the local model is not asked at all (a shadow asks only after the exchange).
+    with gateway(tmp_path, mode="observer", shadows=False) as gw:
         response = gw.send()
     assert gw.inference.requests == []
     [received] = gw.upstream.requests

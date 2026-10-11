@@ -46,6 +46,7 @@ from theygent_ir.gateway import (
     GatewayConfig,
     GatewayMode,
     Outcome,
+    PolicyConfig,
     ReasonCode,
     SeatAllowance,
     Timing,
@@ -74,6 +75,7 @@ from theygent_ai_gateway.observe import (
 from theygent_ai_gateway.policy import Plan, Policy, counterfactual_usd, to_decision
 from theygent_ai_gateway.routing import RETRY_ON_REQUESTED, with_model
 from theygent_ai_gateway.settings import GatewaySettings
+from theygent_ai_gateway.shadow import ShadowJob, Shadows
 from theygent_ai_gateway.signals import RequestSignals, credential_kind, read_request
 
 log = logging.getLogger(__name__)
@@ -253,6 +255,14 @@ class _Exchange:
         self._applied = False
         #: The applied target was a local model: no API spend.
         self._local = False
+        self._shadows: Shadows | None = getattr(request.app.state, "shadows", None)
+        #: What a shadow run needs, kept from the forward path (see ``keep_for_shadow``).
+        self._shadow_request: tuple[bytes, str, list[tuple[bytes, bytes]]] | None = None
+        self._cloud_shadow_allowed = False
+
+    @property
+    def credential(self) -> str:
+        return self._signals.credential
 
     @property
     def requested_model(self) -> str | None:
@@ -280,6 +290,27 @@ class _Exchange:
 
     def applied(self) -> None:
         self._applied = True
+
+    def keep_for_shadow(
+        self, body: bytes, path: str, headers: list[tuple[bytes, bytes]], *, cloud_allowed: bool
+    ) -> None:
+        """Keep what a shadow of this request would send, should its decision be a route that is
+        not applied. ``cloud_allowed``: the credential is one the gateway's operator holds."""
+        self._shadow_request = (body, path, headers)
+        self._cloud_shadow_allowed = cloud_allowed
+
+    def _shadow_job(self, outcome: Outcome) -> ShadowJob | None:
+        """A shadow of this exchange: only of a complete, successful Messages exchange whose
+        decision routed it somewhere it did not go."""
+        plan, kept = self.plan, self._shadow_request
+        if kept is None or plan is None or self._applied or outcome != "complete":
+            return None
+        if self._endpoint != "messages" or self._status is None or not 200 <= self._status < 300:
+            return None
+        if plan.action != "route" or plan.target is None:
+            return None
+        body, path, headers = kept
+        return ShadowJob(plan.target, body, path, headers)
 
     def served_locally(self, answer: LocalAnswer) -> None:
         """The local model answered: the exchange is that answer, read like an upstream one."""
@@ -437,7 +468,31 @@ class _Exchange:
         except Exception as exc:
             log.error("could not assemble the observation: %s", type(exc).__name__)
             return
+        if self._shadow(observation, outcome):
+            return  # delivered when the shadow ends
         deliver(self._hook, observation)
+
+    def _shadow(self, observation: Observation, outcome: Outcome) -> bool:
+        """Start a shadow of this exchange, which then delivers its observation; ``False`` when
+        none runs."""
+        shadows = self._shadows
+        try:
+            job = self._shadow_job(outcome)
+            if shadows is None or job is None:
+                return False
+            return shadows.start(
+                job,
+                observation,
+                self._hook,
+                policy=self._config.policy if self._config is not None else PolicyConfig(),
+                prices=self._prices,
+                cloud_allowed=self._cloud_shadow_allowed,
+            )
+        except Exception as exc:
+            log.error("could not start a shadow run: %s", type(exc).__name__)
+            return False
+        finally:
+            self._shadow_request = None  # the body and credentials go with the exchange
 
 
 async def _relay(upstream: httpx.Response, exchange: _Exchange) -> AsyncIterator[bytes]:
@@ -577,6 +632,16 @@ async def forward(request: Request) -> Response:
     outbound_headers = upstream_request_headers(
         list(request.headers.raw), profile=profile, org_api_key=org_api_key
     )
+    if endpoint == "messages" and exchange.plan is not None and exchange.plan.action == "route":
+        # A cloud shadow spends only a key the gateway's operator holds: the organization's, or in
+        # personal mode the user's own API key. Never a seat's login, never a team developer's key.
+        own_key = settings.auth_mode == "personal" and exchange.credential == "api_key"
+        exchange.keep_for_shadow(
+            body,
+            target.lstrip("/"),
+            outbound_headers,
+            cloud_allowed=own_key or profile == "org_key",
+        )
 
     def outbound(content: bytes) -> httpx.Request:
         # Relative to the upstream base URL, so a base URL with a path prefix keeps it.

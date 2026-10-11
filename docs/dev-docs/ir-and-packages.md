@@ -161,6 +161,11 @@ The plane boundary is enforced by the types:
   model); an applied decision has no counterfactual, since its cost is the actual one. The saving
   is baseline minus with-routing: what routing would save in observer mode, what it saved in
   router mode. A record from before router mode (no baseline) adds up exactly as it did.
+- **Shadow runs are their own figures.** A record may carry a `shadow` (`ShadowRun`), but only for
+  a route that was not applied, and only on the target its decision named (validated). Its cost is
+  calibration spend, summed as `shadow_cost_usd` and never part of `cost_usd` or the saving. Only
+  an `answered` shadow adds output tokens, its own and the real exchange's, so their ratio
+  compares like with like.
 
 None of these models is hashed, and `packages/ir-types` does not generate them.
 

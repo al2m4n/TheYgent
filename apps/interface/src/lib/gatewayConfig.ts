@@ -39,6 +39,9 @@ export function draftOf(config: GatewayConfig | null): GatewayConfigDraft {
         main_target: null,
         local_target: null,
         warm_switch_margin: 1.5,
+        shadow_local: true,
+        shadow_cloud: false,
+        shadow_cloud_daily_usd: 1,
       },
       fingerprints: [],
       pricing_overrides: {},
@@ -84,6 +87,9 @@ export interface SettingsForm {
   mainTarget: string;
   localTarget: string;
   margin: string;
+  shadowLocal: boolean;
+  shadowCloud: boolean;
+  shadowCap: string;
   rates: RateRow[];
 }
 
@@ -94,6 +100,9 @@ export function formOf(draft: GatewayConfigDraft): SettingsForm {
     mainTarget: draft.policy.main_target ?? "",
     localTarget: draft.policy.local_target ?? "",
     margin: String(draft.policy.warm_switch_margin),
+    shadowLocal: draft.policy.shadow_local,
+    shadowCloud: draft.policy.shadow_cloud,
+    shadowCap: String(draft.policy.shadow_cloud_daily_usd),
     rates: rowsOf(draft.pricing_overrides),
   };
 }
@@ -131,6 +140,8 @@ export function draftFromForm(
   if (form.margin.trim() === "" || !Number.isFinite(margin) || margin < 1) {
     errors.margin = "A number of at least 1.";
   }
+  const cap = rate(form.shadowCap);
+  if (cap === null) errors.shadowCap = "USD per day, 0 or more.";
   const overrides: Record<string, GatewayModelRates> = {};
   form.rates.forEach((row, i) => {
     const model = row.model.trim();
@@ -156,6 +167,9 @@ export function draftFromForm(
         main_target: main,
         local_target: local,
         warm_switch_margin: margin,
+        shadow_local: form.shadowLocal,
+        shadow_cloud: form.shadowCloud,
+        shadow_cloud_daily_usd: cap ?? 0,
       },
       fingerprints,
       pricing_overrides: overrides,
@@ -173,6 +187,9 @@ export function sameSettings(a: GatewayConfigDraft, b: GatewayConfigDraft): bool
       d.policy.main_target,
       d.policy.local_target,
       d.policy.warm_switch_margin,
+      d.policy.shadow_local,
+      d.policy.shadow_cloud,
+      d.policy.shadow_cloud_daily_usd,
       Object.keys(d.pricing_overrides)
         .sort()
         .map((model) => [model, RATE_FIELDS.map(({ key }) => d.pricing_overrides[model][key])]),

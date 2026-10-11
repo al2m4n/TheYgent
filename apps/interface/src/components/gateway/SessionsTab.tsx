@@ -10,6 +10,8 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import {
   type GatewaySessionSummary,
+  type GatewayShadowOutcome,
+  type GatewayShadowRun,
   type GatewayTimelineEntry,
   type GatewayTotals,
   api,
@@ -320,6 +322,28 @@ function TimelineRow({ entry, offsetMs }: { entry: GatewayTimelineEntry; offsetM
           );
         })}
       </div>
+      {entry.shadow && <ShadowLine shadow={entry.shadow} wrote={u.output_tokens} />}
     </li>
+  );
+}
+
+/** What a shadow run outcome means for the route it tested. */
+const SHADOW_OUTCOME: Record<GatewayShadowOutcome, string> = {
+  answered: "its answer would have been used",
+  unusable: "its answer would not have been used",
+  failed: "it did not answer",
+  untranslatable: "the request could not be sent there",
+};
+
+function ShadowLine({ shadow, wrote }: { shadow: GatewayShadowRun; wrote: number }) {
+  const output =
+    shadow.outcome === "answered"
+      ? ` · wrote ${shadow.usage.output_tokens.toLocaleString()} out where this wrote ${wrote.toLocaleString()}`
+      : "";
+  return (
+    <div className="mt-1 pl-16 text-[11px] text-muted-foreground">
+      Shadow run on {shadow.target.model}: {SHADOW_OUTCOME[shadow.outcome]}
+      {output} · {usd(shadow.cost_usd)}
+    </div>
   );
 }

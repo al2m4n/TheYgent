@@ -1119,6 +1119,11 @@ export interface GatewayConfig {
     main_target: string | null;
     local_target: string | null;
     warm_switch_margin: number;
+    /** Shadow runs on the local model: free, on by default. */
+    shadow_local: boolean;
+    /** Shadow runs on a cloud target: real spend, off by default, capped per day per gateway. */
+    shadow_cloud: boolean;
+    shadow_cloud_daily_usd: number;
   };
   fingerprints: { fingerprint: string; status: FingerprintStatus; label: string | null }[];
   pricing_overrides: Record<string, GatewayModelRates>;
@@ -1180,6 +1185,33 @@ export interface GatewayTotals {
   /** API calls a local model would have answered. */
   routed_local_calls: number;
   routed_local_tokens: number;
+  /** Shadow runs, and those whose answer the route could have used. */
+  shadow_calls: number;
+  shadow_answered_calls: number;
+  /** What shadow runs cost: calibration spend, outside ``cost_usd``. */
+  shadow_cost_usd: number;
+  /** Output the targets wrote in usable shadows, and the requested models' for the same
+   *  requests: their ratio calibrates the counterfactuals' assumption of equal output. */
+  shadow_output_tokens: number;
+  shadowed_output_tokens: number;
+}
+
+/** How a shadow run ended (theygent_ir.gateway.ShadowOutcome). */
+export type GatewayShadowOutcome = "answered" | "unusable" | "failed" | "untranslatable";
+
+/** A copy of a request sent to its decision's target after the exchange, to measure it. */
+export interface GatewayShadowRun {
+  target: { kind: "anthropic" | "local"; model: string };
+  outcome: GatewayShadowOutcome;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_5m_tokens: number;
+    cache_write_1h_tokens: number;
+  };
+  cost_usd: number | null;
+  total_ms: number | null;
 }
 
 export type GatewayDimension =
@@ -1303,6 +1335,8 @@ export interface GatewayTimelineEntry {
     counterfactual_usd: number | null;
     applied: boolean;
   };
+  /** A copy sent to the decision's target after the exchange, where one ran. */
+  shadow: GatewayShadowRun | null;
 }
 
 export interface GatewaySessionDetail {

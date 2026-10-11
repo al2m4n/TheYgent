@@ -11,13 +11,18 @@ like any other — headers are an open list):
   breaking mid-stream, or an error response;
 * ``x-fake-refuse-model: <model>`` refuses requests for that model (``x-fake-refuse-status``,
   400 by default), as a router's target sometimes does. A replayed exchange reports the model the
-  request asked for, so a routed request is answered "by" its target.
+  request asked for, so a routed request is answered "by" its target;
+* ``x-fake-slow-model: <model>`` holds requests for that model ``x-fake-slow-seconds`` (2 by
+  default) before answering; ``x-fake-pressure-model: <model>`` answers them with rate-limit
+  headers showing little left; ``x-fake-output-model: <model>=<n>`` reports ``n`` output tokens
+  for them — so a shadow run, a copy sent to another model, can be told apart from the original.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 import time
 from collections.abc import AsyncIterator, Iterator
@@ -137,6 +142,7 @@ class FakeAnthropic:
 
     requests: list[Captured] = field(default_factory=list)
     hold_started: threading.Event = field(default_factory=threading.Event)
+    slow_started: threading.Event = field(default_factory=threading.Event)
     abandoned: threading.Event = field(default_factory=threading.Event)
     base_url: str = ""
 
@@ -145,13 +151,30 @@ class FakeAnthropic:
         return self.requests[-1]
 
 
-def replay(exchange: Exchange, served: str | None = None) -> Response:
+#: What the upstream reports when a rate limit is nearly used up.
+PRESSURE_HEADERS = [
+    (b"anthropic-ratelimit-output-tokens-limit", b"80000"),
+    (b"anthropic-ratelimit-output-tokens-remaining", b"4000"),
+]
+
+
+def replay(
+    exchange: Exchange,
+    served: str | None = None,
+    *,
+    output_tokens: int | None = None,
+    extra_headers: list[tuple[bytes, bytes]] | None = None,
+) -> Response:
     """Answer exactly as the recorded upstream did — reporting ``served`` as the model, when the
-    request asked for another than the recording did (a routed request)."""
+    request asked for another than the recording did (a routed request), and ``output_tokens``
+    where given."""
     headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in exchange.response_headers]
+    headers += extra_headers or []
     recorded = exchange.body.get("model") if isinstance(exchange.body, dict) else None
 
     def as_served(text: str) -> str:
+        if output_tokens is not None:
+            text = re.sub(r'"output_tokens":\d+', f'"output_tokens":{output_tokens}', text)
         if served is None or recorded is None or served == recorded:
             return text
         return text.replace(f'"{recorded}"', f'"{served}"')
@@ -201,9 +224,20 @@ def build_app(state: FakeAnthropic) -> Starlette:
                 },
                 status_code=status,
             )
+        if asked and asked == request.headers.get("x-fake-slow-model"):
+            state.slow_started.set()
+            await asyncio.sleep(float(request.headers.get("x-fake-slow-seconds", "2")))
         fixture = request.headers.get("x-fake-fixture")
         if fixture:
-            return replay(load(fixture), served=asked)
+            output = request.headers.get("x-fake-output-model", "")
+            model, _, count = output.partition("=")
+            pressured = asked and asked == request.headers.get("x-fake-pressure-model")
+            return replay(
+                load(fixture),
+                served=asked,
+                output_tokens=int(count) if asked and model == asked else None,
+                extra_headers=PRESSURE_HEADERS if pressured else None,
+            )
         scenario = request.headers.get("x-fake-scenario", "")
         if scenario == "error-400":
             return JSONResponse(

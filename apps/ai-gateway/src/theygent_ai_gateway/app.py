@@ -71,6 +71,7 @@ from theygent_ai_gateway.requestlog import (
     Spool,
 )
 from theygent_ai_gateway.settings import GatewaySettings, load_settings
+from theygent_ai_gateway.shadow import Shadows
 
 #: Streams can stay open through long thinking pauses (Claude Code itself waits five minutes of
 #: silence before giving up), so reads have no timeout; connecting and sending stay bounded.
@@ -129,6 +130,7 @@ def create_app(
     if config is not None:
         config_state.apply(config, persist=False)
     health = UpstreamHealth()
+    shadows = Shadows()
     version = software_version()
     org_key = OrgKey(
         env_value=settings.org_api_key,
@@ -154,14 +156,18 @@ def create_app(
         config_state.load_from_disk()
         async with contextlib.AsyncExitStack() as stack:
             stack.push_async_callback(upstream.aclose)
+            shadows.upstream = upstream
             if settings.inference_plane_url is not None:
                 local = LocalRoute(settings.inference_plane_url)
-                app.state.local = local
+                app.state.local = shadows.local = local
                 stack.push_async_callback(local.aclose)
             records.start()
             # Stopped after the exporter: what is still queued reaches the spool, and the next
             # start exports it.
             stack.push_async_callback(records.stop)
+            # Before the request log and the clients close: a cut-short shadow still delivers its
+            # exchange's record.
+            stack.push_async_callback(shadows.stop)
             control_plane: ControlPlane | None = None
             if settings.control_plane_url is not None and settings.service_key is not None:
                 client = httpx.AsyncClient(timeout=CONTROL_PLANE_TIMEOUT)
@@ -227,6 +233,7 @@ def create_app(
     app.state.settings = settings
     app.state.upstream = None
     app.state.local = None
+    app.state.shadows = shadows
     app.state.request_log = records
     hooks = (records.record, health.observe, *((observe,) if observe is not None else ()))
     app.state.observe = fan_out(*hooks)

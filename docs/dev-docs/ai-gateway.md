@@ -161,6 +161,37 @@ tokenizer, so an estimate. Claude Code sends side requests only in interactive s
 opt-in test (`THEYGENT_E2E_LOCAL_MODEL`) drives the gateway with the recorded title request's
 shape against a real local model and a fake upstream.
 
+### Shadow runs
+
+A counterfactual assumes the target writes as many tokens as the requested model did. Shadow runs
+(`shadow.py`) measure that. A complete, 2xx Messages exchange whose decision routed it somewhere it
+did not go has a copy sent to the decision's target, after the exchange ends. In practice that
+means observer mode. Nothing awaits the copy, and its answer goes only to the record: the
+exchange's observation is delivered when the shadow ends, with a `ShadowRun` holding the outcome,
+usage, cost and time. If the gateway stops first, it is delivered without one.
+
+- **Local targets** (`PolicyConfig.shadow_local`, default on) go through the local route's
+  `attempt()`. The outcome says whether the answer would have been used (`answered`), would have
+  fallen back (`unusable`), never came (`failed`), or the request does not translate
+  (`untranslatable`).
+- **Cloud targets** (`shadow_cloud`, default off) get the routed bytes (`with_model`), sent with
+  the exchange's outbound headers.
+    - They run only on a key the gateway's operator holds: the org key (the `org_key` profile),
+      or in personal mode the user's own API key. Never an OAuth seat, never a team developer's
+      own key.
+    - They stop for the UTC day at `shadow_cloud_daily_usd`, counted per instance in memory.
+    - They pause for ten minutes after a 429/529, or when any `anthropic-ratelimit-*` limit has
+      under half remaining.
+    - Outcome mapping: 400/404/413/422 is `unusable`; anything else that is not 2xx, a transport
+      error or the 300 s timeout is `failed`.
+- **Limits.** At most one local and two cloud shadows run at once. Beyond that a shadow is skipped,
+  never queued.
+
+`GatewayTotals` sums them: `shadow_calls`, `shadow_answered_calls`, `shadow_cost_usd`
+(calibration spend, outside `cost_usd`), and `shadow_output_tokens` against
+`shadowed_output_tokens` (the real exchanges' output for the same answered shadows). The report
+shows that ratio per target. It does not adjust counterfactuals.
+
 ### Auxiliary requests and the fingerprint catalog
 
 Side requests (titles, suggestions, checks) are told apart by a fingerprint of their shape — a

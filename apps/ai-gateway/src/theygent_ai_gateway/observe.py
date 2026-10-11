@@ -22,6 +22,7 @@ from theygent_ir.gateway import (
     GatewayMode,
     Outcome,
     SeatAllowance,
+    ShadowRun,
     Timing,
     Usage,
 )
@@ -254,6 +255,8 @@ class Observation:
     #: The config the exchange was decided under; ``None`` (and observer mode) before any config.
     config_version: int | None = None
     mode: GatewayMode = "observer"
+    #: A copy of the request sent to the decision's target after the exchange, where one ran.
+    shadow: ShadowRun | None = None
 
 
 ObserveHook = Callable[[Observation], None]

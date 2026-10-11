@@ -219,6 +219,26 @@ class Usage(_GatewayWire):
     cache_write_1h_tokens: int = Field(default=0, ge=0)
 
 
+#: How a shadow run ended: ``answered`` — the target answered, with an answer the route could
+#: have used (for a local model, one that passed the checks a routed answer must pass);
+#: ``unusable`` — it answered, but a routed request would have fallen back; ``failed`` — no answer
+#: (an error, a timeout, unreachable); ``untranslatable`` — the request could not be sent there.
+ShadowOutcome = Literal["answered", "unusable", "failed", "untranslatable"]
+
+
+class ShadowRun(_GatewayWire):
+    """A copy of a request sent, after the real exchange, to the target its decision named but did
+    not apply — to measure what the counterfactual only estimates. Claude Code never sees it."""
+
+    target: Target
+    outcome: ShadowOutcome
+    usage: Usage = Field(default_factory=Usage)
+    #: What the shadow itself cost (a cloud target's list price; a local model costs no API
+    #: spend). Calibration spend, outside the record's ``cost_usd``.
+    cost_usd: float | None = Field(default=None, ge=0)
+    total_ms: int | None = Field(default=None, ge=0)
+
+
 class Timing(_GatewayWire):
     """Milliseconds from the request's arrival at the gateway."""
 
@@ -310,11 +330,24 @@ class GatewayRequestRecord(_GatewayWire):
     baseline_usd: float | None = Field(default=None, ge=0)
     pricing_version: Token | None = None
     decision: Decision
+    #: A copy sent to the decision's target after this exchange, where one ran.
+    shadow: ShadowRun | None = None
 
     @model_validator(mode="after")
     def _raw_class_only_when_unrecognized(self) -> GatewayRequestRecord:
         if (self.request_class == "unrecognized") != (self.request_class_raw is not None):
             raise ValueError("request_class_raw is set exactly when request_class is unrecognized")
+        return self
+
+    @model_validator(mode="after")
+    def _shadow_of_an_unapplied_route(self) -> GatewayRequestRecord:
+        if self.shadow is None:
+            return self
+        decision = self.decision
+        if decision.action != "route" or decision.applied:
+            raise ValueError("a shadow runs only for a route that was not applied")
+        if self.shadow.target != decision.target:
+            raise ValueError("a shadow runs on the target its decision named")
         return self
 
 
@@ -386,6 +419,15 @@ class GatewayTotals(_GatewayWire):
     #: Calls a local model would have answered: API calls that would not have been made.
     routed_local_calls: int = Field(default=0, ge=0)
     routed_local_tokens: int = Field(default=0, ge=0)
+    #: Shadow runs, and those whose answer the route could have used.
+    shadow_calls: int = Field(default=0, ge=0)
+    shadow_answered_calls: int = Field(default=0, ge=0)
+    #: What shadow runs cost: calibration spend, outside ``cost_usd``.
+    shadow_cost_usd: float = Field(default=0.0, ge=0)
+    #: Output tokens the targets wrote in answered shadows, and the real exchanges' output for the
+    #: same requests. Their ratio calibrates a counterfactual's assumption of equal output.
+    shadow_output_tokens: int = Field(default=0, ge=0)
+    shadowed_output_tokens: int = Field(default=0, ge=0)
 
     @property
     def cache_write_tokens(self) -> int:
@@ -420,6 +462,8 @@ class GatewayTotals(_GatewayWire):
         failed = record.outcome != "complete" or (
             record.status is not None and record.status >= 400
         )
+        shadow = record.shadow
+        answered = shadow is not None and shadow.outcome == "answered"
         return cls.model_construct(
             calls=1,
             errors=int(failed),
@@ -437,6 +481,11 @@ class GatewayTotals(_GatewayWire):
             routed_tokens=tokens if target is not None else 0,
             routed_local_calls=int(local),
             routed_local_tokens=tokens if local else 0,
+            shadow_calls=int(shadow is not None),
+            shadow_answered_calls=int(answered),
+            shadow_cost_usd=(shadow.cost_usd or 0.0) if shadow is not None else 0.0,
+            shadow_output_tokens=shadow.usage.output_tokens if answered and shadow else 0,
+            shadowed_output_tokens=usage.output_tokens if answered else 0,
         )
 
     def __add__(self, other: GatewayTotals) -> GatewayTotals:
@@ -477,6 +526,14 @@ class PolicyConfig(_GatewayWire):
     #: A conversation whose cache is warm moves (either way) only where staying would cost at
     #: least this many times rebuilding its cached prefix on the other model.
     warm_switch_margin: float = Field(default=1.5, ge=1.0)
+    #: Shadow runs: after a route that was not applied, a copy of the request goes to its target
+    #: to measure it. A local model's costs nothing but its time.
+    shadow_local: bool = True
+    #: A cloud target's shadow is real spend, so it is off unless chosen, runs only on API keys
+    #: the gateway's operator holds (never a subscription seat, never a developer's own key in
+    #: team mode), and stops for the day at ``shadow_cloud_daily_usd`` per gateway instance.
+    shadow_cloud: bool = False
+    shadow_cloud_daily_usd: float = Field(default=1.0, ge=0)
 
     @model_validator(mode="after")
     def _local_is_logical(self) -> PolicyConfig:

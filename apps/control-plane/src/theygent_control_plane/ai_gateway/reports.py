@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import Select, and_, case, func, literal, or_, select, text
+from sqlalchemy import BigInteger, Float, Select, and_, case, func, literal, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import QueryableAttribute
 from sqlalchemy.sql.elements import ColumnElement
@@ -35,6 +35,10 @@ _APPLIED = and_(_ROUTED, R.decision_applied.is_(True))
 _LOCAL = and_(_ROUTED, R.decision_target_kind == "local")
 _FAILED = or_(R.outcome != "complete", R.status >= 400)
 _COST = func.coalesce(R.cost_usd, 0.0)
+_SHADOWED = R.shadow.is_not(None)
+_ANSWERED = R.shadow["outcome"].astext == "answered"
+_SHADOW_COST = func.coalesce(R.shadow["cost_usd"].astext.cast(Float), 0.0)
+_SHADOW_OUTPUT = func.coalesce(R.shadow["usage"]["output_tokens"].astext.cast(BigInteger), 0)
 
 #: ``GatewayTotals.of`` summed, field by field.
 TOTALS: dict[str, ColumnElement[Any]] = {
@@ -62,6 +66,13 @@ TOTALS: dict[str, ColumnElement[Any]] = {
     "routed_tokens": func.coalesce(func.sum(case((_ROUTED, _TOKENS), else_=0)), 0),
     "routed_local_calls": func.count().filter(_LOCAL),
     "routed_local_tokens": func.coalesce(func.sum(case((_LOCAL, _TOKENS), else_=0)), 0),
+    "shadow_calls": func.count().filter(_SHADOWED),
+    "shadow_answered_calls": func.count().filter(_ANSWERED),
+    "shadow_cost_usd": func.coalesce(func.sum(case((_SHADOWED, _SHADOW_COST), else_=0.0)), 0.0),
+    "shadow_output_tokens": func.coalesce(func.sum(case((_ANSWERED, _SHADOW_OUTPUT), else_=0)), 0),
+    "shadowed_output_tokens": func.coalesce(
+        func.sum(case((_ANSWERED, R.output_tokens), else_=0)), 0
+    ),
 }
 
 #: Report dimensions, named as in the gateway's own report, plus ``day`` (UTC).
@@ -411,6 +422,8 @@ class TimelineEntry(BaseModel):
     baseline_usd: float | None
     timing: dict[str, Any]
     decision: dict[str, Any]
+    #: The shadow run's outcome, usage and cost (``ShadowRun``), where one ran.
+    shadow: dict[str, Any] | None = None
 
 
 class SessionDetail(BaseModel):
@@ -490,6 +503,7 @@ def _entry(row: R) -> TimelineEntry:
         },
         cost_usd=row.cost_usd,
         baseline_usd=row.baseline_usd,
+        shadow=row.shadow,
         timing=row.timing,
         decision={
             "action": row.decision_action,

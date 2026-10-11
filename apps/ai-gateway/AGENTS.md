@@ -107,6 +107,14 @@ Router mode applies the policy's decisions; observer mode only records them.
 - **An applied route records what served it.** `served_model` from the response, `applied`,
   `cost_usd` priced on the served model and `baseline_usd` on the requested one. A local answer
   costs 0.0: no API spend, and local compute is not priced.
+- **A shadow run never touches the real exchange.**
+    - A copy of an unapplied route goes to its target only after the exchange ends. Nothing awaits
+      it, its answer goes only to the record, and the record is delivered when it ends (without it
+      if cut short).
+    - A cloud shadow is real spend. It runs only on a key the operator holds (the org key, or
+      personal mode's own API key), never a seat or a team developer's own key. It stops at the
+      daily budget, and pauses under rate-limit pressure.
+    - Shadows are sampled, never queued.
 - **Never route** compaction, the quota check, requests that share the main conversation's cache,
   requests carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
   fingerprints.

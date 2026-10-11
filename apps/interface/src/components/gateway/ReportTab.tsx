@@ -127,7 +127,13 @@ export function ReportTab() {
 
   const report = useQuery({
     queryKey: ["gatewayReport", range, scope, by],
-    queryFn: () => api.getGatewayReport({ ...bounds(range), by: ["day", by], scope }),
+    // "decision" also feeds the shadow runs' calibration, per target.
+    queryFn: () =>
+      api.getGatewayReport({
+        ...bounds(range),
+        by: [...new Set(["day", by, "decision"] as const)],
+        scope,
+      }),
     refetchInterval: 60_000,
     // Changing the range, scope or grouping keeps the last report on screen until the next one
     // arrives, instead of flashing back to skeletons.
@@ -251,6 +257,7 @@ function ReportBody({
         onDimension={onDimension}
         seesIndividuals={seesIndividuals}
       />
+      {total.shadow_calls > 0 && <ShadowRuns report={report} />}
       {report.seats.length > 0 && <Seats report={report} />}
       <p className="text-[11px] text-muted-foreground">
         {total.input_tokens.toLocaleString()} input · {total.output_tokens.toLocaleString()} output
@@ -392,6 +399,58 @@ function Breakdown({
                     usd(row.saving_usd)
                   )}
                 </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** What shadow runs measured, per target: how often its answer would have been used, and how much
+ *  it wrote against the requested model — the counterfactuals assume the same. */
+function ShadowRuns({ report }: { report: GatewayReport }) {
+  const rows = (report.groups.decision ?? [])
+    .filter((row) => row.shadow_calls > 0)
+    .map((row) => ({ ...row, key: row.key.replace(/^route:/, "") }));
+  const shown = rows.length > 0 ? rows : [{ ...report.total, key: "All targets" }];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>Shadow runs</CardTitle>
+        <CardDescription>
+          After a request routing would have sent elsewhere, a copy went to that target, unseen by
+          Claude Code. The savings above assume a target writes as much as the model Claude Code
+          asked for; here is what the targets actually did. Shadow runs cost{" "}
+          {usd(report.total.shadow_cost_usd)}, outside the spend above.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-2">
+        <Table aria-label="Shadow runs">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Target</TableHead>
+              <TableHead className="text-right">Shadows</TableHead>
+              <TableHead className="text-right">Usable</TableHead>
+              <TableHead className="text-right">Output vs requested</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {shown.map((row) => (
+              <TableRow key={row.key}>
+                <TableCell className="font-mono text-xs">{row.key}</TableCell>
+                <TableCell className="text-right">{row.shadow_calls.toLocaleString()}</TableCell>
+                <TableCell className="text-right">
+                  {percent(row.shadow_answered_calls, row.shadow_calls)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {row.shadowed_output_tokens > 0
+                    ? percent(row.shadow_output_tokens, row.shadowed_output_tokens)
+                    : "—"}
+                </TableCell>
+                <TableCell className="text-right">{usd(row.shadow_cost_usd)}</TableCell>
               </TableRow>
             ))}
           </TableBody>

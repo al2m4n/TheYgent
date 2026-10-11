@@ -884,6 +884,8 @@ class AiGatewayRequestRow(Base):
     decision_reasons: Mapped[list] = mapped_column(JSONB)  # reason codes, in order
     counterfactual_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     decision_applied: Mapped[bool] = mapped_column(Boolean)
+    # A copy sent to the decision's target after the exchange (``ShadowRun``), where one ran.
+    shadow: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
 
     __table_args__ = (
         Index("ix_ai_gateway_request_started", "started_at"),
@@ -924,6 +926,11 @@ class AiGatewayDailyUsageRow(Base):
     routed_tokens: Mapped[int] = mapped_column(BigInteger)
     routed_local_calls: Mapped[int] = mapped_column(BigInteger)
     routed_local_tokens: Mapped[int] = mapped_column(BigInteger)
+    shadow_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_answered_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_cost_usd: Mapped[float] = mapped_column(Float)
+    shadow_output_tokens: Mapped[int] = mapped_column(BigInteger)
+    shadowed_output_tokens: Mapped[int] = mapped_column(BigInteger)
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 
     __table_args__ = (

@@ -137,6 +137,18 @@ def _config(**overrides: Any) -> dict[str, Any]:
 
 EXAMPLES: list[tuple[type[BaseModel], dict[str, Any]]] = [
     (GatewayRequestRecord, _record()),
+    (
+        GatewayRequestRecord,
+        _record(
+            shadow={
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "outcome": "answered",
+                "usage": {"input_tokens": 2, "output_tokens": 151, "cache_write_5m_tokens": 22987},
+                "cost_usd": 0.0884,
+                "total_ms": 4210,
+            }
+        ),
+    ),
     (GatewayEventBatch, {"gateway_id": "gw-laptop-1", "records": [_record()]}),
     (GatewayEventAck, {"accepted": 1, "duplicates": 0}),
     (GatewayConfig, _config()),
@@ -589,6 +601,93 @@ def test_an_unpriced_call_is_counted_not_free() -> None:
 )
 def test_errors(status: int | None, outcome: str, error: int) -> None:
     assert GatewayTotals.of(_built(status=status, outcome=outcome)).errors == error
+
+
+# ── shadow runs ──────────────────────────────────────────────────────────────
+
+SONNET_ROUTE = {
+    "action": "route",
+    "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+    "reasons": ["subagent_at_spawn"],
+    "counterfactual_usd": 0.2,
+}
+
+
+def _shadow(**fields: Any) -> dict[str, Any]:
+    return {
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "outcome": "answered",
+        "usage": {"output_tokens": 80},
+        "cost_usd": 0.03,
+        **fields,
+    }
+
+
+def test_a_shadow_measures_the_counterfactual_and_costs_apart() -> None:
+    totals = GatewayTotals.of(
+        _built(usage={"output_tokens": 100}, cost_usd=0.5, decision=SONNET_ROUTE, shadow=_shadow())
+    )
+    assert (totals.shadow_calls, totals.shadow_answered_calls) == (1, 1)
+    # The target wrote 80 where the requested model wrote 100.
+    assert (totals.shadow_output_tokens, totals.shadowed_output_tokens) == (80, 100)
+    # Calibration spend is its own figure: what ran, and the saving, are unchanged.
+    assert (totals.shadow_cost_usd, totals.cost_usd, totals.with_routing_usd) == (0.03, 0.5, 0.2)
+    assert totals.saving_usd == pytest.approx(0.3)
+
+
+@pytest.mark.parametrize("outcome", ["unusable", "failed", "untranslatable"])
+def test_only_an_answered_shadow_calibrates_output(outcome: str) -> None:
+    totals = GatewayTotals.of(
+        _built(
+            usage={"output_tokens": 100},
+            cost_usd=0.5,
+            decision=SONNET_ROUTE,
+            shadow=_shadow(outcome=outcome, cost_usd=0.01),
+        )
+    )
+    assert (totals.shadow_calls, totals.shadow_answered_calls) == (1, 0)
+    assert (totals.shadow_output_tokens, totals.shadowed_output_tokens) == (0, 0)
+    assert totals.shadow_cost_usd == 0.01  # spent all the same
+
+
+def test_a_local_shadow_costs_nothing() -> None:
+    local_route = {
+        "action": "route",
+        "target": {"kind": "local", "model": "aux-local"},
+        "reasons": ["local_candidate"],
+        "counterfactual_usd": 0.0,
+    }
+    shadow = _shadow(target={"kind": "local", "model": "aux-local"}, cost_usd=0.0)
+    totals = GatewayTotals.of(_built(cost_usd=0.01, decision=local_route, shadow=shadow))
+    assert (totals.shadow_calls, totals.shadow_cost_usd) == (1, 0.0)
+
+
+def test_a_shadow_runs_only_for_a_route_not_applied() -> None:
+    with pytest.raises(ValidationError, match="route that was not applied"):
+        _built(shadow=_shadow())  # a stay
+    applied = {**SONNET_ROUTE, "counterfactual_usd": None, "applied": True}
+    with pytest.raises(ValidationError, match="route that was not applied"):
+        _built(decision=applied, shadow=_shadow())
+    other = _shadow(target={"kind": "anthropic", "model": "claude-opus-5-5"})
+    with pytest.raises(ValidationError, match="target its decision named"):
+        _built(decision=SONNET_ROUTE, shadow=other)
+
+
+def test_shadow_settings_default_to_local_only() -> None:
+    policy = PolicyConfig()
+    assert (policy.shadow_local, policy.shadow_cloud) == (True, False)
+    assert policy.shadow_cloud_daily_usd == 1.0
+    with pytest.raises(ValidationError):
+        PolicyConfig(shadow_cloud_daily_usd=-1)
+
+
+def test_a_record_without_a_shadow_adds_none() -> None:
+    totals = GatewayTotals.of(_built(cost_usd=0.5, decision=SONNET_ROUTE))
+    assert (totals.shadow_calls, totals.shadow_cost_usd, totals.shadowed_output_tokens) == (
+        0,
+        0.0,
+        0,
+    )
 
 
 def test_totals_add_field_by_field() -> None:

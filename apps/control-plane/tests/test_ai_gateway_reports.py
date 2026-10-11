@@ -144,6 +144,55 @@ def routed(ada: str, bob: str) -> list[dict[str, Any]]:
     ]
 
 
+def shadowed(ada: str, bob: str) -> list[dict[str, Any]]:
+    """Observer mode with shadow runs: answered (calibrating output), unusable and failed, on a
+    cloud target and the local model."""
+
+    def shadow(target: dict[str, str], outcome: str, output: int, cost: float | None) -> dict:
+        return {
+            "target": target,
+            "outcome": outcome,
+            "usage": {"input_tokens": 3, "output_tokens": output},
+            "cost_usd": cost,
+            "total_ms": 900,
+        }
+
+    return [
+        record(
+            11,
+            developer_id=ada,
+            session_id="s-ada-1",
+            request_class="subagent",
+            decision=route(SONNET, 0.0011, "subagent_at_spawn"),
+            shadow=shadow(SONNET, "answered", 80, 0.0009),
+        ),
+        record(
+            12,
+            developer_id=bob,
+            session_id="s-bob-1",
+            request_class="subagent",
+            decision=route(SONNET, 0.0011, "subagent_at_spawn"),
+            shadow=shadow(SONNET, "unusable", 0, 0.0),
+        ),
+        record(
+            13,
+            developer_id=bob,
+            session_id="s-bob-1",
+            request_class="auxiliary",
+            decision=route(LOCAL, 0.0, "local_candidate"),
+            shadow=shadow(LOCAL, "answered", 9, 0.0),
+        ),
+        record(
+            14,
+            developer_id=ada,
+            session_id="s-ada-2",
+            request_class="subagent",
+            decision=route(SONNET, 0.0011, "subagent_at_spawn"),
+            shadow=shadow(SONNET, "failed", 0, None),
+        ),
+    ]
+
+
 def python_key(dimension: str, raw: dict[str, Any]) -> str:
     """What each report dimension means, computed from a record in Python."""
     r = GatewayRequestRecord.model_validate(raw)
@@ -188,13 +237,12 @@ def test_the_totals_cover_every_field() -> None:
     assert set(TOTALS) == set(GatewayTotals.model_fields)
 
 
-@pytest.mark.parametrize("with_router_records", [False, True], ids=["observer", "router"])
-def test_the_report_sql_equals_the_shared_totals(
-    client: TestClient, with_router_records: bool
-) -> None:
+@pytest.mark.parametrize("extra", ["observer", "router", "shadows"])
+def test_the_report_sql_equals_the_shared_totals(client: TestClient, extra: str) -> None:
     ada, _ = make_user(client, "ada", "editor")
     bob, _ = make_user(client, "bob", "editor")
-    records = varied(ada, bob) + (routed(ada, bob) if with_router_records else [])
+    more = {"observer": lambda a, b: [], "router": routed, "shadows": shadowed}[extra]
+    records = varied(ada, bob) + more(ada, bob)
     seed(client, records)
     result = report(client, by=",".join(DIMENSIONS))
     assert numbers(result["total"]) == pytest.approx(python_totals(records).model_dump())
@@ -404,6 +452,27 @@ def test_a_session_timeline_shows_each_request_and_its_decision(
     }
     assert routed["usage"]["cache_read_tokens"] == 2000
     assert entries[0]["decision"]["target"] is None
+    assert routed["shadow"] is None
+
+
+def test_a_timeline_entry_carries_its_shadow_run(client: TestClient) -> None:
+    ada, ada_token = make_user(client, "ada", "editor")
+    bob, _ = make_user(client, "bob", "editor")
+    seed(client, shadowed(ada, bob))
+    [entry] = timeline(client, "s-ada-1", ada_token).json()["requests"]
+    assert entry["shadow"] == {
+        "target": SONNET,
+        "outcome": "answered",
+        "usage": {
+            "input_tokens": 3,
+            "output_tokens": 80,
+            "cache_read_tokens": 0,
+            "cache_write_5m_tokens": 0,
+            "cache_write_1h_tokens": 0,
+        },
+        "cost_usd": 0.0009,
+        "total_ms": 900,
+    }
 
 
 def test_another_developers_session_is_not_there(

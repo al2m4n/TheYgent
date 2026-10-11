@@ -26,6 +26,9 @@ function config(version: number, over: Record<string, unknown> = {}) {
       main_target: null,
       local_target: null,
       warm_switch_margin: 1.5,
+      shadow_local: true,
+      shadow_cloud: false,
+      shadow_cloud_daily_usd: 1,
     },
     fingerprints: RULES,
     pricing_overrides: {
@@ -144,6 +147,9 @@ function mockPlanes({
               main_target: null,
               local_target: null,
               warm_switch_margin: 2,
+              shadow_local: false,
+              shadow_cloud: true,
+              shadow_cloud_daily_usd: 3,
             },
             pricing_overrides: {},
           }),
@@ -249,6 +255,9 @@ describe("AI Gateway settings: the config", () => {
         main_target: null,
         local_target: "triage-fast",
         warm_switch_margin: 1.5,
+        shadow_local: true,
+        shadow_cloud: false,
+        shadow_cloud_daily_usd: 1,
       },
       fingerprints: RULES,
       pricing_overrides: {
@@ -279,6 +288,36 @@ describe("AI Gateway settings: the config", () => {
     const body = puts(calls)[0].body as { mode: string; policy: { subagent_target: string } };
     expect(body.mode).toBe("router");
     expect(body.policy.subagent_target).toBe("claude-sonnet-5-5");
+  });
+
+  it("turns cloud shadow runs on with a daily budget", async () => {
+    const calls = mockPlanes({});
+    const ui = userEvent.setup();
+    renderTab();
+    const budget = await screen.findByLabelText("Cloud shadow budget (USD per day)");
+    // Local shadows are on and cloud ones off, as configured; the budget waits for cloud.
+    expect(screen.getByRole("checkbox", { name: "Shadow the local model" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Shadow cloud targets" })).not.toBeChecked();
+    expect(budget).toBeDisabled();
+
+    await ui.click(screen.getByRole("checkbox", { name: "Shadow cloud targets" }));
+    await ui.click(screen.getByRole("checkbox", { name: "Shadow the local model" }));
+    await ui.clear(budget);
+    await ui.type(budget, "-2");
+    await ui.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByText("USD per day, 0 or more.")).toBeInTheDocument();
+    expect(puts(calls)).toHaveLength(0);
+
+    await ui.clear(budget);
+    await ui.type(budget, "2.5");
+    await ui.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    const { policy } = puts(calls)[0].body as { policy: Record<string, unknown> };
+    expect(policy).toMatchObject({
+      shadow_local: false,
+      shadow_cloud: true,
+      shadow_cloud_daily_usd: 2.5,
+    });
   });
 
   it("shows why the control plane refused a target", async () => {

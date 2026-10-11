@@ -23,6 +23,14 @@ served it, the routing decision or its reason — and, where you may see individ
 or session. Grouping by requested model matches Claude Code's own usage summary, which files every
 token under the model it asked for.
 
+**Shadow runs.** A saving is an estimate: it assumes the target would have written as much as
+the model Claude Code asked for. Shadow runs check it. After a request that routing would have sent
+elsewhere, the gateway sends a copy to that target. Claude Code never sees the copy, and it never
+delays Claude Code's answer. The **Shadow runs** table shows, per target, how many copies ran,
+how many of their answers routing could have used, and how much the target wrote compared with
+the model Claude Code asked for. It also shows what the copies cost, which is kept apart from the
+spend above. The Sessions timeline shows the shadow run under each request that had one.
+
 **Subscription seats.** For developers on a claude.ai plan, the dollar figures are the
 API-equivalent value of their traffic, not a bill. The seats table shows each developer's latest
 reading of the plan's five-hour and weekly allowance and how much of it was used in the range.
@@ -127,6 +135,13 @@ local model's tokens.
 - **Warm switch margin** — a conversation whose cache is warm moves only where staying would cost
   at least this many times rebuilding its cache on the other model (at least 1). Cache reads cost
   a fraction of cache writes, so in practice warm conversations stay put.
+- **Shadow runs** — which targets get shadow runs (see the Report tab above).
+    - *Local model* is on by default. It costs no API spend, only the local model's time.
+    - *Cloud targets* are off by default, because each copy is a real API call. Cloud shadow runs
+      use only the organization's key (on a personal gateway, your own API key), never a
+      subscription seat's login or a developer's own key. They stop for the day at the **budget**
+      (per gateway instance, counted from its last restart), and pause for ten minutes when the
+      target's rate limit runs low.
 - **Contracted prices** — per-model rates (USD per million tokens: input, output, 5-minute and
   1-hour cache writes, cache reads) where yours differ from list price.
 
