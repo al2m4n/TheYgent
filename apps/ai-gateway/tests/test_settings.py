@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from theygent_ai_gateway.settings import (
+    DEFAULT_INFERENCE_PLANE_URL,
     DEFAULT_PORT,
     DEFAULT_UPSTREAM_URL,
     ENV_AUTH_MODE,
@@ -14,6 +15,7 @@ from theygent_ai_gateway.settings import (
     ENV_GATEWAY_ID,
     ENV_HEARTBEAT_SECONDS,
     ENV_HOST,
+    ENV_INFERENCE_PLANE_URL,
     ENV_KEY_SYNC_SECONDS,
     ENV_ORG_API_KEY,
     ENV_PORT,
@@ -36,6 +38,7 @@ ALL_VARS = [
     ENV_PORT,
     ENV_UPSTREAM_URL,
     ENV_CONTROL_PLANE_URL,
+    ENV_INFERENCE_PLANE_URL,
     ENV_AUTH_MODE,
     ENV_STATE_DIR,
     ENV_GATEWAY_ID,
@@ -49,6 +52,8 @@ def test_defaults_with_an_empty_environment() -> None:
     assert settings.upstream_url == DEFAULT_UPSTREAM_URL
     assert settings.auth_mode == "personal"
     assert settings.control_plane_url is None
+    # Where every other service looks for the inference plane by default.
+    assert settings.inference_plane_url == DEFAULT_INFERENCE_PLANE_URL == "http://127.0.0.1:8081/v1"
     assert settings.state_dir == Path.home() / ".theygent" / "ai-gateway"
     assert settings.gateway_id.startswith("gw-")
     assert settings.heartbeat_seconds == 30.0
@@ -68,6 +73,7 @@ def test_values_are_read(tmp_path: Path) -> None:
             ENV_PORT: "9000",
             ENV_UPSTREAM_URL: "https://api.anthropic.com/",
             ENV_CONTROL_PLANE_URL: "http://control-plane:8080/",
+            ENV_INFERENCE_PLANE_URL: "http://inference-plane:8081/v1/",
             ENV_AUTH_MODE: "team",
             ENV_STATE_DIR: str(tmp_path),
             ENV_GATEWAY_ID: "gw-cluster-1",
@@ -82,6 +88,7 @@ def test_values_are_read(tmp_path: Path) -> None:
     assert settings.port == 9000
     assert settings.upstream_url == "https://api.anthropic.com"  # trailing slash dropped
     assert settings.control_plane_url == "http://control-plane:8080"
+    assert settings.inference_plane_url == "http://inference-plane:8081/v1"
     assert settings.auth_mode == "team"
     assert settings.state_dir == tmp_path
     assert settings.gateway_id == "gw-cluster-1"
@@ -199,6 +206,11 @@ def test_upstream_must_be_an_http_url(url: str) -> None:
 def test_control_plane_must_be_an_http_url() -> None:
     with pytest.raises(SettingsError, match=ENV_CONTROL_PLANE_URL):
         load_settings({ENV_CONTROL_PLANE_URL: "control-plane:8080"})
+
+
+def test_inference_plane_must_be_an_http_url() -> None:
+    with pytest.raises(SettingsError, match=ENV_INFERENCE_PLANE_URL):
+        load_settings({ENV_INFERENCE_PLANE_URL: "inference-plane:8081/v1"})
 
 
 @pytest.mark.parametrize("url", ["http://127.0.0.1:8082", "http://localhost:8082/"])

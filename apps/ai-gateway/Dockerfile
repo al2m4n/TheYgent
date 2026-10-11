@@ -33,8 +33,10 @@ COPY packages/gateway-client/pyproject.toml packages/gateway-client/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-install-workspace --package theygent-ai-gateway
 
-# Source layer: only the members the gateway imports (its wire types live in packages/ir).
+# Source layer: only the members the gateway imports (its wire types live in packages/ir; the
+# local route reaches the inference plane through packages/gateway-client).
 COPY packages/ir/src packages/ir/src
+COPY packages/gateway-client/src packages/gateway-client/src
 COPY apps/ai-gateway/src apps/ai-gateway/src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev --no-editable --package theygent-ai-gateway

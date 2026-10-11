@@ -250,7 +250,9 @@ async def test_router_mode_serves_opus_requests_on_sonnet(tmp_path: Path, worksp
     routed = [r for r in messages if r.decision.applied]
     assert routed, "nothing was routed"
     assert all(r.served_model and r.served_model.startswith(ROUTER_TARGET) for r in routed)
-    assert all(r.baseline_usd is not None and r.cost_usd is not None for r in routed)
-    assert all(r.baseline_usd > r.cost_usd for r in routed)  # type: ignore[operator]
+    assert all(
+        r.baseline_usd is not None and r.cost_usd is not None and r.baseline_usd > r.cost_usd
+        for r in routed
+    )
     assert not [r for r in messages if "target_refused" in r.decision.reasons]
     assert_totals_match(records, result)

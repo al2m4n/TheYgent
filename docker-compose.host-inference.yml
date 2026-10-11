@@ -27,3 +27,9 @@ services:
       THEYGENT_INFERENCE_PLANE_URL: http://host.docker.internal:8081/v1
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  ai-gateway:
+    environment:
+      THEYGENT_INFERENCE_PLANE_URL: http://host.docker.internal:8081/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

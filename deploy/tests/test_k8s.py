@@ -175,6 +175,9 @@ def test_ai_gateway_secrets_come_from_its_secret(k8s_docs: list[dict]) -> None:
     for name in ("THEYGENT_AI_GATEWAY_SERVICE_KEY", "THEYGENT_AI_GATEWAY_ORG_API_KEY"):
         assert "value" not in env[name], f"ai-gateway: {name} must come from a Secret"
     assert env["THEYGENT_CONTROL_PLANE_URL"]["value"] == "http://control-plane:8080"
+    # The local route follows the shared ConfigMap, like every other service's inference URL.
+    ref = env["THEYGENT_INFERENCE_PLANE_URL"]["valueFrom"]["configMapKeyRef"]
+    assert (ref["name"], ref["key"]) == ("theygent-config", "THEYGENT_INFERENCE_PLANE_URL")
 
 
 def test_a_scalable_ai_gateway_never_stores_an_org_key(k8s_docs: list[dict]) -> None:

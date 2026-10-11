@@ -8,7 +8,8 @@ process type, on :8082.
 
 Not to be confused with the inference plane's OpenAI-compatible data plane (`/v1/*`, reached
 through `packages/gateway-client`): that serves TheYgent's own agents; this one serves a coding
-agent's Anthropic-format traffic. The two never call each other today.
+agent's Anthropic-format traffic. The gateway calls it in one case only: in router mode, for the
+side requests an admin allows to run on a local model (see *Router mode* below).
 
 Rules for changing it live in [apps/ai-gateway/AGENTS.md](../../apps/ai-gateway/AGENTS.md); the
 measurements behind them in [apps/ai-gateway/spike/FINDINGS.md](../../apps/ai-gateway/spike/FINDINGS.md).
@@ -140,8 +141,25 @@ original bytes to the requested model; Claude Code sees only that answer (`targe
 the policy pins the conversation to the requested model until its next cold boundary
 (`pinned_after_refusal`). An applied route's record says `applied`, names the served model, prices
 `cost_usd` on it and `baseline_usd` on the requested model, so the report shows what routing
-saved. A local target is not applied by this path. Proven against the real API by the opt-in
-end-to-end test: Claude Code asking for Opus 5.5 completes its work served by Sonnet 5.5.
+saved. Proven against the real API by the opt-in end-to-end test: Claude Code asking for
+Opus 5.5 completes its work served by Sonnet 5.5.
+
+A local-target route (an `allow_local` side request — the session title, typically) is answered
+by the inference plane instead (`local.py`, at `THEYGENT_INFERENCE_PLANE_URL` through
+`packages/gateway-client`). Only what translates faithfully goes: text system blocks less the
+billing attribution, text messages, sampling settings and the output schema (as a `json_schema`
+response format, thinking off, the output budget capped at 4,096). Tools, images, documents or any
+other block stay with the Anthropic API. The answer is checked before Claude Code sees it — text,
+and JSON that fits the schema (reasoning blocks and code fences stripped) — and returned as the
+Anthropic message Claude Code asked for, as server-sent events when it streamed. Anything else — a
+request that does not translate, no inference plane, an error, 30 seconds without an answer, an
+answer that does not fit — sends the original bytes upstream and records `target_refused`, without
+pinning anything (a side request holds no conversation cache). A local answer is recorded as
+applied, served by the logical id, `cost_usd` 0.0 (no API spend; local compute is not priced) and
+`baseline_usd` priced on the requested model with the local model's token counts — a different
+tokenizer, so an estimate. Claude Code sends side requests only in interactive sessions, so its
+opt-in test (`THEYGENT_E2E_LOCAL_MODEL`) drives the gateway with the recorded title request's
+shape against a real local model and a fake upstream.
 
 ### Auxiliary requests and the fingerprint catalog
 

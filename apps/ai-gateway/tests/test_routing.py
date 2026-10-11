@@ -32,7 +32,7 @@ from theygent_ai_gateway.observe import Observation
 from theygent_ai_gateway.routing import with_model
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ai_gateway.signals import read_request
-from theygent_ir.gateway import FingerprintRule, GatewayConfig, PolicyConfig
+from theygent_ir.gateway import FingerprintRule, FingerprintStatus, GatewayConfig, PolicyConfig
 
 PRICES = PriceBook.packaged()
 SONNET = "claude-sonnet-5-5"
@@ -84,16 +84,13 @@ def test_an_ambiguous_body_is_not_routed(body: bytes) -> None:
 
 
 def router_config(
-    *, local: str | None = None, rules: dict[str, str] | None = None
+    *, local: str | None = None, rules: dict[str, FingerprintStatus] | None = None
 ) -> GatewayConfig:
     return GatewayConfig(
         version=1,
         mode="router",
         policy=PolicyConfig(subagent_target=SONNET, main_target=SONNET, local_target=local),
-        fingerprints=[
-            FingerprintRule(fingerprint=f, status=s)  # type: ignore[arg-type]
-            for f, s in (rules or {}).items()
-        ],
+        fingerprints=[FingerprintRule(fingerprint=f, status=s) for f, s in (rules or {}).items()],
         updated_at=datetime(2026, 10, 8, tzinfo=UTC),
     )
 
@@ -156,6 +153,7 @@ def test_a_subagent_is_served_by_the_target_and_recorded_so(tmp_path: Path) -> N
     usage = observed.response.usage
     assert observed.cost_usd == pytest.approx(PRICES.cost(SONNET, usage))
     assert observed.baseline_usd == pytest.approx(PRICES.cost("claude-opus-5-5", usage))
+    assert observed.baseline_usd is not None and observed.cost_usd is not None
     assert observed.baseline_usd > observed.cost_usd
 
 
@@ -203,7 +201,7 @@ def test_only_applied_routes_change_a_request(tmp_path: Path) -> None:
     headers = dict(title.request_headers)
     signals = read_request(headers, title.request_bytes(), has_messages_body=True)
     assert signals.body is not None and signals.body.fingerprint is not None
-    rules = {signals.body.fingerprint: "allow_local"}
+    rules: dict[str, FingerprintStatus] = {signals.body.fingerprint: "allow_local"}
     replayed = [e for e in all_exchanges() if e.abort_after_events is None]
     with router(tmp_path, router_config(local="aux-local", rules=rules)) as gw:
         for exchange in replayed:

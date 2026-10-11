@@ -15,7 +15,7 @@ refusal — it disables a rejected capability for the rest of its conversation o
 from __future__ import annotations
 
 import json
-from json.decoder import scanstring
+from json.decoder import scanstring  # ty: ignore[unresolved-import] (public, not in the stubs)
 
 #: A target's answers that mean "not here", given before any of the response: the request is
 #: retried on the requested model. 401 and 403 are about the credential, not the model, and would

@@ -160,6 +160,9 @@ services:
     restart: unless-stopped
     environment:
       THEYGENT_CONTROL_PLANE_URL: http://control-plane:8080
+      # Router mode's local route. No depends_on: a local model that cannot answer falls back to
+      # the Anthropic API, so the gateway serves without an inference plane.
+      THEYGENT_INFERENCE_PLANE_URL: http://inference-plane:8081/v1
       THEYGENT_AI_GATEWAY_SERVICE_KEY: ${THEYGENT_AI_GATEWAY_SERVICE_KEY:-}
       # Optional: the organization's Anthropic key, for developers billed to it. One instance,
       # so an admin may instead set it from the AI Gateway page (kept on the volume below).

@@ -104,6 +104,16 @@ side requests riding the main conversation's cache: *never route*; the session t
 model* — which you can apply in one click or override with **Review**. A suggestion is only that:
 the status is your decision, and saving one creates a new configuration version.
 
+In router mode, a *local model* side request goes to the inference plane, as a chat request for
+the configuration's local model. Claude Code gets the local model's answer in the form the
+Anthropic API would have given it, but only after the gateway has checked it: for a session title,
+JSON with a `title`. Only text goes. A request carrying anything else (images, documents, tools)
+stays with the Anthropic API. So does a request the local model cannot answer: an error, no answer
+within 30 seconds, an answer of the wrong shape, or no inference plane running. It goes to the
+model Claude Code asked for, marked *target refused*, and Claude Code never sees the difference. A
+local answer costs no API spend; its *without routing* figure is an estimate, counted with the
+local model's tokens.
+
 ## Settings (admins)
 
 - **Mode** — observer, router or passthrough (see

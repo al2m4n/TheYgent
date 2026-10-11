@@ -92,6 +92,13 @@ spec:
           env:
             - name: THEYGENT_CONTROL_PLANE_URL
               value: http://control-plane:8080
+            # Router mode's local route; the same address every service reads, so repointing
+            # the inference plane in the ConfigMap moves the gateway with it.
+            - name: THEYGENT_INFERENCE_PLANE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: theygent-config
+                  key: THEYGENT_INFERENCE_PLANE_URL
             # Replicas would each keep their own copy of a key set from the AI Gateway page;
             # the org key comes from the Secret only.
             - name: THEYGENT_AI_GATEWAY_STORE_ORG_KEY

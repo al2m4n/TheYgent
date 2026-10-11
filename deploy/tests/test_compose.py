@@ -116,6 +116,12 @@ def test_ai_gateway_is_profiled_and_attached_to_the_control_plane(compose: dict)
     )
     env = gateway["environment"]
     assert env["THEYGENT_CONTROL_PLANE_URL"] == "http://control-plane:8080"
+    assert env["THEYGENT_INFERENCE_PLANE_URL"] == "http://inference-plane:8081/v1", (
+        "router mode's local route reaches the inference plane's data-plane root, /v1 included"
+    )
+    # A local model is optional — its failure falls back to the Anthropic API — and the
+    # host-inference overlay parks the inference-plane service.
+    assert "inference-plane" not in gateway["depends_on"]
     # Secrets pass through from the shell/.env, empty meaning unset — never a literal value.
     for secret in ("THEYGENT_AI_GATEWAY_SERVICE_KEY", "THEYGENT_AI_GATEWAY_ORG_API_KEY"):
         assert env[secret] == f"${{{secret}:-}}", f"ai-gateway: {secret} must pass through"
@@ -158,7 +164,7 @@ def test_host_inference_overlay(compose_host_inference: dict) -> None:
     assert services["inference-plane"].get("profiles"), (
         "the overlay must park the containerized inference plane under a profile"
     )
-    for name in ("control-plane", "worker"):
+    for name in ("control-plane", "worker", "ai-gateway"):
         env = services[name]["environment"]
         assert env["THEYGENT_INFERENCE_PLANE_URL"] == "http://host.docker.internal:8081/v1"
         assert "host.docker.internal:host-gateway" in services[name]["extra_hosts"]

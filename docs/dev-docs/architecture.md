@@ -135,9 +135,10 @@ Notes on the topology:
   Messages API), in the user's trust domain like the inference plane: it sees prompts and
   credentials, forwards them byte-for-byte, and sends the control plane metadata only —
   per-request records whose wire types refuse free text, and heartbeats. It records what
-  each exchange cost and what a routing policy would have done; the control plane holds its
-  versioned config, developers' gateway keys and the reports. See
-  [ai-gateway.md](./ai-gateway.md).
+  each exchange cost and what a routing policy would have done, and in router mode applies
+  that policy — side requests an admin allows to run locally go to the inference plane through
+  the same shared client. The control plane holds its versioned config, developers' gateway
+  keys and the reports. See [ai-gateway.md](./ai-gateway.md).
 
 The same four process types run in every mode: `make up` on bare metal, Docker Compose,
 or Kubernetes. Only the inference target and the wiring change. See
@@ -182,7 +183,7 @@ the walk, [control-plane.md](./control-plane.md) for persistence and spans,
 | [apps/control-plane](../../apps/control-plane) | FastAPI orchestration API + graph runtime | Python, uv |
 | [apps/inference-plane](../../apps/inference-plane) | Engine manager + OpenAI-compatible gateway | Python, uv |
 | [apps/worker](../../apps/worker) | Durable-runtime host (separate deployable) | Python, uv |
-| [apps/ai-gateway](../../apps/ai-gateway) | Anthropic-Messages proxy for coding agents (observer) | Python, uv |
+| [apps/ai-gateway](../../apps/ai-gateway) | Anthropic-Messages proxy for coding agents (observer and router) | Python, uv |
 | [apps/interface](../../apps/interface) | React SPA: visual builder + every operator surface | TS, pnpm, Vite |
 | [apps/web](../../apps/web) | Static marketing site (theygent.ai) | plain HTML/CSS/JS |
 | [packages/ir](../../packages/ir) | Pydantic IR models — the single source of truth | Python, uv |

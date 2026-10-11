@@ -97,7 +97,7 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
   target_refused: {
     label: "target refused",
     detail:
-      "The cheaper model refused this request before answering, so the gateway sent it to the requested model instead — Claude Code never saw the refusal.",
+      "The target refused this request before answering, or the local model could not answer it, so the gateway sent it to the requested model instead — Claude Code never saw the difference.",
   },
   pinned_after_refusal: {
     label: "kept on requested",

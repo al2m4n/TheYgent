@@ -3543,6 +3543,7 @@ source = { editable = "apps/ai-gateway" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "theygent-gateway-client" },
     { name = "theygent-ir" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -3561,6 +3562,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "theygent-gateway-client", editable = "packages/gateway-client" },
     { name = "theygent-ir", editable = "packages/ir" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]

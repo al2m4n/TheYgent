@@ -45,6 +45,9 @@ ENV_ADMIN_ORIGINS = "THEYGENT_AI_GATEWAY_ADMIN_ORIGINS"
 #: Read by every service that reaches the control plane, as THEYGENT_INFERENCE_PLANE_URL is for
 #: the inference plane.
 ENV_CONTROL_PLANE_URL = "THEYGENT_CONTROL_PLANE_URL"
+#: The inference plane's OpenAI-compatible data plane (including ``/v1``), where router mode sends
+#: side requests an admin allowed to run on a local model. The name every service reads.
+ENV_INFERENCE_PLANE_URL = "THEYGENT_INFERENCE_PLANE_URL"
 
 DEFAULT_PORT = 8082
 #: How often team mode re-syncs developer keys; a revoked key is refused within one interval.
@@ -53,6 +56,7 @@ DEFAULT_KEY_SYNC_SECONDS = 30.0
 #: applies within one interval.
 DEFAULT_HEARTBEAT_SECONDS = 30.0
 DEFAULT_UPSTREAM_URL = "https://api.anthropic.com"
+DEFAULT_INFERENCE_PLANE_URL = "http://127.0.0.1:8081/v1"
 #: The interface's dev origins. Only ``/admin/*`` answers browsers; proxied paths never do.
 DEFAULT_ADMIN_ORIGINS = ("http://localhost:5174", "http://127.0.0.1:5174")
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
@@ -83,6 +87,8 @@ class GatewaySettings:
     port: int = DEFAULT_PORT
     upstream_url: str = DEFAULT_UPSTREAM_URL
     control_plane_url: str | None = None
+    #: ``None``: no local route; a local target falls back to the requested model.
+    inference_plane_url: str | None = None
     auth_mode: AuthMode = "personal"
     state_dir: Path = field(default_factory=_default_state_dir)
     gateway_id: str = field(default_factory=_default_gateway_id)
@@ -145,6 +151,12 @@ class GatewaySettings:
                 self,
                 "control_plane_url",
                 _http_url(ENV_CONTROL_PLANE_URL, self.control_plane_url),
+            )
+        if self.inference_plane_url is not None:
+            object.__setattr__(
+                self,
+                "inference_plane_url",
+                _http_url(ENV_INFERENCE_PLANE_URL, self.inference_plane_url),
             )
         if _points_at_self(self.upstream_url, self.port):
             raise SettingsError(
@@ -225,6 +237,7 @@ def load_settings(env: Mapping[str, str]) -> GatewaySettings:
         port=DEFAULT_PORT if port is None else port,
         upstream_url=_read(env, ENV_UPSTREAM_URL) or DEFAULT_UPSTREAM_URL,
         control_plane_url=_read(env, ENV_CONTROL_PLANE_URL),
+        inference_plane_url=_read(env, ENV_INFERENCE_PLANE_URL) or DEFAULT_INFERENCE_PLANE_URL,
         # Checked against the AuthMode vocabulary on construction.
         auth_mode=cast(AuthMode, _read(env, ENV_AUTH_MODE) or "personal"),
         state_dir=state_dir_from(env),

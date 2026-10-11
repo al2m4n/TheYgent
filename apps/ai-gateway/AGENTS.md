@@ -99,8 +99,14 @@ Router mode applies the policy's decisions; observer mode only records them.
   refusal before the answer starts (400, 404, 413, 422, 429, 529) sends the original bytes to the
   requested model and pins the conversation there until its next cold boundary; 401/403 are
   credential problems and are not retried. A mid-stream error cannot be retried — bytes are out.
+- **A local route answers only what translates faithfully, and only once the answer is checked.**
+  An `allow_local` side request goes to the inference plane as a chat completion when it is text
+  only (no tools, images or documents). The answer must be text, and JSON that fits the schema
+  where one was asked for. Any failure sends the original bytes upstream (`target_refused`).
+  Nothing is pinned, and Claude Code never sees a local error.
 - **An applied route records what served it.** `served_model` from the response, `applied`,
-  `cost_usd` priced on the served model and `baseline_usd` on the requested one.
+  `cost_usd` priced on the served model and `baseline_usd` on the requested one. A local answer
+  costs 0.0: no API spend, and local compute is not priced.
 - **Never route** compaction, the quota check, requests that share the main conversation's cache,
   requests carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
   fingerprints.

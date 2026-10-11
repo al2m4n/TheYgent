@@ -58,6 +58,7 @@ from theygent_ai_gateway.identity import (
     key_set_summary,
     sync_forever,
 )
+from theygent_ai_gateway.local import LocalRoute
 from theygent_ai_gateway.observe import ObserveHook, fan_out
 from theygent_ai_gateway.policy import Policy
 from theygent_ai_gateway.proxy import forward
@@ -153,6 +154,10 @@ def create_app(
         config_state.load_from_disk()
         async with contextlib.AsyncExitStack() as stack:
             stack.push_async_callback(upstream.aclose)
+            if settings.inference_plane_url is not None:
+                local = LocalRoute(settings.inference_plane_url)
+                app.state.local = local
+                stack.push_async_callback(local.aclose)
             records.start()
             # Stopped after the exporter: what is still queued reaches the spool, and the next
             # start exports it.
@@ -208,6 +213,7 @@ def create_app(
                 yield
             finally:
                 app.state.upstream = None
+                app.state.local = None
                 if token_check is None:
                     app.state.admin_check = None
 
@@ -220,6 +226,7 @@ def create_app(
     )
     app.state.settings = settings
     app.state.upstream = None
+    app.state.local = None
     app.state.request_log = records
     hooks = (records.record, health.observe, *((observe,) if observe is not None else ()))
     app.state.observe = fan_out(*hooks)

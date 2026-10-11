@@ -18,7 +18,8 @@ read the stream it relays; the gateway's own credential header (``x-theygent-gat
 never forwarded — it authenticates a developer to the gateway, not to the upstream; and in router
 mode a routed request's top-level ``model`` value is replaced, nothing else (see ``routing``) — a
 target that refuses it before answering gets the original bytes sent to the requested model
-instead.
+instead. A side request routed to a local model is answered by the inference plane (see
+``local``); when it cannot answer, the original bytes go upstream as if it had never been tried.
 
 Every path other than the gateway's own (``/healthz``, ``/readyz``, ``/admin/…``) is forwarded:
 Claude Code's endpoints grow over releases, and an allowlist would break the next one.
@@ -61,6 +62,7 @@ from theygent_ai_gateway.identity import (
     KeyRing,
     presented_gateway_key,
 )
+from theygent_ai_gateway.local import LocalAnswer, LocalRoute
 from theygent_ai_gateway.observe import (
     Observation,
     ObserveHook,
@@ -249,6 +251,8 @@ class _Exchange:
         self.position: Position | None = None
         #: Router mode: the decision was applied — the target served the request.
         self._applied = False
+        #: The applied target was a local model: no API spend.
+        self._local = False
 
     @property
     def requested_model(self) -> str | None:
@@ -265,8 +269,34 @@ class _Exchange:
             return None
         return plan.target.model
 
+    def local_route(self) -> str | None:
+        """Router mode: the local model a side request goes to instead, if any."""
+        plan = self.plan
+        if self._mode != "router" or self._endpoint != "messages" or plan is None:
+            return None
+        if plan.action != "route" or plan.target is None or plan.target.kind != "local":
+            return None
+        return plan.target.model
+
     def applied(self) -> None:
         self._applied = True
+
+    def served_locally(self, answer: LocalAnswer) -> None:
+        """The local model answered: the exchange is that answer, read like an upstream one."""
+        self._applied = self._local = True
+        self._status = 200
+        self._headers_ms = self._ms()
+        try:
+            self._observer = ResponseObserver(answer.content_type, None)
+        except Exception as exc:
+            log.error("could not start reading the response: %s", type(exc).__name__)
+        self.chunk(answer.body)
+
+    def local_failed(self) -> None:
+        """The local model could not answer; the request goes to the requested model. Unlike a
+        refused Anthropic route nothing is pinned: a side request holds no conversation cache."""
+        if self.plan is not None:
+            self.plan = Plan.stay("target_refused", *self.plan.reasons)
 
     def target_refused(self) -> None:
         """The target refused the routed request before answering; it goes to the requested model
@@ -323,7 +353,10 @@ class _Exchange:
             self._observer.feed(data)  # never raises
 
     def _cost(self, summary: ResponseSummary) -> tuple[float | None, str | None]:
-        """What the exchange cost, priced on the model that served it (else the one asked for)."""
+        """What the exchange cost, priced on the model that served it (else the one asked for).
+        A local model's answer costs no API spend; local compute is not priced here."""
+        if self._local:
+            return 0.0, self._prices.version if self._prices is not None else None
         usage = summary.usage
         used = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens
         used += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
@@ -550,6 +583,24 @@ async def forward(request: Request) -> Response:
         return client.build_request(
             request.method, target.lstrip("/"), headers=outbound_headers, content=content
         )
+
+    local_model = exchange.local_route()
+    if local_model is not None:
+        local: LocalRoute | None = getattr(request.app.state, "local", None)
+        answered: LocalAnswer | None = None
+        if local is not None:
+            try:
+                answered = await _unless_client_disconnects(
+                    request, local.answer(local_model, body)
+                )
+            except ClientDisconnected:
+                exchange.finish("client_disconnected")
+                return Response(status_code=CLIENT_CLOSED_REQUEST)
+        if answered is not None:
+            exchange.served_locally(answered)
+            exchange.finish("complete")
+            return Response(answered.body, status_code=200, media_type=answered.content_type)
+        exchange.local_failed()
 
     routed_to = exchange.route_to()
     routed = with_model(body, routed_to) if routed_to is not None else None
