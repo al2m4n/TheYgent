@@ -105,7 +105,7 @@ def test_a_configs_contracted_rates_price_its_snapshot() -> None:
     state = ConfigState(PRICES, unconfigured_mode="observer")
     state.apply(config(1, pricing_overrides={"claude-sonnet-5-5": SONNET_HALF}), persist=False)
     prices = state.current.prices
-    assert prices.version == "2026-09-25+overrides"
+    assert prices.version == f"{PRICES.version}+overrides"
     rates = prices.rates("claude-sonnet-5-5")
     assert rates is not None and rates.output == 5.0
     list_rates = PRICES.rates("claude-sonnet-5-5")
@@ -355,7 +355,8 @@ def test_config_changes_apply_live(
             send(url, exchange)
     first, second = spool_records(tmp_path / "requests")  # passthrough recorded nothing
     assert (first.config_version, second.config_version) == (1, 2)
-    assert (first.pricing_version, second.pricing_version) == ("2026-09-25", "2026-09-25+overrides")
+    listed = PriceBook.packaged().version
+    assert (first.pricing_version, second.pricing_version) == (listed, f"{listed}+overrides")
     assert first.cost_usd is not None and second.cost_usd is not None
     assert second.cost_usd == pytest.approx(first.cost_usd / 2)
     assert fake.beats[0].config_version is None

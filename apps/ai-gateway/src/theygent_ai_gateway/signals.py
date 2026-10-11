@@ -231,6 +231,7 @@ def body_signals(body: bytes) -> BodySignals | None:
         has_mid_conversation_system=any(m.get("role") == "system" for m in messages),
         has_context_management="context_management" in data,
         body_bytes=len(body),
+        speed=token_or_none(data.get("speed")) if isinstance(data.get("speed"), str) else None,
     )
     return BodySignals(
         model=token_or_none(data.get("model")) if isinstance(data.get("model"), str) else None,
@@ -257,6 +258,11 @@ class RequestSignals:
     body: BodySignals | None
     #: Names of the parsers that failed, for the record; never the failing content.
     parse_errors: tuple[str, ...] = ()
+
+    @property
+    def fast(self) -> bool:
+        """Sent in fast mode: priced at the model's fast rates."""
+        return self.body is not None and self.body.shape.speed == "fast"
 
 
 def read_request(

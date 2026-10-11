@@ -130,6 +130,15 @@ Router mode applies the policy's decisions; observer mode only records them.
 - **`spike/` is research tooling, not product code.** The type check skips it. Nothing under
   `src/` imports from it.
 
+## Prices
+
+- **`pricing.json` is generated, never hand-edited.** `scripts/update_pricing.py` writes it from
+  Anthropic's published pricing page, stamped with when it was read; a weekly workflow opens a pull
+  request when prices change. A page the parser cannot read fails; it is never half read.
+- **Pin figures on the frozen copy.** A test that pins what an exchange costs uses
+  `tests/_prices.py` (`FROZEN_PRICES`), so a price update never breaks the arithmetic's tests;
+  tests of the packaged file check its shape and source.
+
 ## Fixtures
 
 `tests/fixtures/exchanges/` holds real Claude Code exchanges rebuilt without content by

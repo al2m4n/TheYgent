@@ -310,7 +310,7 @@ class _Exchange:
         if plan.action != "route" or plan.target is None:
             return None
         body, path, headers = kept
-        return ShadowJob(plan.target, body, path, headers)
+        return ShadowJob(plan.target, body, path, headers, fast=self._signals.fast)
 
     def served_locally(self, answer: LocalAnswer) -> None:
         """The local model answered: the exchange is that answer, read like an upstream one."""
@@ -395,7 +395,7 @@ class _Exchange:
             return None, None
         body = self._signals.body
         model = summary.model or (body.model if body else None)
-        cost = self._prices.cost(model, usage)
+        cost = self._prices.cost(model, usage, fast=self._signals.fast)
         return (cost, self._prices.version) if cost is not None else (None, None)
 
     def _decision(self, summary: ResponseSummary, outcome: Outcome) -> Decision:
@@ -409,7 +409,9 @@ class _Exchange:
             if self._applied:
                 return to_decision(self.plan, None, applied=True)
             counterfactual = (
-                counterfactual_usd(self.plan, summary.usage, self.position, self._prices)
+                counterfactual_usd(
+                    self.plan, summary.usage, self.position, self._prices, fast=self._signals.fast
+                )
                 if self._prices is not None
                 else None
             )
@@ -438,7 +440,7 @@ class _Exchange:
             cost_usd, pricing_version = self._cost(summary)
             decision = self._decision(summary, outcome)
             baseline_usd = (
-                self._prices.cost(self.requested_model, summary.usage)
+                self._prices.cost(self.requested_model, summary.usage, fast=self._signals.fast)
                 if self._applied and self._prices is not None and cost_usd is not None
                 else None
             )

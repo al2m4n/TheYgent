@@ -96,6 +96,12 @@ Haiku 4.5, or for a model with no known price, stays as *target not cheaper*.
 of tokens. Models differ in how much they write, so treat savings as estimates; the actual
 figures are exact.
 
+**Prices.** Figures use Anthropic's published list prices. The Report's footer names the date
+they were read (*Prices: 2026-10-11*), and TheYgent checks for changes every week. Requests in
+Claude Code's fast mode are priced at fast-mode rates. A model priced by prompt length, such as
+Haiku 5.5, is priced at its higher rates for a long prompt. Where your organization pays other
+rates, an admin enters them under **Settings → Contracted prices**.
+
 ## Catalog (admins)
 
 Claude Code also sends small **side requests** — session titles, suggestions, checks. The Catalog

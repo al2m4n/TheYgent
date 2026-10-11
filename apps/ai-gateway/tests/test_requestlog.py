@@ -45,6 +45,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.configsync import StaticConfigSource
+from theygent_ai_gateway.costs import PriceBook
 from theygent_ai_gateway.identity import StaticKeySource
 from theygent_ai_gateway.observe import Observation, ResponseObserver
 from theygent_ai_gateway.policy import Plan
@@ -195,7 +196,7 @@ def test_a_record_carries_the_exchanges_metadata(tmp_path: Path) -> None:
     assert r.served_model == summary.model == "claude-sonnet-5-5"
     assert r.usage == summary.usage
     assert r.cost_usd is not None and r.cost_usd == pytest.approx(seen[0].cost_usd)
-    assert r.pricing_version == "2026-09-25"
+    assert r.pricing_version == PriceBook.packaged().version
     assert r.decision == seen[0].decision
     assert r.shape is not None and r.fingerprint is not None
     assert (r.credential_kind, r.credential_profile, r.developer_id) == (

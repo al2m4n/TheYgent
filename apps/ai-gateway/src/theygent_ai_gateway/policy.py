@@ -108,6 +108,8 @@ def accepts(target_model: str, signals: RequestSignals) -> bool:
         return False
     if shape.max_tokens is not None and shape.max_tokens > capabilities.max_output_tokens:
         return False
+    if shape.speed == "fast" and not capabilities.fast_mode:
+        return False
     return not (shape.has_mid_conversation_system and not capabilities.mid_conversation_system)
 
 
@@ -272,7 +274,9 @@ class Policy:
                 return current.because("follows_warm_cache")
             informative = tuple(r for r in preferred.reasons if r not in _BOUNDARY_REASONS)
             return Plan.stay(*(informative or ("follows_warm_cache",)))
-        if self._warm_switch_pays(position, policy, prices, current, preferred, requested):
+        if self._warm_switch_pays(
+            position, policy, prices, current, preferred, requested, fast=signals.fast
+        ):
             moved = preferred.because("warm_switch_pays")
             return replace(moved, cold=moved.action == "route")
         return current.because("warm_cache_switch_cost")
@@ -285,12 +289,16 @@ class Policy:
         current: Plan,
         preferred: Plan,
         requested: str | None,
+        *,
+        fast: bool,
     ) -> bool:
         if prices is None or position.cached_prefix_tokens <= 0:
             return False
         cached = Usage(cache_read_tokens=position.cached_prefix_tokens)
-        stay = prices.cost(current.serves(requested), cached)
-        move = prices.cost_cold(preferred.serves(requested), cached, ttl_for(position.ttl_seconds))
+        stay = prices.cost(current.serves(requested), cached, fast=fast)
+        move = prices.cost_cold(
+            preferred.serves(requested), cached, ttl_for(position.ttl_seconds), fast=fast
+        )
         if stay is None or move is None:
             return False
         return stay >= policy.warm_switch_margin * move
@@ -341,7 +349,7 @@ def costs_less(prices: PriceBook, target: str, requested: str | None) -> bool:
 
 
 def counterfactual_usd(
-    plan: Plan, usage: Usage, position: Position | None, prices: PriceBook
+    plan: Plan, usage: Usage, position: Position | None, prices: PriceBook, *, fast: bool = False
 ) -> float | None:
     """What the request would have cost had the plan been applied. ``None`` for a stay (the
     actual cost is the answer) or when the target cannot be priced."""
@@ -352,8 +360,8 @@ def counterfactual_usd(
     if plan.cold:
         # The target holds nothing of this conversation yet: its cache must be built.
         ttl = ttl_for(position.ttl_seconds if position is not None else 0)
-        return prices.cost_cold(plan.target.model, usage, ttl)
-    return prices.cost(plan.target.model, usage)
+        return prices.cost_cold(plan.target.model, usage, ttl, fast=fast)
+    return prices.cost(plan.target.model, usage, fast=fast)
 
 
 def to_decision(plan: Plan, counterfactual: float | None, *, applied: bool = False) -> Decision:

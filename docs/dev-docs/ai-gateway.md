@@ -235,6 +235,28 @@ it is kept in the state directory (`0600`). A replicated gateway turns that off
 (`THEYGENT_AI_GATEWAY_STORE_ORG_KEY=0`): each instance would keep its own copy. `orgApiKey.readOnly`
 tells the page which of the three applies (`env`, `personal_mode`, `deployment_only`).
 
+## Prices
+
+`pricing.json` is Anthropic's published price list, read from the docs' Markdown copy of the
+pricing page by `pricing_source.py`, never hand-edited. It is stamped with `updated_at` (date and
+time, UTC), and `version` is that date. Besides each model's five rates it holds two published
+modifiers that change what a Claude Code request costs:
+
+- `long_context`: a model priced by prompt length charges higher rates once the prompt is over a
+  threshold. The prompt counts input, cache reads and cache writes. Haiku 5.5 has this tier.
+- `fast`: a request sent with `speed: "fast"` (Claude Code's fast mode, recorded as
+  `RequestShape.speed`) pays the model's fast rates. The cache rates keep the model's own ratios.
+  Only models whose `TargetCapabilities.fast_mode` is set may serve such a request, so a fast
+  request is never routed to a model without one.
+
+A contracted override in the config replaces a model's base rates, and its tiers keep their
+published ratio to them. `make ai-gateway-prices` (or `scripts/update_pricing.py`) rewrites the
+file when a price changed, and `CHECK=1` only reports. `.github/workflows/ai-gateway-pricing.yml`
+runs it every Monday and opens a pull request when prices change, so a change is reviewed before
+it reaches anyone's figures. A page the parser cannot read fails loudly rather than being half
+read. Tests that pin dollar figures price them on a frozen copy (`tests/fixtures/pricing-*.json`),
+so a price update changes the gateway's figures without breaking them.
+
 ## The report
 
 `theygent-ai-gateway report [--since 24h] [--by class,client,model] [--json]` reads the local log

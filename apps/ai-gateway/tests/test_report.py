@@ -3,7 +3,7 @@
 The acceptance check is Claude Code's own accounting: the bug-fix session replayed through the
 gateway reports exactly the tokens Claude Code's ``modelUsage`` reported for that run. The saving
 is pinned against the routing numbers the plan rests on (the Explore subagent trio: $0.1621 on Opus
-5.5, $0.0859 estimated on Sonnet 5.5).
+5.5, $0.0810 estimated on Sonnet 5.5), priced on the frozen price list.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ import pytest
 import theygent_ai_gateway.__main__ as entrypoint
 from _fake_anthropic import fake_anthropic, serve
 from _fixtures import Exchange, all_exchanges, load
+from _prices import FROZEN_PRICES
 from _support import send
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.costs import PriceBook
@@ -53,7 +54,7 @@ def replay(tmp_path: Path, exchanges: list[Exchange]) -> Path:
         settings = GatewaySettings(
             upstream_url=upstream.base_url, gateway_id="gw-test", state_dir=tmp_path
         )
-        with serve(create_app(settings)) as url:
+        with serve(create_app(settings, prices=FROZEN_PRICES)) as url:
             for exchange in exchanges:
                 send(url, exchange)
     return tmp_path / "requests"
@@ -124,7 +125,7 @@ def test_the_saving_is_what_the_decisions_would_have_saved(tmp_path: Path) -> No
     subagent, main = report.groups["class"]["subagent"], report.groups["class"]["main"]
     assert subagent.calls == subagent.routed_calls == 3
     assert subagent.cost_usd == pytest.approx(0.1621, abs=5e-5)
-    assert subagent.with_routing_usd == pytest.approx(0.0859, abs=5e-5)
+    assert subagent.with_routing_usd == pytest.approx(0.0810, abs=5e-5)
     assert main.routed_calls == 0 and main.with_routing_usd == pytest.approx(main.cost_usd)
     assert report.total.saving_usd == pytest.approx(subagent.saving_usd)
     assert report.total.routed_local_calls == 0

@@ -19,6 +19,7 @@ import httpx
 import pytest
 from _fake_anthropic import fake_anthropic, serve
 from _fixtures import Exchange, all_exchanges, load
+from _prices import FROZEN_PRICES
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.conversations import ConversationTracker, Position
 from theygent_ai_gateway.costs import PriceBook
@@ -240,6 +241,17 @@ def test_haiku_is_refused_for_claude_codes_subagent_turns() -> None:
 def test_a_subagent_already_on_the_target_stays() -> None:
     plan, _ = Run(config(subagent="claude-opus-5-5"))("subagent-explore-1")
     assert plan.reasons == ("subagent_at_spawn", "already_on_target")
+
+
+def test_a_fast_mode_request_goes_only_to_a_target_with_fast_mode() -> None:
+    # Sonnet 5.5 has no fast mode: a fast request to it would be refused.
+    spawn = load("subagent-explore-1")
+    fast = replace(spawn, body={**spawn.body, "speed": "fast"})
+    signals = signals_of(fast)
+    assert signals.fast and signals.body is not None and signals.body.shape.speed == "fast"
+    assert not accepts("claude-sonnet-5-5", signals)
+    assert accepts("claude-opus-5", signals)  # has a fast mode, takes it
+    assert accepts("claude-sonnet-5-5", signals_of(spawn))
 
 
 def test_a_request_for_a_cheaper_model_is_never_moved_up() -> None:
@@ -471,17 +483,18 @@ def test_the_estimate_against_the_one_real_pair() -> None:
     # Pricing the Opus run's tokens on Sonnet (the counterfactual's assumption) against what the
     # same work really cost on Sonnet: the estimate is close, and errs high here because Sonnet
     # wrote fewer output tokens than Opus did.
-    run = Run(config())
+    run = Run(config(), FROZEN_PRICES)
     estimate = 0.0
     for name in ("subagent-explore-1", "subagent-explore-2", "subagent-explore-3"):
         plan, position = run(name)
-        estimate += counterfactual_usd(plan, usage_of(load(name)), position, PRICES) or 0.0
+        estimate += counterfactual_usd(plan, usage_of(load(name)), position, FROZEN_PRICES) or 0.0
     actual = sum(
-        PRICES.cost("claude-sonnet-5-5", usage_of(load(f"subagent-explore-sonnet-{n}"))) or 0.0
+        FROZEN_PRICES.cost("claude-sonnet-5-5", usage_of(load(f"subagent-explore-sonnet-{n}")))
+        or 0.0
         for n in (1, 2, 3)
     )
-    assert estimate == pytest.approx(0.0859, abs=1e-4)
-    assert actual == pytest.approx(0.0837, abs=1e-4)
+    assert estimate == pytest.approx(0.0810, abs=1e-4)
+    assert actual == pytest.approx(0.0788, abs=1e-4)
     assert abs(estimate - actual) / actual < 0.05
 
 

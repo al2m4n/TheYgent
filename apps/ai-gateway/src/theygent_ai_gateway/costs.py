@@ -1,8 +1,14 @@
 """What a request cost, and what it would have cost on another model.
 
-Prices come from ``pricing.json`` (list prices, versioned and dated) with the gateway config's
-``pricing_overrides`` on top for contracted rates; every figure carries the price version it was
-computed with. An unknown model has no cost — ``None``, never a guess.
+Prices come from ``pricing.json`` (list prices, versioned and stamped with when they were read;
+``scripts/update_pricing.py`` refreshes it) with the gateway config's ``pricing_overrides`` on top
+for contracted rates; every figure carries the price version it was computed with. An unknown
+model has no cost — ``None``, never a guess.
+
+Two published modifiers apply per request: a model priced by prompt length charges its
+``long_context`` rates when the prompt (input, cache reads and cache writes) is over the
+threshold, and a request sent with ``speed: "fast"`` pays the model's ``fast`` rates. A contracted
+override keeps each tier's published ratio to the base price.
 
 Two costs matter for routing:
 
@@ -27,7 +33,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from importlib import resources
-from typing import Literal
+from typing import Any, Literal
 
 # ``base_model`` is shared with the control plane, which checks targets with it on save.
 from theygent_ir.gateway import ModelRates, SeatAllowance, Usage, base_model
@@ -52,50 +58,127 @@ class Rates:
             rates.input, rates.output, rates.cache_write_5m, rates.cache_write_1h, rates.cache_read
         )
 
+    @classmethod
+    def from_entry(cls, entry: Mapping[str, Any]) -> Rates:
+        return cls(
+            entry["input"],
+            entry["output"],
+            entry["cache_write_5m"],
+            entry["cache_write_1h"],
+            entry["cache_read"],
+        )
+
+    def scaled(self, base: Rates, onto: Rates) -> Rates:
+        """This tier's ratio to ``base``, applied to ``onto``: a tier of contracted rates."""
+
+        def ratio(field: str) -> float:
+            ours, theirs = getattr(self, field), getattr(base, field)
+            return getattr(onto, field) * (ours / theirs) if theirs else ours
+
+        return Rates(
+            ratio("input"),
+            ratio("output"),
+            ratio("cache_write_5m"),
+            ratio("cache_write_1h"),
+            ratio("cache_read"),
+        )
+
+
+@dataclass(frozen=True)
+class ModelPrices:
+    """A model's rates, with the tiers it is published with."""
+
+    base: Rates
+    #: Rates for a prompt over ``long_context[0]`` tokens.
+    long_context: tuple[int, Rates] | None = None
+    #: Rates for a request sent with ``speed: "fast"``.
+    fast: Rates | None = None
+
+    def contracted(self, base: Rates) -> ModelPrices:
+        long = self.long_context
+        return ModelPrices(
+            base,
+            (long[0], long[1].scaled(self.base, base)) if long else None,
+            self.fast.scaled(self.base, base) if self.fast else None,
+        )
+
 
 class PriceBook:
-    def __init__(self, version: str, rates: Mapping[str, Rates], *, source: str = "") -> None:
+    def __init__(
+        self,
+        version: str,
+        rates: Mapping[str, Rates | ModelPrices],
+        *,
+        source: str = "",
+        updated_at: str | None = None,
+    ) -> None:
         self.version = version
         self.source = source
-        self._rates = dict(rates)
+        self.updated_at = updated_at
+        self._prices = {
+            model: entry if isinstance(entry, ModelPrices) else ModelPrices(entry)
+            for model, entry in rates.items()
+        }
 
     @classmethod
     def packaged(cls) -> PriceBook:
-        data = json.loads(
-            resources.files("theygent_ai_gateway").joinpath("pricing.json").read_text()
+        return cls.from_document(
+            json.loads(resources.files("theygent_ai_gateway").joinpath("pricing.json").read_text())
         )
-        rates = {
-            model: Rates(
-                entry["input"],
-                entry["output"],
-                entry["cache_write_5m"],
-                entry["cache_write_1h"],
-                entry["cache_read"],
+
+    @classmethod
+    def from_document(cls, data: Mapping[str, Any]) -> PriceBook:
+        """A price list in ``pricing.json``'s shape."""
+        prices: dict[str, ModelPrices] = {}
+        for model, entry in data["models"].items():
+            long = entry.get("long_context")
+            fast = entry.get("fast")
+            prices[model] = ModelPrices(
+                Rates.from_entry(entry),
+                (long["over_prompt_tokens"], Rates.from_entry(long)) if long else None,
+                Rates.from_entry(fast) if fast else None,
             )
-            for model, entry in data["models"].items()
-        }
-        return cls(data["version"], rates, source=data["source"])
+        return cls(
+            data["version"], prices, source=data["source"], updated_at=data.get("updated_at")
+        )
 
     def with_overrides(self, overrides: Mapping[str, ModelRates]) -> PriceBook:
         """Contracted rates on top of list prices. The version says overrides are in effect."""
         if not overrides:
             return self
-        merged = {**self._rates, **{m: Rates.from_wire(r) for m, r in overrides.items()}}
-        return PriceBook(f"{self.version}+overrides", merged, source=self.source)
+        merged = dict(self._prices)
+        for model, wire in overrides.items():
+            rates = Rates.from_wire(wire)
+            listed = merged.get(base_model(model))
+            merged[model] = listed.contracted(rates) if listed else ModelPrices(rates)
+        return PriceBook(
+            f"{self.version}+overrides", merged, source=self.source, updated_at=self.updated_at
+        )
 
     def rates(self, model: str | None) -> Rates | None:
-        if not model:
-            return None
-        return self._rates.get(base_model(model))
+        """A model's base rates."""
+        prices = self._prices.get(base_model(model)) if model else None
+        return prices.base if prices else None
 
     def models(self) -> list[str]:
-        return sorted(self._rates)
+        return sorted(self._prices)
 
-    def cost(self, model: str | None, usage: Usage) -> float | None:
+    def has_fast_mode(self, model: str | None) -> bool:
+        prices = self._prices.get(base_model(model)) if model else None
+        return prices is not None and prices.fast is not None
+
+    def cost(self, model: str | None, usage: Usage, *, fast: bool = False) -> float | None:
         """USD for ``usage`` on ``model``; ``None`` for a model without known rates."""
-        rates = self.rates(model)
-        if rates is None:
+        prices = self._prices.get(base_model(model)) if model else None
+        if prices is None:
             return None
+        rates = prices.base
+        prompt = usage.input_tokens + usage.cache_read_tokens
+        prompt += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
+        if prices.long_context is not None and prompt > prices.long_context[0]:
+            rates = prices.long_context[1]
+        if fast and prices.fast is not None:
+            rates = prices.fast
         return (
             usage.input_tokens * rates.input
             + usage.output_tokens * rates.output
@@ -104,7 +187,9 @@ class PriceBook:
             + usage.cache_write_1h_tokens * rates.cache_write_1h
         ) / PER_MILLION
 
-    def cost_cold(self, model: str | None, usage: Usage, ttl: Ttl) -> float | None:
+    def cost_cold(
+        self, model: str | None, usage: Usage, ttl: Ttl, *, fast: bool = False
+    ) -> float | None:
         """USD for ``usage`` on ``model`` with nothing of it cached there yet: the tokens read
         from cache are written at ``ttl``'s rate instead."""
         moved = usage.cache_read_tokens
@@ -115,7 +200,7 @@ class PriceBook:
             cache_write_5m_tokens=usage.cache_write_5m_tokens + (moved if ttl == "5m" else 0),
             cache_write_1h_tokens=usage.cache_write_1h_tokens + (moved if ttl == "1h" else 0),
         )
-        return self.cost(model, cold)
+        return self.cost(model, cold, fast=fast)
 
 
 def ttl_for(seconds: int) -> Ttl:

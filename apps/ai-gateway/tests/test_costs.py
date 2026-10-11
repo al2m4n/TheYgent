@@ -2,7 +2,9 @@
 
 The figures that matter are pinned against the numbers the routing plan rests on: the Phase 0
 pair (the same Explore subagent work on Opus 5.5 and Sonnet 5.5) and the plan's worked example of
-a mid-conversation switch costing more than it saves.
+a mid-conversation switch costing more than it saves. They are priced on a frozen copy of the
+price list (``_prices``), so a published price change moves the gateway's figures, not these; the
+packaged list itself is checked for shape and source.
 """
 
 from __future__ import annotations
@@ -17,13 +19,15 @@ import httpx
 import pytest
 from _fake_anthropic import fake_anthropic, serve
 from _fixtures import load
+from _prices import FROZEN_PRICES
 from theygent_ai_gateway.app import create_app
-from theygent_ai_gateway.costs import PriceBook, Rates, ttl_for, utilization_change
+from theygent_ai_gateway.costs import PriceBook, ttl_for, utilization_change
 from theygent_ai_gateway.observe import Observation, ResponseObserver
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ir.gateway import ModelRates, SeatAllowance, Usage
 
-PRICES = PriceBook.packaged()
+PRICES = FROZEN_PRICES
+PACKAGED = PriceBook.packaged()
 
 
 def usage_of(name: str) -> tuple[str | None, Usage]:
@@ -45,8 +49,8 @@ def test_the_phase_0_subagent_pair() -> None:
 
     opus, sonnet = total("subagent-explore"), total("subagent-explore-sonnet")
     assert opus == pytest.approx(0.1621, abs=5e-5)
-    assert sonnet == pytest.approx(0.0837, abs=5e-5)
-    assert 1 - sonnet / opus == pytest.approx(0.48, abs=0.01)
+    assert sonnet == pytest.approx(0.0788, abs=5e-5)
+    assert 1 - sonnet / opus == pytest.approx(0.51, abs=0.01)
 
 
 def test_the_plans_worked_example_a_warm_switch_costs_more() -> None:
@@ -60,7 +64,7 @@ def test_the_plans_worked_example_a_warm_switch_costs_more() -> None:
     switch_first = PRICES.cost_cold("claude-sonnet-5-5", turns[0], "5m") or 0
     switch = switch_first + sum(PRICES.cost("claude-sonnet-5-5", u) or 0 for u in turns[1:])
     assert stay == pytest.approx(0.4248, abs=1e-4)
-    assert switch == pytest.approx(0.5928, abs=1e-4)
+    assert switch == pytest.approx(0.5004, abs=1e-4)
     assert switch > stay
 
 
@@ -127,7 +131,7 @@ def test_overrides_replace_list_prices_and_say_so() -> None:
         input=3.6, output=18.0, cache_write_5m=4.5, cache_write_1h=7.2, cache_read=0.18
     )
     book = PRICES.with_overrides({"claude-opus-5-5": contracted})
-    assert book.version == "2026-09-25+overrides"
+    assert book.version == f"{PRICES.version}+overrides"
     assert book.cost("claude-opus-5-5", Usage(output_tokens=1_000_000)) == pytest.approx(18.0)
     assert book.cost("claude-sonnet-5-5", Usage(output_tokens=1_000_000)) == pytest.approx(10.0)
     assert PRICES.cost("claude-opus-5-5", Usage(output_tokens=1_000_000)) == pytest.approx(20.0)
@@ -140,44 +144,86 @@ def test_an_override_can_price_a_model_the_list_lacks() -> None:
 
 
 def test_no_overrides_keeps_the_list_version() -> None:
-    assert PRICES.with_overrides({}).version == "2026-09-25"
+    assert PRICES.with_overrides({}).version == PRICES.version
 
 
 # ── the price file ───────────────────────────────────────────────────────────
 
 
+def _packaged() -> dict:
+    return json.loads(resources.files("theygent_ai_gateway").joinpath("pricing.json").read_text())
+
+
 def test_the_price_file_is_dated_sourced_and_complete() -> None:
-    data = json.loads(resources.files("theygent_ai_gateway").joinpath("pricing.json").read_text())
-    assert data["version"] == PRICES.version
-    assert "Re-check" in data["source"]
+    data = _packaged()
+    assert data["version"] == PACKAGED.version == data["updated_at"][:10]
+    assert datetime.fromisoformat(data["updated_at"]).tzinfo is not None  # date and time, UTC
+    assert data["source_url"].startswith("https://platform.claude.com/")
+    assert "pricing_overrides" in data["source"]
+    assert {"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"} <= set(data["models"])
     for model, entry in data["models"].items():
-        rates = Rates(
-            *(
-                entry[k]
-                for k in ("input", "output", "cache_write_5m", "cache_write_1h", "cache_read")
-            )
-        )
-        assert min(rates.__dict__.values()) >= 0, model
-        assert entry["cache_read_rate"] in ("published", "derived"), model
+        tiers = [entry, *(entry[k] for k in ("long_context", "fast") if k in entry)]
+        for tier in tiers:
+            rates = [tier[k] for k in ("input", "output", "cache_write_5m", "cache_write_1h")]
+            assert min(rates) > 0 and tier["cache_read"] >= 0, model
 
 
-def test_derived_rates_follow_the_standard_multipliers() -> None:
-    data = json.loads(resources.files("theygent_ai_gateway").joinpath("pricing.json").read_text())
-    for model, entry in data["models"].items():
-        assert entry["cache_write_5m"] == pytest.approx(1.25 * entry["input"]), model
-        assert entry["cache_write_1h"] == pytest.approx(2.0 * entry["input"]), model
-        if entry["cache_read_rate"] == "derived":
-            assert entry["cache_read"] == pytest.approx(0.1 * entry["input"]), model
+def test_cache_writes_follow_the_standard_multipliers_and_reads_cost_less() -> None:
+    for model, entry in _packaged()["models"].items():
+        for tier in (entry, *(entry[k] for k in ("long_context", "fast") if k in entry)):
+            assert tier["cache_write_5m"] == pytest.approx(1.25 * tier["input"]), model
+            assert tier["cache_write_1h"] == pytest.approx(2.0 * tier["input"]), model
+            assert tier["cache_read"] <= 0.1 * tier["input"] + 1e-9, model
 
 
 def test_the_current_models_cache_reads_are_the_published_rates() -> None:
     for model, read in (
         ("claude-opus-5-5", 0.2),
-        ("claude-sonnet-5-5", 0.2),
+        ("claude-sonnet-5-5", 0.1),
         ("claude-fable-5-1", 0.25),
+        ("claude-haiku-4-5", 0.1),
     ):
         rates = PRICES.rates(model)
         assert rates is not None and rates.cache_read == read
+
+
+# ── published modifiers ──────────────────────────────────────────────────────
+
+
+def test_a_long_prompt_pays_the_long_context_rates() -> None:
+    # Haiku 5.5 is priced by prompt length, cache reads and writes included in the prompt.
+    short = Usage(input_tokens=60_000, cache_read_tokens=40_000, output_tokens=1_000)
+    long = Usage(input_tokens=60_000, cache_read_tokens=40_001, output_tokens=1_000)
+    assert PRICES.cost("claude-haiku-5-5", short) == pytest.approx(
+        (60_000 * 0.1 + 40_000 * 0.01 + 1_000 * 0.5) / 1e6
+    )
+    assert PRICES.cost("claude-haiku-5-5", long) == pytest.approx(
+        (60_000 * 0.5 + 40_001 * 0.05 + 1_000 * 2.5) / 1e6
+    )
+    # A model without the tier costs the same at any length.
+    assert PRICES.cost("claude-sonnet-5-5", long) == pytest.approx(
+        (60_000 * 2 + 40_001 * 0.1 + 1_000 * 10) / 1e6
+    )
+
+
+def test_fast_mode_pays_the_fast_rates_with_the_models_cache_ratios() -> None:
+    usage = Usage(input_tokens=1_000, output_tokens=1_000, cache_read_tokens=10_000)
+    assert PRICES.cost("claude-opus-5-5", usage, fast=True) == pytest.approx(
+        (1_000 * 8 + 1_000 * 40 + 10_000 * 0.4) / 1e6
+    )
+    assert PRICES.has_fast_mode("claude-opus-5-5") and not PRICES.has_fast_mode("claude-sonnet-5-5")
+    # A model with no fast mode never charges fast rates.
+    assert PRICES.cost("claude-sonnet-5-5", usage, fast=True) == PRICES.cost(
+        "claude-sonnet-5-5", usage
+    )
+
+
+def test_contracted_rates_keep_each_tiers_published_ratio() -> None:
+    half = ModelRates(input=2, output=10, cache_write_5m=2.5, cache_write_1h=4, cache_read=0.1)
+    book = PRICES.with_overrides({"claude-opus-5-5": half})
+    usage = Usage(output_tokens=1_000_000)
+    assert book.cost("claude-opus-5-5", usage) == pytest.approx(10.0)
+    assert book.cost("claude-opus-5-5", usage, fast=True) == pytest.approx(20.0)  # still 2x
 
 
 # ── seat allowance ───────────────────────────────────────────────────────────
@@ -222,6 +268,32 @@ def test_a_reading_that_went_down_counts_as_no_use() -> None:
 # ── through the gateway ──────────────────────────────────────────────────────
 
 
+def test_a_fast_mode_exchange_is_priced_at_fast_rates(tmp_path: Path) -> None:
+    seen: list[Observation] = []
+    exchange = load("main-bugfix-1")
+    body = json.dumps({**exchange.body, "speed": "fast"}, separators=(",", ":")).encode()
+    with fake_anthropic() as upstream:
+        settings = GatewaySettings(
+            upstream_url=upstream.base_url, gateway_id="gw-test", state_dir=tmp_path
+        )
+        with serve(create_app(settings, observe=seen.append)) as url:
+            httpx.post(
+                f"{url}{exchange.target}",
+                content=body,
+                headers=[*exchange.request_headers, ("x-fake-fixture", exchange.name)],
+                timeout=10,
+            )
+            deadline = time.monotonic() + 10
+            while not seen and time.monotonic() < deadline:
+                time.sleep(0.01)
+    [observation] = seen
+    model, usage = usage_of(exchange.name)
+    standard = PACKAGED.cost(model, usage)
+    assert observation.request.fast
+    assert observation.cost_usd == pytest.approx(PACKAGED.cost(model, usage, fast=True))
+    assert standard is not None and observation.cost_usd > standard
+
+
 def test_observations_carry_their_cost(tmp_path: Path) -> None:
     seen: list[Observation] = []
     exchange = load("subagent-explore-sonnet-1")
@@ -244,5 +316,5 @@ def test_observations_carry_their_cost(tmp_path: Path) -> None:
     model, usage = usage_of(exchange.name)
     # Priced on the model that served it (Sonnet), not the one Claude Code asked for (Opus).
     assert model == "claude-sonnet-5-5"
-    assert observation.cost_usd == pytest.approx(PRICES.cost(model, usage))
-    assert observation.pricing_version == "2026-09-25"
+    assert observation.cost_usd == pytest.approx(PACKAGED.cost(model, usage))
+    assert observation.pricing_version == PACKAGED.version

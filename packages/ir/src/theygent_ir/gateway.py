@@ -136,15 +136,17 @@ class TargetCapabilities:
     max_output_tokens: int
     mid_conversation_system: bool
     context_tokens: int
+    #: Serves ``speed: "fast"`` requests (Claude Code's fast mode); others refuse them.
+    fast_mode: bool = False
 
 
 #: Published or measured per model (Haiku 4.5's row is the spike's measured rejections). A model
 #: missing here is never a routing target: no data is no evidence a request would work.
 TARGET_CAPABILITIES: dict[str, TargetCapabilities] = {
     "claude-fable-5-1": TargetCapabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-5-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-4-8": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-opus-5-5": TargetCapabilities(True, True, 128_000, True, 1_000_000, fast_mode=True),
+    "claude-opus-5": TargetCapabilities(True, True, 128_000, True, 1_000_000, fast_mode=True),
+    "claude-opus-4-8": TargetCapabilities(True, True, 128_000, True, 1_000_000, fast_mode=True),
     "claude-sonnet-5-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
     "claude-sonnet-5": TargetCapabilities(True, True, 128_000, False, 1_000_000),
     "claude-haiku-4-5": TargetCapabilities(False, False, 64_000, False, 200_000),
@@ -263,6 +265,9 @@ class RequestShape(_GatewayWire):
     has_mid_conversation_system: bool = False
     has_context_management: bool = False
     body_bytes: int = Field(default=0, ge=0)
+    #: ``fast`` for a request sent in fast mode, which is priced at the model's fast rates and
+    #: served only by models that have one.
+    speed: Token | None = None
 
 
 class SeatAllowance(_GatewayWire):

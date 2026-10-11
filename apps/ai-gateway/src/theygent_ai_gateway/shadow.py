@@ -74,6 +74,8 @@ class ShadowJob:
     body: bytes
     path: str
     headers: list[tuple[bytes, bytes]]
+    #: The request was sent in fast mode, and its copy is too.
+    fast: bool = False
 
 
 def _under_pressure(response: httpx.Response) -> bool:
@@ -232,7 +234,7 @@ class Shadows:
         usage = summary.usage if summary is not None else Usage()
         if outcome == "answered" and summary is not None and summary.error_type is not None:
             outcome = "failed"  # an error event inside a 2xx stream
-        cost = prices.cost(job.target.model, usage) if prices is not None else None
+        cost = prices.cost(job.target.model, usage, fast=job.fast) if prices is not None else None
         if cost is not None:
             self._spent = self.spent_today + cost
         return ShadowRun(

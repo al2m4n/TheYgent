@@ -68,7 +68,7 @@ PG_VOLUME ?= theygent-pgdata
 # The sample observability stack (deploy/otel): OTel collector (:4318) → Tempo → Grafana (:3000).
 OTEL_COMPOSE := deploy/otel/docker-compose.yml
 
-.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-up k8s-forward k8s-forward-stop k8s-down k8s-delete
+.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy ai-gateway-prices gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-up k8s-forward k8s-forward-stop k8s-down k8s-delete
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -275,6 +275,9 @@ test-web: ## Run interface unit tests (vitest)
 test-deploy: ## Guard the containerization contracts (Dockerfiles · compose · deploy/k8s)
 	@echo "==> pytest deploy/tests"
 	uv run --package theygent-control-plane pytest deploy/tests
+
+ai-gateway-prices: ## Update the AI gateway's price list from Anthropic's published prices (CHECK=1: report only)
+	uv run --package theygent-ai-gateway python apps/ai-gateway/scripts/update_pricing.py $(if $(CHECK),--check,)
 
 gen-ir-types: ## Regenerate @theygent/ir-types from packages/ir (schema + TS + node registry)
 	@echo "==> generating ir-types from packages/ir"
