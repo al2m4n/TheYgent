@@ -149,6 +149,22 @@ local model's tokens.
   `claude-sonnet-5-5`), the model for the main conversation at cold points (empty: never
   considered), and the local model for side requests the Catalog allows to run locally (a
   [logical model id](../concepts/models-and-engines.md)).
+- **Local models** — the models on your inference plane that may take Claude Code's work, listed
+  small to large. Each has a [logical model id](../concepts/models-and-engines.md), its context
+  size in tokens, and whether it follows tool calls and takes images. Beside each one is what the
+  last week shows: the requests it served, and how often its shadow runs picked the same next
+  action as Claude. Then one dial per kind of request, each a **share** of conversations and the
+  **model** (or "smallest that fits"):
+    - *Side requests* (100% by default): the kinds reviewed *local model* in the Catalog.
+    - *Subagents* (0% by default): a share of subagents, from their first request. You can limit
+      it to some agent types (for example `Explore`).
+    - *Main conversation* (0% by default): a share of conversations, at their start or after
+      compaction.
+
+    A conversation in the share stays on its local model for its task, and the rest go to
+    Anthropic as before. Agent turns need a model that follows tool calls. Raise a dial on
+    evidence: run in observer mode first and read the *same next action* rate. A local model that
+    fails before it starts answering hands the request to Anthropic, unseen by Claude Code.
 - **Warm switch margin** — a conversation whose cache is warm moves only where staying would cost
   at least this many times rebuilding its cache on the other model (at least 1). Cache reads cost
   a fraction of cache writes, so in practice warm conversations stay put.

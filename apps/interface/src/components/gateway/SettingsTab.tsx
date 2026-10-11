@@ -25,7 +25,10 @@ import {
 } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import {
+  type DialKind,
+  type DialRow,
   type FormErrors,
+  type LocalModelRow,
   MODE_SUMMARY,
   RATE_FIELDS,
   type SettingsForm,
@@ -344,6 +347,8 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
                 </div>
               </div>
             </fieldset>
+
+            <LocalModels form={form} errors={errors} onChange={(patch) => update(patch)} />
 
             <fieldset className="min-w-0 space-y-3">
               <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1172,5 +1177,245 @@ function RecordsCard() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ── local models and the local dials ────────────────────────────────────────
+
+const DIALS: { kind: DialKind; label: string; detail: string }[] = [
+  {
+    kind: "side_requests",
+    label: "Side requests",
+    detail: "Titles, suggestions and checks reviewed as local model in the Catalog.",
+  },
+  {
+    kind: "subagents",
+    label: "Subagents",
+    detail: "A share of subagents, from their first request; they keep the model for their task.",
+  },
+  {
+    kind: "main",
+    label: "Main conversation",
+    detail: "A share of conversations, at their start or after compaction. Needs a capable model.",
+  },
+];
+
+/** What the last week's records say about each local model: requests it served, and the shadow
+ *  runs that measured it on agent turns. */
+function useLocalEvidence(): Map<
+  string,
+  { served: number; shadows: number; compared: number; agreed: number }
+> {
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const report = useQuery({
+    queryKey: ["gatewayReport", "localEvidence"],
+    queryFn: () => api.getGatewayReport({ since, by: ["decision"], scope: "org" }),
+    staleTime: 60_000,
+  });
+  const out = new Map<
+    string,
+    { served: number; shadows: number; compared: number; agreed: number }
+  >();
+  for (const row of report.data?.groups?.decision ?? []) {
+    if (!row.key.startsWith("route:")) continue;
+    out.set(row.key.slice(6), {
+      served: row.applied_calls,
+      shadows: row.shadow_calls,
+      compared: row.shadow_compared_calls,
+      agreed: row.shadow_agreed_calls,
+    });
+  }
+  return out;
+}
+
+function LocalModels({
+  form,
+  errors,
+  onChange,
+}: {
+  form: SettingsForm;
+  errors: FormErrors;
+  onChange: (patch: Partial<SettingsForm>) => void;
+}) {
+  const evidence = useLocalEvidence();
+  const rows = form.localModels;
+  const setRow = (i: number, patch: Partial<LocalModelRow>) =>
+    onChange({ localModels: rows.map((row, j) => (j === i ? { ...row, ...patch } : row)) });
+  const setDial = (kind: DialKind, patch: Partial<DialRow>) =>
+    onChange({ dials: { ...form.dials, [kind]: { ...form.dials[kind], ...patch } } });
+  const choices = [
+    ...rows.map((r) => r.model.trim()).filter((m) => m !== ""),
+    ...(form.localTarget.trim() && !rows.some((r) => r.model.trim() === form.localTarget.trim())
+      ? [form.localTarget.trim()]
+      : []),
+  ];
+  return (
+    <fieldset className="min-w-0 space-y-3">
+      <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Local models
+      </legend>
+      <p className="text-xs text-muted-foreground">
+        Models on your inference plane that may take Claude Code's work, listed small to large: a
+        request goes to the first that can take it. A local answer costs no API spend; one that
+        fails before it starts goes to Anthropic, unseen by Claude Code. Measure a model in observer
+        mode first — its shadow runs show how often it picks the same next action as Claude.
+      </p>
+      {rows.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <Th>Logical id</Th>
+              <Th>Context (tokens)</Th>
+              <Th>Tool calls</Th>
+              <Th>Images</Th>
+              <Th>Last 7 days</Th>
+              <Th>
+                <span className="sr-only">Remove</span>
+              </Th>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, i) => {
+              const seen = evidence.get(row.model.trim());
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until an id is typed
+                <TableRow key={i}>
+                  <Td>
+                    <Input
+                      aria-label={`Local model (row ${i + 1})`}
+                      value={row.model}
+                      placeholder="coder-medium"
+                      spellCheck={false}
+                      className="min-w-36 font-mono"
+                      aria-invalid={errors[`local.${i}.model`] ? true : undefined}
+                      title={errors[`local.${i}.model`]}
+                      onChange={(e) => setRow(i, { model: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
+                    <Input
+                      aria-label={`Context (row ${i + 1})`}
+                      value={row.context}
+                      inputMode="numeric"
+                      className="w-28 tabular-nums"
+                      aria-invalid={errors[`local.${i}.context`] ? true : undefined}
+                      title={errors[`local.${i}.context`]}
+                      onChange={(e) => setRow(i, { context: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
+                    <Checkbox
+                      aria-label={`Follows tool calls (row ${i + 1})`}
+                      checked={row.tools}
+                      onCheckedChange={(v) => setRow(i, { tools: v === true })}
+                    />
+                  </Td>
+                  <Td>
+                    <Checkbox
+                      aria-label={`Takes images (row ${i + 1})`}
+                      checked={row.images}
+                      onCheckedChange={(v) => setRow(i, { images: v === true })}
+                    />
+                  </Td>
+                  <Td className="text-xs text-muted-foreground">
+                    {seen ? (
+                      <>
+                        served {seen.served.toLocaleString()}
+                        {seen.compared > 0 &&
+                          ` · same next action ${Math.round((seen.agreed / seen.compared) * 100)}% of ${seen.compared}`}
+                      </>
+                    ) : (
+                      "nothing yet"
+                    )}
+                  </Td>
+                  <Td>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove local model ${i + 1}`}
+                      onClick={() => onChange({ localModels: rows.filter((_, j) => j !== i) })}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </Td>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() =>
+          onChange({
+            localModels: [...rows, { model: "", context: "32768", tools: false, images: false }],
+          })
+        }
+      >
+        <Plus size={14} /> Add a local model
+      </Button>
+      <div className="space-y-2">
+        {DIALS.map(({ kind, label, detail }) => {
+          const dial = form.dials[kind];
+          return (
+            <div
+              key={kind}
+              className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_auto_auto]"
+            >
+              <div>
+                <span className="block text-sm font-medium text-foreground">{label}</span>
+                <span className="block text-xs text-muted-foreground">{detail}</span>
+                {(errors[`dial.${kind}.share`] || errors[`dial.${kind}.model`]) && (
+                  <span className="block text-xs text-destructive">
+                    {errors[`dial.${kind}.share`] ?? errors[`dial.${kind}.model`]}
+                  </span>
+                )}
+              </div>
+              <Field label="Share (%)">
+                <Input
+                  aria-label={`${label} share`}
+                  value={dial.share}
+                  inputMode="decimal"
+                  className="w-24 tabular-nums"
+                  aria-invalid={errors[`dial.${kind}.share`] ? true : undefined}
+                  onChange={(e) => setDial(kind, { share: e.target.value })}
+                />
+              </Field>
+              <Field label="Model">
+                <NativeSelect
+                  aria-label={`${label} model`}
+                  value={dial.model}
+                  onChange={(e) => setDial(kind, { model: e.target.value })}
+                >
+                  <NativeSelectOption value="">Smallest that fits</NativeSelectOption>
+                  {choices.map((m) => (
+                    <NativeSelectOption key={m} value={m}>
+                      {m}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              {kind === "subagents" && (
+                <div className="md:col-span-3">
+                  <Field label="Only these agent types (comma-separated; empty: every type)">
+                    <Input
+                      aria-label="Subagent types"
+                      value={dial.agentTypes}
+                      placeholder="Explore"
+                      spellCheck={false}
+                      aria-invalid={errors["dial.subagents.agentTypes"] ? true : undefined}
+                      onChange={(e) => setDial(kind, { agentTypes: e.target.value })}
+                    />
+                  </Field>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }

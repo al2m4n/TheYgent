@@ -224,6 +224,21 @@ function mockPlanes({
         });
       }
       if (parsed.pathname === "/gateway/archive") return json(archive);
+      if (parsed.pathname === "/gateway/report") {
+        return json({
+          groups: {
+            decision: [
+              {
+                key: "route:coder-medium",
+                applied_calls: 42,
+                shadow_calls: 30,
+                shadow_compared_calls: 20,
+                shadow_agreed_calls: 15,
+              },
+            ],
+          },
+        });
+      }
       if (parsed.pathname.startsWith("/gateway/archive/")) {
         return new Response(new Blob(["{}\n"]), {
           status: 200,
@@ -809,6 +824,79 @@ describe("AI Gateway settings: developers' billing", () => {
         ]),
       );
       expect(calls.some((c) => c.path === "/gateway/archive/2026-07-01")).toBe(true);
+    });
+  });
+
+  describe("local models", () => {
+    it("opens a config from a control plane that predates them", async () => {
+      const older = config(3);
+      const {
+        local_models: _models,
+        local_routing: _routing,
+        shadow_local: _local,
+        ...policy
+      } = older.policy as Record<string, unknown>;
+      const calls = mockPlanes({ latest: () => json({ ...older, policy }) });
+      const ui = userEvent.setup();
+      renderTab();
+      expect(await screen.findByLabelText("Subagents share")).toHaveValue("0");
+      await ui.click(screen.getByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "aux-small");
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(puts(calls)).toHaveLength(1));
+      const sent = puts(calls)[0].body as { policy: Record<string, unknown> };
+      expect(sent.policy.shadow_local).toBe(true);
+      expect((sent.policy.local_models as unknown[]).length).toBe(1);
+    });
+
+    it("lists a model and sends a share of subagents to it", async () => {
+      const calls = mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      await ui.click(await screen.findByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "coder-medium");
+      const context = screen.getByLabelText("Context (row 1)");
+      await ui.clear(context);
+      await ui.type(context, "131072");
+      await ui.click(screen.getByRole("checkbox", { name: "Follows tool calls (row 1)" }));
+      const share = screen.getByLabelText("Subagents share");
+      await ui.clear(share);
+      await ui.type(share, "25");
+      await ui.type(screen.getByLabelText("Subagent types"), "Explore, Plan");
+      // The evidence from the last week of records, beside the model.
+      expect(screen.getByText(/served 42 · same next action 75% of 20/)).toBeInTheDocument();
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(puts(calls)).toHaveLength(1));
+      const { policy } = puts(calls)[0].body as { policy: Record<string, unknown> };
+      expect(policy.local_models).toEqual([
+        { model: "coder-medium", context_tokens: 131072, tools: true, images: false },
+      ]);
+      expect(policy.local_routing).toEqual({
+        side_requests: { share: 1, model: null, agent_types: [] },
+        subagents: { share: 0.25, model: null, agent_types: ["Explore", "Plan"] },
+        main: { share: 0, model: null, agent_types: [] },
+      });
+    });
+
+    it("will not save a dial no listed model can serve", async () => {
+      const calls = mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      await ui.click(await screen.findByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "llamacpp");
+      const context = screen.getByLabelText("Context (row 1)");
+      await ui.clear(context);
+      await ui.type(context, "512");
+      const share = screen.getByLabelText("Main conversation share");
+      await ui.clear(share);
+      await ui.type(share, "10");
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      expect(
+        screen.getByText("Agent turns need a listed local model that follows tool calls."),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("Local model (row 1)")).toHaveAttribute("aria-invalid", "true");
+      expect(screen.getByLabelText("Context (row 1)")).toHaveAttribute("aria-invalid", "true");
+      expect(puts(calls)).toHaveLength(0);
     });
   });
 });

@@ -28,34 +28,48 @@ export function isToken(value: string): boolean {
   return value.length <= 128 && TOKEN.test(value);
 }
 
+/** The policy's defaults: what a control plane fills in for a field it is not sent. */
+const DEFAULT_POLICY: GatewayConfigDraft["policy"] = {
+  subagent_target: null,
+  main_target: null,
+  local_target: null,
+  warm_switch_margin: 1.5,
+  shadow_local: true,
+  shadow_cloud: false,
+  shadow_cloud_daily_usd: 1,
+  local_models: [],
+  local_routing: {
+    side_requests: { share: 1, model: null, agent_types: [] },
+    subagents: { share: 0, model: null, agent_types: [] },
+    main: { share: 0, model: null, agent_types: [] },
+  },
+};
+
 /** The draft an edit starts from: the latest config's settings, or — before any is saved — an
- *  observer config with no routing targets. */
+ *  observer config with no routing targets. A field a control plane predating it did not send
+ *  takes its default, so an older version still opens. */
 export function draftOf(config: GatewayConfig | null): GatewayConfigDraft {
   if (config === null) {
     return {
       mode: "observer",
-      policy: {
-        subagent_target: null,
-        main_target: null,
-        local_target: null,
-        warm_switch_margin: 1.5,
-        shadow_local: true,
-        shadow_cloud: false,
-        shadow_cloud_daily_usd: 1,
-        local_models: [],
-        local_routing: {
-          side_requests: { share: 1, model: null, agent_types: [] },
-          subagents: { share: 0, model: null, agent_types: [] },
-          main: { share: 0, model: null, agent_types: [] },
-        },
-      },
+      policy: structuredClone(DEFAULT_POLICY),
       fingerprints: [],
       pricing_overrides: {},
     };
   }
+  const routing = config.policy.local_routing;
   return {
     mode: config.mode,
-    policy: { ...config.policy },
+    policy: {
+      ...structuredClone(DEFAULT_POLICY),
+      ...config.policy,
+      local_models: (config.policy.local_models ?? []).map((m) => ({ ...m })),
+      local_routing: {
+        side_requests: { ...DEFAULT_POLICY.local_routing.side_requests, ...routing?.side_requests },
+        subagents: { ...DEFAULT_POLICY.local_routing.subagents, ...routing?.subagents },
+        main: { ...DEFAULT_POLICY.local_routing.main, ...routing?.main },
+      },
+    },
     fingerprints: config.fingerprints.map((rule) => ({ ...rule })),
     pricing_overrides: Object.fromEntries(
       Object.entries(config.pricing_overrides).map(([model, rates]) => [model, { ...rates }]),
@@ -86,6 +100,28 @@ export function blankRow(): RateRow {
   };
 }
 
+/** One listed local model as the form holds it. */
+export interface LocalModelRow {
+  model: string;
+  /** Context size in tokens, as text. */
+  context: string;
+  tools: boolean;
+  images: boolean;
+}
+
+export type DialKind = "side_requests" | "subagents" | "main";
+export const DIAL_KINDS: DialKind[] = ["side_requests", "subagents", "main"];
+
+/** One local dial as the form holds it. */
+export interface DialRow {
+  /** Percent of eligible conversations, as text. */
+  share: string;
+  /** A listed model, or "" for the smallest that fits. */
+  model: string;
+  /** Subagent types, comma-separated ("" for every type). */
+  agentTypes: string;
+}
+
 /** The form's fields, as text. */
 export interface SettingsForm {
   mode: GatewayConfigDraft["mode"];
@@ -96,8 +132,8 @@ export interface SettingsForm {
   shadowLocal: boolean;
   shadowCloud: boolean;
   shadowCap: string;
-  localModels: GatewayConfigDraft["policy"]["local_models"];
-  localRouting: GatewayConfigDraft["policy"]["local_routing"];
+  localModels: LocalModelRow[];
+  dials: Record<DialKind, DialRow>;
   rates: RateRow[];
 }
 
@@ -111,8 +147,25 @@ export function formOf(draft: GatewayConfigDraft): SettingsForm {
     shadowLocal: draft.policy.shadow_local,
     shadowCloud: draft.policy.shadow_cloud,
     shadowCap: String(draft.policy.shadow_cloud_daily_usd),
-    localModels: draft.policy.local_models.map((m) => ({ ...m })),
-    localRouting: structuredClone(draft.policy.local_routing),
+    localModels: draft.policy.local_models.map((m) => ({
+      model: m.model,
+      context: String(m.context_tokens),
+      tools: m.tools,
+      images: m.images,
+    })),
+    dials: Object.fromEntries(
+      DIAL_KINDS.map((kind) => {
+        const dial = draft.policy.local_routing[kind];
+        return [
+          kind,
+          {
+            share: String(Math.round(dial.share * 1000) / 10),
+            model: dial.model ?? "",
+            agentTypes: dial.agent_types.join(", "),
+          },
+        ];
+      }),
+    ) as Record<DialKind, DialRow>,
     rates: rowsOf(draft.pricing_overrides),
   };
 }
@@ -152,6 +205,51 @@ export function draftFromForm(
   }
   const cap = rate(form.shadowCap);
   if (cap === null) errors.shadowCap = "USD per day, 0 or more.";
+  const localModels: GatewayConfigDraft["policy"]["local_models"] = [];
+  form.localModels.forEach((row, i) => {
+    const model = row.model.trim();
+    if (!isToken(model)) errors[`local.${i}.model`] = "A logical model id, no spaces.";
+    else if (ENGINES.has(model))
+      errors[`local.${i}.model`] = "An engine name; use a logical model id.";
+    else if (localModels.some((m) => m.model === model))
+      errors[`local.${i}.model`] = "Listed twice.";
+    const context = Number(row.context.trim());
+    if (!Number.isInteger(context) || context < 1024) {
+      errors[`local.${i}.context`] = "Tokens, 1024 or more.";
+    }
+    localModels.push({ model, context_tokens: context, tools: row.tools, images: row.images });
+  });
+  const listed = new Set(localModels.map((m) => m.model));
+  const dials = {} as GatewayConfigDraft["policy"]["local_routing"];
+  for (const kind of DIAL_KINDS) {
+    const row = form.dials[kind];
+    const percent = Number(row.share.trim());
+    if (row.share.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) {
+      errors[`dial.${kind}.share`] = "A percentage from 0 to 100.";
+    }
+    const model = row.model.trim() || null;
+    const known =
+      model === null || listed.has(model) || (kind === "side_requests" && model === local);
+    if (!known) errors[`dial.${kind}.model`] = "Not a listed local model.";
+    const agentTypes = row.agentTypes
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t !== "");
+    if (agentTypes.some((t) => !isToken(t))) {
+      errors[`dial.${kind}.agentTypes`] = "Agent type names, separated by commas.";
+    }
+    // Agent turns carry Claude Code's tools: a share needs a model that follows tool calls.
+    const candidates = localModels.filter((m) => model === null || m.model === model);
+    if (kind !== "side_requests" && percent > 0 && !candidates.some((m) => m.tools)) {
+      errors[`dial.${kind}.share`] ??=
+        "Agent turns need a listed local model that follows tool calls.";
+    }
+    dials[kind] = {
+      share: percent / 100,
+      model,
+      agent_types: kind === "subagents" ? agentTypes : [],
+    };
+  }
   const overrides: Record<string, GatewayModelRates> = {};
   form.rates.forEach((row, i) => {
     const model = row.model.trim();
@@ -180,8 +278,8 @@ export function draftFromForm(
         shadow_local: form.shadowLocal,
         shadow_cloud: form.shadowCloud,
         shadow_cloud_daily_usd: cap ?? 0,
-        local_models: form.localModels,
-        local_routing: form.localRouting,
+        local_models: localModels,
+        local_routing: dials,
       },
       fingerprints,
       pricing_overrides: overrides,
