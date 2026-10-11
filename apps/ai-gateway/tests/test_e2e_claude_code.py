@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import secrets
 import time
@@ -31,6 +32,7 @@ from typing import Any
 
 import pytest
 from _fake_anthropic import serve
+from _fake_inference import fake_inference
 from _support import FakeSink
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.configsync import StaticConfigSource
@@ -382,4 +384,64 @@ async def test_router_mode_serves_an_explore_subagent_on_a_local_model(
             for r in subagent
         ],
     )
+    assert_totals_match(records, result)
+
+
+async def test_a_local_subagent_that_fails_mid_loop_finishes_on_anthropic(
+    tmp_path: Path, workspace: Path
+) -> None:
+    # A local model serves an Explore subagent's first turn (a Read call, written without a
+    # thinking block) and then fails. The rest of the loop goes to Anthropic with that turn in its
+    # history and thinking on: the API must take it, and the subagent must finish there.
+    with fake_inference() as fake:
+        fake.content, fake.pieces = None, []
+        fake.tool_calls = [("Read", [json.dumps({"file_path": str(workspace / "note.txt")})])]
+        fake.fail_after = 1
+        settings = GatewaySettings(
+            state_dir=tmp_path / "state",
+            gateway_id="gw-e2e-local-fallback",
+            inference_plane_url=fake.base_url,
+        )
+        router = GatewayConfig(
+            version=1,
+            mode="router",
+            policy=PolicyConfig(
+                local_models=[LocalModel(model="e2e-local", context_tokens=200_000, tools=True)],
+                local_routing=LocalRouting(
+                    subagents=LocalShare(share=1.0, agent_types=["Explore"])
+                ),
+            ),
+            updated_at=datetime.now(UTC),
+        )
+        log_dir = settings.state_dir / "requests"
+        with serve(create_app(settings, config=router)) as url:
+            # Opus, so the subagent asks with thinking on (adaptive), as Claude Code's agents do.
+            result = await drive_claude_code(
+                url,
+                workspace,
+                {},
+                model=ROUTER_REQUESTED,
+                prompt=EXPLORE_PROMPT,
+                tools=("Agent", "Read"),
+                max_turns=8,
+            )
+            records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    subagent = sorted(
+        (r for r in records if r.endpoint == "messages" and r.request_class == "subagent"),
+        key=lambda r: r.started_at,
+    )
+    print(
+        "\nsubagent turns:",
+        [
+            (r.decision.reasons, r.served_model, r.status, r.shape and r.shape.thinking)
+            for r in subagent
+        ],
+    )
+    served_locally = [r for r in subagent if r.served_model == "e2e-local"]
+    assert len(served_locally) == 1, "the local model served the first turn only"
+    after = [r for r in subagent if r.started_at > served_locally[0].started_at]
+    assert after, "the subagent ended with its local turn"
+    assert all(r.status == 200 and r.served_model != "e2e-local" for r in after)
+    assert "target_refused" in after[0].decision.reasons
+    assert after[0].shape is not None and after[0].shape.thinking, "the case needs thinking on"
     assert_totals_match(records, result)

@@ -220,7 +220,10 @@ images. `local_routing` sets a dial per kind of request: a share of conversation
   images and the prompt cap match the model.
 - **When the local model cannot take the request.** `Policy.after_local_failure` re-decides on
   Anthropic's side (a subagent may still start on the cheaper target), with `target_refused`
-  first, and holds that until the next cold boundary.
+  first, and holds that until the next cold boundary. The history then holds local turns written
+  without thinking blocks; the API takes them with thinking on (measured on Opus 5.5, and kept by
+  an opt-in Claude Code test with a fake local model that fails mid-loop), so nothing is
+  rewritten.
 
 ### Shadow runs
 

@@ -34,6 +34,8 @@ class FakeInference:
     piece_delay: float = 0.0
     #: Tool calls streamed after the text: (name, the arguments in pieces) each.
     tool_calls: list[tuple[str, list[str]]] = field(default_factory=list)
+    #: Answer this many requests as told, then fail every later one (503).
+    fail_after: int | None = None
     sent_pieces: int = 0
     abandoned: threading.Event = field(default_factory=threading.Event)
     requests: list[dict[str, Any]] = field(default_factory=list)
@@ -45,6 +47,8 @@ class FakeInference:
         self.requests.append(body)
         self.asked.set()
         await asyncio.sleep(self.delay)
+        if self.fail_after is not None and len(self.requests) > self.fail_after:
+            self.status = 503
         if self.status != 200:
             return JSONResponse(
                 {"error": {"message": "engine unavailable", "code": "engine_unavailable"}},

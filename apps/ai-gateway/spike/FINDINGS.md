@@ -204,6 +204,12 @@ Anthropic.
   the whole prompt before its first token, at about 300 tokens a second on this laptop. The deadline
   now adds the prompt's reading time at 200 tokens a second, and once output starts, the commit (a
   first tool call whole) gets its own deadline from that moment.
+- **Anthropic takes over a loop a local model began.** A local model writes no thinking block,
+  so a fallback mid-loop sends Anthropic an assistant turn (a `toolu_local_…` tool call) without
+  one, with thinking on. Measured with Opus 5.5 and `thinking: adaptive`: a fake local model
+  answered the subagent's first turn with a `Read` call and failed the second, which went to
+  Opus with that history and got a 200; the subagent finished and usage still matched. The
+  gateway needs no history rewrite for it.
 - **What this does and doesn't show.** It proves the path: tool definitions, a tool call and its
   result translate both ways and stream, and the fallback and accounting hold. It says nothing
   new about quality: a one-file read is the easiest Explore task, and Q5's 1-in-6 agreement on
