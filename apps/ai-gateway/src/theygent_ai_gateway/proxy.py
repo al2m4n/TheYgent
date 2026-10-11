@@ -263,6 +263,7 @@ class _Exchange:
                     self.position,
                     self._config,
                     endpoint_is_messages=self._endpoint == "messages",
+                    prices=self._prices,
                 )
             except Exception as exc:
                 log.error("the policy failed: %s", type(exc).__name__)

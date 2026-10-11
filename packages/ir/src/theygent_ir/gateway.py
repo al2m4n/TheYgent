@@ -106,6 +106,8 @@ ReasonCode = Literal[
     "context_exceeds_target",
     "already_on_target",
     "no_target_configured",
+    "follows_warm_cache",
+    "warm_switch_pays",
 ]
 
 
@@ -411,7 +413,8 @@ class PolicyConfig(_GatewayWire):
     main_target: Token | None = None
     #: A logical model id on the inference plane, for auxiliary requests allowed to run locally.
     local_target: Token | None = None
-    #: How much a mid-conversation switch's expected saving must exceed its cache cost.
+    #: A conversation whose cache is warm moves (either way) only where staying would cost at
+    #: least this many times rebuilding its cached prefix on the other model.
     warm_switch_margin: float = Field(default=1.5, ge=1.0)
 
     @model_validator(mode="after")

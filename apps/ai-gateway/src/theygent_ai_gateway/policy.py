@@ -11,10 +11,12 @@ The rules follow what the spike measured:
   the main conversation's cache, and side requests whose fingerprint is not reviewed;
 * a subagent may move at spawn, where its cache is cold anyway;
 * the main conversation may move only where its cache is cold (start, after compaction, after
-  the cache expired), and only if the config names a main target; a warm new prompt stays put,
-  because a switch would rebuild the whole cached prefix;
-* inside a segment, every request inherits the segment's decision — a conversation never switches
-  in the middle of a tool loop;
+  the cache expired), and only if the config names a main target;
+* a decision holds until the conversation's next cold boundary: its tool loops and warm new
+  prompts stay on the model its cache is on — routed or not — because moving would rebuild the
+  whole cached prefix. A warm move (either way) happens only where staying would cost at least
+  ``warm_switch_margin`` times that rebuild. Claude Code switching the requested model itself
+  starts afresh;
 * a target must accept the request's shape: Claude Code's turns use adaptive thinking, effort,
   128K output and mid-conversation system messages, which Haiku 4.5 rejects.
 
@@ -25,7 +27,7 @@ the response's usage is known.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from theygent_ir.gateway import (
     Decision,
@@ -46,7 +48,10 @@ from theygent_ai_gateway.signals import RequestSignals
 #: The dry-run defaults when no config has arrived: the measured subagent candidate, nothing else.
 #: Observer mode never applies a decision, so a default target only shapes the report.
 DEFAULT_POLICY = PolicyConfig(subagent_target="claude-sonnet-5-5")
-DEFAULT_MAX_SEGMENTS = 10_000
+DEFAULT_MAX_CONVERSATIONS = 10_000
+#: Reasons that name the cold boundary a decision was made at; a warm prompt holding that decision
+#: drops them rather than claiming a boundary it is not at.
+_BOUNDARY_REASONS: frozenset[ReasonCode] = frozenset({"cold_cache_boundary", "subagent_at_spawn"})
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,8 @@ class Plan:
     action: DecisionAction
     reasons: tuple[ReasonCode, ...]
     target: Target | None = None
+    #: The target holds none of this conversation's cache yet: moving there means rebuilding it.
+    cold: bool = False
 
     @classmethod
     def stay(cls, *reasons: ReasonCode) -> Plan:
@@ -87,6 +94,22 @@ class Plan:
     @classmethod
     def route(cls, target: Target, *reasons: ReasonCode) -> Plan:
         return cls("route", reasons, target)
+
+    def because(self, *reasons: ReasonCode) -> Plan:
+        """The same decision, explained differently."""
+        return replace(self, reasons=reasons, cold=False)
+
+    def serves(self, requested: str | None) -> str | None:
+        """The model this plan puts the request on."""
+        return self.target.model if self.target is not None else requested
+
+
+@dataclass(frozen=True)
+class _Held:
+    """The decision in force for a conversation, and the model Claude Code asked for then."""
+
+    plan: Plan
+    requested: str | None
 
 
 def accepts(target_model: str, signals: RequestSignals) -> bool:
@@ -130,12 +153,12 @@ def _standalone_structured(signals: RequestSignals, position: Position | None) -
 
 
 class Policy:
-    """Decides per request, remembering each conversation segment's decision so its requests
-    move together."""
+    """Decides per request, remembering each conversation's decision until its next cold
+    boundary so its requests stay on the model their cache is on."""
 
-    def __init__(self, *, max_segments: int = DEFAULT_MAX_SEGMENTS) -> None:
-        self._segments: OrderedDict[ConversationKey, tuple[int, Plan]] = OrderedDict()
-        self._max = max_segments
+    def __init__(self, *, max_conversations: int = DEFAULT_MAX_CONVERSATIONS) -> None:
+        self._held: OrderedDict[ConversationKey, _Held] = OrderedDict()
+        self._max = max_conversations
 
     def decide(
         self,
@@ -144,6 +167,7 @@ class Policy:
         config: GatewayConfig | None,
         *,
         endpoint_is_messages: bool,
+        prices: PriceBook | None = None,
     ) -> Plan:
         mode: GatewayMode = config.mode if config is not None else "observer"
         policy = config.policy if config is not None else DEFAULT_POLICY
@@ -168,7 +192,7 @@ class Policy:
             return Plan.stay("quota_check")
         if request_class == "auxiliary":
             return self._side_request(signals, position, policy, rules)
-        return self._conversation(signals, position, policy)
+        return self._conversation(signals, position, policy, prices)
 
     def _side_request(
         self,
@@ -200,34 +224,89 @@ class Policy:
         )
 
     def _conversation(
-        self, signals: RequestSignals, position: Position | None, policy: PolicyConfig
+        self,
+        signals: RequestSignals,
+        position: Position | None,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
     ) -> Plan:
         if position is None or position.key is None:
             return Plan.stay("unlabeled_request")
-        if position.boundary == "continuation":
-            remembered = self._segments.get(position.key)
-            if remembered is not None and remembered[0] == position.segment:
-                plan = remembered[1]
-                return Plan(plan.action, ("mid_conversation", *plan.reasons), plan.target)
-            return Plan.stay("mid_conversation")
-        if position.boundary == "new_prompt":
+        requested = signals.body.model if signals.body else None
+        held = self._held.get(position.key)
+        if held is not None and held.requested != requested:
+            # Claude Code moved the conversation itself (a model switch, its fallback model): the
+            # cache is cold on the model it asks for now, so this is a free point to decide afresh.
+            plan = self._at_cold_boundary(signals, position, policy)
+        elif position.boundary == "continuation":
+            if held is None:
+                return Plan.stay("mid_conversation")
+            return held.plan.because("mid_conversation", *held.plan.reasons)
+        elif position.boundary == "new_prompt" and held is not None:
+            plan = self._warm_prompt(signals, position, policy, prices, held, requested)
+        elif position.boundary == "new_prompt":
+            # What the conversation was decided under is forgotten: its cache is on the model it
+            # asked for, and leaving it would rebuild that.
             plan = Plan.stay("warm_cache_switch_cost")
-        elif position.kind in ("subagent", "workflow"):
-            plan = (
-                self._anthropic_target(
-                    signals, position, policy.subagent_target, ("subagent_at_spawn",)
-                )
-                if position.boundary == "conversation_start"
-                else self._anthropic_target(
-                    signals, position, policy.subagent_target, ("cold_cache_boundary",)
-                )
-            )
         else:
-            plan = self._anthropic_target(
-                signals, position, policy.main_target, ("cold_cache_boundary",)
-            )
-        self._remember(position.key, position.segment, plan)
+            plan = self._at_cold_boundary(signals, position, policy)
+        self._remember(position.key, _Held(plan, requested))
         return plan
+
+    def _at_cold_boundary(
+        self, signals: RequestSignals, position: Position, policy: PolicyConfig
+    ) -> Plan:
+        if position.kind in ("subagent", "workflow"):
+            why: ReasonCode = (
+                "subagent_at_spawn"
+                if position.boundary == "conversation_start"
+                else "cold_cache_boundary"
+            )
+            return self._anthropic_target(signals, position, policy.subagent_target, (why,))
+        return self._anthropic_target(
+            signals, position, policy.main_target, ("cold_cache_boundary",)
+        )
+
+    def _warm_prompt(
+        self,
+        signals: RequestSignals,
+        position: Position,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
+        held: _Held,
+        requested: str | None,
+    ) -> Plan:
+        """A new prompt while the cache is warm: stay on the model the cache is on, unless
+        staying would cost at least ``warm_switch_margin`` times rebuilding it elsewhere."""
+        current = held.plan
+        preferred = self._at_cold_boundary(signals, position, policy)
+        if preferred.serves(requested) == current.serves(requested):
+            if current.action == "route":
+                return current.because("follows_warm_cache")
+            informative = tuple(r for r in preferred.reasons if r not in _BOUNDARY_REASONS)
+            return Plan.stay(*(informative or ("follows_warm_cache",)))
+        if self._warm_switch_pays(position, policy, prices, current, preferred, requested):
+            moved = preferred.because("warm_switch_pays")
+            return replace(moved, cold=moved.action == "route")
+        return current.because("warm_cache_switch_cost")
+
+    @staticmethod
+    def _warm_switch_pays(
+        position: Position,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
+        current: Plan,
+        preferred: Plan,
+        requested: str | None,
+    ) -> bool:
+        if prices is None or position.cached_prefix_tokens <= 0:
+            return False
+        cached = Usage(cache_read_tokens=position.cached_prefix_tokens)
+        stay = prices.cost(current.serves(requested), cached)
+        move = prices.cost_cold(preferred.serves(requested), cached, ttl_for(position.ttl_seconds))
+        if stay is None or move is None:
+            return False
+        return stay >= policy.warm_switch_margin * move
 
     def _anthropic_target(
         self,
@@ -247,11 +326,11 @@ class Policy:
             return Plan.stay(*why, "context_exceeds_target")
         return Plan.route(Target(kind="anthropic", model=target), *why)
 
-    def _remember(self, key: ConversationKey, segment: int, plan: Plan) -> None:
-        self._segments[key] = (segment, plan)
-        self._segments.move_to_end(key)
-        while len(self._segments) > self._max:
-            self._segments.popitem(last=False)
+    def _remember(self, key: ConversationKey, held: _Held) -> None:
+        self._held[key] = held
+        self._held.move_to_end(key)
+        while len(self._held) > self._max:
+            self._held.popitem(last=False)
 
 
 def counterfactual_usd(
@@ -263,9 +342,10 @@ def counterfactual_usd(
         return None
     if plan.target.kind == "local":
         return 0.0  # no API spend; local compute is not priced here
-    if position is not None and position.boundary == "new_prompt" and position.cache_warm:
+    if plan.cold:
         # The target holds nothing of this conversation yet: its cache must be built.
-        return prices.cost_cold(plan.target.model, usage, ttl_for(position.ttl_seconds))
+        ttl = ttl_for(position.ttl_seconds if position is not None else 0)
+        return prices.cost_cold(plan.target.model, usage, ttl)
     return prices.cost(plan.target.model, usage)
 
 

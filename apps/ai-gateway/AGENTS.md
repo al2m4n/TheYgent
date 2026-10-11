@@ -86,7 +86,9 @@ The rules that follow:
 These hold whenever the router lands:
 
 - **Routing is per conversation segment, never per request.** Caches are per model, so a
-  mid-conversation switch usually costs more than it saves.
+  mid-conversation switch usually costs more than it saves. A decision holds until the next cold
+  boundary: "stay" means stay on the model the cache is on, which for a routed conversation is the
+  target — moving back is a switch too.
 - **Targets must accept the request's shape.** Sonnet 5.5 is a drop-in for Opus 5.5; Haiku 4.5
   is not.
 - **A routed request the target rejects is retried on the original model before Claude Code sees

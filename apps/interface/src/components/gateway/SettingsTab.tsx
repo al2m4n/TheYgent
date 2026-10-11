@@ -312,7 +312,7 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
                   </Field>
                   <FieldNote
                     error={errors.margin}
-                    hint="How many times its cache cost a switch in mid-conversation must save. At least 1."
+                    hint="A conversation with a warm cache moves only where staying would cost at least this many times rebuilding its cache on the other model. At least 1."
                   />
                 </div>
               </div>

@@ -50,6 +50,8 @@ them:
 | cold cache | The main conversation's cache is cold (its start, after compaction, or expired) |
 | mid-conversation | Inside one prompt's tool loop: a conversation never switches mid-turn |
 | warm cache | Moving would throw away a warm cache and pay to rebuild it |
+| follows cache | The conversation keeps the model its cache is on until the cache goes cold |
+| switch pays | Staying would cost at least the configured margin times rebuilding the cache elsewhere |
 | no target set | The configuration names no target for this kind of request |
 | target can't take it | The target model would reject this request's shape |
 | unreviewed kind | A side request whose kind an admin has not reviewed in the Catalog |
@@ -63,10 +65,13 @@ and pays to rebuild it. The policy therefore only considers a move where the cac
   measurements, the same exploration subagent cost about half as much on Sonnet 5.5 as on
   Opus 5.5.
 - **The main conversation, at a cold point** — its start, after compaction, or after its cache
-  expired — and only if the configuration names a main target. A new prompt while the cache is
-  warm stays put.
-- **Inside a segment, never.** Every request after a switch point follows the same decision, so a
-  conversation never changes model in the middle of a tool loop.
+  expired — and only if the configuration names a main target.
+- **Then it stays where its cache is.** Every later request — the tool loop, and new prompts while
+  the cache is warm — follows the same decision until the next cold point (*follows cache*), so a
+  conversation never changes model mid-turn, and a routed one isn't pulled back to the requested
+  model either. A warm move happens only where staying would cost at least the **warm switch
+  margin** times rebuilding the cache on the other model (*switch pays*). If Claude Code switches
+  model itself, the policy decides afresh.
 
 Some traffic never moves: compaction (it reads the main conversation's cache), Claude Code's
 quota check, side requests that ride the main conversation's cache, auto mode's safety checks,
@@ -104,8 +109,9 @@ the status is your decision, and saving one creates a new configuration version.
   `claude-sonnet-5-5`), the model for the main conversation at cold points (empty: never
   considered), and the local model for side requests the Catalog allows to run locally (a
   [logical model id](../concepts/models-and-engines.md)).
-- **Warm switch margin** — how many times its cache cost a mid-conversation switch must save
-  (at least 1).
+- **Warm switch margin** — a conversation whose cache is warm moves only where staying would cost
+  at least this many times rebuilding its cache on the other model (at least 1). Cache reads cost
+  a fraction of cache writes, so in practice warm conversations stay put.
 - **Contracted prices** — per-model rates (USD per million tokens: input, output, 5-minute and
   1-hour cache writes, cache reads) where yours differ from list price.
 

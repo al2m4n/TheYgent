@@ -1,8 +1,9 @@
 """The dry-run policy on real Claude Code traffic.
 
 Every rule is pinned against the fixtures: what is never routed, where a subagent or the main
-conversation could move, how a segment's decision carries through its tool loop, which targets a
-request's shape rules out, and what the counterfactual costs. Whatever the policy decides, observer
+conversation could move, how a decision holds until the conversation's next cold boundary (and
+when a warm move pays), which targets a request's shape rules out, and what the counterfactual
+costs. Whatever the policy decides, observer
 mode forwards the request unchanged.
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import time
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -36,6 +38,7 @@ from theygent_ir.gateway import (
     FingerprintStatus,
     GatewayConfig,
     GatewayMode,
+    ModelRates,
     PolicyConfig,
     Target,
     Usage,
@@ -52,11 +55,17 @@ def config(
     main: str | None = None,
     local: str | None = None,
     rules: dict[str, FingerprintStatus] | None = None,
+    margin: float = 1.5,
 ) -> GatewayConfig:
     return GatewayConfig(
         version=1,
         mode=mode,
-        policy=PolicyConfig(subagent_target=subagent, main_target=main, local_target=local),
+        policy=PolicyConfig(
+            subagent_target=subagent,
+            main_target=main,
+            local_target=local,
+            warm_switch_margin=margin,
+        ),
         fingerprints=[FingerprintRule(fingerprint=f, status=s) for f, s in (rules or {}).items()],
         updated_at=NOW,
     )
@@ -85,18 +94,29 @@ def usage_of(exchange: Exchange) -> Usage:
 class Run:
     """A tracker and policy fed requests in order, as the gateway does."""
 
-    def __init__(self, cfg: GatewayConfig | None = None) -> None:
+    def __init__(self, cfg: GatewayConfig | None = None, prices: PriceBook = PRICES) -> None:
         self.clock = Clock()
         self.tracker = ConversationTracker(clock=self.clock)
         self.policy = Policy()
         self.cfg = cfg
+        self.prices = prices
 
-    def __call__(self, name: str, *, advance: float = 2.0, **headers: str) -> tuple[Plan, Position]:
+    def __call__(
+        self, name: str, *, advance: float = 2.0, model: str | None = None, **headers: str
+    ) -> tuple[Plan, Position]:
         self.clock.now += advance
         exchange = load(name)
         signals = signals_of(exchange, **headers)
+        if model is not None:
+            # Claude Code asking for another model in the same conversation.
+            body = exchange.request_bytes().replace(b'"claude-opus-5-5"', f'"{model}"'.encode())
+            merged = dict(exchange.request_headers)
+            merged.update({k.replace("_", "-"): v for k, v in headers.items()})
+            signals = read_request(merged, body, has_messages_body=True)
         position = self.tracker.begin(signals, None)
-        plan = self.policy.decide(signals, position, self.cfg, endpoint_is_messages=True)
+        plan = self.policy.decide(
+            signals, position, self.cfg, endpoint_is_messages=True, prices=self.prices
+        )
         observer = ResponseObserver(exchange.response_header("content-type"))
         observer.feed(exchange.response_bytes())
         self.tracker.complete(position, exchange.status, observer.finish())
@@ -244,27 +264,108 @@ def test_the_main_conversation_moves_only_where_its_cache_is_cold() -> None:
     expired, _ = run("main-bugfix-3", advance=3700, x_claude_code_prompt_id="next-prompt")
     assert (start.action, start.reasons) == ("route", ("cold_cache_boundary",))
     assert (loop.action, loop.reasons) == ("route", ("mid_conversation", "cold_cache_boundary"))
-    assert (new_prompt.action, new_prompt.reasons) == ("stay", ("warm_cache_switch_cost",))
-    assert after_prompt.reasons == ("mid_conversation", "warm_cache_switch_cost")
+    # The routed conversation's cache is on the target now: a warm new prompt stays there.
+    assert (new_prompt.action, new_prompt.target, new_prompt.reasons) == (
+        "route",
+        SONNET,
+        ("follows_warm_cache",),
+    )
+    assert not new_prompt.cold
+    assert after_prompt.reasons == ("mid_conversation", "follows_warm_cache")
     assert (expired.action, expired.reasons) == ("route", ("cold_cache_boundary",))
+
+
+def test_a_warm_prompt_without_a_candidate_names_the_real_reason() -> None:
+    run = Run(config(main=None))
+    run("main-bugfix-1")
+    plan, _ = run("main-bugfix-3", advance=60, x_claude_code_prompt_id="next-prompt")
+    assert (plan.action, plan.reasons) == ("stay", ("no_target_configured",))
+
+
+def test_a_target_added_mid_conversation_waits_for_a_cold_boundary() -> None:
+    run = Run(config(main=None))
+    run("main-bugfix-1")
+    run.cfg = config(main="claude-sonnet-5-5")
+    warm, _ = run("main-bugfix-3", advance=60, x_claude_code_prompt_id="next-prompt")
+    expired, _ = run("main-bugfix-3", advance=3700, x_claude_code_prompt_id="later")
+    assert (warm.action, warm.reasons) == ("stay", ("warm_cache_switch_cost",))
+    assert (expired.action, expired.target) == ("route", SONNET)
+
+
+def test_a_removed_target_does_not_pull_a_warm_conversation_back() -> None:
+    # Moving back to the requested model is a switch too: it rebuilds the cache there.
+    run = Run(config(main="claude-sonnet-5-5"))
+    run("main-bugfix-1")
+    run.cfg = config(main=None)
+    warm, _ = run("main-bugfix-3", advance=60, x_claude_code_prompt_id="next-prompt")
+    expired, _ = run("main-bugfix-3", advance=3700, x_claude_code_prompt_id="later")
+    assert (warm.action, warm.target, warm.reasons) == (
+        "route",
+        SONNET,
+        ("warm_cache_switch_cost",),
+    )
+    assert (expired.action, expired.reasons) == (
+        "stay",
+        ("cold_cache_boundary", "no_target_configured"),
+    )
+
+
+def test_a_warm_move_happens_only_where_the_margin_says_it_pays() -> None:
+    # Contracted rates that make rebuilding on Sonnet nearly free: staying on Opus's warm cache
+    # costs more than twice the rebuild, so a margin of 2 moves it and a margin of 50 does not.
+    cheap = ModelRates(input=0.1, output=1, cache_write_5m=0.01, cache_write_1h=0.01, cache_read=0)
+    prices = PRICES.with_overrides({"claude-sonnet-5-5": cheap})
+    for margin, moves in ((2.0, True), (50.0, False)):
+        run = Run(config(main=None, margin=margin), prices)
+        run("main-bugfix-1")
+        run("main-bugfix-2")
+        run.cfg = config(main="claude-sonnet-5-5", margin=margin)
+        plan, position = run("main-bugfix-3", advance=60, x_claude_code_prompt_id="next")
+        assert position.cache_warm and position.cached_prefix_tokens > 0
+        if moves:
+            assert (plan.action, plan.target, plan.reasons) == (
+                "route",
+                SONNET,
+                ("warm_switch_pays",),
+            )
+            assert plan.cold
+            usage = usage_of(load("main-bugfix-3"))
+            assert counterfactual_usd(plan, usage, position, prices) == prices.cost_cold(
+                "claude-sonnet-5-5", usage, "1h"
+            )
+        else:
+            assert (plan.action, plan.reasons) == ("stay", ("warm_cache_switch_cost",))
+
+
+def test_claude_code_switching_model_itself_decides_afresh() -> None:
+    run = Run(config(main="claude-sonnet-5-5"))
+    run("main-bugfix-1")
+    plan, position = run(
+        "main-bugfix-3",
+        advance=60,
+        model="claude-fable-5-1",
+        x_claude_code_prompt_id="next-prompt",
+    )
+    assert position.boundary == "new_prompt"
+    assert (plan.action, plan.target, plan.reasons) == ("route", SONNET, ("cold_cache_boundary",))
 
 
 def test_after_compaction_is_a_free_switch_point() -> None:
     run = Run(config(main="claude-sonnet-5-5"))
     run("main-bugfix-1")
-    run("main-bugfix-2", advance=60, x_claude_code_prompt_id="p2")  # warm new prompt: stays
+    run("main-bugfix-2", advance=60, x_claude_code_prompt_id="p2")  # warm new prompt: follows
     plan, position = run("main-bugfix-3", x_claude_code_context_compacted="auto")
     assert position.boundary == "after_compaction"
     assert (plan.action, plan.reasons) == ("route", ("cold_cache_boundary",))
 
 
-def test_segment_memory_is_bounded() -> None:
-    policy = Policy(max_segments=2)
+def test_conversation_memory_is_bounded() -> None:
+    policy = Policy(max_conversations=2)
     tracker = ConversationTracker(clock=Clock())
     for n in range(4):
         signals = signals_of(load("main-bugfix-1"), x_claude_code_session_id=f"s{n}")
         policy.decide(signals, tracker.begin(signals, None), config(), endpoint_is_messages=True)
-    assert len(policy._segments) == 2
+    assert len(policy._held) == 2
 
 
 # ── capability and context checks ────────────────────────────────────────────
@@ -305,15 +406,18 @@ def test_a_local_route_costs_nothing_in_api_spend() -> None:
     assert counterfactual_usd(plan, Usage(input_tokens=1200, output_tokens=16), None, PRICES) == 0.0
 
 
-def test_a_warm_route_pays_to_rebuild_the_cache() -> None:
+def test_only_a_warm_switch_pays_to_rebuild_the_cache() -> None:
     usage = Usage(output_tokens=600, cache_read_tokens=120_000, cache_write_1h_tokens=3000)
     warm = Position(boundary="new_prompt", cache_warm=True, ttl_seconds=3600)
-    plan = Plan.route(SONNET, "cold_cache_boundary")
-    assert counterfactual_usd(plan, usage, warm, PRICES) == PRICES.cost_cold(
+    switch = replace(Plan.route(SONNET, "warm_switch_pays"), cold=True)
+    assert counterfactual_usd(switch, usage, warm, PRICES) == PRICES.cost_cold(
         "claude-sonnet-5-5", usage, "1h"
     )
-    cold = Position(boundary="cache_expired")
-    assert counterfactual_usd(plan, usage, cold, PRICES) == PRICES.cost("claude-sonnet-5-5", usage)
+    # A conversation already on the target reads its own warm cache there.
+    follows = Plan.route(SONNET, "follows_warm_cache")
+    assert counterfactual_usd(follows, usage, warm, PRICES) == PRICES.cost(
+        "claude-sonnet-5-5", usage
+    )
 
 
 def test_the_estimate_against_the_one_real_pair() -> None:

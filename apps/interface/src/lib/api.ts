@@ -1247,7 +1247,9 @@ export type GatewayReasonCode =
   | "target_rejects_request_shape"
   | "context_exceeds_target"
   | "already_on_target"
-  | "no_target_configured";
+  | "no_target_configured"
+  | "follows_warm_cache"
+  | "warm_switch_pays";
 
 export interface GatewaySessionSummary {
   session_id: string;

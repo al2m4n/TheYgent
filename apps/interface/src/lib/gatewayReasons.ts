@@ -89,6 +89,16 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
     detail:
       "Switching now would rebuild the whole cached conversation on the other model, costing more than it saves.",
   },
+  follows_warm_cache: {
+    label: "follows cache",
+    detail:
+      "The conversation keeps the model its cache is on until the cache goes cold (compaction, or expiry).",
+  },
+  warm_switch_pays: {
+    label: "switch pays",
+    detail:
+      "Staying would cost at least the configured margin times rebuilding the cache on the other model, so it moves despite the warm cache.",
+  },
   target_rejects_request_shape: {
     label: "target can't take it",
     detail:

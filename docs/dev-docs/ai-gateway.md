@@ -113,13 +113,18 @@ nothing is a routing candidate. The tracker places each request in its conversat
 and its compaction share one; each subagent has its own), from the request's own cache-lifetime
 markers. Caches belong to one model, so the policy only ever moves a conversation where its cache
 is cold anyway — a subagent at spawn, the main conversation at its start, after compaction or
-after its cache expired — and every request inside a segment inherits the segment's decision.
+after its cache expired. A decision then holds until the conversation's next cold boundary: its
+tool loops and warm new prompts stay on the model their cache is on, routed or not (moving back to
+the requested model is a switch too). A warm move happens only where staying would cost at least
+`warm_switch_margin` times rebuilding the cached prefix on the other model — and then the
+counterfactual prices that rebuild. Claude Code switching the requested model itself (`/model`, its
+fallback model) is a fresh decision, since the cache there is cold anyway.
 Some traffic never moves: compaction, the quota check, side requests that ride the main
 conversation's cache, requests carrying `safeguards`, and side requests whose fingerprint an admin
 has not reviewed. A target must accept the request's shape: Sonnet 5.5 is a drop-in for Opus 5.5;
 Haiku 4.5 rejects Claude Code's request shape.
 
-Each decision carries reason codes (`ReasonCode`, 23 of them; the interface's
+Each decision carries reason codes (`ReasonCode`, 25 of them; the interface's
 `lib/gatewayReasons.ts` explains every one, and a test in `packages/ir` keeps the two in step) and
 a counterfactual cost, priced once the response's usage is known. Counterfactuals assume the other
 model would use the same tokens — an estimate.
