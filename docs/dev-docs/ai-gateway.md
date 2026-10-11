@@ -267,8 +267,18 @@ Code exchanges rebuilt without content; `test_fixtures.py` scans every fixture f
 credentials and prose, since the repository is public. The suite starts every test from an empty
 gateway environment, because `make test` exports the developer's `.env`.
 
-One opt-in test runs against the real thing: `THEYGENT_E2E_CLAUDE_CODE=1 uv run --package
+Opt-in tests run against the real thing. `THEYGENT_E2E_CLAUDE_CODE=1 uv run --package
 theygent-ai-gateway pytest -m integration -n0 tests/test_e2e_claude_code.py` drives headless Claude
-Code through the Agent SDK and a real gateway, in personal and team mode, and requires the
-gateway's per-model totals — input, output, cache reads and cache writes — to equal Claude Code's
-own `modelUsage`. It skips cleanly without the opt-in or without credentials.
+Code through the Agent SDK and a real gateway, four times:
+
+- personal mode;
+- team mode;
+- router mode with Opus 5.5 requested and the whole conversation served by Sonnet 5.5;
+- router mode with subagents only: the main conversation stays on Opus 5.5, and the Explore
+  subagent is served by Sonnet 5.5 from its spawn.
+
+Each run requires the gateway's per-model totals (input, output, cache reads and cache writes) to
+equal Claude Code's own `modelUsage`. Claude Code files routed tokens under the model it
+requested, which is why its cost display overstates routed spend. It skips cleanly without the
+opt-in or without credentials. `THEYGENT_E2E_LOCAL_MODEL` runs the local route against a real
+model on a running inference plane, with a fake upstream.

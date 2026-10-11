@@ -185,7 +185,8 @@ each gates on its prerequisites, skipping clean when they are absent:
 | `THEYGENT_MLX_REASONING_MODEL` (a think-token model, e.g. `mlx-community/Qwen3-0.6B-4bit`) + `mlx_lm.server` on PATH | Real MLX reasoning: thinking reaches the caller as `reasoning_content`, streamed live, kept on a tool-call turn |
 | `THEYGENT_VLLM_CUDA=1` (or `nvidia-smi`) + `THEYGENT_VLLM_MODEL` | vLLM on a real CUDA host (still unverified — no CUDA runner) |
 | `DATABASE_URL` | Control-plane integration (real Postgres, no testcontainers) |
-| `THEYGENT_E2E_CLAUDE_CODE=1` (+ Claude Code credentials) | The AI gateway end to end: the Agent SDK drives headless Claude Code through a real gateway to the real Anthropic API, in personal and team mode, and the gateway's per-model totals must equal Claude Code's own `modelUsage`. Spends real (small) model usage; `THEYGENT_E2E_MODEL` picks the model, Haiku 4.5 by default |
+| `THEYGENT_E2E_CLAUDE_CODE=1` (+ Claude Code credentials) | The AI gateway end to end: the Agent SDK drives headless Claude Code through a real gateway to the real Anthropic API, in personal and team mode and in router mode (a conversation, and an Explore subagent, asked for on Opus 5.5 and served by Sonnet 5.5), and the gateway's per-model totals must equal Claude Code's own `modelUsage`. Spends real (small) model usage; `THEYGENT_E2E_MODEL` picks the observer runs' model, Haiku 4.5 by default |
+| `THEYGENT_E2E_LOCAL_MODEL` (a logical chat model id) + a running inference plane | The AI gateway's local route against a real local model: the session-title request's shape answered locally, checked, and returned as Claude Code reads it; the upstream is faked, so nothing is spent. `THEYGENT_E2E_INFERENCE_PLANE_URL` names the plane (default `http://127.0.0.1:8081/v1`) |
 
 Run them serially — they spawn real engine processes against a shared HF cache and real
 unified memory, so parallelizing races engine spawns, not test code:

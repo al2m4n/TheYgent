@@ -97,12 +97,20 @@ it the way you distribute Claude Code's managed settings today.
 ## Claude Code's own cost display
 
 Claude Code prices every token at the model it **asked for**. In observer mode that is also the
-model that answered, so Claude Code's figures and the gateway's agree (at list prices — the
-gateway also applies any contracted rates an admin entered). In **router** mode, routed requests
-run on a cheaper model, but Claude Code still prices them at the model it asked for: its own cost
-display and usage summary overstate spend. The AI Gateway **Report**, which records the model that
-actually served each request, is the figure to trust. On a subscription, dollar figures are the
-API-equivalent value of the traffic, not a bill — the Report shows plan usage separately.
+model that answered, so Claude Code's figures and the gateway's agree (at list prices; the gateway
+also applies any contracted rates an admin entered).
+
+In **router** mode, routed requests run on a cheaper model, but Claude Code still files and prices
+them under the model it asked for. Its own cost figures overstate spend: the session cost, the
+usage summary, a status line that shows cost, and the SDK's `total_cost_usd`. For example, one
+Explore subagent task cost $0.16 on Opus 5.5 and $0.08 on Sonnet 5.5, with near-identical token
+counts. Route that subagent to Sonnet and Claude Code still shows about $0.16 for it. On the AI
+Gateway **Report**, its spend is about $0.08, and $0.16 appears as *without routing*.
+
+The token counts still agree. Claude Code's per-model usage matches the Report grouped by **model
+requested**, and **served model** shows where the tokens actually went. The Report is the figure to
+trust for cost. On a subscription, dollar figures are the API-equivalent value of the traffic, not
+a bill; the Report shows plan usage separately.
 
 ## Check that it works
 

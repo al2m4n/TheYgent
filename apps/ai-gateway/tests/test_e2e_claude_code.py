@@ -79,8 +79,23 @@ def workspace(tmp_path: Path) -> Path:
     return directory
 
 
+PROMPT = "Read note.txt and answer with its exact contents, nothing else."
+#: Has Claude Code spawn its built-in Explore subagent, which does the reading.
+EXPLORE_PROMPT = (
+    "Use the Explore agent to read note.txt in the current directory, then answer with its exact "
+    "contents, nothing else."
+)
+
+
 async def drive_claude_code(
-    gateway_url: str, workspace: Path, extra_env: dict[str, str], *, model: str = MODEL
+    gateway_url: str,
+    workspace: Path,
+    extra_env: dict[str, str],
+    *,
+    model: str = MODEL,
+    prompt: str = PROMPT,
+    tools: tuple[str, ...] = ("Read",),
+    max_turns: int = 4,
 ) -> Any:
     """One headless Claude Code prompt through the gateway, with the setup the AI Gateway page
     hands out; returns the SDK's result message."""
@@ -88,9 +103,9 @@ async def drive_claude_code(
         model=model,
         cwd=str(workspace),
         # Claude Code's full toolset, so its prompt is large enough to cache: cache writes and
-        # reads are where accounting goes wrong. Only Read runs without asking.
-        allowed_tools=["Read"],
-        max_turns=4,
+        # reads are where accounting goes wrong. Only ``tools`` run without asking.
+        allowed_tools=list(tools),
+        max_turns=max_turns,
         setting_sources=[],
         strict_mcp_config=True,
         env={
@@ -101,10 +116,7 @@ async def drive_claude_code(
         },
     )
     result = None
-    async for message in sdk.query(
-        prompt="Read note.txt and answer with its exact contents, nothing else.",
-        options=options,
-    ):
+    async for message in sdk.query(prompt=prompt, options=options):
         if isinstance(message, sdk.ResultMessage):
             result = message
     assert result is not None, "Claude Code ended without a result"
@@ -254,5 +266,50 @@ async def test_router_mode_serves_opus_requests_on_sonnet(tmp_path: Path, worksp
         r.baseline_usd is not None and r.cost_usd is not None and r.baseline_usd > r.cost_usd
         for r in routed
     )
+    assert not [r for r in messages if "target_refused" in r.decision.reasons]
+    assert_totals_match(records, result)
+
+
+async def test_router_mode_serves_an_explore_subagent_on_sonnet(
+    tmp_path: Path, workspace: Path
+) -> None:
+    # The routing a team starts with: subagents only. Claude Code asks for Opus 5.5 throughout; its
+    # main conversation stays there, and the Explore subagent it spawns is served by Sonnet 5.5
+    # from its first request — a subagent starts with an empty cache, so moving it costs nothing.
+    settings = GatewaySettings(state_dir=tmp_path / "state", gateway_id="gw-e2e-subagent")
+    router = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(subagent_target=ROUTER_TARGET),
+        updated_at=datetime.now(UTC),
+    )
+    log_dir = settings.state_dir / "requests"
+    with serve(create_app(settings, config=router)) as url:
+        result = await drive_claude_code(
+            url,
+            workspace,
+            {},
+            model=ROUTER_REQUESTED,
+            prompt=EXPLORE_PROMPT,
+            tools=("Agent", "Read"),
+            max_turns=8,
+        )
+        records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    messages = sorted(
+        (r for r in records if r.endpoint == "messages" and r.requested_model),
+        key=lambda r: r.started_at,
+    )
+    subagent = [r for r in messages if r.request_class == "subagent"]
+    main = [r for r in messages if r.request_class == "main"]
+    assert subagent, "Claude Code spawned no subagent"
+    assert {r.agent_type for r in subagent} == {"Explore"}
+    assert all(r.requested_model == ROUTER_REQUESTED for r in subagent)
+    assert all(
+        r.decision.applied and r.served_model and r.served_model.startswith(ROUTER_TARGET)
+        for r in subagent
+    ), [(r.decision.reasons, r.served_model) for r in subagent]
+    assert subagent[0].decision.reasons[0] == "subagent_at_spawn"
+    assert main and not any(r.decision.applied for r in main)
+    assert all(r.served_model and r.served_model.startswith(ROUTER_REQUESTED) for r in main)
     assert not [r for r in messages if "target_refused" in r.decision.reasons]
     assert_totals_match(records, result)

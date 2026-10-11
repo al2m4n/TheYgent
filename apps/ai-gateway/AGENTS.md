@@ -158,4 +158,7 @@ THEYGENT_E2E_CLAUDE_CODE=1 uv run --package theygent-ai-gateway \
 ```
 
 It requires the gateway's per-model totals to equal Claude Code's own `modelUsage`, cache reads
-and writes included: a change to how usage is parsed, recorded or summed must keep it green.
+and writes included: a change to how usage is parsed, recorded or summed must keep it green. Its
+router runs (a conversation, and an Explore subagent, served by Sonnet 5.5 where Claude Code asked
+for Opus 5.5) must too. The local route has its own opt-in test against a real local model
+(`THEYGENT_E2E_LOCAL_MODEL=<logical id> … tests/test_e2e_local_model.py`), with a faked upstream.
