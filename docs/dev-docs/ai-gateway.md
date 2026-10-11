@@ -195,3 +195,9 @@ injected key, config and event seams, no network. `tests/fixtures/exchanges/` ho
 Code exchanges rebuilt without content; `test_fixtures.py` scans every fixture for paths, emails,
 credentials and prose, since the repository is public. The suite starts every test from an empty
 gateway environment, because `make test` exports the developer's `.env`.
+
+One opt-in test runs against the real thing: `THEYGENT_E2E_CLAUDE_CODE=1 uv run --package
+theygent-ai-gateway pytest -m integration -n0 tests/test_e2e_claude_code.py` drives headless Claude
+Code through the Agent SDK and a real gateway, in personal and team mode, and requires the
+gateway's per-model totals — input, output, cache reads and cache writes — to equal Claude Code's
+own `modelUsage`. It skips cleanly without the opt-in or without credentials.

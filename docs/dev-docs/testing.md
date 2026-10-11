@@ -160,6 +160,13 @@ outside it:
 - **`tests/fixtures/exchanges/`** — real Claude Code exchanges rebuilt without content (counts
   and settings kept, all text replaced). `test_fixtures.py` scans every fixture for paths,
   emails, credentials, foreign ids and prose: the repository is public.
+- **`test_e2e_claude_code.py`** (`integration`, opt-in) — the one test against the real thing:
+  headless Claude Code, driven by the Agent SDK with the setup the AI Gateway page hands out,
+  through a real gateway to the real Anthropic API. Claude Code's full toolset keeps its prompt
+  large enough to cache, and the test requires cached tokens, so cache writes and reads — where
+  accounting goes wrong — are always compared. The child Claude Code gets none of the caller's
+  settings files or `CLAUDE*`/`ANTHROPIC*` variables except the credentials, since a caller
+  inside another Claude Code session would hand it its base URL and session.
 - **An empty gateway environment per test** — an autouse fixture clears
   `THEYGENT_AI_GATEWAY_*` and `THEYGENT_CONTROL_PLANE_URL`, because `make test` exports the
   developer's `.env`.
@@ -177,6 +184,7 @@ each gates on its prerequisites, skipping clean when they are absent:
 | `THEYGENT_MLX_MODEL` + `mlx_lm.server` on PATH | Real MLX chat (Apple Silicon) |
 | `THEYGENT_VLLM_CUDA=1` (or `nvidia-smi`) + `THEYGENT_VLLM_MODEL` | vLLM on a real CUDA host (still unverified — no CUDA runner) |
 | `DATABASE_URL` | Control-plane integration (real Postgres, no testcontainers) |
+| `THEYGENT_E2E_CLAUDE_CODE=1` (+ Claude Code credentials) | The AI gateway end to end: the Agent SDK drives headless Claude Code through a real gateway to the real Anthropic API, in personal and team mode, and the gateway's per-model totals must equal Claude Code's own `modelUsage`. Spends real (small) model usage; `THEYGENT_E2E_MODEL` picks the model, Haiku 4.5 by default |
 
 Run them serially — they spawn real engine processes against a shared HF cache and real
 unified memory, so parallelizing races engine spawns, not test code:

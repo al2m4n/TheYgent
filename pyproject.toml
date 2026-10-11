@@ -24,7 +24,7 @@ quote-style = "double"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 markers = [
-    "integration: opt-in tests that spawn a real llama-server (needs THEYGENT_GGUF_PATH + binary)",
+    "integration: opt-in tests against real engines or services (each names its prerequisites and skips cleanly without them)",
 ]
 # -n auto (pytest-xdist): distribute the fast suite across CPU cores. The macOS integration
 # job spawns real engine processes against a shared HF cache and overrides this with -n0

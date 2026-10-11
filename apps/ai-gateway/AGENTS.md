@@ -124,4 +124,12 @@ the control plane receives.
 
 The fast suite injects the upstream transport (`create_app(upstream_transport=…)`) and must run on
 any machine offline. Tests against the real Anthropic API or a real Claude Code are opt-in and
-env-gated; they skip cleanly when credentials are absent.
+env-gated; they skip cleanly when credentials are absent:
+
+```bash
+THEYGENT_E2E_CLAUDE_CODE=1 uv run --package theygent-ai-gateway \
+    pytest -m integration -n0 tests/test_e2e_claude_code.py   # spends real (small) usage
+```
+
+It requires the gateway's per-model totals to equal Claude Code's own `modelUsage`, cache reads
+and writes included: a change to how usage is parsed, recorded or summed must keep it green.
