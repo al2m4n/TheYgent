@@ -324,8 +324,10 @@ modifiers that change what a Claude Code request costs:
   Only models whose `TargetCapabilities.fast_mode` is set may serve such a request, so a fast
   request is never routed to a model without one.
 
-A contracted override in the config replaces a model's base rates, and its tiers keep their
-published ratio to them. `make ai-gateway-prices` (or `scripts/update_pricing.py`) rewrites the
+Prices and capabilities are looked up by the model an id names (`base_model`): a context
+variant (`claude-opus-5-5[1m]`) and a dated snapshot (`claude-haiku-4-5-20251001`, as the API names
+the model that served a request) take their model's rates. A contracted override in the config
+replaces a model's base rates, and its tiers keep their published ratio to them. `make ai-gateway-prices` (or `scripts/update_pricing.py`) rewrites the
 file when a price changed, and `CHECK=1` only reports. `.github/workflows/ai-gateway-pricing.yml`
 runs it every Monday and opens a pull request when prices change, so a change is reviewed before
 it reaches anyone's figures. A page the parser cannot read fails loudly rather than being half

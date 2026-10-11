@@ -19,6 +19,7 @@ None of these models is part of an agent's IR, so nothing here touches a ``conte
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
@@ -124,9 +125,15 @@ class _GatewayWire(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
 
 
+#: A dated snapshot id's suffix: the API names the model that served a request this way.
+_SNAPSHOT = re.compile(r"-\d{8}$")
+
+
 def base_model(model: str) -> str:
-    """``claude-opus-5-5[1m]`` and ``claude-opus-5-5`` are the same model at another context."""
-    return model.split("[", 1)[0]
+    """The model an id names, for prices and capabilities: ``claude-opus-5-5[1m]`` is
+    ``claude-opus-5-5`` at another context, and ``claude-haiku-4-5-20251001`` a dated snapshot of
+    ``claude-haiku-4-5``."""
+    return _SNAPSHOT.sub("", model.split("[", 1)[0])
 
 
 @dataclass(frozen=True)

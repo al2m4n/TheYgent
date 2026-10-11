@@ -103,6 +103,15 @@ def test_the_extended_context_variant_is_priced_like_the_base_model() -> None:
     assert PRICES.cost("claude-opus-5-5[1m]", usage) == PRICES.cost("claude-opus-5-5", usage)
 
 
+def test_a_dated_snapshot_is_priced_like_its_model() -> None:
+    # The API names the model that served a request by its snapshot: Claude Code asks for
+    # claude-haiku-4-5, and the response says claude-haiku-4-5-20251001.
+    usage = Usage(input_tokens=10_000, output_tokens=500)
+    cost = PRICES.cost("claude-haiku-4-5-20251001", usage)
+    assert cost is not None and cost == PRICES.cost("claude-haiku-4-5", usage)
+    assert PRICES.cost("claude-haiku-4-5-2025", usage) is None  # not a date: an unknown model
+
+
 @pytest.mark.parametrize("model", ["claude-imaginary-9", "", None])
 def test_an_unknown_model_has_no_cost(model: str | None) -> None:
     assert PRICES.cost(model, Usage(input_tokens=1)) is None
