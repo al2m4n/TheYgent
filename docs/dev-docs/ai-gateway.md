@@ -149,10 +149,24 @@ Opus 5.5 completes its work served by Sonnet 5.5.
 
 A local-target route (an `allow_local` side request — the session title, typically) is answered
 by the inference plane instead (`local.py`, at `THEYGENT_INFERENCE_PLANE_URL` through
-`packages/gateway-client`). Only what translates faithfully goes: text system blocks less the
-billing attribution, text messages, sampling settings and the output schema (as a `json_schema`
-response format, thinking off, the output budget capped at 4,096). Tools, images, documents or any
-other block stay with the Anthropic API. A prompt over 32K tokens (at about four bytes a token) is
+`packages/gateway-client`). `translation.py` turns the request into a chat completion, and does so
+faithfully or not at all:
+
+- **What carries over:** the system prompt less the billing attribution, mid-conversation system
+  messages in place, text, sampling settings, and the output schema (as a `json_schema` response
+  format). Thinking is off, and the output budget is capped at 4,096, or 16,384 for an agent turn.
+- **For a model that follows tool calls:** the tools not deferred, plus those `tool_addition`
+  blocks add mid-conversation (how tool search loads them), as OpenAI functions; `tool_choice`
+  mapped; `tool_use` blocks as an assistant's `tool_calls`, each `tool_result` as a `tool` message
+  right after its call (an error marked `[error]`). Thinking blocks are dropped.
+- **For a model that takes images:** images, as `image_url` parts.
+- **Never:** documents, server tools and their results, an image inside a tool result, or any
+  block type it does not know.
+
+The answer comes back through a writer that turns OpenAI chunks into Anthropic events. Text
+streams as deltas; each tool call is emitted as one whole `tool_use` block (input in a single
+`input_json_delta`) once its arguments are complete. A local `toolu_local_…` id replaces the
+model's own, and the stop reason is `tool_use` when it called one. A prompt over 32K tokens (at about four bytes a token) is
 never sent.
 
 The gateway always streams from the engine, so a client that hangs up closes the stream and the
@@ -163,9 +177,12 @@ on the request:
   text, and JSON that fits the schema, with reasoning blocks and code fences stripped. It is
   returned as the Anthropic message Claude Code asked for.
 - **Any other request.** The answer is relayed as Anthropic server-sent events as it is written,
-  with pings while the model is quiet and a leading reasoning block dropped. It is relayed only
-  once the first visible text arrives within 15 seconds: opening the stream and the first token
-  share that deadline.
+  with pings while the model is quiet and a leading reasoning block dropped. Nothing is relayed
+  until the answer is committed: its first visible text, or its first tool call once whole and
+  checked (an offered tool, arguments that are a JSON object). The first output must begin within
+  15 seconds — opening the stream shares that deadline — and the commit must come within 30. A bad
+  tool call after the commit still goes out, with empty input, and Claude Code answers it with a
+  tool error as it would for any model.
 
 Anything that fails before an answer is committed sends the original bytes upstream and records
 `target_refused`, without pinning anything (a side request holds no conversation cache). That

@@ -32,6 +32,8 @@ class FakeInference:
     #: The streamed answer in pieces (``None``: ``content`` whole), each after ``piece_delay``.
     pieces: list[str] | None = None
     piece_delay: float = 0.0
+    #: Tool calls streamed after the text: (name, the arguments in pieces) each.
+    tool_calls: list[tuple[str, list[str]]] = field(default_factory=list)
     sent_pieces: int = 0
     abandoned: threading.Event = field(default_factory=threading.Event)
     requests: list[dict[str, Any]] = field(default_factory=list)
@@ -89,7 +91,24 @@ class FakeInference:
                 await asyncio.sleep(self.piece_delay)
                 self.sent_pieces += 1
                 yield chunk({"content": piece})
-            yield chunk({}, self.finish_reason)
+            for index, (name, arguments) in enumerate(self.tool_calls):
+                # A call's id and name first, then its arguments in pieces, as servers stream them.
+                yield chunk(
+                    {
+                        "tool_calls": [
+                            {
+                                "index": index,
+                                "id": f"call_{index}",
+                                "type": "function",
+                                "function": {"name": name, "arguments": ""},
+                            }
+                        ]
+                    }
+                )
+                for part in arguments:
+                    await asyncio.sleep(self.piece_delay)
+                    yield chunk({"tool_calls": [{"index": index, "function": {"arguments": part}}]})
+            yield chunk({}, "tool_calls" if self.tool_calls else self.finish_reason)
             if (body.get("stream_options") or {}).get("include_usage"):
                 usage = {
                     "id": "chatcmpl-fake",

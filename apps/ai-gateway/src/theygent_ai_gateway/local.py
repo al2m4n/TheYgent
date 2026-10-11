@@ -1,18 +1,28 @@
-"""The local route — router mode only: a side request the Catalog allows to run locally (a session
-title, typically), answered by a model on the inference plane instead of the Anthropic API.
+"""The local route — router mode only: a request answered by a model on the inference plane instead
+of the Anthropic API.
 
-The inference plane speaks OpenAI's chat completions, so the request is translated there and the
-answer back into an Anthropic message — streamed as server-sent events when Claude Code asked for a
-stream. Only what translates faithfully goes: text system blocks and text messages, and a JSON
-schema for structured output. Anything else (images, documents, tools, tool results) stays with
-the Anthropic API.
+The inference plane speaks OpenAI's chat completions, so the request is translated there
+(``translation``) and the answer back into Anthropic's shape: server-sent events when Claude Code
+asked for a stream, a message otherwise. Text and tool calls both come back; a model that follows
+tool calls is given Claude Code's tools.
 
-The local answer is checked before Claude Code sees it: it must be text, and where the request
-asked for structured output, JSON that fits the schema. Any failure — the request does not
-translate, the inference plane is down, slow or refuses, the answer does not fit — returns
-``None``, and the caller sends the original request to the model Claude Code asked for. A local
-model is a candidate for a few cheap side requests; it is never a reason for Claude Code to see an
-error.
+The gateway always streams from the engine: a client that hangs up closes the stream, which stops
+the model — a non-streaming request would hold the engine until it finished. A prompt larger than
+the model takes is never sent.
+
+Nothing reaches Claude Code until the local answer is worth sending:
+
+* an answer that must be checked first — structured output, or a client that did not stream — is
+  read whole, then checked: text, JSON that fits the schema where one was asked for, tool calls
+  that name an offered tool with arguments that are a JSON object;
+* any other answer is relayed as it is written, once it has started — visible text, or a first
+  tool call that checks out — within the first-output time. A tool call is relayed whole, once
+  its arguments are.
+
+Any failure before then — the request does not translate, the inference plane is down, slow or
+refuses, the answer does not check out — returns ``None``, and the caller sends the original
+request to the model Claude Code asked for. After it, bytes are out: a model that breaks off ends
+the response, as an upstream that breaks would.
 """
 
 from __future__ import annotations
@@ -20,8 +30,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import secrets
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,45 +40,43 @@ import anyio
 from theygent_gateway_client import GatewayClient
 from theygent_ir.gateway import ShadowOutcome, Usage
 
+from theygent_ai_gateway.translation import (
+    LOCAL_AGENT_MAX_TOKENS,
+    LOCAL_MAX_TOKENS,
+    Translated,
+    answer_text,
+    fits,
+    translate,
+)
+
+__all__ = [
+    "LOCAL_AGENT_MAX_TOKENS",
+    "LOCAL_MAX_TOKENS",
+    "LocalAnswer",
+    "LocalAttempt",
+    "LocalRoute",
+    "LocalStream",
+    "Translated",
+    "answer_text",
+    "as_stream",
+    "fits",
+    "translate",
+]
+
 log = logging.getLogger(__name__)
 
-#: An answer checked before Claude Code sees it (structured output) is read whole within this.
+#: An answer checked before Claude Code sees it is read whole within this; a relayed answer must
+#: have started (its first visible text, or its first tool call whole) within it.
 LOCAL_TIMEOUT_SECONDS = 30.0
-#: A relayed answer must start within this, or the request goes to Anthropic (a model still loading
-#: takes about a minute; the cloud answers meanwhile).
+#: A relayed answer's first output — text, or a tool call's name — must come within this, or the
+#: request goes to Anthropic (a model still loading takes about a minute; the cloud answers
+#: meanwhile).
 FIRST_TOKEN_SECONDS = 15.0
 #: A keep-alive ping while the local model is quiet, as the Anthropic API sends them.
 PING_SECONDS = 5.0
 #: A prompt larger than this, at about four bytes a token, is never sent to a local model.
 LOCAL_MAX_PROMPT_TOKENS = 32_768
 SSE_CONTENT_TYPE = "text/event-stream; charset=utf-8"
-#: Claude Code asks for 128K output on every request; a side request's answer is a few tokens.
-LOCAL_MAX_TOKENS = 4096
-#: Claude Code's first system block is billing attribution for Anthropic, nothing a model reads.
-_BILLING_PREFIX = "x-anthropic-billing-header:"
-#: What a local model wraps an answer in that Claude Code would not: a reasoning block it was asked
-#: not to produce, and a Markdown code fence around JSON.
-_THINKING = re.compile(r"^\s*<think>.*?</think>\s*", re.DOTALL)
-_FENCE = re.compile(r"^```[A-Za-z]*\s*\n(.*?)\n?```$", re.DOTALL)
-_JSON_TYPES: dict[str, tuple[type, ...]] = {
-    "string": (str,),
-    "number": (int, float),
-    "integer": (int,),
-    "boolean": (bool,),
-    "array": (list,),
-    "object": (dict,),
-    "null": (type(None),),
-}
-
-
-@dataclass(frozen=True)
-class Translated:
-    """An Anthropic request as a chat completion: messages, params, and what the answer must be."""
-
-    messages: list[dict[str, str]]
-    params: dict[str, Any]
-    schema: dict[str, Any] | None
-    stream: bool
 
 
 @dataclass(frozen=True)
@@ -77,186 +85,6 @@ class LocalAnswer:
 
     body: bytes
     content_type: str
-
-
-@dataclass(frozen=True)
-class LocalAttempt:
-    """How asking the local model went: the answer Claude Code would get (``None`` unless
-    ``answered``), and what the model used — a shadow run records both."""
-
-    outcome: ShadowOutcome
-    answer: LocalAnswer | None = None
-    usage: Usage = field(default_factory=Usage)
-
-
-def _texts(content: Any) -> str | None:
-    """The text of a message or system value, or ``None`` if it holds anything but text."""
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return None
-    parts: list[str] = []
-    for block in content:
-        if not isinstance(block, dict) or block.get("type") != "text":
-            return None
-        text = block.get("text")
-        if not isinstance(text, str):
-            return None
-        parts.append(text)
-    return "\n\n".join(parts)
-
-
-def translate(body: bytes) -> Translated | None:
-    """The request as a chat completion, or ``None`` when it does not translate faithfully."""
-    try:
-        request = json.loads(body)
-    except ValueError:
-        return None
-    if not isinstance(request, dict) or request.get("tools") or request.get("tool_choice"):
-        return None
-    messages: list[dict[str, str]] = []
-    system = request.get("system")
-    if system is not None:
-        blocks = system if isinstance(system, list) else [{"type": "text", "text": system}]
-        kept = [
-            b
-            for b in blocks
-            if not (isinstance(b, dict) and str(b.get("text", "")).startswith(_BILLING_PREFIX))
-        ]
-        text = _texts(kept)
-        if text is None:
-            return None
-        if text:
-            messages.append({"role": "system", "content": text})
-    turns = request.get("messages")
-    if not isinstance(turns, list) or not turns:
-        return None
-    for turn in turns:
-        if not isinstance(turn, dict) or turn.get("role") not in ("user", "assistant"):
-            return None
-        text = _texts(turn.get("content"))
-        if text is None:
-            return None
-        messages.append({"role": turn["role"], "content": text})
-    asked = request.get("max_tokens")
-    params: dict[str, Any] = {
-        "max_tokens": min(asked, LOCAL_MAX_TOKENS) if isinstance(asked, int) else LOCAL_MAX_TOKENS,
-        # A reasoning model would spend the answer's budget thinking about a title.
-        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
-    }
-    for name in ("temperature", "top_p"):
-        if isinstance(request.get(name), int | float):
-            params[name] = request[name]
-    stop = request.get("stop_sequences")
-    if isinstance(stop, list) and stop and all(isinstance(item, str) for item in stop):
-        params["stop"] = stop
-    schema: dict[str, Any] | None = None
-    output = request.get("output_config")
-    if isinstance(output, dict) and output.get("format") is not None:
-        fmt = output["format"]
-        if not (isinstance(fmt, dict) and fmt.get("type") == "json_schema"):
-            return None
-        schema = fmt.get("schema")
-        if not isinstance(schema, dict):
-            return None
-        params["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": "answer", "schema": schema},
-        }
-    return Translated(messages, params, schema, bool(request.get("stream")))
-
-
-def fits(value: Any, schema: dict[str, Any]) -> bool:
-    """Whether ``value`` fits the schema, for the subset structured output uses: types, required
-    properties, no additional ones when the schema says so, and nested properties and items."""
-    kind = schema.get("type")
-    if isinstance(kind, str):
-        allowed = _JSON_TYPES.get(kind)
-        if allowed is None or not isinstance(value, allowed):
-            return False
-        if kind in ("number", "integer") and isinstance(value, bool):
-            return False
-    if isinstance(value, dict):
-        properties = schema.get("properties", {})
-        if any(name not in value for name in schema.get("required", [])):
-            return False
-        if schema.get("additionalProperties") is False and set(value) - set(properties):
-            return False
-        return all(
-            fits(item, properties[name])
-            for name, item in value.items()
-            if isinstance(properties.get(name), dict)
-        )
-    if isinstance(value, list) and isinstance(schema.get("items"), dict):
-        return all(fits(item, schema["items"]) for item in value)
-    return True
-
-
-def answer_text(content: str | None) -> str:
-    """The answer as Claude Code should read it: no reasoning block, no code fence."""
-    text = _THINKING.sub("", content or "").strip()
-    fenced = _FENCE.match(text)
-    return fenced.group(1).strip() if fenced else text
-
-
-def _message(text: str, model: str, usage: Usage, stop_reason: str) -> dict[str, Any]:
-    return {
-        "id": f"msg_local_{secrets.token_hex(12)}",
-        "type": "message",
-        "role": "assistant",
-        "model": model,
-        "content": [{"type": "text", "text": text}],
-        "stop_reason": stop_reason,
-        "stop_sequence": None,
-        "usage": {
-            "input_tokens": usage.input_tokens,
-            "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
-            "output_tokens": usage.output_tokens,
-        },
-    }
-
-
-def _event(name: str, data: dict[str, Any]) -> bytes:
-    return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
-
-
-def as_stream(message: dict[str, Any]) -> bytes:
-    """An Anthropic message as the server-sent events Claude Code reads from a stream."""
-    usage = message["usage"]
-    start = {**message, "content": [], "stop_reason": None, "usage": {**usage, "output_tokens": 0}}
-    text = message["content"][0]["text"]
-    return b"".join(
-        [
-            _event("message_start", {"type": "message_start", "message": start}),
-            _event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-            _event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": text},
-                },
-            ),
-            _event("content_block_stop", {"type": "content_block_stop", "index": 0}),
-            _event(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": message["stop_reason"], "stop_sequence": None},
-                    "usage": {"output_tokens": usage["output_tokens"]},
-                },
-            ),
-            _event("message_stop", {"type": "message_stop"}),
-        ]
-    )
 
 
 @dataclass
@@ -269,37 +97,87 @@ class LocalStream:
     content_type: str = SSE_CONTENT_TYPE
 
 
-@dataclass
-class _Written:
-    """What a local model wrote, read whole: its text, usage and why it stopped."""
+@dataclass(frozen=True)
+class LocalAttempt:
+    """How asking the local model went: the answer Claude Code would get (``None`` unless
+    ``answered``), what the model used, the tools it called and when it started — a shadow run
+    records them."""
 
-    text: str = ""
+    outcome: ShadowOutcome
+    answer: LocalAnswer | None = None
     usage: Usage = field(default_factory=Usage)
-    finish_reason: str | None = None
+    tool_calls: tuple[str, ...] = ()
+    first_output_ms: int | None = None
 
 
-def _too_large(body: bytes) -> bool:
-    return len(body) // 4 > LOCAL_MAX_PROMPT_TOKENS
+class _Unusable(Exception):
+    """The answer would not be used: a tool call that names no offered tool, or whose arguments
+    are not a JSON object, before anything was sent."""
 
 
-def _usage_of(chunk: Any) -> Usage | None:
-    usage = getattr(chunk, "usage", None)
-    if usage is None:
-        return None
-    return Usage(
-        input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-        output_tokens=getattr(usage, "completion_tokens", 0) or 0,
-    )
+def _event(name: str, data: dict[str, Any]) -> bytes:
+    return f"event: {name}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
-def _delta_text(chunk: Any) -> tuple[str, str | None]:
-    """A chunk's visible text and finish reason (reasoning is not part of the answer)."""
-    choices = getattr(chunk, "choices", None) or []
-    if not choices:
-        return "", None
-    choice = choices[0]
-    delta = getattr(choice, "delta", None)
-    return (getattr(delta, "content", None) or ""), getattr(choice, "finish_reason", None)
+def _message(
+    content: list[dict[str, Any]], model: str, usage: Usage, stop_reason: str
+) -> dict[str, Any]:
+    return {
+        "id": f"msg_local_{secrets.token_hex(12)}",
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "content": content,
+        "stop_reason": stop_reason,
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": usage.input_tokens,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "output_tokens": usage.output_tokens,
+        },
+    }
+
+
+def as_stream(message: dict[str, Any]) -> bytes:
+    """An Anthropic message as the server-sent events Claude Code reads from a stream."""
+    usage = message["usage"]
+    start = {**message, "content": [], "stop_reason": None, "usage": {**usage, "output_tokens": 0}}
+    out = [_event("message_start", {"type": "message_start", "message": start})]
+    for index, block in enumerate(message["content"]):
+        out += _block_events(index, block)
+    out += [
+        _event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": message["stop_reason"], "stop_sequence": None},
+                "usage": {"output_tokens": usage["output_tokens"]},
+            },
+        ),
+        _event("message_stop", {"type": "message_stop"}),
+    ]
+    return b"".join(out)
+
+
+def _block_events(index: int, block: dict[str, Any]) -> list[bytes]:
+    """One whole content block as its start, delta and stop events."""
+    if block["type"] == "text":
+        start = {"type": "text", "text": ""}
+        delta = {"type": "text_delta", "text": block["text"]}
+    else:
+        start = {"type": "tool_use", "id": block["id"], "name": block["name"], "input": {}}
+        delta = {"type": "input_json_delta", "partial_json": json.dumps(block["input"])}
+    return [
+        _event(
+            "content_block_start",
+            {"type": "content_block_start", "index": index, "content_block": start},
+        ),
+        _event(
+            "content_block_delta", {"type": "content_block_delta", "index": index, "delta": delta}
+        ),
+        _event("content_block_stop", {"type": "content_block_stop", "index": index}),
+    ]
 
 
 class _ThinkFilter:
@@ -334,6 +212,171 @@ class _ThinkFilter:
         return piece
 
 
+@dataclass
+class _Call:
+    """A tool call being written: its arguments arrive in pieces."""
+
+    id: str
+    name: str
+    arguments: str = ""
+
+
+class _Writer:
+    """OpenAI stream chunks in, Anthropic server-sent events out (after ``message_start``, which
+    the relay sends once committed). Text streams as deltas; a tool call is emitted whole once the
+    next one starts or the stream ends. ``committed``: something was emitted — from then on
+    nothing can be taken back."""
+
+    def __init__(self, tool_names: frozenset[str]) -> None:
+        self._tool_names = tool_names
+        self._think = _ThinkFilter()
+        self._index = 0
+        self._text_open = False
+        self._calls: dict[int, _Call] = {}
+        self._current: int | None = None
+        self.content: list[dict[str, Any]] = []
+        self.usage = Usage()
+        self.finish_reason: str | None = None
+        self.committed = False
+        self.started = False  # any output at all: text, or a tool call's name
+        self.called: list[str] = []
+        self.stop_reason = "end_turn"
+
+    def feed(self, chunk: Any) -> list[bytes]:
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            self.usage = Usage(
+                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            return []
+        choice = choices[0]
+        self.finish_reason = getattr(choice, "finish_reason", None) or self.finish_reason
+        delta = getattr(choice, "delta", None)
+        out: list[bytes] = []
+        if text := self._think.feed(getattr(delta, "content", None) or ""):
+            out += self._text(text)
+        for call in getattr(delta, "tool_calls", None) or []:
+            out += self._tool_piece(call)
+        return out
+
+    def _text(self, text: str) -> list[bytes]:
+        self.started = self.committed = True
+        out: list[bytes] = []
+        if not self._text_open:
+            self._text_open = True
+            self.content.append({"type": "text", "text": ""})
+            out.append(
+                _event(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": self._index,
+                        "content_block": {"type": "text", "text": ""},
+                    },
+                )
+            )
+        self.content[-1]["text"] += text
+        out.append(
+            _event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": self._index,
+                    "delta": {"type": "text_delta", "text": text},
+                },
+            )
+        )
+        return out
+
+    def _close_text(self) -> list[bytes]:
+        if not self._text_open:
+            return []
+        self._text_open = False
+        stop = _event("content_block_stop", {"type": "content_block_stop", "index": self._index})
+        self._index += 1
+        return [stop]
+
+    def _tool_piece(self, piece: Any) -> list[bytes]:
+        index = getattr(piece, "index", 0) or 0
+        function = getattr(piece, "function", None)
+        out: list[bytes] = []
+        if index not in self._calls:
+            out += self._flush()  # a new call starts: the one before it is whole
+            self._calls[index] = _Call(
+                id=f"toolu_local_{secrets.token_hex(10)}",
+                name=getattr(function, "name", None) or "",
+            )
+            self._current = index
+            self.started = True
+        call = self._calls[index]
+        if not call.name and getattr(function, "name", None):
+            call.name = function.name
+        call.arguments += getattr(function, "arguments", None) or ""
+        return out
+
+    def _flush(self) -> list[bytes]:
+        """Emit the call being written, whole."""
+        if self._current is None:
+            return []
+        call = self._calls[self._current]
+        self._current = None
+        try:
+            arguments = json.loads(call.arguments or "{}")
+        except ValueError:
+            arguments = None
+        valid = call.name in self._tool_names and isinstance(arguments, dict)
+        if not valid and not self.committed:
+            raise _Unusable
+        block = {
+            "type": "tool_use",
+            "id": call.id,
+            "name": call.name,
+            # Past the point of no return a bad call still goes out: Claude Code answers it with
+            # a tool error, as it would any model's mistake.
+            "input": arguments if isinstance(arguments, dict) else {},
+        }
+        out = self._close_text()
+        out += _block_events(self._index, block)
+        self._index += 1
+        self.content.append(block)
+        self.called.append(call.name)
+        self.committed = True
+        return out
+
+    def finish(self) -> list[bytes]:
+        """The closing events once the stream has ended."""
+        out = self._flush() + self._close_text()
+        if self.called:
+            stop = "tool_use"
+        elif self.finish_reason == "length":
+            stop = "max_tokens"
+        else:
+            stop = "end_turn"
+        self.stop_reason = stop
+        return [
+            *out,
+            _event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop, "stop_sequence": None},
+                    "usage": {
+                        "input_tokens": self.usage.input_tokens,
+                        "output_tokens": self.usage.output_tokens,
+                    },
+                },
+            ),
+            _event("message_stop", {"type": "message_stop"}),
+        ]
+
+
+def _too_large(body: bytes) -> bool:
+    return len(body) // 4 > LOCAL_MAX_PROMPT_TOKENS
+
+
 class LocalRoute:
     """Answers translatable requests with a model on the inference plane, streaming from it."""
 
@@ -346,126 +389,146 @@ class LocalRoute:
     ) -> None:
         # No retries: the fallback for a failure is the Anthropic API, not a second local attempt.
         self._timeout = timeout if timeout is not None else LOCAL_TIMEOUT_SECONDS
-        self._first_token = (
-            first_token_seconds if first_token_seconds is not None else FIRST_TOKEN_SECONDS
-        )
+        self._first_token = first_token_seconds
         self._client = GatewayClient(base_url, timeout=self._timeout, max_retries=0)
 
-    async def _open(self, model: str, translated: Translated) -> Any | None:
-        try:
-            return await self._client.open_stream(
-                model=model,
-                messages=list(translated.messages),
-                params=translated.params,
-                include_usage=True,
-            )
-        except Exception as exc:
-            log.warning("the local model did not answer: %s", type(exc).__name__)
-            return None
+    async def _open(self, model: str, translated: Translated) -> Any:
+        return await self._client.open_stream(
+            model=model,
+            messages=list(translated.messages),
+            params=translated.params,
+            tools=translated.tools,
+            tool_choice=translated.tool_choice,
+            include_usage=True,
+        )
 
-    async def answer(self, model: str, body: bytes) -> LocalAnswer | LocalStream | None:
-        """What Claude Code gets, or ``None`` when the request goes upstream instead. An answer that
-        must be checked first (structured output, or a client that did not stream) is read whole;
-        any other is relayed as it is written, once the model has started within the first-token
-        time."""
-        translated = translate(body)
+    async def answer(
+        self, model: str, body: bytes, *, tools: bool = False, images: bool = False
+    ) -> LocalAnswer | LocalStream | None:
+        """What Claude Code gets, or ``None`` when the request goes upstream instead. ``tools``
+        and ``images``: what the model can take."""
+        translated = translate(body, tools=tools, images=images)
         if translated is None or _too_large(body):
             return None
         if translated.stream and translated.schema is None:
             return await self._relay(model, translated)
         return (await self._checked(model, translated)).answer
 
-    async def attempt(self, model: str, body: bytes) -> LocalAttempt:
+    async def attempt(
+        self, model: str, body: bytes, *, tools: bool = False, images: bool = False
+    ) -> LocalAttempt:
         """How the local model does on this request, read whole and checked (a shadow run)."""
-        translated = translate(body)
+        translated = translate(body, tools=tools, images=images)
         if translated is None or _too_large(body):
             return LocalAttempt("untranslatable")
         return await self._checked(model, translated)
 
-    async def _read_whole(self, stream: Any) -> _Written:
-        written = _Written()
-        async for chunk in stream:
-            text, finish = _delta_text(chunk)
-            written.text += text
-            written.finish_reason = finish or written.finish_reason
-            written.usage = _usage_of(chunk) or written.usage
-        return written
-
     async def _checked(self, model: str, translated: Translated) -> LocalAttempt:
-        stream = await self._open(model, translated)
-        if stream is None:
-            return LocalAttempt("failed")
+        started = time.perf_counter()
+        first: list[int] = []
         try:
-            written = await asyncio.wait_for(self._read_whole(stream), self._timeout)
+            stream = await self._open(model, translated)
+        except Exception as exc:
+            log.warning("the local model did not answer: %s", type(exc).__name__)
+            return LocalAttempt("failed")
+        writer = _Writer(translated.tool_names)
+
+        async def read() -> None:
+            async for chunk in stream:
+                writer.feed(chunk)
+                if writer.started and not first:
+                    first.append(int((time.perf_counter() - started) * 1000))
+            writer.finish()
+
+        try:
+            await asyncio.wait_for(read(), self._timeout)
+        except _Unusable:
+            log.warning("the local model called a tool it was not offered, or mangled one")
+            return LocalAttempt("unusable", usage=writer.usage)
         except Exception as exc:
             log.warning("the local model did not finish: %s", type(exc).__name__)
             return LocalAttempt("failed")
         finally:
             with anyio.CancelScope(shield=True):
                 await _close(stream)
-        usage = written.usage
-        text = answer_text(written.text)
-        if not text:
-            log.warning("the local model's answer is empty")
-            return LocalAttempt("unusable", usage=usage)
-        if translated.schema is not None:
-            try:
-                parsed = json.loads(text)
-            except ValueError:
-                log.warning("the local model's answer is not JSON")
-                return LocalAttempt("unusable", usage=usage)
-            if not fits(parsed, translated.schema):
-                log.warning("the local model's answer does not fit the schema")
-                return LocalAttempt("unusable", usage=usage)
-        cut_short = written.finish_reason == "length"
-        message = _message(text, model, usage, "max_tokens" if cut_short else "end_turn")
+        timing = first[0] if first else None
+        usage = writer.usage
+        calls = tuple(writer.called)
+        texts = [b for b in writer.content if b["type"] == "text"]
+        if not calls:
+            text = answer_text("".join(b["text"] for b in texts))
+            if not text:
+                log.warning("the local model's answer is empty")
+                return LocalAttempt("unusable", usage=usage, first_output_ms=timing)
+            if translated.schema is not None:
+                try:
+                    parsed = json.loads(text)
+                except ValueError:
+                    log.warning("the local model's answer is not JSON")
+                    return LocalAttempt("unusable", usage=usage, first_output_ms=timing)
+                if not fits(parsed, translated.schema):
+                    log.warning("the local model's answer does not fit the schema")
+                    return LocalAttempt("unusable", usage=usage, first_output_ms=timing)
+            content: list[dict[str, Any]] = [{"type": "text", "text": text}]
+        else:
+            content = [
+                {**b, "text": b["text"].strip()} if b["type"] == "text" else b
+                for b in writer.content
+                if b["type"] != "text" or b["text"].strip()
+            ]
+        message = _message(content, model, usage, writer.stop_reason)
         if translated.stream:
             answer = LocalAnswer(as_stream(message), SSE_CONTENT_TYPE)
         else:
             answer = LocalAnswer(
                 json.dumps(message, ensure_ascii=False).encode(), "application/json"
             )
-        return LocalAttempt("answered", answer, usage)
+        return LocalAttempt("answered", answer, usage, calls, timing)
 
     async def _relay(self, model: str, translated: Translated) -> LocalStream | None:
         opened: list[Any] = []
-        thinking = _ThinkFilter()
-        state = _Written()
+        writer = _Writer(translated.tool_names)
+        held: list[bytes] = []  # events written before the answer was committed
+        exhausted = False
+        first_deadline = self._first_token if self._first_token is not None else FIRST_TOKEN_SECONDS
 
-        async def start() -> tuple[Any, AsyncIterator[Any], str]:
-            # Opening the stream and the first visible text share one deadline: a server slow to
-            # answer at all is as late as a model slow to start.
-            stream = await self._client.open_stream(
-                model=model,
-                messages=list(translated.messages),
-                params=translated.params,
-                include_usage=True,
-            )
+        async def start() -> AsyncIterator[Any]:
+            # Opening the stream, the first output and the commit share the deadlines: a server
+            # slow to answer at all is as late as a model slow to start.
+            nonlocal exhausted
+            began = time.monotonic()
+            stream = await asyncio.wait_for(self._open(model, translated), first_deadline)
             opened.append(stream)
             chunks = stream.__aiter__()
-            while True:
-                chunk = await chunks.__anext__()
-                text, finish = _delta_text(chunk)
-                state.usage = _usage_of(chunk) or state.usage
-                state.finish_reason = finish or state.finish_reason
-                if visible := thinking.feed(text):
-                    return stream, chunks, visible
-                if finish is not None:
-                    raise StopAsyncIteration
+            while not writer.committed:
+                limit = first_deadline if not writer.started else self._timeout
+                remaining = limit - (time.monotonic() - began)
+                if remaining <= 0:
+                    raise TimeoutError
+                try:
+                    chunk = await asyncio.wait_for(chunks.__anext__(), remaining)
+                except StopAsyncIteration:
+                    exhausted = True
+                    held.extend(writer.finish())
+                    if not writer.committed:
+                        raise _Unusable from None  # it ended without saying anything
+                    break
+                held.extend(writer.feed(chunk))
+            return chunks
 
         try:
-            stream, chunks, first = await asyncio.wait_for(start(), self._first_token)
+            chunks = await start()
         except (Exception, StopAsyncIteration) as exc:
-            log.warning("the local model did not start answering: %s", type(exc).__name__)
+            log.warning("the local model did not start a usable answer: %s", type(exc).__name__)
             with anyio.CancelScope(shield=True):
                 for stream in opened:
                     await _close(stream)
             return None
+        stream = opened[0]
 
         async def events() -> AsyncIterator[bytes]:
-            message_id = f"msg_local_{secrets.token_hex(12)}"
             start = {
-                "id": message_id,
+                "id": f"msg_local_{secrets.token_hex(12)}",
                 "type": "message",
                 "role": "assistant",
                 "model": model,
@@ -475,15 +538,10 @@ class LocalRoute:
                 "usage": {"input_tokens": 0, "output_tokens": 0},
             }
             yield _event("message_start", {"type": "message_start", "message": start})
-            yield _event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            )
-            yield _text_delta(first)
+            for event in held:
+                yield event
+            if exhausted:
+                return
             pending: asyncio.Future[Any] | None = None
             try:
                 while True:
@@ -498,30 +556,15 @@ class LocalRoute:
                         break
                     finally:
                         pending = None
-                    text, finish = _delta_text(chunk)
-                    state.usage = _usage_of(chunk) or state.usage
-                    state.finish_reason = finish or state.finish_reason
-                    if visible := thinking.feed(text):
-                        yield _text_delta(visible)
+                    for event in writer.feed(chunk):
+                        yield event
             finally:
                 if pending is not None:
                     pending.cancel()
                 with anyio.CancelScope(shield=True):
                     await _close(stream)
-            yield _event("content_block_stop", {"type": "content_block_stop", "index": 0})
-            stop = "max_tokens" if state.finish_reason == "length" else "end_turn"
-            yield _event(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": stop, "stop_sequence": None},
-                    "usage": {
-                        "input_tokens": state.usage.input_tokens,
-                        "output_tokens": state.usage.output_tokens,
-                    },
-                },
-            )
-            yield _event("message_stop", {"type": "message_stop"})
+            for event in writer.finish():
+                yield event
 
         async def close() -> None:
             with anyio.CancelScope(shield=True):
@@ -531,13 +574,6 @@ class LocalRoute:
 
     async def aclose(self) -> None:
         await self._client.aclose()
-
-
-def _text_delta(text: str) -> bytes:
-    return _event(
-        "content_block_delta",
-        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}},
-    )
 
 
 async def _close(stream: Any) -> None:

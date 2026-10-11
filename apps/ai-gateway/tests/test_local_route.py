@@ -112,7 +112,7 @@ IMAGE = {"type": "image", "source": {"type": "base64", "media_type": "image/png"
         {"messages": [{"role": "user", "content": [{"type": "document", "source": {}}]}]},
         # A block of a kind it does not know, even one carrying text, is not text.
         {"messages": [{"role": "user", "content": [{"type": "new_kind", "text": "x"}]}]},
-        {"messages": [{"role": "system", "content": "x"}]},
+        {"messages": [{"role": "tool", "content": "x"}]},
         {"messages": []},
         {"messages": None},
         {"system": [{"type": "text", "text": "x"}, IMAGE]},
@@ -122,6 +122,21 @@ IMAGE = {"type": "image", "source": {"type": "base64", "media_type": "image/png"
 )
 def test_what_does_not_translate_faithfully_does_not_translate(changes: dict[str, Any]) -> None:
     assert translate(title_with(**changes).request_bytes()) is None
+
+
+def test_a_mid_conversation_system_message_translates_in_place() -> None:
+    translated = translate(
+        title_with(
+            messages=[
+                {"role": "user", "content": "one"},
+                {"role": "system", "content": [{"type": "text", "text": "Now be brief."}]},
+                {"role": "user", "content": "two"},
+            ]
+        ).request_bytes()
+    )
+    assert translated is not None
+    assert [m["role"] for m in translated.messages] == ["system", "user", "system", "user"]
+    assert translated.messages[2]["content"] == "Now be brief."
 
 
 @pytest.mark.parametrize("body", [b"", b"not json", b"[]", b'"x"'])
@@ -181,7 +196,12 @@ def test_reasoning_and_fences_are_not_part_of_the_answer(content: str | None, te
 
 
 def test_a_streamed_answer_reads_like_anthropics() -> None:
-    message = local._message(ANSWER, LOCAL, Usage(input_tokens=812, output_tokens=9), "end_turn")
+    message = local._message(
+        [{"type": "text", "text": ANSWER}],
+        LOCAL,
+        Usage(input_tokens=812, output_tokens=9),
+        "end_turn",
+    )
     stream = as_stream(message)
     events = [block.split("\n")[0] for block in stream.decode().split("\n\n") if block]
     assert events == [
