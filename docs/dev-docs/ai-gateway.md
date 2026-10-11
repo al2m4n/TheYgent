@@ -23,9 +23,9 @@ measurements behind them in [apps/ai-gateway/spike/FINDINGS.md](../../apps/ai-ga
   responses (errors included) come back verbatim, streams are relayed unbuffered, and a client
   hang-up cancels the upstream call. Claude Code's prompt caching, preserved thinking, paired
   betas and retry logic all depend on it.
-- **Observing never changes a request.** The gateway decides what a router would do and records
-  the decision with its reasons and counterfactual cost; it never applies it. Routing — applying
-  decisions — is the next stage, and its rules are already fixed in the app's AGENTS.md.
+- **Only router mode changes a request, and only its model.** Observer mode records each decision
+  with its reasons and counterfactual cost and applies none. Router mode applies them: a routed
+  request's top-level `model` value is spliced into the original bytes, and nothing else changes.
 - **Recording never blocks a request.** Observations go on a bounded queue; a full queue drops
   and counts, never waits.
 - **Team mode fails closed** — on developer keys and on its admin surface alike.
@@ -36,7 +36,7 @@ measurements behind them in [apps/ai-gateway/spike/FINDINGS.md](../../apps/ai-ga
 | Axis | Values | Set by |
 |------|--------|--------|
 | Auth mode | `personal` — loopback only, no keys, the caller's own credential · `team` — developers authenticated by gateway keys from the control plane | `THEYGENT_AI_GATEWAY_AUTH_MODE` at startup |
-| Traffic mode | `observer` — record every exchange with a decision · `passthrough` — forward without recording · `router` — also apply the decisions (see [PHASE2.md](../../apps/ai-gateway/PHASE2.md); until it lands a router config is observed) | the gateway config (an admin, on the control plane) |
+| Traffic mode | `observer` — record every exchange with a decision · `passthrough` — forward without recording · `router` — record and apply the decisions | the gateway config (an admin, on the control plane) |
 
 A standalone personal gateway (no control plane) has no one to configure it, so it observes from
 the start with the default policy. A gateway attached to a control plane forwards in passthrough
@@ -54,7 +54,8 @@ until an admin saves a config: an organization's traffic is recorded only once s
 | `signals.py` | What a request says without changing it: Claude Code's `x-claude-code-*` hint headers, client and credential kind, the body's structure, the auxiliary-request fingerprint |
 | `observe.py` | What a response says: usage, stop reason, timing, the plan-allowance headers — parsed from a copy of the relayed bytes, bounded, never raising |
 | `conversations.py` | Where a request sits in its conversation (start, after compaction, cache expired, new prompt, continuation) |
-| `policy.py` | The routing policy: a decision per request with reason codes |
+| `policy.py` | The routing policy: a decision per request with reason codes, held per conversation until its next cold boundary |
+| `routing.py` | Router mode: the `model` splice, and which target answers send the request back to the requested model |
 | `costs.py` + `pricing.json` | List prices (versioned, dated) plus the config's contracted rates; actual and counterfactual cost |
 | `configsync.py` | The config in effect (one snapshot per exchange), the last known good on disk, the heartbeat |
 | `requestlog.py` | The JSONL spool and the exporter to the control plane |
@@ -128,6 +129,19 @@ Each decision carries reason codes (`ReasonCode`, 27 of them; the interface's
 `lib/gatewayReasons.ts` explains every one, and a test in `packages/ir` keeps the two in step) and
 a counterfactual cost, priced once the response's usage is known. Counterfactuals assume the other
 model would use the same tokens — an estimate.
+
+### Router mode
+
+In router mode the forward path applies an Anthropic-target route: `routing.with_model` splices
+the target into the body's top-level `model` value — the rest of the body, every header and beta
+stay as Claude Code sent them — and the request goes to the target. If the target answers 400,
+404, 413, 422, 429 or 529 before the response starts, the gateway closes that answer and sends the
+original bytes to the requested model; Claude Code sees only that answer (`target_refused`), and
+the policy pins the conversation to the requested model until its next cold boundary
+(`pinned_after_refusal`). An applied route's record says `applied`, names the served model, prices
+`cost_usd` on it and `baseline_usd` on the requested model, so the report shows what routing
+saved. A local target is not applied by this path. Proven against the real API by the opt-in
+end-to-end test: Claude Code asking for Opus 5.5 completes its work served by Sonnet 5.5.
 
 ### Auxiliary requests and the fingerprint catalog
 

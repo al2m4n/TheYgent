@@ -248,6 +248,8 @@ class Observation:
     #: Estimated USD at the price book's rates (API-equivalent on a subscription); ``None`` when
     #: the model has no known rates or nothing was used.
     cost_usd: float | None = None
+    #: What it would have cost on the requested model, where an applied route served it elsewhere.
+    baseline_usd: float | None = None
     pricing_version: str | None = None
     #: The config the exchange was decided under; ``None`` (and observer mode) before any config.
     config_version: int | None = None

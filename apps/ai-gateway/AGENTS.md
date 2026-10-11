@@ -81,9 +81,12 @@ The rules that follow:
   skipped: the records were validated against the same wire types, so a refusal means the two
   sides disagree, and dropping the batch would lose data that is accepted once that is fixed.
 
-## Routing (later phases)
+## Routing
 
-These hold whenever the router lands:
+Router mode applies the policy's decisions; observer mode only records them.
+
+- **A routed request changes in one place: its top-level `model` value**, spliced into the
+  original bytes (never re-serialized). A body that cannot be spliced unambiguously is not routed.
 
 - **Routing is per conversation segment, never per request.** Caches are per model, so a
   mid-conversation switch usually costs more than it saves. A decision holds until the next cold
@@ -92,7 +95,12 @@ These hold whenever the router lands:
 - **Targets must accept the request's shape.** Sonnet 5.5 is a drop-in for Opus 5.5; Haiku 4.5
   is not.
 - **A routed request the target rejects is retried on the original model before Claude Code sees
-  anything.** Claude Code disables a rejected capability for the rest of the conversation.
+  anything.** Claude Code disables a rejected capability for the rest of the conversation. A
+  refusal before the answer starts (400, 404, 413, 422, 429, 529) sends the original bytes to the
+  requested model and pins the conversation there until its next cold boundary; 401/403 are
+  credential problems and are not retried. A mid-stream error cannot be retried — bytes are out.
+- **An applied route records what served it.** `served_model` from the response, `applied`,
+  `cost_usd` priced on the served model and `baseline_usd` on the requested one.
 - **Never route** compaction, the quota check, requests that share the main conversation's cache,
   requests carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
   fingerprints.

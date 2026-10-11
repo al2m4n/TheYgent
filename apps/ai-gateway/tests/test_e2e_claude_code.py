@@ -37,7 +37,13 @@ from theygent_ai_gateway.configsync import StaticConfigSource
 from theygent_ai_gateway.identity import StaticKeySource
 from theygent_ai_gateway.report import LogReader, build_report
 from theygent_ai_gateway.settings import GatewaySettings
-from theygent_ir.gateway import GatewayConfig, GatewayKey, GatewayKeySet, GatewayRequestRecord
+from theygent_ir.gateway import (
+    GatewayConfig,
+    GatewayKey,
+    GatewayKeySet,
+    GatewayRequestRecord,
+    PolicyConfig,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -50,6 +56,8 @@ pytestmark = [
 sdk = pytest.importorskip("claude_agent_sdk")
 
 MODEL = os.environ.get("THEYGENT_E2E_MODEL", "").strip() or "claude-haiku-4-5"
+#: Router mode's measured pair: Sonnet 5.5 takes Claude Code's Opus 5.5 requests as they are.
+ROUTER_REQUESTED, ROUTER_TARGET = "claude-opus-5-5", "claude-sonnet-5-5"
 PASSPHRASE = "theygent-e2e-" + secrets.token_hex(4)
 #: Credentials Claude Code may use; every other CLAUDE*/ANTHROPIC* variable is the caller's own.
 CREDENTIAL_VARIABLES = {"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
@@ -71,11 +79,13 @@ def workspace(tmp_path: Path) -> Path:
     return directory
 
 
-async def drive_claude_code(gateway_url: str, workspace: Path, extra_env: dict[str, str]) -> Any:
+async def drive_claude_code(
+    gateway_url: str, workspace: Path, extra_env: dict[str, str], *, model: str = MODEL
+) -> Any:
     """One headless Claude Code prompt through the gateway, with the setup the AI Gateway page
     hands out; returns the SDK's result message."""
     options = sdk.ClaudeAgentOptions(
-        model=MODEL,
+        model=model,
         cwd=str(workspace),
         # Claude Code's full toolset, so its prompt is large enough to cache: cache writes and
         # reads are where accounting goes wrong. Only Read runs without asking.
@@ -219,3 +229,28 @@ async def test_team_mode_totals_equal_claude_codes_usage(tmp_path: Path, workspa
     assert delivered and {r.developer_id for r in delivered} == {"usr_e2e"}
     assert all(r.config_version == 1 for r in delivered)
     assert_totals_match(delivered, result)
+
+
+async def test_router_mode_serves_opus_requests_on_sonnet(tmp_path: Path, workspace: Path) -> None:
+    # Claude Code asks for Opus 5.5; the router serves its conversation on Sonnet 5.5 (cold at the
+    # start, so free to move). Claude Code finishes its work, files the usage under the model it
+    # asked for — as it always does — and the gateway records what actually served it.
+    settings = GatewaySettings(state_dir=tmp_path / "state", gateway_id="gw-e2e-router")
+    router = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(subagent_target=ROUTER_TARGET, main_target=ROUTER_TARGET),
+        updated_at=datetime.now(UTC),
+    )
+    log_dir = settings.state_dir / "requests"
+    with serve(create_app(settings, config=router)) as url:
+        result = await drive_claude_code(url, workspace, {}, model=ROUTER_REQUESTED)
+        records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    messages = [r for r in records if r.endpoint == "messages" and r.requested_model]
+    routed = [r for r in messages if r.decision.applied]
+    assert routed, "nothing was routed"
+    assert all(r.served_model and r.served_model.startswith(ROUTER_TARGET) for r in routed)
+    assert all(r.baseline_usd is not None and r.cost_usd is not None for r in routed)
+    assert all(r.baseline_usd > r.cost_usd for r in routed)  # type: ignore[operator]
+    assert not [r for r in messages if "target_refused" in r.decision.reasons]
+    assert_totals_match(records, result)

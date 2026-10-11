@@ -8,7 +8,10 @@ like any other — headers are an open list):
 * ``x-fake-fixture: <name>`` replays a recorded exchange (``_fixtures.py``): the recorded status,
   headers and bytes, dropping the connection where the fixture says the upstream did;
 * ``x-fake-scenario`` picks a misbehaviour: a slow first byte, holding until the caller hangs up,
-  breaking mid-stream, or an error response.
+  breaking mid-stream, or an error response;
+* ``x-fake-refuse-model: <model>`` refuses requests for that model (``x-fake-refuse-status``,
+  400 by default), as a router's target sometimes does. A replayed exchange reports the model the
+  request asked for, so a routed request is answered "by" its target.
 """
 
 from __future__ import annotations
@@ -142,14 +145,23 @@ class FakeAnthropic:
         return self.requests[-1]
 
 
-def replay(exchange: Exchange) -> Response:
-    """Answer exactly as the recorded upstream did."""
+def replay(exchange: Exchange, served: str | None = None) -> Response:
+    """Answer exactly as the recorded upstream did — reporting ``served`` as the model, when the
+    request asked for another than the recording did (a routed request)."""
     headers = [(k.encode("latin-1"), v.encode("latin-1")) for k, v in exchange.response_headers]
+    recorded = exchange.body.get("model") if isinstance(exchange.body, dict) else None
+
+    def as_served(text: str) -> str:
+        if served is None or recorded is None or served == recorded:
+            return text
+        return text.replace(f'"{recorded}"', f'"{served}"')
+
     if exchange.events is None:
-        response = Response(exchange.response_bytes(), status_code=exchange.status)
+        body = as_served(exchange.response_bytes().decode()).encode()
+        response = Response(body, status_code=exchange.status)
         response.raw_headers = headers
         return response
-    events = exchange.events
+    events = [as_served(event) for event in exchange.events]
 
     async def stream() -> AsyncIterator[bytes]:
         for index, event in enumerate(events):
@@ -177,9 +189,21 @@ def build_app(state: FakeAnthropic) -> Starlette:
 
     async def messages(request: Request) -> Response:
         captured = await capture(request)
+        asked = json.loads(captured.body or b"{}").get("model")
+        refused = request.headers.get("x-fake-refuse-model")
+        if refused and asked == refused:
+            # A model that will not take this request, as a router's target sometimes will not.
+            status = int(request.headers.get("x-fake-refuse-status", "400"))
+            return JSONResponse(
+                {
+                    "type": "error",
+                    "error": {"type": "invalid_request_error", "message": f"{asked} refuses"},
+                },
+                status_code=status,
+            )
         fixture = request.headers.get("x-fake-fixture")
         if fixture:
-            return replay(load(fixture))
+            return replay(load(fixture), served=asked)
         scenario = request.headers.get("x-fake-scenario", "")
         if scenario == "error-400":
             return JSONResponse(

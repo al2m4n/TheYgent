@@ -1,8 +1,8 @@
 """The routing policy: what the gateway would do with a request.
 
 In observer mode a decision is recorded and never applied — the request is forwarded exactly as
-it arrived. The policy still decides as a router would, so the report can say what routing would
-have saved and why each request was or was not a candidate.
+it arrived — and the report says what routing would have saved and why each request was or was not
+a candidate. Router mode applies the same decisions (see ``routing``).
 
 The rules follow what the spike measured:
 
@@ -326,6 +326,12 @@ class Policy:
             return Plan.stay(*why, "context_exceeds_target")
         return Plan.route(Target(kind="anthropic", model=target), *why)
 
+    def refused(self, position: Position | None, requested: str | None) -> None:
+        """The target refused a routed request of this conversation: keep it on the requested
+        model until its next cold boundary."""
+        if position is not None and position.key is not None:
+            self._remember(position.key, _Held(Plan.stay("pinned_after_refusal"), requested))
+
     def _remember(self, key: ConversationKey, held: _Held) -> None:
         self._held[key] = held
         self._held.move_to_end(key)
@@ -349,12 +355,12 @@ def counterfactual_usd(
     return prices.cost(plan.target.model, usage)
 
 
-def to_decision(plan: Plan, counterfactual: float | None) -> Decision:
-    """The wire decision. Observer mode never applies a decision."""
+def to_decision(plan: Plan, counterfactual: float | None, *, applied: bool = False) -> Decision:
+    """The wire decision. An applied one has no counterfactual: what ran is its cost."""
     return Decision(
         action=plan.action,
         target=plan.target,
         reasons=list(plan.reasons),
-        counterfactual_usd=counterfactual,
-        applied=False,
+        counterfactual_usd=None if applied else counterfactual,
+        applied=applied,
     )

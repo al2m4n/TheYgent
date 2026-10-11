@@ -117,6 +117,7 @@ def to_record(observation: Observation, *, record_id: str, gateway_id: str) -> G
         timing=observation.timing,
         seat_allowance=observation.seat_allowance,
         cost_usd=observation.cost_usd,
+        baseline_usd=observation.baseline_usd,
         pricing_version=token_or_none(observation.pricing_version),
         decision=observation.decision,
     )

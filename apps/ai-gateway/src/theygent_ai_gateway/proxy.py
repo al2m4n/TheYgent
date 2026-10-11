@@ -13,10 +13,12 @@ they enable must travel together; the attribution block is recognised by its pos
 * a client that hangs up cancels the upstream call, whether before the upstream answered or
   mid-stream, so an abandoned request stops consuming tokens at once.
 
-Two deliberate deviations: upstream ``accept-encoding`` is forced to ``identity`` so the gateway
-can read the stream it relays, and the gateway's own credential header
-(``x-theygent-gateway-key``) is never forwarded — it authenticates a developer to the gateway, not
-to the upstream.
+Deliberate deviations: upstream ``accept-encoding`` is forced to ``identity`` so the gateway can
+read the stream it relays; the gateway's own credential header (``x-theygent-gateway-key``) is
+never forwarded — it authenticates a developer to the gateway, not to the upstream; and in router
+mode a routed request's top-level ``model`` value is replaced, nothing else (see ``routing``) — a
+target that refuses it before answering gets the original bytes sent to the requested model
+instead.
 
 Every path other than the gateway's own (``/healthz``, ``/readyz``, ``/admin/…``) is forwarded:
 Claude Code's endpoints grow over releases, and an allowlist would break the next one.
@@ -68,6 +70,7 @@ from theygent_ai_gateway.observe import (
     seat_allowance,
 )
 from theygent_ai_gateway.policy import Plan, Policy, counterfactual_usd, to_decision
+from theygent_ai_gateway.routing import RETRY_ON_REQUESTED, with_model
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ai_gateway.signals import RequestSignals, credential_kind, read_request
 
@@ -244,6 +247,37 @@ class _Exchange:
         self._prices: PriceBook | None = snapshot.prices if snapshot else None
         self.plan: Plan | None = None
         self.position: Position | None = None
+        #: Router mode: the decision was applied — the target served the request.
+        self._applied = False
+
+    @property
+    def requested_model(self) -> str | None:
+        body = self._signals.body
+        return body.model if body is not None else None
+
+    def route_to(self) -> str | None:
+        """Router mode: the Anthropic model the request goes to instead, if any. A local target
+        is not applied by this path."""
+        plan = self.plan
+        if self._mode != "router" or plan is None or plan.action != "route":
+            return None
+        if plan.target is None or plan.target.kind != "anthropic":
+            return None
+        return plan.target.model
+
+    def applied(self) -> None:
+        self._applied = True
+
+    def target_refused(self) -> None:
+        """The target refused the routed request before answering; it goes to the requested model
+        instead, and the conversation stays there until its next cold boundary."""
+        if self.plan is not None:
+            self.plan = Plan.stay("target_refused", *self.plan.reasons)
+        if self._policy is not None:
+            try:
+                self._policy.refused(self.position, self.requested_model)
+            except Exception as exc:
+                log.error("could not pin the conversation: %s", type(exc).__name__)
 
     def place(self) -> None:
         """Locate a request in its conversation and decide what routing would do with it, before
@@ -308,6 +342,8 @@ class _Exchange:
             reason: ReasonCode = "request_refused" if outcome == "rejected" else "policy_error"
             return to_decision(Plan.stay(reason), None)
         try:
+            if self._applied:
+                return to_decision(self.plan, None, applied=True)
             counterfactual = (
                 counterfactual_usd(self.plan, summary.usage, self.position, self._prices)
                 if self._prices is not None
@@ -337,6 +373,11 @@ class _Exchange:
                     log.error("could not update the conversation: %s", type(exc).__name__)
             cost_usd, pricing_version = self._cost(summary)
             decision = self._decision(summary, outcome)
+            baseline_usd = (
+                self._prices.cost(self.requested_model, summary.usage)
+                if self._applied and self._prices is not None and cost_usd is not None
+                else None
+            )
             observation = Observation(
                 started_at=self._started_at,
                 method=self._method,
@@ -354,6 +395,7 @@ class _Exchange:
                 identity=self.identity,
                 position=self.position,
                 cost_usd=cost_usd,
+                baseline_usd=baseline_usd,
                 pricing_version=pricing_version,
                 decision=decision,
                 config_version=self._config.version if self._config else None,
@@ -499,17 +541,55 @@ async def forward(request: Request) -> Response:
     raw_path: bytes = request.scope.get("raw_path") or path.encode()
     query: bytes = request.scope.get("query_string", b"")
     target = raw_path.decode("latin-1") + (f"?{query.decode('latin-1')}" if query else "")
-    outbound = client.build_request(
-        request.method,
-        # Relative to the upstream base URL, so a base URL with a path prefix keeps it.
-        target.lstrip("/"),
-        headers=upstream_request_headers(
-            list(request.headers.raw), profile=profile, org_api_key=org_api_key
-        ),
-        content=body,
+    outbound_headers = upstream_request_headers(
+        list(request.headers.raw), profile=profile, org_api_key=org_api_key
     )
+
+    def outbound(content: bytes) -> httpx.Request:
+        # Relative to the upstream base URL, so a base URL with a path prefix keeps it.
+        return client.build_request(
+            request.method, target.lstrip("/"), headers=outbound_headers, content=content
+        )
+
+    routed_to = exchange.route_to()
+    routed = with_model(body, routed_to) if routed_to is not None else None
+    if routed_to is not None and routed is None:
+        log.warning("not routed: the request's model could not be replaced unambiguously")
+    answer = await _send(request, client, outbound(routed or body), exchange)
+    if isinstance(answer, Response):
+        return answer
+    upstream = answer
+    if routed is not None:
+        if upstream.status_code in RETRY_ON_REQUESTED:
+            # The target said no before answering: Claude Code gets the requested model's answer
+            # instead, never the refusal.
+            with anyio.CancelScope(shield=True):
+                await upstream.aclose()
+            exchange.target_refused()
+            answer = await _send(request, client, outbound(body), exchange)
+            if isinstance(answer, Response):
+                return answer
+            upstream = answer
+        else:
+            exchange.applied()
+
+    exchange.headers_arrived(upstream)
+    response = StreamingResponse(
+        _relay(upstream, exchange),
+        status_code=upstream.status_code,
+        background=BackgroundTask(_close_unrelayed, upstream, exchange),
+    )
+    response.raw_headers = client_response_headers(list(upstream.headers.raw))
+    return response
+
+
+async def _send(
+    request: Request, client: httpx.AsyncClient, outbound: httpx.Request, exchange: _Exchange
+) -> httpx.Response | Response:
+    """The upstream's answer to ``outbound``, or the response the client gets when there is none
+    (the client left, the upstream timed out or could not be reached)."""
     try:
-        upstream = await _unless_client_disconnects(request, client.send(outbound, stream=True))
+        return await _unless_client_disconnects(request, client.send(outbound, stream=True))
     except ClientDisconnected:
         exchange.finish("client_disconnected")
         return Response(status_code=CLIENT_CLOSED_REQUEST)
@@ -528,12 +608,3 @@ async def forward(request: Request) -> Response:
             f"the upstream could not be reached ({type(exc).__name__})",
             retry=True,
         )
-
-    exchange.headers_arrived(upstream)
-    response = StreamingResponse(
-        _relay(upstream, exchange),
-        status_code=upstream.status_code,
-        background=BackgroundTask(_close_unrelayed, upstream, exchange),
-    )
-    response.raw_headers = client_response_headers(list(upstream.headers.raw))
-    return response
