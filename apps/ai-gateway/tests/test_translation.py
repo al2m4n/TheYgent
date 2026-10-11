@@ -410,3 +410,56 @@ async def test_a_tool_call_begun_late_still_gets_its_own_time_to_finish(
         finally:
             await route.aclose()
     assert [b["name"] for b in blocks] == ["Read"]
+
+
+async def test_a_long_tool_call_written_steadily_is_waited_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Long arguments (a whole file, say) take a slow model longer in all than the time allowed
+    # between pieces; it keeps writing, so it is waited for and Claude Code gets the call whole.
+    monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)  # no reading time
+    with fake_inference() as fake:
+        fake.pieces = []
+        fake.piece_delay = 0.3
+        fake.tool_calls = [("Read", ['{"file_path": "a.py", ', *['"x": 1, '] * 5, '"y": 2}'])]
+        route = LocalRoute(fake.base_url)
+        try:
+            answer = await relay(route, LOOP)
+            assert isinstance(answer, LocalStream)
+            blocks = assembled(events_of(await drain(answer)))
+        finally:
+            await route.aclose()
+    assert [b["name"] for b in blocks] == ["Read"]  # 2 s of writing, never 0.5 s without a piece
+
+
+async def test_a_tool_call_that_stalls_goes_to_anthropic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)
+    with fake_inference() as fake:
+        fake.pieces = []
+        fake.piece_delay = 1.0
+        fake.tool_calls = [("Read", ['{"file_path": ', '"a.py"}'])]
+        route = LocalRoute(fake.base_url)
+        try:
+            assert await relay(route, LOOP) is None
+        finally:
+            await route.aclose()
+
+
+async def test_a_tool_call_held_past_the_hold_goes_to_anthropic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Written steadily, but for longer than an answer may be held back.
+    monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(local, "HOLD_SECONDS", 1.0)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)
+    with fake_inference() as fake:
+        fake.pieces = []
+        fake.piece_delay = 0.3
+        fake.tool_calls = [("Read", ['{"file_path": "a.py", ', *['"x": 1, '] * 5, '"y": 2}'])]
+        route = LocalRoute(fake.base_url)
+        try:
+            assert await relay(route, LOOP) is None
+        finally:
+            await route.aclose()

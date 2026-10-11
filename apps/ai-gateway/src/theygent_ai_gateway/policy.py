@@ -6,9 +6,10 @@ a candidate. Router mode applies the same decisions (see ``routing``).
 
 The rules follow what the spike measured:
 
-* some traffic is never routed: requests carrying ``safeguards`` (auto mode's safety check),
-  compaction (it reads the main conversation's cache), the quota check, side requests that ride
-  the main conversation's cache, and side requests whose fingerprint is not reviewed;
+* some traffic is never routed: requests carrying ``safeguards`` (auto mode's safety check), the
+  quota check, side requests that ride the main conversation's cache, and side requests whose
+  fingerprint is not reviewed. Compaction reads the main conversation's cache, so it goes where
+  the conversation's decision serves it, and nowhere else;
 * a subagent may move at spawn, where its cache is cold anyway;
 * the main conversation may move only where its cache is cold (start, after compaction, after
   the cache expired), and only if the config names a main target;
@@ -46,7 +47,7 @@ from theygent_ir.gateway import (
 )
 
 from theygent_ai_gateway.conversations import ConversationKey, Position
-from theygent_ai_gateway.costs import PriceBook, base_model, ttl_for
+from theygent_ai_gateway.costs import PriceBook, base_model, local_cost, ttl_for
 from theygent_ai_gateway.signals import RequestSignals
 
 #: The dry-run defaults when no config has arrived: the measured subagent candidate, nothing else.
@@ -177,12 +178,27 @@ class Policy:
         if body is not None and body.safeguards:
             return Plan.stay("safety_check")
         if request_class == "compaction":
-            return Plan.stay("compaction")
+            return self._compaction(signals, position)
         if body is not None and body.is_quota_probe:
             return Plan.stay("quota_check")
         if request_class == "auxiliary":
             return self._side_request(signals, position, policy, rules, prices)
         return self._conversation(signals, position, policy, prices)
+
+    def _compaction(self, signals: RequestSignals, position: Position | None) -> Plan:
+        """Compaction reads the conversation's cache, so it runs where the conversation runs: on
+        the model its decision serves now (a cheaper one, or a local one), else the one asked
+        for. Moving it anywhere else would rebuild the whole conversation's cache."""
+        held = self._held.get(position.key) if position and position.key else None
+        requested = signals.body.model if signals.body else None
+        if held is None or held.requested != requested:
+            return Plan.stay("compaction")
+        target = held.plan.target  # a decision to stay has none
+        if target is None:
+            return Plan.stay("compaction")
+        if target.kind == "anthropic" and not accepts(target.model, signals):
+            return Plan.stay("compaction", "target_rejects_request_shape")
+        return Plan.route(target, "compaction", "follows_warm_cache")
 
     def _side_request(
         self,
@@ -466,14 +482,21 @@ def costs_less(prices: PriceBook, target: str, requested: str | None) -> bool:
 
 
 def counterfactual_usd(
-    plan: Plan, usage: Usage, position: Position | None, prices: PriceBook, *, fast: bool = False
+    plan: Plan,
+    usage: Usage,
+    position: Position | None,
+    prices: PriceBook,
+    *,
+    fast: bool = False,
+    local: LocalModel | None = None,
 ) -> float | None:
     """What the request would have cost had the plan been applied. ``None`` for a stay (the
-    actual cost is the answer) or when the target cannot be priced."""
+    actual cost is the answer) or when the target cannot be priced. A local target (``local``, as
+    listed) costs no API spend, only what running it costs at its rates."""
     if plan.action != "route" or plan.target is None:
         return None
     if plan.target.kind == "local":
-        return 0.0  # no API spend; local compute is not priced here
+        return local_cost(local.rates if local is not None else None, usage)
     if plan.cold:
         # The target holds nothing of this conversation yet: its cache must be built.
         ttl = ttl_for(position.ttl_seconds if position is not None else 0)

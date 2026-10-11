@@ -15,9 +15,9 @@ Nothing reaches Claude Code until the local answer is worth sending:
 * an answer that must be checked first — structured output, or a client that did not stream — is
   read whole, then checked: text, JSON that fits the schema where one was asked for, tool calls
   that name an offered tool with arguments that are a JSON object;
-* any other answer is relayed as it is written, once it has started — visible text, or a first
-  tool call that checks out — within the first-output time. A tool call is relayed whole, once
-  its arguments are.
+* any other answer is relayed as it is written, once it has started — visible text within the
+  first-output time, or a first tool call that checks out, begun within that time and then written
+  without stalling. A tool call is relayed whole, once its arguments are.
 
 Any failure before then — the request does not translate, the inference plane is down, slow or
 refuses, the answer does not check out — returns ``None``, and the caller sends the original
@@ -65,9 +65,14 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: An answer checked before Claude Code sees it is read whole within this; a relayed answer must
-#: have started (its first visible text, or its first tool call whole) within it.
+#: An answer checked before Claude Code sees it is read whole within this. A relayed answer that
+#: opens with a tool call is held until the call is whole; the model may go this long between two
+#: pieces of it, so a long call written steadily is waited for and a stalled one is not.
 LOCAL_TIMEOUT_SECONDS = 30.0
+#: However steadily a first tool call is written, it is held back no longer than this from the
+#: request's start: past it, Anthropic answers instead. About the time a large model takes to write
+#: an agent turn's whole output budget.
+HOLD_SECONDS = 300.0
 #: A relayed answer's first output — text, or a tool call's name — must come within this, or the
 #: request goes to Anthropic (a model still loading takes about a minute; the cloud answers
 #: meanwhile).
@@ -423,10 +428,14 @@ class LocalRoute:
         tools: bool = False,
         images: bool = False,
         context_tokens: int | None = None,
+        max_output_tokens: int = LOCAL_AGENT_MAX_TOKENS,
     ) -> LocalAnswer | LocalStream | None:
         """What Claude Code gets, or ``None`` when the request goes upstream instead. ``tools``,
-        ``images`` and ``context_tokens``: what the model can take."""
-        translated = translate(body, tools=tools, images=images)
+        ``images``, ``context_tokens`` and ``max_output_tokens``: what the model can take, and the
+        most it writes in an agent turn."""
+        translated = translate(
+            body, tools=tools, images=images, max_output_tokens=max_output_tokens
+        )
         if translated is None or _too_large(body, context_tokens):
             return None
         reading = _reading_seconds(body)
@@ -442,9 +451,12 @@ class LocalRoute:
         tools: bool = False,
         images: bool = False,
         context_tokens: int | None = None,
+        max_output_tokens: int = LOCAL_AGENT_MAX_TOKENS,
     ) -> LocalAttempt:
         """How the local model does on this request, read whole and checked (a shadow run)."""
-        translated = translate(body, tools=tools, images=images)
+        translated = translate(
+            body, tools=tools, images=images, max_output_tokens=max_output_tokens
+        )
         if translated is None or _too_large(body, context_tokens):
             return LocalAttempt("untranslatable")
         return await self._checked(model, translated, _reading_seconds(body))
@@ -528,17 +540,17 @@ class LocalRoute:
             # slow to answer at all is as late as a model slow to start.
             nonlocal exhausted
             began = time.monotonic()
-            started_at: float | None = None
+            last = began  # when the model last wrote something
             stream = await asyncio.wait_for(self._open(model, translated), first_deadline)
             opened.append(stream)
             chunks = stream.__aiter__()
             while not writer.committed:
-                if writer.started and started_at is None:
-                    started_at = time.monotonic()
-                # Before any output: the first-output deadline from the start. After it: the
-                # commit (a first tool call whole) gets its own time from when output began.
+                # Before any output: the first-output deadline from the start. After it, until
+                # the commit (a first tool call whole): the time between pieces, within the hold.
                 deadline = (
-                    began + first_deadline if started_at is None else started_at + self._timeout
+                    min(last + self._timeout, began + HOLD_SECONDS)
+                    if writer.started
+                    else began + first_deadline
                 )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -552,6 +564,7 @@ class LocalRoute:
                         raise _Unusable from None  # it ended without saying anything
                     break
                 held.extend(writer.feed(chunk))
+                last = time.monotonic()
             return chunks
 
         try:

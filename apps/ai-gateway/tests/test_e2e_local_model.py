@@ -32,7 +32,15 @@ from theygent_ai_gateway.costs import PriceBook
 from theygent_ai_gateway.observe import Observation
 from theygent_ai_gateway.settings import DEFAULT_INFERENCE_PLANE_URL, GatewaySettings
 from theygent_ai_gateway.signals import read_request
-from theygent_ir.gateway import FingerprintRule, GatewayConfig, PolicyConfig
+from theygent_ir.gateway import (
+    FingerprintRule,
+    GatewayConfig,
+    LocalModel,
+    LocalRates,
+    LocalRouting,
+    LocalShare,
+    PolicyConfig,
+)
 
 MODEL = os.environ.get("THEYGENT_E2E_LOCAL_MODEL", "").strip()
 INFERENCE = (
@@ -153,6 +161,61 @@ def test_a_local_model_writes_the_session_title(tmp_path: Path, stream: bool) ->
     assert usage.input_tokens > 0 and usage.output_tokens > 0
     baseline = PriceBook.packaged().cost(TITLE.body["model"], usage)
     assert baseline is not None and observed.baseline_usd == pytest.approx(baseline)
+
+
+def test_a_local_conversation_is_compacted_by_its_local_model(tmp_path: Path) -> None:
+    # The recorded main turn and its compaction, with every main conversation served locally: the
+    # compaction reads the conversation's cache, so it runs on the same local model — nothing
+    # reaches Anthropic — and costs what the model's rates say.
+    rates = LocalRates(input=0.5, output=2.0)
+    config = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(
+            local_models=[LocalModel(model=MODEL, context_tokens=32_768, tools=True, rates=rates)],
+            local_routing=LocalRouting(main=LocalShare(share=1.0)),
+        ),
+        updated_at=datetime.now(UTC),
+    )
+    seen: list[Observation] = []
+    with fake_anthropic() as upstream:
+        settings = GatewaySettings(
+            upstream_url=upstream.base_url,
+            inference_plane_url=INFERENCE,
+            gateway_id="gw-e2e-local-compaction",
+            state_dir=tmp_path,
+        )
+        with serve(create_app(settings, observe=seen.append, config=config)) as url:
+            for exchange in (load("main-bugfix-1"), load("compaction-manual")):
+                count = len(seen)
+                answer = httpx.post(
+                    f"{url}{exchange.target}",
+                    content=exchange.request_bytes(),
+                    headers=[*exchange.request_headers, ("x-fake-fixture", exchange.name)],
+                    timeout=LOAD_SECONDS,
+                )
+                assert answer.status_code == 200, answer.text
+                deadline = time.monotonic() + 10
+                while len(seen) <= count:
+                    assert time.monotonic() < deadline, "no observation"
+                    time.sleep(0.01)
+    main, compaction = seen
+    print(
+        "\nlocal main and compaction:",
+        [
+            (o.decision.reasons, o.timing.total_ms, o.response.usage.output_tokens, o.cost_usd)
+            for o in seen
+        ],
+    )
+    assert upstream.requests == [], "Anthropic was asked"
+    assert main.decision.applied and main.decision.reasons[-1] == "local_share"
+    assert compaction.decision.applied and compaction.decision.target is not None
+    assert compaction.decision.target.model == MODEL
+    assert compaction.decision.reasons == ["compaction", "follows_warm_cache"]
+    usage = compaction.response.usage
+    assert usage.output_tokens > 0
+    expected = (usage.input_tokens * 0.5 + usage.output_tokens * 2.0) / 1_000_000
+    assert compaction.cost_usd == pytest.approx(expected)
 
 
 def test_the_request_is_the_recorded_one_in_our_words() -> None:

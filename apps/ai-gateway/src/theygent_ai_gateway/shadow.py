@@ -40,9 +40,16 @@ from datetime import UTC, date, datetime
 
 import anyio
 import httpx
-from theygent_ir.gateway import PolicyConfig, ShadowOutcome, ShadowRun, Target, Usage
+from theygent_ir.gateway import (
+    LocalRates,
+    PolicyConfig,
+    ShadowOutcome,
+    ShadowRun,
+    Target,
+    Usage,
+)
 
-from theygent_ai_gateway.costs import PriceBook
+from theygent_ai_gateway.costs import PriceBook, local_cost
 from theygent_ai_gateway.local import LocalRoute
 from theygent_ai_gateway.observe import (
     Observation,
@@ -51,6 +58,7 @@ from theygent_ai_gateway.observe import (
     deliver,
 )
 from theygent_ai_gateway.routing import with_model
+from theygent_ai_gateway.translation import LOCAL_AGENT_MAX_TOKENS
 
 log = logging.getLogger(__name__)
 
@@ -98,10 +106,12 @@ class ShadowJob:
     headers: list[tuple[bytes, bytes]]
     #: The request was sent in fast mode, and its copy is too.
     fast: bool = False
-    #: A local target's capabilities (see ``LocalModel``).
+    #: A local target's capabilities and rates (see ``LocalModel``).
     tools: bool = False
     images: bool = False
     context_tokens: int | None = None
+    max_output_tokens: int = LOCAL_AGENT_MAX_TOKENS
+    rates: LocalRates | None = None
     #: A local trial: its decision named another target, or none.
     trial: bool = False
 
@@ -246,12 +256,13 @@ class Shadows:
             tools=job.tools,
             images=job.images,
             context_tokens=job.context_tokens,
+            max_output_tokens=job.max_output_tokens,
         )
         run = ShadowRun(
             target=job.target,
             outcome=attempt.outcome,
             usage=attempt.usage,
-            cost_usd=0.0,
+            cost_usd=local_cost(job.rates, attempt.usage),
             total_ms=int((time.perf_counter() - started) * 1000),
             first_output_ms=attempt.first_output_ms,
             trial=job.trial,

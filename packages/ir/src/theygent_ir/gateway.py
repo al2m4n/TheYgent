@@ -550,6 +550,14 @@ class FingerprintRule(_GatewayWire):
     label: Token | None = None
 
 
+class LocalRates(_GatewayWire):
+    """What running a local model costs, in USD per million tokens: its hardware, power or rental,
+    spread over what it serves. A prompt token is one read, cached or not."""
+
+    input: float = Field(ge=0)
+    output: float = Field(ge=0)
+
+
 class LocalModel(_GatewayWire):
     """A model on the inference plane the gateway may route to, and what it can take. Listed small
     to large: "the smallest that fits" is the first that can take a request."""
@@ -558,10 +566,14 @@ class LocalModel(_GatewayWire):
     model: Token
     #: The prompt it takes, in tokens; a larger request never goes to it.
     context_tokens: int = Field(default=32_768, ge=1_024)
+    #: The most it writes in an agent turn (a tool call can carry a whole file), in tokens.
+    max_output_tokens: int = Field(default=16_384, ge=1_024)
     #: Follows tool calls well enough for Claude Code's agent turns (subagents, the main loop).
     tools: bool = False
     #: Takes images.
     images: bool = False
+    #: What it costs to run; ``None``: not priced, so its answers count as costing nothing.
+    rates: LocalRates | None = None
 
     @model_validator(mode="after")
     def _logical(self) -> LocalModel:

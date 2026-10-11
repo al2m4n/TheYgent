@@ -70,8 +70,10 @@ On **AI Gateway → Settings → Local models**, choose **Add a local model** an
 |---|---|
 | Logical id | The id you registered on the inference plane |
 | Context (tokens) | The context the model is served with: the gateway never sends a larger prompt |
+| Max output (tokens) | The most it may write in one subagent or main-conversation turn (16,384 unless you change it). Raise it for a large model that writes whole files |
 | Tool calls | Ticked if it follows tool calls well enough for agent work |
 | Images | Ticked if it takes images |
+| Cost | Optional: what running it costs, in USD per million input and output tokens (your hardware, power or rental, spread over what it serves). Leave both empty and its answers count as costing nothing |
 
 List models small to large: *smallest that fits* picks the first that can take a request. A very
 small model for side requests and a medium one for agent work is a common pair.
@@ -103,8 +105,10 @@ shows it against what the same work would have cost on the model Claude Code ask
 
 Some requests never go to a local model, whatever the dials say:
 
-- **Compaction**, Claude Code's quota check, auto mode's safety checks, side requests that reuse the
-  main conversation's cache, and side-request kinds nobody has reviewed.
+- Claude Code's quota check, auto mode's safety checks, side requests that reuse the main
+  conversation's cache, and side-request kinds nobody has reviewed.
+- **Compaction of a conversation Anthropic serves.** Compaction reads the conversation's cache, so
+  it runs where the conversation runs: a conversation on a local model is compacted by that model.
 - **Requests that can't be translated faithfully**: documents such as PDFs, Anthropic's server
   tools (web search, code execution) and their results, and images for a model that doesn't take
   them.
@@ -117,20 +121,21 @@ replace it.
 
 - **Answers have time limits.** A local model's answer must start within 15 seconds, plus the time
   to read the prompt (counted at 200 tokens a second), or Anthropic answers instead. An answer that
-  opens with a tool call must finish that call within 30 seconds of starting it. A large file
-  written by a slow model can run past that and go to Anthropic. Once an answer has started,
-  Claude Code gets it to the end. A side request's answer is checked whole, so it must be complete
-  within 30 seconds plus the reading time.
-- **Answers have length limits.** A local subagent or main-conversation turn can write up to 16,384
-  tokens, and a side request up to 4,096.
+  opens with a tool call is held back until the call is whole, so Anthropic can still step in: the
+  model may pause no more than 30 seconds while writing it, and the call must be whole within 5
+  minutes of the request. A large file written steadily is waited for; a model that stalls is
+  not. Once an answer has gone out, Claude Code gets it to the end. A side request's answer is
+  checked whole, so it must be complete within 30 seconds plus the reading time.
+- **Answers have length limits.** A subagent or main-conversation turn can write up to the model's
+  **max output** (16,384 tokens unless you raise it), and a side request up to 4,096.
 - **Claude Code compacts by the model it asked for.** It knows its model's context window (200,000
   tokens or more), not the local model's. A conversation that outgrows the local model goes to
   Anthropic, which reads the whole history without a cache: that request costs more than a cached
   one would.
-- **Compaction of a local conversation runs on Anthropic, without a cache.** Compacting a
-  150,000-token conversation on Opus 5.5 costs about $0.81 that way.
-- **Local compute is not priced.** The Report counts a local answer as costing nothing. If your
-  models run on hardware you pay for, the saving shown is larger than your real saving.
+- **Local compute is priced only if you price it.** Without a **cost**, the Report counts a local
+  answer as costing nothing, and the saving it shows is larger than your real saving if your
+  models run on hardware you pay for. With one, local answers, trials and what routing would cost
+  in observer mode are all counted at it.
 - **Concurrency is the engine's.** Each developer's requests reach the model as they come. An engine
   serving one request at a time makes the others wait, and a request that waits past the time limit
   goes to Anthropic. For a team, serve the model with an engine that handles many requests at once

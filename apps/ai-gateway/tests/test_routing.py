@@ -220,7 +220,13 @@ def test_only_applied_routes_change_a_request(tmp_path: Path) -> None:
         else:
             assert received[exchange.name] == exchange.request_bytes(), exchange.name
     assert applied, "the config routes main and subagent traffic"
-    never = {"compaction", "quota_check", "safety_check", "shares_main_prefix"}
+    never = {"quota_check", "safety_check", "shares_main_prefix"}
     assert not any(o.decision.applied and never & set(o.decision.reasons) for o in gw.seen), (
         "traffic that never routes was routed"
+    )
+    # Compaction moves only with its conversation, to the model the conversation is on.
+    compactions = [o for o in gw.seen if o.decision.reasons[0] == "compaction"]
+    assert compactions and all(
+        not o.decision.applied or o.decision.reasons == ["compaction", "follows_warm_cache"]
+        for o in compactions
     )

@@ -866,6 +866,13 @@ describe("AI Gateway settings: developers' billing", () => {
       await ui.clear(context);
       await ui.type(context, "131072");
       await ui.click(screen.getByRole("checkbox", { name: "Follows tool calls (row 1)" }));
+      // A large model may write more than the default 16K tokens, and costs something to run.
+      const maxOutput = screen.getByLabelText("Max output (row 1)");
+      expect(maxOutput).toHaveValue("16384");
+      await ui.clear(maxOutput);
+      await ui.type(maxOutput, "65536");
+      await ui.type(screen.getByLabelText("Cost per million input tokens (row 1)"), "0.2");
+      await ui.type(screen.getByLabelText("Cost per million output tokens (row 1)"), "0.8");
       const share = screen.getByLabelText("Subagents share");
       await ui.clear(share);
       await ui.type(share, "25");
@@ -880,13 +887,63 @@ describe("AI Gateway settings: developers' billing", () => {
       await waitFor(() => expect(puts(calls)).toHaveLength(1));
       const { policy } = puts(calls)[0].body as { policy: Record<string, unknown> };
       expect(policy.local_models).toEqual([
-        { model: "coder-medium", context_tokens: 131072, tools: true, images: false },
+        {
+          model: "coder-medium",
+          context_tokens: 131072,
+          max_output_tokens: 65536,
+          tools: true,
+          images: false,
+          rates: { input: 0.2, output: 0.8 },
+        },
       ]);
       expect(policy.local_routing).toEqual({
         side_requests: { share: 1, trial: 0, model: null, agent_types: [] },
         subagents: { share: 0.25, trial: 0.2, model: null, agent_types: ["Explore", "Plan"] },
         main: { share: 0, trial: 0, model: null, agent_types: [] },
       });
+    });
+
+    it("opens a listed model saved before output budgets and costs", async () => {
+      const older = config(3);
+      const policy = {
+        ...(older.policy as Record<string, unknown>),
+        local_models: [
+          { model: "coder-medium", context_tokens: 131072, tools: true, images: false },
+        ],
+      };
+      const calls = mockPlanes({ latest: () => json({ ...older, policy }) });
+      const ui = userEvent.setup();
+      renderTab();
+      expect(await screen.findByLabelText("Max output (row 1)")).toHaveValue("16384");
+      expect(screen.getByLabelText("Cost per million input tokens (row 1)")).toHaveValue("");
+      await ui.type(screen.getByLabelText("Context (row 1)"), "0"); // any edit, then save
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(puts(calls)).toHaveLength(1));
+      const sent = puts(calls)[0].body as { policy: { local_models: unknown[] } };
+      expect(sent.policy.local_models[0]).toMatchObject({ max_output_tokens: 16384, rates: null });
+    });
+
+    it("prices a model only with both of its rates", async () => {
+      const calls = mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      await ui.click(await screen.findByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "coder-medium");
+      await ui.type(screen.getByLabelText("Cost per million input tokens (row 1)"), "0.2");
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.getByLabelText("Cost per million output tokens (row 1)")).toHaveAttribute(
+        "aria-invalid",
+        "true",
+      );
+      expect(puts(calls)).toHaveLength(0);
+      // Without either rate, the model is listed unpriced.
+      await ui.clear(screen.getByLabelText("Cost per million input tokens (row 1)"));
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(puts(calls)).toHaveLength(1));
+      const { policy } = puts(calls)[0].body as {
+        policy: { local_models: { rates: unknown; max_output_tokens: number }[] };
+      };
+      expect(policy.local_models[0]).toMatchObject({ rates: null, max_output_tokens: 16384 });
     });
 
     it("will not save a trial that overruns the share or has no model to try", async () => {

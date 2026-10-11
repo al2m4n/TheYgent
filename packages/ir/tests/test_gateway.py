@@ -746,6 +746,9 @@ def test_a_phase_two_config_routes_nothing_new_locally() -> None:
     assert (dials.side_requests.share, dials.subagents.share, dials.main.share) == (1.0, 0.0, 0.0)
 
 
+MEDIUM_ROW = {"model": "coder-medium", "context_tokens": 131_072, "tools": True}
+
+
 def _policy(**fields: Any) -> PolicyConfig:
     return PolicyConfig.model_validate(
         {
@@ -769,6 +772,17 @@ def test_local_models_and_dials_validate() -> None:
     assert policy.local_routing.subagents.agent_types == ["Explore"]
     assert policy.local_models[1].tools and not policy.local_models[0].images
     assert policy.local_routing.subagents.trial == 0.0  # no trial unless chosen
+    # Not priced, and up to 16K tokens an agent turn, unless chosen.
+    assert (policy.local_models[1].rates, policy.local_models[1].max_output_tokens) == (
+        None,
+        16_384,
+    )
+    priced = _policy(
+        local_models=[
+            {**MEDIUM_ROW, "max_output_tokens": 65_536, "rates": {"input": 0.1, "output": 0.4}}
+        ]
+    )
+    assert priced.local_models[0].rates is not None and priced.local_models[0].rates.output == 0.4
     trial = _policy(local_routing={"subagents": {"share": 0.4, "trial": 0.6}})
     assert trial.local_routing.subagents.trial == 0.6
     # 0.71% and 99.29% typed in a form add up to a hair over 1 as fractions: still 100%.
@@ -790,6 +804,9 @@ def test_local_models_and_dials_validate() -> None:
         ({"local_routing": {"side_requests": {"share": 1.0, "trial": 0.1}}}, "exceed 100%"),
         ({"local_routing": {"subagents": {"trial": 0.2, "model": "aux-small"}}}, "tool calls"),
         ({"local_models": [{"model": "tiny", "context_tokens": 10}]}, "greater than or equal"),
+        ({"local_models": [{"model": "tiny", "max_output_tokens": 100}]}, "greater than or equal"),
+        ({"local_models": [{"model": "m", "rates": {"input": -1, "output": 0}}]}, "greater than"),
+        ({"local_models": [{"model": "m", "rates": {"input": 0.1}}]}, "Field required"),
     ],
 )
 def test_a_local_dial_that_cannot_be_served_is_refused(

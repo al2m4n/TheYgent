@@ -482,3 +482,95 @@ def test_a_conversation_served_locally_is_never_tried(tmp_path: Path) -> None:
     observed = gw.seen[-1]
     assert observed.decision.applied and observed.decision.target == LOCAL_MEDIUM
     assert observed.shadow is None and len(gw.inference.requests) == 1
+
+
+# ── compaction, output budgets and what local compute costs ──────────────────
+
+BUGFIX, COMPACTION = load("main-bugfix-1"), load("compaction-manual")
+
+
+def test_compaction_of_a_local_conversation_runs_on_its_local_model(tmp_path: Path) -> None:
+    # Compaction reads the conversation's cache, so it goes where the conversation is: here, the
+    # local model, rather than to Anthropic with nothing cached.
+    with gateway(tmp_path, config(main={"share": 1.0})) as gw:
+        gw.inference.pieces = ["The summary."]
+        gw.send(BUGFIX)
+        gw.send(COMPACTION)
+        compacted = gw.seen[-1]
+    assert gw.upstream.requests == []  # neither went to Anthropic
+    assert compacted.decision.applied and compacted.decision.target == LOCAL_MEDIUM
+    assert compacted.decision.reasons == ["compaction", "follows_warm_cache"]
+
+
+def test_a_compaction_the_local_model_cannot_take_goes_to_the_requested_model(
+    tmp_path: Path,
+) -> None:
+    with gateway(tmp_path, config(main={"share": 1.0})) as gw:
+        gw.inference.pieces = ["Working on it."]
+        gw.send(BUGFIX)
+        gw.inference.status = 503
+        gw.send(COMPACTION)
+        failed = gw.seen[-1]
+    assert [r.body for r in gw.upstream.requests] == [COMPACTION.request_bytes()]
+    assert failed.decision.reasons[0] == "target_refused" and not failed.decision.applied
+
+
+def test_an_agent_turn_may_write_up_to_the_models_own_budget(tmp_path: Path) -> None:
+    big = {**MEDIUM, "max_output_tokens": 65_536}
+    with gateway(tmp_path, config(models=[big], subagents={"share": 1.0})) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    # Claude Code asks for 128K; the model's budget, not the default 16K, bounds it.
+    assert [r["max_tokens"] for r in gw.inference.requests] == [65_536]
+
+
+RATES = {"input": 0.5, "output": 2.0}
+
+
+def test_a_local_answer_costs_what_running_the_model_costs(tmp_path: Path) -> None:
+    priced = {**MEDIUM, "rates": RATES}
+    with gateway(tmp_path, config(models=[priced], subagents={"share": 1.0})) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    served = gw.seen[-1]
+    usage = served.response.usage
+    prompt = usage.input_tokens + usage.cache_read_tokens
+    prompt += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
+    assert prompt and usage.output_tokens
+    expected = (prompt * 0.5 + usage.output_tokens * 2.0) / 1_000_000
+    assert served.decision.applied and served.cost_usd == pytest.approx(expected)
+    # What it would have cost on the model Claude Code asked for is still the baseline.
+    assert served.baseline_usd is not None and served.cost_usd is not None
+    assert served.baseline_usd > served.cost_usd
+
+
+def test_observer_mode_prices_a_local_route_and_its_shadow_at_the_models_rates(
+    tmp_path: Path,
+) -> None:
+    priced = {**MEDIUM, "rates": RATES}
+    cfg = config("observer", models=[priced], subagents={"share": 1.0}, shadow_local=True)
+    with gateway(tmp_path, cfg) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    observed = gw.seen[-1]
+    usage = observed.response.usage
+    prompt = usage.input_tokens + usage.cache_read_tokens
+    prompt += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
+    expected = (prompt * 0.5 + usage.output_tokens * 2.0) / 1_000_000
+    assert observed.decision.counterfactual_usd == pytest.approx(expected)
+    run = observed.shadow
+    assert run is not None and run.usage.output_tokens
+    assert run.cost_usd == pytest.approx(
+        (run.usage.input_tokens * 0.5 + run.usage.output_tokens * 2.0) / 1_000_000
+    )
+
+
+def test_a_model_without_rates_still_costs_nothing(tmp_path: Path) -> None:
+    with gateway(tmp_path, config(subagents={"share": 1.0})) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    assert gw.seen[-1].cost_usd == 0.0

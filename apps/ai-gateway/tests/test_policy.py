@@ -147,9 +147,34 @@ def test_traffic_that_is_never_routed(name: str, reasons: tuple[str, ...]) -> No
     assert (plan.action, plan.reasons) == ("stay", reasons)
 
 
-def test_compaction_stays_on_the_main_model() -> None:
+def test_compaction_runs_where_its_conversation_runs() -> None:
+    # Compaction reads the main conversation's cache: on the model the conversation was moved to,
+    # it reads it warm; anywhere else it would rebuild the whole conversation.
     run = Run(config(main="claude-sonnet-5-5"))
+    start, _ = run("main-bugfix-1")
+    assert start.target == SONNET
+    plan, _ = run("compaction-manual")
+    assert (plan.action, plan.target, plan.reasons) == (
+        "route",
+        SONNET,
+        ("compaction", "follows_warm_cache"),
+    )
+
+
+def test_compaction_of_a_conversation_on_its_requested_model_stays() -> None:
+    run = Run(config(main=None))
     run("main-bugfix-1")
+    plan, _ = run("compaction-manual")
+    assert (plan.action, plan.reasons) == ("stay", ("compaction",))
+    # Nor does it move when nothing is known of its conversation.
+    alone, _ = Run(config(main="claude-sonnet-5-5"))("compaction-manual")
+    assert (alone.action, alone.reasons) == ("stay", ("compaction",))
+
+
+def test_compaction_stays_when_its_conversation_was_kept_on_the_requested_model() -> None:
+    run = Run(config(main="claude-sonnet-5-5"))
+    _, position = run("main-bugfix-1")
+    run.policy.refused(position, "claude-opus-5-5")  # the target refused: pinned to Opus
     plan, _ = run("compaction-manual")
     assert (plan.action, plan.reasons) == ("stay", ("compaction",))
 

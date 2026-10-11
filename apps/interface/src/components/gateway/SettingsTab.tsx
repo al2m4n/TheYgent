@@ -32,6 +32,7 @@ import {
   MODE_SUMMARY,
   RATE_FIELDS,
   type SettingsForm,
+  blankLocalModel,
   blankRow,
   draftFromForm,
   draftOf,
@@ -1265,11 +1266,12 @@ function LocalModels({
       </legend>
       <p className="text-xs text-muted-foreground">
         Models on your inference plane that may take Claude Code's work, listed small to large: a
-        request goes to the first that can take it. A local answer costs no API spend; one that
-        fails before it starts goes to Anthropic, unseen by Claude Code. Measure a model before it
-        serves: a dial's trial tries it on conversations Anthropic still answers — in router mode
-        too, never delaying anyone — and shows how often it picks the same next action as Claude.
-        Raising the share by the trial then serves exactly the conversations tried.
+        request goes to the first that can take it. A local answer costs no API spend, only what
+        running the model costs, if you give it a cost; one that fails before it starts goes to
+        Anthropic, unseen by Claude Code. Measure a model before it serves: a dial's trial tries it
+        on conversations Anthropic still answers — in router mode too, never delaying anyone — and
+        shows how often it picks the same next action as Claude. Raising the share by the trial then
+        serves exactly the conversations tried.
       </p>
       {rows.length > 0 && (
         <Table>
@@ -1277,8 +1279,10 @@ function LocalModels({
             <TableRow>
               <Th>Logical id</Th>
               <Th>Context (tokens)</Th>
+              <Th>Max output (tokens)</Th>
               <Th>Tool calls</Th>
               <Th>Images</Th>
+              <Th>Cost (USD / M tokens: in · out)</Th>
               <Th>Last 7 days</Th>
               <Th>
                 <span className="sr-only">Remove</span>
@@ -1315,6 +1319,17 @@ function LocalModels({
                     />
                   </Td>
                   <Td>
+                    <Input
+                      aria-label={`Max output (row ${i + 1})`}
+                      value={row.maxOutput}
+                      inputMode="numeric"
+                      className="w-28 tabular-nums"
+                      aria-invalid={errors[`local.${i}.maxOutput`] ? true : undefined}
+                      title={errors[`local.${i}.maxOutput`]}
+                      onChange={(e) => setRow(i, { maxOutput: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
                     <Checkbox
                       aria-label={`Follows tool calls (row ${i + 1})`}
                       checked={row.tools}
@@ -1327,6 +1342,30 @@ function LocalModels({
                       checked={row.images}
                       onCheckedChange={(v) => setRow(i, { images: v === true })}
                     />
+                  </Td>
+                  <Td>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        aria-label={`Cost per million input tokens (row ${i + 1})`}
+                        value={row.inputRate}
+                        placeholder="—"
+                        inputMode="decimal"
+                        className="w-20 tabular-nums"
+                        aria-invalid={errors[`local.${i}.inputRate`] ? true : undefined}
+                        title={errors[`local.${i}.inputRate`]}
+                        onChange={(e) => setRow(i, { inputRate: e.target.value })}
+                      />
+                      <Input
+                        aria-label={`Cost per million output tokens (row ${i + 1})`}
+                        value={row.outputRate}
+                        placeholder="—"
+                        inputMode="decimal"
+                        className="w-20 tabular-nums"
+                        aria-invalid={errors[`local.${i}.outputRate`] ? true : undefined}
+                        title={errors[`local.${i}.outputRate`]}
+                        onChange={(e) => setRow(i, { outputRate: e.target.value })}
+                      />
+                    </div>
                   </Td>
                   <Td className="text-xs text-muted-foreground">
                     {seen ? (
@@ -1362,7 +1401,7 @@ function LocalModels({
         size="sm"
         onClick={() =>
           onChange({
-            localModels: [...rows, { model: "", context: "32768", tools: false, images: false }],
+            localModels: [...rows, blankLocalModel()],
           })
         }
       >

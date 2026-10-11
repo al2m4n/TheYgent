@@ -34,7 +34,8 @@ from typing import Any
 
 #: The output budget for an answer that is a few words (structured output, a title).
 LOCAL_MAX_TOKENS = 4096
-#: The output budget for an agent turn: a tool call can carry a whole file.
+#: The output budget for an agent turn unless the model's own is set: a tool call can carry a
+#: whole file.
 LOCAL_AGENT_MAX_TOKENS = 16_384
 #: Claude Code's first system block is billing attribution for Anthropic, nothing a model reads.
 _BILLING_PREFIX = "x-anthropic-billing-header:"
@@ -246,9 +247,16 @@ def _tool_choice(choice: Any) -> tuple[Any, bool | None]:
     raise _Untranslatable
 
 
-def translate(body: bytes, *, tools: bool = False, images: bool = False) -> Translated | None:
+def translate(
+    body: bytes,
+    *,
+    tools: bool = False,
+    images: bool = False,
+    max_output_tokens: int = LOCAL_AGENT_MAX_TOKENS,
+) -> Translated | None:
     """The request as a chat completion, or ``None`` when it does not translate faithfully.
-    ``tools`` and ``images``: what the local model can take."""
+    ``tools``, ``images`` and ``max_output_tokens``: what the local model can take, and the most it
+    writes in an agent turn."""
     try:
         request = json.loads(body)
     except ValueError:
@@ -256,12 +264,14 @@ def translate(body: bytes, *, tools: bool = False, images: bool = False) -> Tran
     if not isinstance(request, dict):
         return None
     try:
-        return _translate(request, tools=tools, images=images)
+        return _translate(request, tools=tools, images=images, max_output_tokens=max_output_tokens)
     except _Untranslatable:
         return None
 
 
-def _translate(request: dict[str, Any], *, tools: bool, images: bool) -> Translated:
+def _translate(
+    request: dict[str, Any], *, tools: bool, images: bool, max_output_tokens: int
+) -> Translated:
     builder = _Builder(tools=tools, images=images)
     declared = request.get("tools") or []
     if not isinstance(declared, list) or (declared and not tools):
@@ -290,7 +300,7 @@ def _translate(request: dict[str, Any], *, tools: bool, images: bool) -> Transla
         else:
             raise _Untranslatable
     all_tools = [*functions, *builder.added_tools]
-    budget = LOCAL_AGENT_MAX_TOKENS if all_tools else LOCAL_MAX_TOKENS
+    budget = max_output_tokens if all_tools else LOCAL_MAX_TOKENS
     asked = request.get("max_tokens")
     params: dict[str, Any] = {
         "max_tokens": min(asked, budget) if isinstance(asked, int) else budget,

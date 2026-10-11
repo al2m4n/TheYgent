@@ -128,9 +128,11 @@ the requested model is a switch too). A warm move happens only where staying wou
 `warm_switch_margin` times rebuilding the cached prefix on the other model — and then the
 counterfactual prices that rebuild. Claude Code switching the requested model itself (`/model`, its
 fallback model) is a fresh decision, since the cache there is cold anyway.
-Some traffic never moves: compaction, the quota check, side requests that ride the main
-conversation's cache, requests carrying `safeguards`, and side requests whose fingerprint an admin
-has not reviewed. A target must accept the request's shape: Sonnet 5.5 is a drop-in for Opus 5.5;
+Some traffic never moves: the quota check, side requests that ride the main conversation's cache,
+requests carrying `safeguards`, and side requests whose fingerprint an admin has not reviewed.
+Compaction reads the main conversation's cache, so it follows the conversation (`Policy._compaction`):
+it is routed, with `compaction, follows_warm_cache`, to the target the conversation's held decision
+serves — a cheaper model or a local one — and otherwise stays on the requested model. A target must accept the request's shape: Sonnet 5.5 is a drop-in for Opus 5.5;
 Haiku 4.5 rejects Claude Code's request shape. A target must also cost less than the requested
 model (`costs_less`), at the config's contracted prices: no rate higher, and at least one lower.
 An unpriced model on either side is never moved (`target_not_cheaper`), so nothing is ever
@@ -161,7 +163,8 @@ faithfully or not at all:
 
 - **What carries over:** the system prompt less the billing attribution, mid-conversation system
   messages in place, text, sampling settings, and the output schema (as a `json_schema` response
-  format). Thinking is off, and the output budget is capped at 4,096, or 16,384 for an agent turn.
+  format). Thinking is off, and the output budget is capped at 4,096, or at the model's
+  `max_output_tokens` (16,384 unless set) for an agent turn.
 - **For a model that follows tool calls:** the tools not deferred, plus those `tool_addition`
   blocks add mid-conversation (how tool search loads them), as OpenAI functions; `tool_choice`
   mapped; `tool_use` blocks as an assistant's `tool_calls`, each `tool_result` as a `tool` message
@@ -189,16 +192,19 @@ on the request:
   checked (an offered tool, arguments that are a JSON object). The first output must begin within
   15 seconds plus the prompt's reading time — a model reads all of it before its first token, so
   200 tokens a second are allowed for, and a 10K-token agent turn gets 50 seconds more. Opening the
-  stream shares that deadline. The commit must come within 30 seconds of the first output. A bad
-  tool call after the commit still goes out, with empty input, and Claude Code answers it with a
-  tool error as it would for any model.
+  stream shares that deadline. After the first output, a first tool call is held until it is
+  whole: the model may go 30 seconds between two pieces of it (`LOCAL_TIMEOUT_SECONDS`), so a long
+  call written steadily — a whole file — is waited for and a stalled one is not, and the hold ends
+  `HOLD_SECONDS` (300) after the request began. A bad tool call after the commit still goes out,
+  with empty input, and Claude Code answers it with a tool error as it would for any model.
 
 Anything that fails before an answer is committed sends the original bytes upstream and records
 `target_refused`. A side request pins nothing (it holds no conversation cache); an agent turn's
 conversation stays on Anthropic's side until its next cold boundary (below). That covers a request
 that does not translate, no inference plane, an error, no first output in time, a checked answer
 over 30 seconds plus the prompt's reading time, or one that does not fit. A local answer is recorded as
-applied, served by the logical id, `cost_usd` 0.0 (no API spend; local compute is not priced) and
+applied, served by the logical id, `cost_usd` at the model's `rates` (`costs.local_cost`: every prompt
+token as input, cached or not; 0.0 for a model without rates, since there is no API spend) and
 `baseline_usd` priced on the requested model with the local model's token counts — a different
 tokenizer, so an estimate. Claude Code sends side requests only in interactive sessions, so its
 opt-in test (`THEYGENT_E2E_LOCAL_MODEL`) drives the gateway with the recorded title request's
@@ -209,8 +215,10 @@ and checks the task completes with Claude Code's usage equal to the gateway's.
 ### Local models, by share
 
 `PolicyConfig.local_models` lists the models on the inference plane the gateway may use, small to
-large. Each has a logical id, the context it takes, and whether it follows tool calls and takes
-images. `local_routing` sets a dial per kind of request: a share of conversations, a trial, the
+large. Each has a logical id, the context it takes, the most it writes in an agent turn
+(`max_output_tokens`), whether it follows tool calls and takes images, and optionally what it costs
+to run (`rates`, USD per million input and output tokens). Rates price its served answers, the
+counterfactual of an unapplied local route and local shadow runs alike. `local_routing` sets a dial per kind of request: a share of conversations, a trial, the
 model or "the smallest that fits", and for subagents an optional agent-type filter.
 
 - **Sampling (`policy.in_share`).** A conversation is in a share when a SHA-256 of its key falls

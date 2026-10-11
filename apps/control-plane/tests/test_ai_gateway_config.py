@@ -210,6 +210,8 @@ LOCAL_MODELS = [
 
 
 def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
+    big = {"max_output_tokens": 65536, "rates": {"input": 0.2, "output": 0.8}}
+    models = [LOCAL_MODELS[0], {**LOCAL_MODELS[1], **big}]
     routing = {
         "side_requests": {"share": 1.0, "trial": 0.0, "model": "aux-small", "agent_types": []},
         "subagents": {"share": 0.25, "trial": 0.25, "model": None, "agent_types": ["Explore"]},
@@ -217,7 +219,7 @@ def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
     }
     saved = put(
         client,
-        {"mode": "router", "policy": {"local_models": LOCAL_MODELS, "local_routing": routing}},
+        {"mode": "router", "policy": {"local_models": models, "local_routing": routing}},
     )
     assert saved.status_code == 201, saved.text
     policy = client.get("/gateway/config").json()["policy"]
@@ -226,9 +228,14 @@ def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
     assert policy["local_models"][1] == {
         "model": "coder-medium",
         "context_tokens": 131072,
+        "max_output_tokens": 65536,
         "tools": True,
         "images": False,
+        "rates": {"input": 0.2, "output": 0.8},
     }
+    # A model listed without them reads back with their defaults: 16K, not priced.
+    assert policy["local_models"][0]["max_output_tokens"] == 16384
+    assert policy["local_models"][0]["rates"] is None
 
 
 @pytest.mark.parametrize(

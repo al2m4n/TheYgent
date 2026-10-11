@@ -1143,9 +1143,13 @@ export interface GatewayConfig {
 export interface GatewayLocalModel {
   model: string;
   context_tokens: number;
+  /** The most it writes in an agent turn, in tokens. */
+  max_output_tokens: number;
   /** Follows tool calls well enough for Claude Code's agent turns. */
   tools: boolean;
   images: boolean;
+  /** What running it costs, USD per million tokens; null: not priced (its answers cost nothing). */
+  rates: { input: number; output: number } | null;
 }
 
 /** How much of one kind of request goes local: a share of conversations, and the model. */

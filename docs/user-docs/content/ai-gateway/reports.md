@@ -91,9 +91,10 @@ and pays to rebuild it. The policy therefore only considers a move where the cac
   margin** times rebuilding the cache on the other model (*switch pays*). If Claude Code switches
   model itself, the policy decides afresh.
 
-Some traffic never moves: compaction (it reads the main conversation's cache), Claude Code's
-quota check, side requests that ride the main conversation's cache, auto mode's safety checks,
-and side requests of a kind nobody has reviewed. And a target must accept the request: Sonnet 5.5
+Some traffic never moves: Claude Code's quota check, side requests that ride the main
+conversation's cache, auto mode's safety checks, and side requests of a kind nobody has reviewed.
+Compaction reads the main conversation's cache, so it moves only with the conversation: it runs
+on the model the conversation is on — the one asked for, a cheaper one, or a local one. And a target must accept the request: Sonnet 5.5
 takes Claude Code's requests to Opus 5.5 as they are; Haiku 4.5 rejects them, so a move to it is
 turned down as *target can't take it*. A target must also cost less, at your contracted prices
 where you set them. A request that already asks for a cheaper model, such as a subagent on
@@ -155,7 +156,8 @@ with the local model's tokens.
   considered), and the local model for side requests the Catalog allows to run locally (a
   [logical model id](../concepts/models-and-engines.md)).
 - **Local models** — the models on your inference plane that may take Claude Code's work, listed
-  small to large, each with its context size and whether it follows tool calls and takes images.
+  small to large, each with its context size, the most it may write in a turn, whether it follows
+  tool calls and takes images, and optionally what it costs to run.
   Beside each one is what the last week shows: the requests it served, and how often it picked the
   same next action as Claude. Then one dial per kind of request (side requests, subagents, the
   main conversation), each a **share** served locally, a **trial** measured locally while

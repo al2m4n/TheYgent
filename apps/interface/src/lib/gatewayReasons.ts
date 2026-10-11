@@ -36,7 +36,8 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
   },
   compaction: {
     label: "compaction",
-    detail: "Compaction reads the main conversation's cache, so it stays on the same model.",
+    detail:
+      "Compaction reads the main conversation's cache, so it runs on the model the conversation runs on: the one asked for, a cheaper one, or a local one.",
   },
   quota_check: {
     label: "quota check",

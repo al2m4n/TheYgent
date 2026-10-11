@@ -112,7 +112,9 @@ Router mode applies the policy's decisions; observer mode only records them.
   a non-streaming request would hold the engine to the end. A prompt larger than the model's
   context is never sent, and a model that has not started within the first-output deadline hands
   the request to Anthropic before any byte is out. The deadline grows with the prompt: a model
-  reads all of it before its first token.
+  reads all of it before its first token. A first tool call held until it is whole is timed by the
+  model's progress (a stall), within an overall hold, never by its length: a whole file written
+  steadily is a legitimate answer.
 - **A local route answers only what translates faithfully, and only once the answer is checked.**
   Text, tool definitions, tool calls and their results translate both ways, and images go only to
   a model that takes them; server tools, documents and anything unknown keep the request on
@@ -122,7 +124,7 @@ Router mode applies the policy's decisions; observer mode only records them.
   conversation on Anthropic until its next cold boundary. Claude Code never sees a local error.
 - **An applied route records what served it.** `served_model` from the response, `applied`,
   `cost_usd` priced on the served model and `baseline_usd` on the requested one. A local answer
-  costs 0.0: no API spend, and local compute is not priced.
+  has no API spend: it costs what the model's `rates` say, or 0.0 without them.
 - **A shadow run never touches the real exchange.**
     - A copy of an unapplied route goes to its target only after the exchange ends, and so does a
       local trial's copy to its local model. Nothing awaits it, its answer goes only to the
@@ -133,9 +135,10 @@ Router mode applies the policy's decisions; observer mode only records them.
       personal mode's own API key), never a seat or a team developer's own key. It stops at the
       daily budget, and pauses under rate-limit pressure.
     - Shadows are sampled, never queued.
-- **Never route** compaction, the quota check, requests that share the main conversation's cache,
-  requests carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
-  fingerprints.
+- **Never route** the quota check, requests that share the main conversation's cache, requests
+  carrying a `safeguards` field (auto-mode classifier context), or unreviewed auxiliary
+  fingerprints. **Compaction follows its conversation**: it reads the conversation's cache, so it
+  goes to the model the conversation's decision serves, and nowhere else.
 
 ## Conventions
 

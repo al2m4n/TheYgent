@@ -56,7 +56,7 @@ from theygent_ir.gateway import (
 
 from theygent_ai_gateway.configsync import ConfigState
 from theygent_ai_gateway.conversations import ConversationTracker, Position
-from theygent_ai_gateway.costs import PriceBook
+from theygent_ai_gateway.costs import PriceBook, local_cost
 from theygent_ai_gateway.credentials import OrgKey
 from theygent_ai_gateway.identity import (
     GATEWAY_KEY_HEADER,
@@ -332,6 +332,8 @@ class _Exchange:
             tools=capabilities.tools,
             images=capabilities.images,
             context_tokens=capabilities.context_tokens,
+            max_output_tokens=capabilities.max_output_tokens,
+            rates=capabilities.rates,
             trial=trial,
         )
 
@@ -374,6 +376,13 @@ class _Exchange:
             log.error("could not start reading the response: %s", type(exc).__name__)
         if isinstance(answer, LocalAnswer):
             self.chunk(answer.body)
+
+    def _local_target(self) -> LocalModel | None:
+        """The local model the plan names, as listed."""
+        target = self.plan.target if self.plan is not None else None
+        if target is None or target.kind != "local":
+            return None
+        return self.local_capabilities(target.model)
 
     def local_capabilities(self, model: str) -> LocalModel:
         return capabilities_of(self._config.policy if self._config else None, model)
@@ -453,9 +462,13 @@ class _Exchange:
 
     def _cost(self, summary: ResponseSummary) -> tuple[float | None, str | None]:
         """What the exchange cost, priced on the model that served it (else the one asked for).
-        A local model's answer costs no API spend; local compute is not priced here."""
+        A local model's answer costs no API spend, only what running it costs at the rates an
+        admin set for it (nothing, without them)."""
         if self._local:
-            return 0.0, self._prices.version if self._prices is not None else None
+            target = self.plan.target if self.plan is not None else None
+            rates = self.local_capabilities(target.model).rates if target is not None else None
+            version = self._prices.version if self._prices is not None else None
+            return local_cost(rates, summary.usage), version
         usage = summary.usage
         used = usage.input_tokens + usage.output_tokens + usage.cache_read_tokens
         used += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
@@ -478,7 +491,12 @@ class _Exchange:
                 return to_decision(self.plan, None, applied=True)
             counterfactual = (
                 counterfactual_usd(
-                    self.plan, summary.usage, self.position, self._prices, fast=self._signals.fast
+                    self.plan,
+                    summary.usage,
+                    self.position,
+                    self._prices,
+                    fast=self._signals.fast,
+                    local=self._local_target(),
                 )
                 if self._prices is not None
                 else None
@@ -765,6 +783,7 @@ async def forward(request: Request) -> Response:
                         tools=capabilities.tools,
                         images=capabilities.images,
                         context_tokens=capabilities.context_tokens,
+                        max_output_tokens=capabilities.max_output_tokens,
                     ),
                 )
             except ClientDisconnected:

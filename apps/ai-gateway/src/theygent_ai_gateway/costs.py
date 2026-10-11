@@ -36,7 +36,7 @@ from importlib import resources
 from typing import Any, Literal
 
 # ``base_model`` is shared with the control plane, which checks targets with it on save.
-from theygent_ir.gateway import ModelRates, SeatAllowance, Usage, base_model
+from theygent_ir.gateway import LocalRates, ModelRates, SeatAllowance, Usage, base_model
 
 PER_MILLION = 1_000_000
 Ttl = Literal["5m", "1h"]
@@ -201,6 +201,17 @@ class PriceBook:
             cache_write_1h_tokens=usage.cache_write_1h_tokens + (moved if ttl == "1h" else 0),
         )
         return self.cost(model, cold, fast=fast)
+
+
+def local_cost(rates: LocalRates | None, usage: Usage) -> float:
+    """What a local model's answer cost to run, at the rates an admin set for it; ``0.0`` for a
+    model without rates. A local engine reads every prompt token, so cached or not they count as
+    input."""
+    if rates is None:
+        return 0.0
+    prompt = usage.input_tokens + usage.cache_read_tokens
+    prompt += usage.cache_write_5m_tokens + usage.cache_write_1h_tokens
+    return (prompt * rates.input + usage.output_tokens * rates.output) / PER_MILLION
 
 
 def ttl_for(seconds: int) -> Ttl:

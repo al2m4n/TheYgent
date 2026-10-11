@@ -63,7 +63,11 @@ export function draftOf(config: GatewayConfig | null): GatewayConfigDraft {
     policy: {
       ...structuredClone(DEFAULT_POLICY),
       ...config.policy,
-      local_models: (config.policy.local_models ?? []).map((m) => ({ ...m })),
+      local_models: (config.policy.local_models ?? []).map((m) => ({
+        ...LOCAL_MODEL_DEFAULTS,
+        ...m,
+        rates: m.rates ? { ...m.rates } : null,
+      })),
       local_routing: {
         side_requests: { ...DEFAULT_POLICY.local_routing.side_requests, ...routing?.side_requests },
         subagents: { ...DEFAULT_POLICY.local_routing.subagents, ...routing?.subagents },
@@ -100,13 +104,34 @@ export function blankRow(): RateRow {
   };
 }
 
+/** What a listed local model's fields default to, as a control plane fills them in. */
+const LOCAL_MODEL_DEFAULTS = { max_output_tokens: 16_384, rates: null };
+
 /** One listed local model as the form holds it. */
 export interface LocalModelRow {
   model: string;
   /** Context size in tokens, as text. */
   context: string;
+  /** The most it writes in an agent turn, in tokens, as text. */
+  maxOutput: string;
   tools: boolean;
   images: boolean;
+  /** What running it costs, USD per million input and output tokens, as text ("" for none). */
+  inputRate: string;
+  outputRate: string;
+}
+
+/** A new row: nothing typed yet, the defaults a control plane would fill in. */
+export function blankLocalModel(): LocalModelRow {
+  return {
+    model: "",
+    context: "32768",
+    maxOutput: "16384",
+    tools: false,
+    images: false,
+    inputRate: "",
+    outputRate: "",
+  };
 }
 
 export type DialKind = "side_requests" | "subagents" | "main";
@@ -152,8 +177,11 @@ export function formOf(draft: GatewayConfigDraft): SettingsForm {
     localModels: draft.policy.local_models.map((m) => ({
       model: m.model,
       context: String(m.context_tokens),
+      maxOutput: String(m.max_output_tokens),
       tools: m.tools,
       images: m.images,
+      inputRate: m.rates ? String(m.rates.input) : "",
+      outputRate: m.rates ? String(m.rates.output) : "",
     })),
     dials: Object.fromEntries(
       DIAL_KINDS.map((kind) => {
@@ -220,7 +248,27 @@ export function draftFromForm(
     if (!Number.isInteger(context) || context < 1024) {
       errors[`local.${i}.context`] = "Tokens, 1024 or more.";
     }
-    localModels.push({ model, context_tokens: context, tools: row.tools, images: row.images });
+    const maxOutput = Number(row.maxOutput.trim());
+    if (!Number.isInteger(maxOutput) || maxOutput < 1024) {
+      errors[`local.${i}.maxOutput`] = "Tokens, 1024 or more.";
+    }
+    // Both rates, or neither: a model without them is not priced.
+    let rates: { input: number; output: number } | null = null;
+    if (row.inputRate.trim() !== "" || row.outputRate.trim() !== "") {
+      const input = rate(row.inputRate);
+      const output = rate(row.outputRate);
+      if (input === null) errors[`local.${i}.inputRate`] = "USD per million tokens, 0 or more.";
+      if (output === null) errors[`local.${i}.outputRate`] = "USD per million tokens, 0 or more.";
+      if (input !== null && output !== null) rates = { input, output };
+    }
+    localModels.push({
+      model,
+      context_tokens: context,
+      max_output_tokens: maxOutput,
+      tools: row.tools,
+      images: row.images,
+      rates,
+    });
   });
   const listed = new Set(localModels.map((m) => m.model));
   const dials = {} as GatewayConfigDraft["policy"]["local_routing"];
