@@ -264,6 +264,46 @@ describe("AI Gateway settings: the config", () => {
     });
   });
 
+  it("turns router mode on, and says when it would route nothing", async () => {
+    const calls = mockPlanes({
+      latest: () => json(config(3, { policy: { ...config(3).policy, subagent_target: null } })),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("radio", { name: /Router/ }));
+    expect(screen.getByText(/routes nothing/)).toBeInTheDocument();
+    await ui.type(screen.getByLabelText("Subagent target"), "claude-sonnet-5-5");
+    expect(screen.queryByText(/routes nothing/)).toBeNull();
+    await ui.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts(calls)).toHaveLength(1));
+    const body = puts(calls)[0].body as { mode: string; policy: { subagent_target: string } };
+    expect(body.mode).toBe("router");
+    expect(body.policy.subagent_target).toBe("claude-sonnet-5-5");
+  });
+
+  it("shows why the control plane refused a target", async () => {
+    mockPlanes({
+      put: () =>
+        json(
+          {
+            error: {
+              message:
+                "invalid gateway config: policy.subagent_target: this model rejects Claude Code's requests (adaptive thinking, effort)",
+              code: "invalid_gateway_config",
+            },
+          },
+          422,
+        ),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    const target = await screen.findByLabelText("Subagent target");
+    await ui.clear(target);
+    await ui.type(target, "claude-haiku-4-5");
+    await ui.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/rejects Claude Code's requests/)).toBeInTheDocument();
+  });
+
   it("says what is wrong instead of saving", async () => {
     const calls = mockPlanes();
     const ui = userEvent.setup();

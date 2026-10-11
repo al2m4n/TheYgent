@@ -234,14 +234,18 @@ function SessionTimeline({ sessionId, onBack }: { sessionId: string; onBack: () 
 }
 
 function SessionTotals({ totals }: { totals: GatewayTotals }) {
+  const routed = totals.applied_calls;
+  const wouldRoute = totals.routed_calls - routed;
   return (
     <p className="text-xs text-muted-foreground">
       {totals.calls.toLocaleString()} requests · {usd(totals.cost_usd)} spent ·{" "}
+      {routed > 0 && <>{usd(totals.baseline_usd)} without routing · </>}
       {usd(totals.with_routing_usd)} with routing ·{" "}
       <span className={totals.saving_usd > 0 ? "text-foreground" : ""}>
-        {usd(totals.saving_usd)} saving
-      </span>{" "}
-      · {totals.routed_calls.toLocaleString()} would route
+        {usd(totals.saving_usd)} {routed > 0 ? "saved" : "saving"}
+      </span>
+      {routed > 0 && ` · ${routed.toLocaleString()} routed`}
+      {wouldRoute > 0 && ` · ${wouldRoute.toLocaleString()} would route`}
     </p>
   );
 }

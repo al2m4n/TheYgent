@@ -1,8 +1,8 @@
 # Reports & policy
 
-What the AI Gateway page's figures mean, how the routing policy decides what *would* move, and
-how admins tune it. Nothing here changes a request: the gateway records each decision and leaves
-the traffic as Claude Code sent it.
+What the AI Gateway page's figures mean, how the routing policy decides what moves, and how admins
+tune it. In observer mode the gateway only records each decision; in router mode it also applies
+it — changing nothing but the model.
 
 ## The Report tab
 
@@ -106,7 +106,10 @@ the status is your decision, and saving one creates a new configuration version.
 
 ## Settings (admins)
 
-- **Mode** — observer or passthrough (see [AI Gateway](index.md#observer-and-passthrough)).
+- **Mode** — observer, router or passthrough (see
+  [AI Gateway](index.md#observer-router-and-passthrough)). Saving refuses a target no Claude Code
+  request could go to — a model the gateway has no data for, or one that rejects Claude Code's
+  requests, such as Haiku 4.5.
 - **Routing targets** — the Anthropic model a subagent could start on (for example
   `claude-sonnet-5-5`), the model for the main conversation at cold points (empty: never
   considered), and the local model for side requests the Catalog allows to run locally (a

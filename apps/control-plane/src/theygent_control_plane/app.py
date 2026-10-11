@@ -74,6 +74,7 @@ from theygent_ir.gateway import (
     GatewayTokenCheck,
     GatewayTokenCheckResult,
     Token,
+    target_problem,
 )
 from theygent_ir.graph import BindingName
 
@@ -5571,6 +5572,16 @@ def create_app(
                 status=422,
                 code="invalid_gateway_config",
             )
+        # A target no Claude Code request could go to would only ever show "target can't take
+        # it". Checked when an admin saves, never on read, so a version saved earlier still loads.
+        for name in ("subagent_target", "main_target"):
+            target = getattr(draft.policy, name)
+            if target is not None and (problem := target_problem(target)) is not None:
+                return _error(
+                    f"invalid gateway config: policy.{name}: {problem}",
+                    status=422,
+                    code="invalid_gateway_config",
+                )
         try:
             async with tx() as session:
                 config = await ai_gateway_store.update_config(

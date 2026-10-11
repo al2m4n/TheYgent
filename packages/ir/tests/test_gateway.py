@@ -562,6 +562,16 @@ def test_a_phase_one_record_still_validates_and_adds_up() -> None:
     assert GatewayTotals.of(record).baseline_usd == 0.5
 
 
+def test_which_targets_claude_codes_requests_could_go_to() -> None:
+    from theygent_ir.gateway import target_problem
+
+    assert target_problem("claude-sonnet-5-5") is None
+    assert target_problem("claude-opus-5-5[1m]") is None
+    assert "rejects" in (target_problem("claude-haiku-4-5") or "")
+    assert "no capability data" in (target_problem("claude-imaginary-9") or "")
+    assert "claude-imaginary-9" not in (target_problem("claude-imaginary-9") or "")
+
+
 def test_an_unpriced_call_is_counted_not_free() -> None:
     totals = GatewayTotals.of(_built(usage={"output_tokens": 3}))
     assert (totals.unpriced_calls, totals.cost_usd) == (1, 0.0)

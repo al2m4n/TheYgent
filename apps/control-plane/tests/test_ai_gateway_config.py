@@ -183,6 +183,38 @@ def test_a_config_the_gateway_would_refuse_is_refused(client: TestClient, body: 
     assert client.get("/gateway/config").status_code == 404
 
 
+@pytest.mark.parametrize(
+    ("policy", "says"),
+    [
+        ({"subagent_target": "claude-haiku-4-5"}, "rejects Claude Code's requests"),
+        ({"main_target": "claude-haiku-4-5[1m]"}, "rejects Claude Code's requests"),
+        ({"subagent_target": "claude-imaginary-9"}, "no capability data"),
+    ],
+)
+def test_a_target_no_claude_code_request_could_go_to_is_refused(
+    client: TestClient, policy: dict[str, str], says: str
+) -> None:
+    refused = put(client, {"mode": "router", "policy": policy})
+    assert refused.status_code == 422
+    error = refused.json()["error"]
+    assert error["code"] == "invalid_gateway_config"
+    assert says in error["message"] and f"policy.{next(iter(policy))}" in error["message"]
+    assert next(iter(policy.values())).split("[")[0] not in error["message"]  # no echo
+    assert client.get("/gateway/config").status_code == 404
+
+
+def test_router_mode_with_a_measured_target_saves(client: TestClient) -> None:
+    saved = put(
+        client,
+        {
+            "mode": "router",
+            "policy": {"subagent_target": "claude-sonnet-5-5", "main_target": "claude-sonnet-5-5"},
+        },
+    )
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["mode"] == "router"
+
+
 def test_signed_in_users_and_gateways_read_only_admins_write(
     client: TestClient, service_key: str
 ) -> None:

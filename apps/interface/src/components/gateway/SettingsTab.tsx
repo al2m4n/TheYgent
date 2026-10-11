@@ -64,6 +64,12 @@ const MODES: { value: SettingsForm["mode"]; label: string; detail: string }[] = 
       "Records every exchange — its cost and what routing would have done — without changing it.",
   },
   {
+    value: "router",
+    label: "Router",
+    detail:
+      "Applies those decisions: routed requests run on the target model. A target that refuses one sends it back to the model Claude Code asked for, unseen.",
+  },
+  {
     value: "passthrough",
     label: "Passthrough",
     detail: "Forwards traffic without recording anything.",
@@ -250,13 +256,12 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
                 .
               </NoteBanner>
             )}
-            {save.error && !conflict && <ErrorBanner error={save.error} />}
 
             <fieldset className="min-w-0 space-y-2">
               <legend className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Mode
               </legend>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="grid gap-2 sm:grid-cols-3">
                 {MODES.map((m) => (
                   <label
                     key={m.value}
@@ -279,13 +284,21 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
               </div>
             </fieldset>
 
+            {form.mode === "router" && !form.subagentTarget.trim() && !form.mainTarget.trim() && (
+              <NoteBanner>
+                Router mode with no subagent or main conversation target routes nothing: set a
+                target below (for Opus 5.5 traffic, <code>claude-sonnet-5-5</code>).
+              </NoteBanner>
+            )}
+
             <fieldset className="min-w-0 space-y-3">
               <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Routing targets
               </legend>
               <p className="text-xs text-muted-foreground">
-                In observer mode nothing is routed: these decide what the Report and Sessions show
-                routing would have saved. Leave a target empty to never consider it.
+                Where routing may send a request: in observer mode they decide what the Report and
+                Sessions show routing would save, in router mode where requests actually go. Leave a
+                target empty to never consider it.
               </p>
               <div className="grid gap-3 md:grid-cols-2">
                 {TARGETS.map((t) => (
@@ -325,6 +338,8 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
               onChange={(rates) => update({ rates })}
             />
 
+            {/* Beside the button that caused it: the form is long, and its top may be out of view. */}
+            {save.error && !conflict && <ErrorBanner error={save.error} />}
             <div className="flex flex-wrap items-center justify-end gap-2">
               {showErrors && built.errors && (
                 <span className="text-xs text-destructive">Fix the fields marked above.</span>

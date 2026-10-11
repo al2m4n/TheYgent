@@ -120,7 +120,13 @@ One step in a [graph](#graph): a typed box with a config, in-[ports](#port), and
 
 ### Observer mode
 
-The [AI gateway](#ai-gateway) mode that records every exchange — its cost and what routing would have done — without changing it. Its counterpart, *passthrough*, forwards without recording. See [AI Gateway](../ai-gateway/index.md#observer-and-passthrough).
+The [AI gateway](#ai-gateway) mode that records every exchange — its cost and what routing would have done — without changing it. Its counterpart, *passthrough*, forwards without recording. See [AI Gateway](../ai-gateway/index.md#observer-router-and-passthrough).
+
+### Router mode
+
+The [AI gateway](#ai-gateway) mode that applies the routing decisions observer mode only records: a
+routed request runs on the target model, with nothing else changed. See
+[AI Gateway](../ai-gateway/index.md#observer-router-and-passthrough).
 
 ### Orchestration
 

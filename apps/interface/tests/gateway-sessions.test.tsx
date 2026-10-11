@@ -245,6 +245,33 @@ describe("AI Gateway sessions", () => {
     expect(await screen.findByText("routing saved $0.1200")).toBeInTheDocument();
   });
 
+  it("totals a routed session as routed, not as would-route", async () => {
+    mockControlPlane({
+      detail: () => ({
+        session_id: "aaaaaaaa-1111",
+        developer_id: "usr_dev",
+        totals: totals({
+          calls: 7,
+          cost_usd: 0.3015,
+          baseline_usd: 0.4425,
+          with_routing_usd: 0.3015,
+          saving_usd: 0.141,
+          routed_calls: 3,
+          applied_calls: 3,
+        }),
+        requests: TIMELINE,
+        truncated: false,
+      }),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: "Open session aaaaaaaa-1111" }));
+    const summary = await screen.findByText(/without routing/);
+    expect(summary).toHaveTextContent("$0.4425 without routing");
+    expect(summary).toHaveTextContent("$0.1410 saved · 3 routed");
+    expect(summary).not.toHaveTextContent("would route");
+  });
+
   it("gives admins everyone's sessions", async () => {
     const asked = mockControlPlane({ role: "admin" });
     renderTab();

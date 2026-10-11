@@ -29,7 +29,8 @@ from dataclasses import dataclass
 from importlib import resources
 from typing import Literal
 
-from theygent_ir.gateway import ModelRates, SeatAllowance, Usage
+# ``base_model`` is shared with the control plane, which checks targets with it on save.
+from theygent_ir.gateway import ModelRates, SeatAllowance, Usage, base_model
 
 PER_MILLION = 1_000_000
 Ttl = Literal["5m", "1h"]
@@ -50,11 +51,6 @@ class Rates:
         return cls(
             rates.input, rates.output, rates.cache_write_5m, rates.cache_write_1h, rates.cache_read
         )
-
-
-def base_model(model: str) -> str:
-    """``claude-opus-5-5[1m]`` and ``claude-opus-5-5`` are priced alike."""
-    return model.split("[", 1)[0]
 
 
 class PriceBook:

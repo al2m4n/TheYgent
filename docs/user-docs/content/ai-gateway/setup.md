@@ -96,12 +96,12 @@ it the way you distribute Claude Code's managed settings today.
 
 ## Claude Code's own cost display
 
-Claude Code prices every token at the model it **asked for**. While the gateway only observes,
-that is also the model that answered, so Claude Code's figures and the gateway's agree (at list
-prices — the gateway also applies any contracted rates an admin entered). Once
-requests run on a different model than the one requested, Claude Code's own cost display and
-usage summary overstate spend: the AI Gateway **Report**, which records the model that actually
-served each request, is the figure to trust. On a subscription, dollar figures are the
+Claude Code prices every token at the model it **asked for**. In observer mode that is also the
+model that answered, so Claude Code's figures and the gateway's agree (at list prices — the
+gateway also applies any contracted rates an admin entered). In **router** mode, routed requests
+run on a cheaper model, but Claude Code still prices them at the model it asked for: its own cost
+display and usage summary overstate spend. The AI Gateway **Report**, which records the model that
+actually served each request, is the figure to trust. On a subscription, dollar figures are the
 API-equivalent value of the traffic, not a bill — the Report shows plan usage separately.
 
 ## Check that it works

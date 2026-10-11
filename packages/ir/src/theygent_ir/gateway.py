@@ -19,6 +19,7 @@ None of these models is part of an agent's IR, so nothing here touches a ``conte
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -118,6 +119,46 @@ class _GatewayWire(BaseModel):
     """Base: snake_case on the wire, unknown keys rejected, immutable once built."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, protected_namespaces=())
+
+
+def base_model(model: str) -> str:
+    """``claude-opus-5-5[1m]`` and ``claude-opus-5-5`` are the same model at another context."""
+    return model.split("[", 1)[0]
+
+
+@dataclass(frozen=True)
+class TargetCapabilities:
+    """What an Anthropic model accepts of Claude Code's request shape."""
+
+    adaptive_thinking: bool
+    effort: bool
+    max_output_tokens: int
+    mid_conversation_system: bool
+    context_tokens: int
+
+
+#: Published or measured per model (Haiku 4.5's row is the spike's measured rejections). A model
+#: missing here is never a routing target: no data is no evidence a request would work.
+TARGET_CAPABILITIES: dict[str, TargetCapabilities] = {
+    "claude-fable-5-1": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-opus-5-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-opus-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-opus-4-8": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-sonnet-5-5": TargetCapabilities(True, True, 128_000, True, 1_000_000),
+    "claude-sonnet-5": TargetCapabilities(True, True, 128_000, False, 1_000_000),
+    "claude-haiku-4-5": TargetCapabilities(False, False, 64_000, False, 200_000),
+}
+
+
+def target_problem(model: str) -> str | None:
+    """Why ``model`` could never take Claude Code's conversation or subagent requests, or ``None``.
+    The message names no value: it is safe to return to whoever chose the model."""
+    capabilities = TARGET_CAPABILITIES.get(base_model(model))
+    if capabilities is None:
+        return "the gateway has no capability data for this model, so it would never route to it"
+    if not (capabilities.adaptive_thinking and capabilities.effort):
+        return "this model rejects Claude Code's requests (adaptive thinking, effort)"
+    return None
 
 
 def _check_logical_id(model: str | None) -> None:

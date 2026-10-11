@@ -30,6 +30,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, replace
 
 from theygent_ir.gateway import (
+    TARGET_CAPABILITIES,
     Decision,
     DecisionAction,
     FingerprintStatus,
@@ -54,27 +55,8 @@ DEFAULT_MAX_CONVERSATIONS = 10_000
 _BOUNDARY_REASONS: frozenset[ReasonCode] = frozenset({"cold_cache_boundary", "subagent_at_spawn"})
 
 
-@dataclass(frozen=True)
-class Capabilities:
-    """What a target model accepts, for the request-shape check."""
-
-    adaptive_thinking: bool
-    effort: bool
-    max_output_tokens: int
-    mid_conversation_system: bool
-    context_tokens: int
-
-
-#: Observed or published per model. Haiku 4.5's row is the spike's measured rejections.
-CAPABILITIES: dict[str, Capabilities] = {
-    "claude-fable-5-1": Capabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-5-5": Capabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-5": Capabilities(True, True, 128_000, True, 1_000_000),
-    "claude-opus-4-8": Capabilities(True, True, 128_000, True, 1_000_000),
-    "claude-sonnet-5-5": Capabilities(True, True, 128_000, True, 1_000_000),
-    "claude-sonnet-5": Capabilities(True, True, 128_000, False, 1_000_000),
-    "claude-haiku-4-5": Capabilities(False, False, 64_000, False, 200_000),
-}
+#: Shared with the control plane, which refuses a target no request could go to when it is saved.
+CAPABILITIES = TARGET_CAPABILITIES
 
 
 @dataclass(frozen=True)

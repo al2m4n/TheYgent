@@ -31,7 +31,8 @@ export function Gateway() {
         <h1 className="text-lg font-semibold text-foreground">AI Gateway</h1>
         <p className="text-xs text-muted-foreground">
           Sits between Claude Code and its models: records what every exchange cost and what routing
-          would have saved. It sees prompts; the control plane receives only metadata.
+          would save — and, in router mode, routes to cheaper models. It sees prompts; the control
+          plane receives only metadata.
         </p>
       </div>
 

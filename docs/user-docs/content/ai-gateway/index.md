@@ -1,22 +1,24 @@
 # AI Gateway
 
 The AI Gateway sits between **Claude Code** — the CLI, IDE extensions, and the desktop app — and
-the Anthropic API. It forwards every request untouched and records what each exchange cost, what
-it would have cost if subagents and cold-cache turns had run on a cheaper model, and why each
-request was or wasn't a candidate. You see where your team's model spend goes, per day, model,
-developer and session, before you move anything.
+the Anthropic API. It records what each exchange cost, what it would have cost if subagents and
+cold-cache turns had run on a cheaper model, and why each request was or wasn't a candidate — and,
+once you choose to, it **routes** them there. You see where your team's model spend goes, per day,
+model, developer and session, before you move anything.
 
-!!! note "What it does today: it observes"
-    Every request reaches Anthropic exactly as Claude Code sent it. The gateway works out what a
-    routing policy *would* do with each request and reports what that would have saved; it does
-    not route anything yet. Your Claude Code sessions behave the same with or without it — the
-    one setting the setup adds that changes Claude Code's own behavior, [tool search](setup.md#why-each-setting),
+!!! note "Observe first, then route"
+    In **observer** mode every request reaches Anthropic exactly as Claude Code sent it; the
+    gateway reports what routing *would* save. When those figures convince you, an admin switches
+    to **router** mode, and the saving becomes real: a subagent asking for Opus 5.5 runs on
+    Sonnet 5.5, for example. Only the model changes — never the prompt — and a model that refuses
+    a request hands it back to the one Claude Code asked for before Claude Code notices. The one
+    setting the setup adds that changes Claude Code's own behavior, [tool search](setup.md#why-each-setting),
     turns back on what a custom gateway address otherwise turns off.
 
 ## What you get
 
-- **Spend and what routing would save** — per day, request class (main conversation, subagents,
-  compaction, side requests), model, client, developer and session. See
+- **Spend and what routing would save — or saved** — per day, request class (main
+  conversation, subagents, compaction, side requests), model, client, developer and session. See
   [Reports & policy](reports.md).
 - **Session timelines** — every request of a Claude Code session in order, with what the
   policy would have done and the reasons, in plain words.
@@ -50,12 +52,16 @@ everyone's; other roles see organization totals without individual detail.
 [Running the gateway](running.md) covers both, on a machine, in Docker Compose, and in
 Kubernetes.
 
-## Observer and passthrough
+## Observer, router and passthrough
 
 An admin chooses the gateway's **mode** on the AI Gateway **Settings** tab:
 
 - **Observer** records every exchange — its cost and what routing would have done — without
   changing it.
+- **Router** records every exchange and applies the routing decisions: routed requests run on the
+  target model, with the rest of the request exactly as Claude Code sent it. A target that refuses
+  a request sends it back to the requested model, unseen, and that conversation stays there until
+  its cache goes cold. Switching back to observer stops routing within one heartbeat (30 seconds).
 - **Passthrough** forwards traffic without recording anything.
 
 A gateway attached to the control plane forwards in passthrough until an admin saves a
@@ -71,6 +77,10 @@ personal gateway on its own records from the start.
    key, and copies the setup for their terminal, IDE or desktop app —
    [Set up Claude Code](setup.md).
 4. **Work as usual** — then watch **Overview**, **Report** and **Sessions**.
+5. **Route** — when the Report's saving is one you want, an admin selects **Router** on the
+   Settings tab (with a subagent target such as `claude-sonnet-5-5`). The Report then shows what
+   routing *saved*, against what the same traffic would have cost on the models Claude Code asked
+   for.
 
 ## The AI Gateway page
 
