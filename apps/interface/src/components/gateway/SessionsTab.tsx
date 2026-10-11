@@ -213,6 +213,13 @@ function SessionTimeline({ sessionId, onBack }: { sessionId: string; onBack: () 
       ) : first ? (
         <>
           <SessionTotals totals={first.totals} />
+          {first.archived_requests > 0 && (
+            <p className="text-xs text-muted-foreground">
+              {first.archived_requests.toLocaleString()} earlier{" "}
+              {first.archived_requests === 1 ? "request is" : "requests are"} archived: counted in
+              the totals above, no longer listed below.
+            </p>
+          )}
           <ol className="space-y-2" aria-label="Session timeline">
             {requests.map((r) => (
               <TimelineRow key={r.id} entry={r} offsetMs={Date.parse(r.started_at) - start} />

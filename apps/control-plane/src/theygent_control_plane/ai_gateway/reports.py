@@ -1,8 +1,14 @@
 """Reports over the AI gateway's records: totals, groupings, sessions and their timelines.
 
-Totals are aggregated in SQL by ``TOTALS``, the column-by-column translation of
-``GatewayTotals.of`` (the one definition the gateway's own report also sums). The test suite seeds
-records and checks the SQL against the Python definition, so the two cannot drift silently.
+Every figure is a sum over *units*: one per request row for the days still kept in detail, and
+the per-day aggregates for the days whose request rows were archived (before ``archived_before``
+on ``ai_gateway_state``). A request row's unit is ``CONTRIB`` — ``GatewayTotals.of`` translated
+column by column, the one definition the gateway's own report also sums — and an aggregate row
+already holds those sums, keyed by every dimension a report groups by. So a report reads the same
+before and after its days are archived; the test suite checks both against the Python definition.
+What only request rows hold — setup warnings, seat readings, the prices used, a session's
+timeline — covers the days kept in detail. Archived days count whole: a window starting inside one
+includes all of it.
 
 Who sees what is decided by the caller (the API layer) as a ``Scope``: every record, or one
 developer's. The functions here only apply it.
@@ -12,17 +18,30 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import BigInteger, Float, Select, and_, case, func, literal, or_, select, text
+from sqlalchemy import (
+    BigInteger,
+    Float,
+    Select,
+    and_,
+    case,
+    func,
+    literal,
+    or_,
+    select,
+    text,
+    union_all,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import QueryableAttribute
 from sqlalchemy.sql.elements import ColumnElement
 from theygent_ir.gateway import TOOL_SEARCH_OFF_MIN_TOOLS, GatewayTotals, SetupWarningCode
 
+from theygent_control_plane.models import AiGatewayDailyUsageRow as D
 from theygent_control_plane.models import AiGatewayRequestRow as R
+from theygent_control_plane.models import AiGatewayStateRow
 
 #: How a group key reads when the record has no value for it (as in the gateway's own report).
 NONE_KEY = "(none)"
@@ -40,53 +59,159 @@ _ANSWERED = R.shadow["outcome"].astext == "answered"
 _SHADOW_COST = func.coalesce(R.shadow["cost_usd"].astext.cast(Float), 0.0)
 _SHADOW_OUTPUT = func.coalesce(R.shadow["usage"]["output_tokens"].astext.cast(BigInteger), 0)
 
-#: ``GatewayTotals.of`` summed, field by field.
-TOTALS: dict[str, ColumnElement[Any]] = {
-    "calls": func.count(),
-    "errors": func.count().filter(_FAILED),
-    "input_tokens": func.coalesce(func.sum(R.input_tokens), 0),
-    "output_tokens": func.coalesce(func.sum(R.output_tokens), 0),
-    "cache_read_tokens": func.coalesce(func.sum(R.cache_read_tokens), 0),
-    "cache_write_5m_tokens": func.coalesce(func.sum(R.cache_write_5m_tokens), 0),
-    "cache_write_1h_tokens": func.coalesce(func.sum(R.cache_write_1h_tokens), 0),
-    "cost_usd": func.coalesce(func.sum(_COST), 0.0),
-    "unpriced_calls": func.count().filter(and_(R.cost_usd.is_(None), _TOKENS > 0)),
-    "baseline_usd": func.coalesce(func.sum(func.coalesce(R.baseline_usd, _COST)), 0.0),
-    "with_routing_usd": func.coalesce(
-        func.sum(
-            case(
-                (and_(_ROUTED, R.counterfactual_usd.is_not(None)), R.counterfactual_usd),
-                else_=_COST,
-            )
-        ),
-        0.0,
+#: One request row's contribution, field by field: ``GatewayTotals.of`` in SQL.
+CONTRIB: dict[str, ColumnElement[Any]] = {
+    "calls": literal(1),
+    "errors": case((_FAILED, 1), else_=0),
+    "input_tokens": R.input_tokens,
+    "output_tokens": R.output_tokens,
+    "cache_read_tokens": R.cache_read_tokens,
+    "cache_write_5m_tokens": R.cache_write_5m_tokens,
+    "cache_write_1h_tokens": R.cache_write_1h_tokens,
+    "cost_usd": _COST,
+    "unpriced_calls": case((and_(R.cost_usd.is_(None), _TOKENS > 0), 1), else_=0),
+    "baseline_usd": func.coalesce(R.baseline_usd, _COST),
+    "with_routing_usd": case(
+        (and_(_ROUTED, R.counterfactual_usd.is_not(None)), R.counterfactual_usd), else_=_COST
     ),
-    "routed_calls": func.count().filter(_ROUTED),
-    "applied_calls": func.count().filter(_APPLIED),
-    "routed_tokens": func.coalesce(func.sum(case((_ROUTED, _TOKENS), else_=0)), 0),
-    "routed_local_calls": func.count().filter(_LOCAL),
-    "routed_local_tokens": func.coalesce(func.sum(case((_LOCAL, _TOKENS), else_=0)), 0),
-    "shadow_calls": func.count().filter(_SHADOWED),
-    "shadow_answered_calls": func.count().filter(_ANSWERED),
-    "shadow_cost_usd": func.coalesce(func.sum(case((_SHADOWED, _SHADOW_COST), else_=0.0)), 0.0),
-    "shadow_output_tokens": func.coalesce(func.sum(case((_ANSWERED, _SHADOW_OUTPUT), else_=0)), 0),
-    "shadowed_output_tokens": func.coalesce(
-        func.sum(case((_ANSWERED, R.output_tokens), else_=0)), 0
-    ),
+    "routed_calls": case((_ROUTED, 1), else_=0),
+    "applied_calls": case((_APPLIED, 1), else_=0),
+    "routed_tokens": case((_ROUTED, _TOKENS), else_=0),
+    "routed_local_calls": case((_LOCAL, 1), else_=0),
+    "routed_local_tokens": case((_LOCAL, _TOKENS), else_=0),
+    "shadow_calls": case((_SHADOWED, 1), else_=0),
+    "shadow_answered_calls": case((_ANSWERED, 1), else_=0),
+    "shadow_cost_usd": case((_SHADOWED, _SHADOW_COST), else_=0.0),
+    "shadow_output_tokens": case((_ANSWERED, _SHADOW_OUTPUT), else_=0),
+    "shadowed_output_tokens": case((_ANSWERED, R.output_tokens), else_=0),
 }
+_FLOATS = frozenset({"cost_usd", "baseline_usd", "with_routing_usd", "shadow_cost_usd"})
+#: The unit columns every report dimension reads, ``''`` for a missing value (as the aggregates
+#: store it).
+_KEYS = (
+    "day",
+    "developer_id",
+    "client",
+    "request_class",
+    "requested_model",
+    "served_model",
+    "decision_target",
+    "session_id",
+    "reason",
+)
+
+
+async def archived_before(session: AsyncSession) -> date | None:
+    """The first UTC day whose request rows are all still kept; ``None``: nothing archived."""
+    return (
+        await session.execute(
+            select(AiGatewayStateRow.archived_before).where(AiGatewayStateRow.id == 1)
+        )
+    ).scalar_one_or_none()
+
+
+def _midnight(day: date) -> datetime:
+    return datetime.combine(day, time(), UTC)
+
+
+def _units(
+    scope: Scope,
+    since: datetime | None,
+    until: datetime | None,
+    archived: date | None,
+    *,
+    session_id: str | None = None,
+) -> Any:
+    """The units of a report: request rows kept in detail, and aggregates for archived days."""
+    kept = select(
+        func.to_char(func.timezone("UTC", R.started_at), "YYYY-MM-DD").label("day"),
+        func.coalesce(R.developer_id, "").label("developer_id"),
+        func.coalesce(R.client, "").label("client"),
+        R.request_class.label("request_class"),
+        func.coalesce(R.requested_model, "").label("requested_model"),
+        func.coalesce(R.served_model, "").label("served_model"),
+        case((_ROUTED, func.coalesce(R.decision_target_model, "")), else_="").label(
+            "decision_target"
+        ),
+        func.coalesce(R.session_id, "").label("session_id"),
+        func.coalesce(R.decision_reasons.op("->>")(0), "").label("reason"),
+        R.started_at.label("first_at"),
+        R.started_at.label("last_at"),
+        *(expr.label(name) for name, expr in CONTRIB.items()),
+    )
+    if since is not None:
+        kept = kept.where(R.started_at >= since)
+    if until is not None:
+        kept = kept.where(R.started_at < until)
+    if archived is not None:
+        kept = kept.where(R.started_at >= _midnight(archived))
+    if scope.developer_id is not None:
+        kept = kept.where(R.developer_id == scope.developer_id)
+    if session_id is not None:
+        kept = kept.where(R.session_id == session_id)
+    if archived is None or (since is not None and since >= _midnight(archived)):
+        return kept.subquery("units")
+    summarized = select(
+        func.to_char(D.day, "YYYY-MM-DD").label("day"),
+        *(D.__table__.c[name] for name in _KEYS[1:]),
+        D.first_at,
+        D.last_at,
+        *(D.__table__.c[name] for name in CONTRIB),
+    ).where(D.day < archived)
+    if since is not None:
+        summarized = summarized.where(D.day >= since.astimezone(UTC).date())
+    if until is not None:
+        summarized = summarized.where(
+            D.day <= (until.astimezone(UTC) - timedelta(microseconds=1)).date()
+        )
+    if scope.developer_id is not None:
+        summarized = summarized.where(D.developer_id == scope.developer_id)
+    if session_id is not None:
+        summarized = summarized.where(D.session_id == session_id)
+    return union_all(kept, summarized).subquery("units")
+
+
+def _sums(units: Any) -> dict[str, ColumnElement[Any]]:
+    """``GatewayTotals`` over units, field by field."""
+    return {
+        name: func.coalesce(func.sum(units.c[name]), 0.0 if name in _FLOATS else 0)
+        for name in CONTRIB
+    }
+
+
+def _dimensions(units: Any) -> dict[str, ColumnElement[Any]]:
+    """Report dimensions over units, named as in the gateway's own report, plus ``day`` (UTC)."""
+    c = units.c
+    return {
+        "class": c.request_class,
+        "client": func.nullif(c.client, ""),
+        "session": func.nullif(c.session_id, ""),
+        "model": func.nullif(c.requested_model, ""),
+        "served-model": func.nullif(c.served_model, ""),
+        "developer": func.nullif(c.developer_id, ""),
+        "decision": case(
+            (c.decision_target == "", literal("stay")),
+            else_=literal("route:") + c.decision_target,
+        ),
+        "reason": func.nullif(c.reason, ""),
+        "day": c.day,
+    }
+
 
 #: Report dimensions, named as in the gateway's own report, plus ``day`` (UTC).
-DIMENSIONS: dict[str, ColumnElement[Any] | QueryableAttribute[Any]] = {
-    "class": R.request_class,
-    "client": R.client,
-    "session": R.session_id,
-    "model": R.requested_model,
-    "served-model": R.served_model,
-    "developer": R.developer_id,
-    "decision": case((_ROUTED, literal("route:") + R.decision_target_model), else_=literal("stay")),
-    "reason": R.decision_reasons.op("->>")(0),
-    "day": func.to_char(func.timezone("UTC", R.started_at), "YYYY-MM-DD"),
-}
+DIMENSIONS: tuple[str, ...] = (
+    "class",
+    "client",
+    "session",
+    "model",
+    "served-model",
+    "developer",
+    "decision",
+    "reason",
+    "day",
+)
+#: ``GatewayTotals`` field by field, as the report sums them.
+TOTALS = CONTRIB
 #: Dimensions that single out a person or their work: admin-only across the organization.
 IDENTIFYING = frozenset({"developer", "session"})
 
@@ -153,6 +278,9 @@ class Report(BaseModel):
     #: tokens under the requested one).
     served_differs: bool
     warnings: list[SetupWarning]
+    #: Days before this one were archived: the figures sum their daily aggregates, and warnings,
+    #: seats and prices cover only the days after it. ``None``: every day in detail.
+    summarized_before: date | None = None
     #: Per developer; empty when the reader may not see individuals.
     seats: list[SeatUse]
 
@@ -166,43 +294,41 @@ async def build_report(
     dimensions: Sequence[str],
     include_seats: bool = True,
 ) -> Report:
+    archived = await archived_before(session)
+    units = _units(scope, since, until, archived)
+    sums = _sums(units)
+    c = units.c
     total_row = (
         await session.execute(
-            _where(
-                select(
-                    *(expr.label(name) for name, expr in TOTALS.items()),
-                    func.min(R.started_at).label("first"),
-                    func.max(R.started_at).label("last"),
-                    func.bool_or(
-                        and_(
-                            R.served_model.is_not(None),
-                            R.requested_model.is_not(None),
-                            R.served_model != R.requested_model,
-                        )
-                    ).label("served_differs"),
-                ),
-                scope,
-                since,
-                until,
+            select(
+                *(expr.label(name) for name, expr in sums.items()),
+                func.min(c.first_at).label("first"),
+                func.max(c.last_at).label("last"),
+                func.bool_or(
+                    and_(
+                        c.served_model != "",
+                        c.requested_model != "",
+                        c.served_model != c.requested_model,
+                    )
+                ).label("served_differs"),
             )
         )
     ).one()
+    dims = _dimensions(units)
     groups: dict[str, list[dict[str, Any]]] = {}
     for dimension in dimensions:
-        key = func.coalesce(DIMENSIONS[dimension], NONE_KEY).label("key")
+        key = func.coalesce(dims[dimension], NONE_KEY).label("key")
         rows = await session.execute(
-            _where(
-                select(key, *(expr.label(name) for name, expr in TOTALS.items())),
-                scope,
-                since,
-                until,
-            )
+            select(key, *(expr.label(name) for name, expr in sums.items()))
             .group_by(key)
-            .order_by(TOTALS["cost_usd"].desc(), TOTALS["calls"].desc(), key)
+            .order_by(sums["cost_usd"].desc(), sums["calls"].desc(), key)
         )
         groups[dimension] = [{"key": row.key, **totals_json(_totals(row))} for row in rows]
+    # Prices, warnings and seat readings live on request rows: the days kept in detail.
+    summarized = archived is not None and since < _midnight(archived)
+    kept_since = max(since, _midnight(archived)) if archived is not None else since
     versions = await session.execute(
-        _where(select(R.pricing_version).distinct(), scope, since, until).where(
+        _where(select(R.pricing_version).distinct(), scope, kept_since, until).where(
             R.pricing_version.is_not(None)
         )
     )
@@ -216,8 +342,9 @@ async def build_report(
         groups=groups,
         pricing_versions=sorted(v for (v,) in versions),
         served_differs=bool(total_row.served_differs),
-        warnings=await _warnings(session, scope, since, until),
-        seats=await _seats(session, scope, since, until) if include_seats else [],
+        warnings=await _warnings(session, scope, kept_since, until),
+        seats=await _seats(session, scope, kept_since, until) if include_seats else [],
+        summarized_before=archived if summarized else None,
     )
 
 
@@ -363,24 +490,22 @@ async def list_sessions(
 ) -> list[SessionSummary]:
     """Sessions with activity in the range, the most recently active first. ``before`` pages:
     sessions last active before that instant."""
-    last_at = func.max(R.started_at)
+    units = _units(scope, since, until, await archived_before(session))
+    sums = _sums(units)
+    c = units.c
+    last_at = func.max(c.last_at)
     stmt = (
-        _where(
-            select(
-                R.session_id,
-                R.developer_id,
-                func.max(R.client).label("client"),
-                func.min(R.started_at).label("first_at"),
-                last_at.label("last_at"),
-                *(expr.label(name) for name, expr in TOTALS.items()),
-            ),
-            scope,
-            since,
-            until,
+        select(
+            c.session_id,
+            func.nullif(c.developer_id, "").label("developer_id"),
+            func.max(func.nullif(c.client, "")).label("client"),
+            func.min(c.first_at).label("first_at"),
+            last_at.label("last_at"),
+            *(expr.label(name) for name, expr in sums.items()),
         )
-        .where(R.session_id.is_not(None))
-        .group_by(R.session_id, R.developer_id)
-        .order_by(last_at.desc(), R.session_id.desc())
+        .where(c.session_id != "")
+        .group_by(c.session_id, c.developer_id)
+        .order_by(last_at.desc(), c.session_id.desc())
         .limit(limit)
     )
     if before is not None:
@@ -433,6 +558,8 @@ class SessionDetail(BaseModel):
     requests: list[TimelineEntry]
     #: More requests follow; ask again with ``after`` set to the last one's ``id``.
     truncated: bool
+    #: Requests of this session on archived days: in its totals, not in its timeline.
+    archived_requests: int = 0
 
 
 async def session_detail(
@@ -444,20 +571,27 @@ async def session_detail(
     after: str | None,
 ) -> SessionDetail | None:
     """A session's requests in the order they started (ties by id), from just past the request
-    ``after`` names. ``None`` when the scope holds no request of that session."""
-    owner_filter = R.session_id == session_id
-    if scope.developer_id is not None:
-        owner_filter = and_(owner_filter, R.developer_id == scope.developer_id)
+    ``after`` names. ``None`` when the scope holds no request of that session. Its totals include
+    requests on archived days, which its timeline no longer lists."""
+    archived = await archived_before(session)
+    units = _units(scope, None, None, archived, session_id=session_id)
+    sums = _sums(units)
     summary = (
         await session.execute(
             select(
-                func.max(R.developer_id).label("developer_id"),
-                *(expr.label(name) for name, expr in TOTALS.items()),
-            ).where(owner_filter)
+                func.max(func.nullif(units.c.developer_id, "")).label("developer_id"),
+                *(expr.label(name) for name, expr in sums.items()),
+            )
         )
     ).one()
     if not summary.calls:
         return None
+    owner_filter = R.session_id == session_id
+    if scope.developer_id is not None:
+        owner_filter = and_(owner_filter, R.developer_id == scope.developer_id)
+    if archived is not None:
+        owner_filter = and_(owner_filter, R.started_at >= _midnight(archived))
+    kept = (await session.execute(select(func.count()).where(owner_filter))).scalar_one()
     stmt = select(R).where(owner_filter).order_by(R.started_at, R.id).limit(limit + 1)
     if after is not None:
         cursor = select(R.started_at).where(R.id == after).scalar_subquery()
@@ -469,6 +603,7 @@ async def session_detail(
         totals=totals_json(_totals(summary)),
         requests=[_entry(row) for row in rows[:limit]],
         truncated=len(rows) > limit,
+        archived_requests=int(summary.calls) - int(kept),
     )
 
 

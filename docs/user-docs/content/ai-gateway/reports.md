@@ -96,6 +96,12 @@ Haiku 4.5, or for a model with no known price, stays as *target not cheaper*.
 of tokens. Models differ in how much they write, so treat savings as estimates; the actual
 figures are exact.
 
+**Archived days.** Requests older than the retention period (90 days by default) are archived:
+the Report reads those days from daily totals, so every figure and grouping stays the same. Its
+footer says from which day that applies. Setup warnings, seat readings and the prices used cover
+only the days still kept in detail. A Sessions timeline lists only the requests still kept in
+detail, and its totals still count every request.
+
 **Prices.** Figures use Anthropic's published list prices. The Report's footer names the date
 they were read (*Prices: 2026-10-11*), and TheYgent checks for changes every week. Requests in
 Claude Code's fast mode are priced at fast-mode rates. A model priced by prompt length, such as

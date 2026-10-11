@@ -36,7 +36,7 @@ Published agents are immutable, content-addressed versions. See [Drafts & publis
 | GET | `/agents/{id}` | One agent with its versions, newest first. |
 | POST | `/agents/{id}/versions` | Publish a new version. Identical content under an existing version is an idempotent `200`; different content under the same version → `409 version_conflict`. |
 | GET | `/agents/{id}/versions/{version}` | The full stored IR + canvas layout for one version. |
-| GET / PUT | `/agents/{id}/io-policy` | Read/set the per-agent I/O capture policy. PUT body `{io_capture, io_retention_seconds?, redact_rules?}`. Setting it never changes the content hash. |
+| GET / PUT | `/agents/{id}/io-policy` | Read/set the per-agent I/O capture policy. PUT body `{io_capture, io_retention_seconds?, redact_rules?}`; `io_retention_seconds` is a positive number of seconds after which captured payloads are deleted (omit it to follow the platform's `telemetry.io_retention_days`). Setting it never changes the content hash. |
 | DELETE | `/agents/{id}` | Delete the whole agent: **all** its versions, its triggers (schedules stop firing), and its I/O policy, in one step. `204`; unknown id → `404 agent_not_found`. Past runs, chats, and drafts survive — they keep the agent id and content hash as breadcrumbs. |
 
 Individual versions are immutable — there is no endpoint to edit or delete a *single* version. Deleting the agent removes every version at once; there is no delete for runs.
@@ -273,6 +273,7 @@ What the [AI Gateway](../ai-gateway/index.md) page uses. Everyone manages their 
 | GET | `/gateway/instances` | Each gateway's latest heartbeat (offline after 120 s). |
 | GET / PUT | `/gateway/developers` · `/gateway/developers/{user_id}` | Every account's billing (admin) · set one: `{"credential_profile": "org_key"}` (or `"passthrough"`). |
 | POST / GET / DELETE | `/gateway/service-keys` · `/gateway/service-keys/{id}` | Gateways' service keys (admin; the `tygs_…` token is in the create response only). |
+| GET | `/gateway/archive` · `/gateway/archive/{day}` | The archived days, with their request counts and sizes · one day's records as gzip-compressed JSON lines, exactly as the gateway sent them (admin; `404 archive_not_found`, `400 invalid_day`). |
 
 ```bash
 curl "http://localhost:8080/gateway/report?since=2026-10-01T00:00:00Z&by=day,model" \

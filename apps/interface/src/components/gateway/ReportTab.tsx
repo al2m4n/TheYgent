@@ -266,6 +266,13 @@ function ReportBody({
         {report.pricing_versions.join(", ") || "none recorded"}. On a subscription, dollars are
         API-equivalent value, not a bill. Claude Code's own cost display assumes the model it
         requested; where the gateway served another, these figures are the true ones.
+        {report.summarized_before && (
+          <>
+            {" "}
+            Days before {report.summarized_before} are archived: their figures come from daily
+            totals, without setup warnings, seat readings or the prices used.
+          </>
+        )}
       </p>
     </div>
   );

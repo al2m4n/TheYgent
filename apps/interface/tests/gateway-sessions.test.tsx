@@ -349,6 +349,25 @@ describe("AI Gateway sessions", () => {
     expect(screen.getByText(/0\.1200 saving/)).toBeInTheDocument();
   });
 
+  it("says how many of a session's requests are archived", async () => {
+    mockControlPlane({
+      detail: () => ({
+        session_id: "aaaaaaaa-1111",
+        developer_id: "usr_dev",
+        totals: totals({ calls: 9 }),
+        requests: TIMELINE,
+        truncated: false,
+        archived_requests: 4,
+      }),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: "Open session aaaaaaaa-1111" }));
+    expect(
+      await screen.findByText(/4 earlier requests are archived: counted in the totals above/),
+    ).toBeInTheDocument();
+  });
+
   it("continues a long timeline past its last request", async () => {
     const asked = mockControlPlane({
       detail: (u) => ({

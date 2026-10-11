@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import asyncpg
+import pytest
 from _db import plain_dsn
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -75,7 +78,7 @@ async def _tables(url: str) -> set[str]:
             "'secret', 'connection', 'gate_counter', 'platform_setting', "
             "'ai_gateway_request', 'ai_gateway_daily_usage', 'ai_gateway_instance', "
             "'ai_gateway_config', 'ai_gateway_fingerprint', 'ai_gateway_developer', "
-            "'ai_gateway_state'"
+            "'ai_gateway_state', 'ai_gateway_request_archive'"
         )
         rows = await conn.fetch(
             f"SELECT to_regclass('public.' || t) AS reg FROM unnest(ARRAY[{names}]) AS t"
@@ -148,6 +151,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "gate_counter",
             "platform_setting",
             *AI_GATEWAY_TABLES,
+            "ai_gateway_request_archive",
         }  # built
         # Column-level proof for the trigger-related run columns (a column add/drop is
         # invisible to the table-set check above, so the round-trip could silently regress
@@ -194,6 +198,7 @@ def test_migration_round_trip(pg_url: str) -> None:
             "gate_counter",
             "platform_setting",
             *AI_GATEWAY_TABLES,
+            "ai_gateway_request_archive",
         }  # rebuilt
         assert {"trigger_id", "completed_at"} <= asyncio.run(_run_columns(scratch))  # cols rebuilt
     finally:
@@ -321,7 +326,7 @@ def test_the_ai_gateway_models_match_the_migrated_schema(pg_url: str) -> None:
         finally:
             await engine.dispose()
 
-    watched = AI_GATEWAY_TABLES | {"api_key"}
+    watched = AI_GATEWAY_TABLES | {"api_key", "ai_gateway_request_archive"}
     relevant = [d for d in asyncio.run(compare()) if _diff_tables(d) & watched]
     assert relevant == []
     # Autogenerate does not compare primary keys; the daily aggregates' composite key matters.
@@ -443,6 +448,139 @@ def test_catalog_stats_migration_single_step_down_up(pg_url: str) -> None:
         assert review <= asyncio.run(_catalog_columns(scratch))
         command.upgrade(cfg, "head")
         assert asyncio.run(_catalog_columns(scratch)).isdisjoint(review)
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+        asyncio.run(_drop_scratch(pg_url))
+
+
+def _retention_records() -> list[Any]:
+    """Request records across two days, two sessions, three reasons and a shadow run."""
+    from theygent_ir.gateway import GatewayRequestRecord
+
+    day = datetime(2026, 10, 9, 10, tzinfo=UTC)
+    route = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "counterfactual_usd": 0.001,
+    }
+    shadow = {
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "outcome": "answered",
+        "usage": {"output_tokens": 40},
+        "cost_usd": 0.0005,
+    }
+
+    def rec(n: int, when: datetime, **fields: Any) -> Any:
+        return GatewayRequestRecord.model_validate(
+            {
+                "id": f"rec_{n:05d}",
+                "gateway_id": "gw",
+                "started_at": when,
+                "endpoint": "messages",
+                "status": 200,
+                "outcome": "complete",
+                "credential_kind": "api_key",
+                "credential_profile": "passthrough",
+                "request_class": "main",
+                "requested_model": "claude-opus-5-5",
+                "served_model": "claude-opus-5-5",
+                "usage": {"input_tokens": 10 * n, "output_tokens": 50},
+                "cost_usd": 0.01 * n,
+                "decision": {"action": "stay", "reasons": ["mid_conversation"]},
+                **fields,
+            }
+        )
+
+    return [
+        rec(1, day, session_id="s-1"),
+        rec(2, day + timedelta(minutes=5), session_id="s-1"),
+        rec(
+            3,
+            day + timedelta(minutes=6),
+            session_id="s-1",
+            request_class="subagent",
+            decision=route,
+            shadow=shadow,
+        ),
+        rec(4, day + timedelta(hours=2), session_id="s-2", outcome="upstream_broke"),
+        rec(
+            5,
+            day + timedelta(days=1),
+            session_id="s-2",
+            decision={"action": "stay", "reasons": ["cold_cache_boundary"]},
+        ),
+        rec(6, day + timedelta(days=1, minutes=1), cost_usd=None),
+    ]
+
+
+async def _insert_requests(url: str, records: list[Any]) -> None:
+    import json
+
+    from theygent_control_plane.ai_gateway.store import _request_row
+
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        for record in records:
+            row = _request_row(record, service_key_id=None, received_at=record.started_at)
+            columns = list(row)
+            values = [json.dumps(v) if isinstance(v, (dict, list)) else v for v in row.values()]
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(columns)))
+            await conn.execute(
+                f"INSERT INTO ai_gateway_request ({', '.join(columns)}) VALUES ({placeholders})",
+                *values,
+            )
+    finally:
+        await conn.close()
+
+
+async def _daily_rows(url: str) -> list[dict[str, Any]]:
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        return [dict(r) for r in await conn.fetch("SELECT * FROM ai_gateway_daily_usage")]
+    finally:
+        await conn.close()
+
+
+def test_retention_migration_rebuilds_the_daily_aggregates_exactly(pg_url: str) -> None:
+    # 0025 widens the daily key (session, reason) and rebuilds every row from the request rows; the
+    # rebuild is SQL frozen in the migration, checked here against GatewayTotals.of.
+    from theygent_control_plane.ai_gateway.store import DAILY_KEY_COLUMNS, daily_key
+    from theygent_ir.gateway import GatewayTotals
+
+    records = _retention_records()
+    scratch = _scratch_url(pg_url)
+    asyncio.run(_recreate_scratch(pg_url))
+    previous = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = scratch
+        cfg = Config(str(_ALEMBIC_INI))
+        command.upgrade(cfg, "0024_ai_gateway_shadows")
+        asyncio.run(_insert_requests(scratch, records))
+        command.upgrade(cfg, "0025_ai_gateway_retention")
+        expected: dict[tuple[Any, ...], GatewayTotals] = {}
+        for record in records:
+            key = daily_key(record)
+            expected[key] = expected.get(key, GatewayTotals()) + GatewayTotals.of(record)
+        stored = asyncio.run(_daily_rows(scratch))
+        assert len(stored) == len(expected) == 5
+        for row in stored:
+            key = tuple(row[c] for c in DAILY_KEY_COLUMNS)
+            got = GatewayTotals.model_validate({f: row[f] for f in GatewayTotals.model_fields})
+            assert got.model_dump() == pytest.approx(expected[key].model_dump()), key
+            starts = [r.started_at for r in records if daily_key(r) == key]
+            assert (row["first_at"], row["last_at"]) == (min(starts), max(starts))
+        # Down a step: the narrower key, the same sums.
+        command.downgrade(cfg, "-1")
+        narrow = asyncio.run(_daily_rows(scratch))
+        assert "session_id" not in narrow[0] and len(narrow) == 3
+        assert sum(r["calls"] for r in narrow) == len(records)
+        assert sum(r["cost_usd"] for r in narrow) == pytest.approx(0.15)
+        command.upgrade(cfg, "head")
+        assert len(asyncio.run(_daily_rows(scratch))) == 5
     finally:
         if previous is None:
             os.environ.pop("DATABASE_URL", None)

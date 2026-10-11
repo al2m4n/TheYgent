@@ -29,11 +29,14 @@ async def truncate(url: str) -> None:
             "platform_setting, "
             "ai_gateway_request, ai_gateway_daily_usage, ai_gateway_instance, "
             "ai_gateway_config, ai_gateway_fingerprint, ai_gateway_developer, "
+            "ai_gateway_request_archive, "
             "auth_identity, auth_session, api_key, auth_provider, user_account "
             "RESTART IDENTITY CASCADE"
         )
         # ai_gateway_state is not truncated: its single row is seeded by the migration and
         # its version only ever moves forward, so a test reads it relative to its own start.
+        # The archive watermark goes with the archive it describes.
+        await conn.execute("UPDATE ai_gateway_state SET archived_before = NULL")
     finally:
         await conn.close()
     # Wiping user_account kills any bearer the suite cached from an earlier sign-in — its

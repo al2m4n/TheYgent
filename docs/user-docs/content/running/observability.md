@@ -128,6 +128,15 @@ The response reports both what you asked for and what actually happens, so you c
 !!! note "Changing capture does not change the agent"
     Setting a capture policy does **not** mint a new agent version — the policy lives beside the agent, not inside its hashed graph, so the [content hash](../concepts/versioning.md) is unchanged. The level is resolved once per run, not per node. An inline graph run with no published agent uses the topology default.
 
+### How long payloads are kept
+
+Captured payloads are kept until you choose otherwise. To expire them, give an agent its own
+retention in its capture policy, `io_retention_seconds` (a positive number of seconds; for example
+`{"io_capture": "full", "io_retention_seconds": 604800}` keeps a week). Or set **Settings →
+Telemetry → io retention days**, which covers every agent without a retention of its own (0, the
+default, keeps everything). Once an hour the control plane deletes payloads older than that. The
+run, its timing and its spans stay. Only the inputs and outputs go.
+
 ### The size cap
 
 Individual payloads are capped so a single huge value can't bloat the store. The cap is `THEYGENT_IO_CAPTURE_MAX_BYTES`, default `262144` (256 KiB). An over-cap value is not dropped — it is stored as a preview plus its true byte size, and the inspector shows an amber note: "Payload truncated to the capture cap (the byte counts are the true sizes)."

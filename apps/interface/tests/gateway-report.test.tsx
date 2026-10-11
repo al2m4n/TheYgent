@@ -85,6 +85,7 @@ function reportBody(over: Record<string, unknown> = {}) {
     served_differs: true,
     warnings: [{ code: "tool_search_off", calls: 2, values: [] }],
     seats: [],
+    summarized_before: null,
     ...over,
   };
 }
@@ -273,6 +274,14 @@ describe("AI Gateway report", () => {
     const localRow = within(table).getByText("aux-local").closest("tr");
     expect(localRow?.textContent).toContain("—"); // nothing usable to compare
     expect(within(table).queryByText("stay")).toBeNull();
+  });
+
+  it("says from when the figures come from archived daily totals", async () => {
+    mockControlPlane("admin", () => json(reportBody({ summarized_before: "2026-07-13" })));
+    renderTab();
+    expect(
+      await screen.findByText(/Days before 2026-07-13 are archived: their figures come from daily/),
+    ).toBeInTheDocument();
   });
 
   it("has no shadow runs section without shadow runs", async () => {

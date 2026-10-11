@@ -48,6 +48,7 @@ export function TelemetryTab({ form }: { form: PlatformSettingsForm }) {
         <div className="mt-2">
           {row("telemetry.io_capture")}
           {row("telemetry.io_capture_max_bytes")}
+          {row("telemetry.io_retention_days")}
         </div>
       </Card>
 

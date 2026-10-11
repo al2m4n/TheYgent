@@ -136,8 +136,20 @@ class Developer(BaseModel):
     updated_by: str | None = None
 
 
-#: A day's aggregates are keyed by these, with ``''`` for a missing value.
-DailyKey = tuple[date, str, str, str, str, str, str]
+#: A day's aggregates are keyed by these, with ``''`` for a missing value: day, developer,
+#: client, class, requested and served model, decision target, session, first reason.
+DailyKey = tuple[date, str, str, str, str, str, str, str, str]
+DAILY_KEY_COLUMNS = (
+    "day",
+    "developer_id",
+    "client",
+    "request_class",
+    "requested_model",
+    "served_model",
+    "decision_target",
+    "session_id",
+    "reason",
+)
 _TOTAL_FIELDS = tuple(GatewayTotals.model_fields)
 
 
@@ -200,6 +212,68 @@ def _request_row(
     }
 
 
+def record_from_row(row: AiGatewayRequestRow) -> GatewayRequestRecord:
+    """The record a gateway sent, read back from its row (what the archive keeps)."""
+    target = (
+        {"kind": row.decision_target_kind, "model": row.decision_target_model}
+        if row.decision_target_kind is not None
+        else None
+    )
+    return GatewayRequestRecord.model_validate(
+        {
+            "id": row.id,
+            "gateway_id": row.gateway_id,
+            "config_version": row.config_version,
+            "started_at": row.started_at,
+            "endpoint": row.endpoint,
+            "status": row.status,
+            "outcome": row.outcome,
+            "error_type": row.error_type,
+            "developer_id": row.developer_id,
+            "credential_kind": row.credential_kind,
+            "credential_profile": row.credential_profile,
+            "client": row.client,
+            "client_version": row.client_version,
+            "session_id": row.session_id,
+            "agent_id": row.agent_id,
+            "parent_agent_id": row.parent_agent_id,
+            "agent_type": row.agent_type,
+            "prompt_id": row.prompt_id,
+            "request_class": row.request_class,
+            "request_class_raw": row.request_class_raw,
+            "compaction": row.compaction,
+            "context_compacted": row.context_compacted,
+            "fingerprint": row.fingerprint,
+            "shares_main_prefix": row.shares_main_prefix,
+            "shape": row.shape,
+            "requested_model": row.requested_model,
+            "served_model": row.served_model,
+            "stop_reason": row.stop_reason,
+            "tool_use_count": row.tool_use_count,
+            "usage": {
+                "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens,
+                "cache_read_tokens": row.cache_read_tokens,
+                "cache_write_5m_tokens": row.cache_write_5m_tokens,
+                "cache_write_1h_tokens": row.cache_write_1h_tokens,
+            },
+            "timing": row.timing,
+            "seat_allowance": row.seat_allowance,
+            "cost_usd": row.cost_usd,
+            "baseline_usd": row.baseline_usd,
+            "pricing_version": row.pricing_version,
+            "decision": {
+                "action": row.decision_action,
+                "target": target,
+                "reasons": row.decision_reasons,
+                "counterfactual_usd": row.counterfactual_usd,
+                "applied": row.decision_applied,
+            },
+            "shadow": row.shadow,
+        }
+    )
+
+
 def daily_key(record: GatewayRequestRecord) -> DailyKey:
     decision = record.decision
     target = decision.target.model if decision.action == "route" and decision.target else ""
@@ -211,6 +285,8 @@ def daily_key(record: GatewayRequestRecord) -> DailyKey:
         record.requested_model or "",
         record.served_model or "",
         target,
+        record.session_id or "",
+        decision.reasons[0],
     )
 
 
@@ -481,23 +557,19 @@ class AiGatewayStore:
         self, session: AsyncSession, records: list[GatewayRequestRecord], now: datetime
     ) -> None:
         totals: dict[DailyKey, GatewayTotals] = {}
+        spans: dict[DailyKey, tuple[datetime, datetime]] = {}
         for record in records:
             key = daily_key(record)
             totals[key] = totals.get(key, GatewayTotals()) + GatewayTotals.of(record)
-        names = (
-            "day",
-            "developer_id",
-            "client",
-            "request_class",
-            "requested_model",
-            "served_model",
-            "decision_target",
-        )
+            first, last = spans.get(key, (record.started_at, record.started_at))
+            spans[key] = (min(first, record.started_at), max(last, record.started_at))
         statement = insert(AiGatewayDailyUsageRow).values(
             [
                 {
-                    **dict(zip(names, key, strict=True)),
+                    **dict(zip(DAILY_KEY_COLUMNS, key, strict=True)),
                     **totals[key].model_dump(),
+                    "first_at": spans[key][0],
+                    "last_at": spans[key][1],
                     "updated_at": now,
                 }
                 for key in sorted(totals)
@@ -509,6 +581,8 @@ class AiGatewayStore:
                 constraint="pk_ai_gateway_daily_usage",
                 set_={
                     **{f: table.c[f] + statement.excluded[f] for f in _TOTAL_FIELDS},
+                    "first_at": func.least(table.c.first_at, statement.excluded.first_at),
+                    "last_at": func.greatest(table.c.last_at, statement.excluded.last_at),
                     "updated_at": statement.excluded.updated_at,
                 },
             )

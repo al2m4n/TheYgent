@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     PrimaryKeyConstraint,
     SmallInteger,
     String,
@@ -896,10 +897,12 @@ class AiGatewayRequestRow(Base):
 
 
 class AiGatewayDailyUsageRow(Base):
-    """Per-day (UTC) aggregates by developer, client, class, requested and served model, and
-    decision target, maintained as records arrive. Long-range reports read these; they outlive
-    the request rows' retention. A missing dimension value is ``''`` (the key cannot hold NULL),
-    and ``decision_target`` ``''`` means the decision was to stay."""
+    """Per-day (UTC) aggregates by every dimension a report groups by — developer, client, class,
+    requested and served model, decision target, session and first reason — maintained as records
+    arrive. Reports read them for the days whose request rows were archived (``archived_before``
+    on ``ai_gateway_state``), so archiving loses nothing a report shows. A missing dimension value
+    is ``''`` (the key cannot hold NULL), and ``decision_target`` ``''`` means the decision was to
+    stay. ``first_at``/``last_at`` bound the requests the row sums."""
 
     __tablename__ = "ai_gateway_daily_usage"
 
@@ -926,6 +929,10 @@ class AiGatewayDailyUsageRow(Base):
     routed_tokens: Mapped[int] = mapped_column(BigInteger)
     routed_local_calls: Mapped[int] = mapped_column(BigInteger)
     routed_local_tokens: Mapped[int] = mapped_column(BigInteger)
+    session_id: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    first_at: Mapped[datetime] = mapped_column(_TZ)
+    last_at: Mapped[datetime] = mapped_column(_TZ)
     shadow_calls: Mapped[int] = mapped_column(BigInteger)
     shadow_answered_calls: Mapped[int] = mapped_column(BigInteger)
     shadow_cost_usd: Mapped[float] = mapped_column(Float)
@@ -942,9 +949,29 @@ class AiGatewayDailyUsageRow(Base):
             "requested_model",
             "served_model",
             "decision_target",
+            "session_id",
+            "reason",
             name="pk_ai_gateway_daily_usage",
         ),
+        Index("ix_ai_gateway_daily_usage_session", "session_id"),
     )
+
+
+class AiGatewayRequestArchiveRow(Base):
+    """Request rows moved out of ``ai_gateway_request`` once older than the retention period: the
+    records exactly as gateways sent them (``GatewayRequestRecord``), one JSON line each,
+    gzip-compressed. A day may span several chunks (late records archive later); concatenated, a
+    day's chunks are one valid gzip stream."""
+
+    __tablename__ = "ai_gateway_request_archive"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    day: Mapped[date] = mapped_column(Date)
+    record_count: Mapped[int] = mapped_column(Integer)
+    records: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("ix_ai_gateway_request_archive_day", "day"),)
 
 
 class AiGatewayInstanceRow(Base):
@@ -1017,3 +1044,6 @@ class AiGatewayStateRow(Base):
 
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
     key_set_version: Mapped[int] = mapped_column(BigInteger)
+    #: Request rows that started before this UTC day were archived; reports read those days from
+    #: the daily aggregates. ``None``: nothing archived yet.
+    archived_before: Mapped[date | None] = mapped_column(Date, nullable=True)

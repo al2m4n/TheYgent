@@ -11,6 +11,13 @@ import { SettingsTab } from "../src/components/gateway/SettingsTab";
 import { AI_GATEWAY_URL, CONTROL_PLANE_URL } from "../src/lib/api";
 import { AuthProvider } from "../src/lib/auth";
 import { notify } from "../src/lib/notify";
+import { saveBlob } from "../src/lib/transfer";
+
+// The browser's save-to-disk is not jsdom's to perform.
+vi.mock("../src/lib/transfer", async (original) => ({
+  ...(await original<typeof import("../src/lib/transfer")>()),
+  saveBlob: vi.fn(),
+}));
 
 const HOUR_AGO = new Date(Date.now() - 3_600_000).toISOString();
 const ORG_KEY = "sk-ant-api03-canary-org-key-value";
@@ -102,6 +109,30 @@ interface Mock {
   serviceKeys?: unknown[];
   developerProfile?: string;
   gateway?: (path: string, method: string, body: unknown) => Response;
+  archive?: { archived_before: string | null; days: unknown[] };
+}
+
+const RETENTION = "ai_gateway.request_retention_days";
+
+function retentionEntry(value: number) {
+  return {
+    key: RETENTION,
+    value,
+    stored_value: value === 90 ? null : value,
+    default: 90,
+    type: "int",
+    source: value === 90 ? "default" : "stored",
+    env_var: null,
+    env_pinned: false,
+    env_capped: false,
+    env_cap_value: null,
+    apply: "live",
+    restart_pending: false,
+    stored_invalid: false,
+    constraints: { min: 0, max: 3650 },
+    description: "Keep each AI gateway request in detail for this many days.",
+    group: "ai_gateway",
+  };
 }
 
 function mockPlanes({
@@ -114,6 +145,7 @@ function mockPlanes({
   serviceKeys = [SERVICE_KEY],
   developerProfile = "passthrough",
   gateway = () => json(credentials()),
+  archive = { archived_before: null, days: [] },
 }: Mock = {}): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -169,6 +201,22 @@ function mockPlanes({
       }
       if (parsed.pathname.startsWith("/gateway/developers/") && method === "PUT") {
         return json({ user_id: parsed.pathname.split("/").at(-1), ...(body as object) });
+      }
+      if (parsed.pathname === "/settings") {
+        const stored = method === "PATCH" ? (body as Record<string, unknown>)[RETENTION] : null;
+        return json({
+          settings: [retentionEntry((stored as number | null) ?? 90)],
+          boot: [],
+          orphaned: [],
+          ...(method === "PATCH" ? { apply_errors: {} } : {}),
+        });
+      }
+      if (parsed.pathname === "/gateway/archive") return json(archive);
+      if (parsed.pathname.startsWith("/gateway/archive/")) {
+        return new Response(new Blob(["{}\n"]), {
+          status: 200,
+          headers: { "content-type": "application/gzip" },
+        });
       }
       if (parsed.pathname === "/gateway/developers") {
         return json({
@@ -695,5 +743,48 @@ describe("AI Gateway settings: developers' billing", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(calls.some((c) => c.path.startsWith("/gateway/developers/"))).toBe(false);
     expect(screen.getByLabelText("Billing for ada")).toHaveValue("org_key");
+  });
+
+  describe("request records", () => {
+    it("sets how long requests are kept in detail", async () => {
+      const calls = mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      const days = await screen.findByLabelText(RETENTION);
+      expect(days).toHaveValue(90);
+      expect(screen.getByText("Nothing archived yet.")).toBeInTheDocument();
+      await ui.clear(days);
+      await ui.type(days, "30");
+      await ui.click(screen.getByRole("button", { name: "Save change" }));
+      await waitFor(() =>
+        expect(calls.filter((c) => c.path === "/settings" && c.method === "PATCH")).toHaveLength(1),
+      );
+      const [patch] = calls.filter((c) => c.path === "/settings" && c.method === "PATCH");
+      expect(patch.body).toEqual({ [RETENTION]: 30 });
+    });
+
+    it("downloads an archived day", async () => {
+      const calls = mockPlanes({
+        archive: {
+          archived_before: "2026-07-03",
+          days: [
+            { day: "2026-07-02", records: 1240, chunks: 1, bytes: 98_304 },
+            { day: "2026-07-01", records: 812, chunks: 2, bytes: 2_048 },
+          ],
+        },
+      });
+      const ui = userEvent.setup();
+      renderTab();
+      const table = await screen.findByRole("table", { name: "Archived days" });
+      expect(within(table).getByText("1,240")).toBeInTheDocument();
+      expect(within(table).getByText("96.0 KB")).toBeInTheDocument();
+      await ui.click(within(table).getByRole("button", { name: "Download 2026-07-01" }));
+      await waitFor(() =>
+        expect(vi.mocked(saveBlob).mock.calls.map(([, name]) => name)).toEqual([
+          "ai-gateway-requests-2026-07-01.jsonl.gz",
+        ]),
+      );
+      expect(calls.some((c) => c.path === "/gateway/archive/2026-07-01")).toBe(true);
+    });
   });
 });

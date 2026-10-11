@@ -140,6 +140,13 @@ delivered yet (so nothing is lost while the control plane is down), the last kno
 developers' keys as one-way digests (never the keys themselves), and a stored organization key.
 Every file is readable by its owner only.
 
+The control plane keeps each request in detail for 90 days by default (**AI Gateway → Settings →
+Request records**; 0 keeps everything). After that, a whole day at a time moves to a compressed
+archive in the same database. Reports read archived days from daily totals that keep every
+grouping, so no figure changes. Only those days' per-request timelines leave the Sessions tab,
+and the card lists each archived day for download. A day's records arrive as JSON lines, one
+record each, exactly as the gateway sent it.
+
 ## Related pages
 
 - [Environment variables](../reference/environment.md#ai-gateway) — every gateway setting.

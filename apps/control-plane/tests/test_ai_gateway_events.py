@@ -30,7 +30,7 @@ from _db import plain_dsn
 from _fake_inference import FakeInference
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from theygent_control_plane.ai_gateway.store import daily_key
+from theygent_control_plane.ai_gateway.store import DAILY_KEY_COLUMNS, daily_key
 from theygent_control_plane.app import create_app
 from theygent_control_plane.auth import ApiKeyKind, AuthStore, Role
 from theygent_ir.gateway import GatewayRequestRecord, GatewayTotals
@@ -232,17 +232,16 @@ def test_daily_usage_is_the_shared_totals(
     stored = rows(pg_url, "SELECT * FROM ai_gateway_daily_usage")
     assert len(stored) == len(expected)
     for row in stored:
-        key = (
-            row["day"],
-            row["developer_id"],
-            row["client"],
-            row["request_class"],
-            row["requested_model"],
-            row["served_model"],
-            row["decision_target"],
-        )
+        key = tuple(row[column] for column in DAILY_KEY_COLUMNS)
         totals = GatewayTotals.model_validate({f: row[f] for f in GatewayTotals.model_fields})
         assert totals.model_dump() == pytest.approx(expected[key].model_dump()), key
+        # Each row spans exactly the requests it sums.
+        starts = [
+            GatewayRequestRecord.model_validate(raw).started_at
+            for raw in records
+            if daily_key(GatewayRequestRecord.model_validate(raw)) == key
+        ]
+        assert (row["first_at"], row["last_at"]) == (min(starts), max(starts)), key
     days = {row["day"] for row in stored}
     assert days == {date(2026, 10, 10), date(2026, 10, 11)}
     assert {row["decision_target"] for row in stored} == {"", "aux-local", "claude-sonnet-5-5"}

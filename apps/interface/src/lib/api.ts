@@ -800,7 +800,7 @@ export type SettingType =
   | "list[registry]"
   | "secret";
 export type SettingSource = "env" | "stored" | "default";
-export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth";
+export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth" | "ai_gateway";
 
 /** The read shape of a `secret` value: presence + non-secret names only. */
 export interface SensitiveValue {
@@ -1258,6 +1258,23 @@ export interface GatewayReport {
   warnings: { code: GatewaySetupWarningCode; calls: number; values: string[] }[];
   /** Per developer; empty where individuals may not be seen. */
   seats: GatewaySeatUse[];
+  /** Days before this one were archived: summed from daily totals, without warnings, seats or
+   *  prices. ``null``: every day in detail. */
+  summarized_before: string | null;
+}
+
+/** One archived day of AI gateway request records. */
+export interface GatewayArchiveDay {
+  day: string;
+  records: number;
+  chunks: number;
+  bytes: number;
+}
+
+export interface GatewayArchive {
+  /** Request rows before this UTC day are archived. */
+  archived_before: string | null;
+  days: GatewayArchiveDay[];
 }
 
 /** Why the routing policy decided what it did — a closed vocabulary (theygent_ir.gateway). */
@@ -1347,6 +1364,8 @@ export interface GatewaySessionDetail {
   requests: GatewayTimelineEntry[];
   /** More requests follow: ask again with ``after`` set to the last one's id. */
   truncated: boolean;
+  /** Requests on archived days: in the totals, not in the timeline. */
+  archived_requests: number;
 }
 
 export type GatewayKnownKind = "quota_check" | "main_prefix_side_request" | "session_title";
@@ -2342,6 +2361,14 @@ export const api = {
     ),
   /** Totals and groupings for a time range. ``scope`` "mine" is the caller's own records; "org"
    *  is everyone's (totals and non-identifying groupings below admin). */
+  getGatewayArchive: () => request<GatewayArchive>(controlPlaneUrl(), "/gateway/archive"),
+  downloadGatewayArchive: async (day: string): Promise<Blob> => {
+    const res = await fetch(`${controlPlaneUrl()}/gateway/archive/${encodeURIComponent(day)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw await toError(res);
+    return res.blob();
+  },
   getGatewayReport: (params: {
     since: string;
     until?: string;

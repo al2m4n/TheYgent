@@ -10,7 +10,7 @@
 // the control plane refuses (412) and the page says so instead of silently replacing their work.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, ServerCog, Trash2, Users } from "lucide-react";
+import { Archive, Download, KeyRound, Plus, ServerCog, Trash2, Users } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ApiError,
@@ -35,8 +35,12 @@ import {
   formOf,
 } from "../../lib/gatewayConfig";
 import { notify } from "../../lib/notify";
+import { saveBlob } from "../../lib/transfer";
 import { CopySnippet } from "../CopySnippet";
 import { TimeAgo } from "../TimeAgo";
+import { SaveBar } from "../settings/SaveBar";
+import { SettingRow } from "../settings/SettingField";
+import { usePlatformSettingsForm } from "../settings/useSettingsForm";
 import {
   Badge,
   ConfirmDialog,
@@ -55,7 +59,14 @@ import { Checkbox } from "../ui/checkbox";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
 import { NativeSelect, NativeSelectOption } from "../ui/native-select";
 import { Skeleton } from "../ui/skeleton";
-import { TableBody, TableHeader, TableRow } from "../ui/table";
+import {
+  Table as DataTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table";
 
 const MODES: { value: SettingsForm["mode"]; label: string; detail: string }[] = [
   {
@@ -115,6 +126,7 @@ export function SettingsTab() {
             <OrgKeyCard />
             <DevelopersCard />
             <ServiceKeysCard />
+            <RecordsCard />
           </>
         }
       />
@@ -1074,6 +1086,91 @@ function DevelopersCard() {
           onCancel={() => setChanging(null)}
         />
       )}
+    </Card>
+  );
+}
+
+// ── request records: retention and the archive ──────────────────────────────
+
+const RETENTION_KEY = "ai_gateway.request_retention_days";
+
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function RecordsCard() {
+  const form = usePlatformSettingsForm();
+  const archive = useQuery({
+    queryKey: ["gatewayArchive"],
+    queryFn: () => api.getGatewayArchive(),
+  });
+  const download = useMutation({
+    mutationFn: async (day: string) =>
+      saveBlob(await api.downloadGatewayArchive(day), `ai-gateway-requests-${day}.jsonl.gz`),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+  });
+  const entry = form.entry(RETENTION_KEY);
+  const days = archive.data?.days ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Archive size={16} /> Request records
+        </CardTitle>
+        <CardDescription>
+          Each request is kept in detail for the days below, then moves to a compressed archive.
+          Reports read archived days from daily totals, so no figure changes; only those days'
+          per-request timelines leave the Sessions tab. An archived day downloads as JSON lines, one
+          record each, exactly as the gateway sent it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-4">
+        {form.loadError && !form.data ? (
+          <ErrorBanner error={form.loadError} />
+        ) : entry ? (
+          <SettingRow entry={entry} form={form} />
+        ) : (
+          <Skeleton className="h-12 rounded-lg" />
+        )}
+        <SaveBar form={form} group="ai_gateway" />
+        <ErrorBanner error={archive.error} />
+        {archive.isPending ? null : days.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nothing archived yet.</p>
+        ) : (
+          <DataTable aria-label="Archived days">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Day (UTC)</TableHead>
+                <TableHead className="text-right">Requests</TableHead>
+                <TableHead className="text-right">Size</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {days.map((d) => (
+                <TableRow key={d.day}>
+                  <TableCell className="font-mono text-xs">{d.day}</TableCell>
+                  <TableCell className="text-right">{d.records.toLocaleString()}</TableCell>
+                  <TableCell className="text-right">{size(d.bytes)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Download ${d.day}`}
+                      disabled={download.isPending}
+                      onClick={() => download.mutate(d.day)}
+                    >
+                      <Download size={14} /> Download
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+        )}
+      </CardContent>
     </Card>
   );
 }

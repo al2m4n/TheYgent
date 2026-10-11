@@ -32,7 +32,7 @@ import re
 import shutil
 import time
 from collections.abc import AsyncIterator, Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
 from urllib.parse import urljoin
@@ -50,6 +50,7 @@ from fastapi.responses import (
 )
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -130,6 +131,7 @@ from theygent_control_plane.mcp.registry import (
     build_install,
     builtin_registries,
 )
+from theygent_control_plane.models import AiGatewayRequestArchiveRow
 from theygent_control_plane.observability import (
     INPROC_EXECUTOR,
     CaptureLevel,
@@ -144,6 +146,8 @@ from theygent_control_plane.rag.parse import supported_extension
 from theygent_control_plane.rag.retrieve import RetrievalError
 from theygent_control_plane.rag.store import RagSourceKind
 from theygent_control_plane.reasoning import ThinkSplitter, split_think
+from theygent_control_plane.retention import DEFAULT_INTERVAL_S as DEFAULT_RETENTION_INTERVAL_S
+from theygent_control_plane.retention import RetentionSweeper
 from theygent_control_plane.run import _SECRETISH_CONFIG_KEYS as _SECRETISH_CONFIG_KEYS
 from theygent_control_plane.run import (
     BenchCase,
@@ -396,7 +400,9 @@ class IoPolicyRequest(BaseModel):
     # default, surfaced in the response so the UI shows the real behavior, not a lie. Keyed to the
     # STABLE agent id — editing it never changes the agent's contentHash (immutability of versions).
     io_capture: CaptureLevel
-    io_retention_seconds: int | None = None
+    #: Captured I/O older than this many seconds is deleted; ``None`` follows the platform's
+    #: ``telemetry.io_retention_days`` (0 there: keep).
+    io_retention_seconds: int | None = Field(default=None, ge=1)
     redact_rules: dict[str, Any] | None = None
 
 
@@ -896,6 +902,8 @@ def create_app(
     durable: bool = False,
     dbos_fast_polling: bool = False,
     settings_refresh_s: float = 15.0,
+    start_retention: bool = True,
+    retention_interval_s: float = DEFAULT_RETENTION_INTERVAL_S,
 ) -> FastAPI:
     # Durable mode re-points the unattended ``fire()`` seam (schedules + webhooks) at the
     # DBOS durable worker and replaces the in-process dispatcher with DBOS dynamic schedules.
@@ -1171,9 +1179,18 @@ def create_app(
         # The cross-process live-apply loop: re-reads platform_setting, diffs, re-runs hooks —
         # what makes a "live" setting true on a replica that didn't handle the PATCH.
         settings_service.start_refresher(settings_refresh_s)
+        # Archives old AI gateway request rows and expires run I/O past its retention; the first
+        # sweep waits one interval, so a restart never sweeps on boot.
+        retention = RetentionSweeper(
+            app.state.sessionmaker, settings_service.get, interval_s=retention_interval_s
+        )
+        app.state.retention = retention
+        if start_retention:
+            retention.start()
         try:
             yield
         finally:
+            await retention.stop()
             await settings_service.stop_refresher()
             # Stop in-flight retrieval ingests first (they write through the sessionmaker).
             await rag_ingest.shutdown()
@@ -5915,6 +5932,66 @@ def create_app(
             await auth_store.revoke_api_key(session, key_id)
         logger.info("ai_gateway.service_key_revoked", extra={"key_id": key_id})
         return Response(status_code=204)
+
+    @app.get("/gateway/archive", dependencies=[Depends(require_admin)])
+    async def list_gateway_archive() -> Any:
+        # The days whose request rows were archived: the records they hold and their size.
+        async with tx() as session:
+            rows = await session.execute(
+                select(
+                    AiGatewayRequestArchiveRow.day,
+                    func.sum(AiGatewayRequestArchiveRow.record_count).label("records"),
+                    func.count().label("chunks"),
+                    func.sum(func.length(AiGatewayRequestArchiveRow.records)).label("bytes"),
+                )
+                .group_by(AiGatewayRequestArchiveRow.day)
+                .order_by(AiGatewayRequestArchiveRow.day.desc())
+            )
+            before = await gateway_reports.archived_before(session)
+        return {
+            "archived_before": before.isoformat() if before else None,
+            "days": [
+                {
+                    "day": row.day.isoformat(),
+                    "records": int(row.records),
+                    "chunks": int(row.chunks),
+                    "bytes": int(row.bytes),
+                }
+                for row in rows
+            ],
+        }
+
+    @app.get("/gateway/archive/{day}", dependencies=[Depends(require_admin)])
+    async def download_gateway_archive(day: str) -> Any:
+        # One day's archived records: JSON lines of GatewayRequestRecord, gzip-compressed (the
+        # day's chunks, concatenated, are one gzip stream).
+        try:
+            wanted = date.fromisoformat(day)
+        except ValueError:
+            return _error(f"not a day: {day!r} (YYYY-MM-DD)", status=400, code="invalid_day")
+        async with tx() as session:
+            chunks = list(
+                (
+                    await session.execute(
+                        select(AiGatewayRequestArchiveRow.records)
+                        .where(AiGatewayRequestArchiveRow.day == wanted)
+                        .order_by(
+                            AiGatewayRequestArchiveRow.created_at, AiGatewayRequestArchiveRow.id
+                        )
+                    )
+                ).scalars()
+            )
+        if not chunks:
+            return _error(f"nothing archived for {day}", status=404, code="archive_not_found")
+        return Response(
+            b"".join(chunks),
+            media_type="application/gzip",
+            headers={
+                "content-disposition": (
+                    f'attachment; filename="ai-gateway-requests-{wanted.isoformat()}.jsonl.gz"'
+                )
+            },
+        )
 
     @app.get("/gateway/me")
     async def get_gateway_developer_me(principal: Principal = Depends(require_auth)) -> Any:

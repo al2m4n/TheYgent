@@ -157,7 +157,7 @@ the rename is itself a migration). By area:
 | Bench | `bench_suite`, `bench_case`, `bench_run`, `bench_preset` |
 | Platform | `platform_setting`, `gate_counter` (fixed-window rate limits) |
 | Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers; `kind` is `personal`, `gateway` or `gateway_service`, and only `personal` keys authenticate this API), `auth_provider` (client secret behind a `secret_ref`) |
-| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates; `baseline_usd` and `applied_calls` since migration `0023`, for router mode; the shadow-run sums since `0024`, with the request's `shadow` run as JSONB), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (what was observed of each auxiliary-request kind; review status is a rule in the config, the only home of decisions), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, moved by triggers — migration `0021` — in the same transaction as any change to the live gateway keys, an account's enabled state, or a credential profile, whichever code path or hand-run SQL made it). Metadata only: no prompt or response content |
+| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates; `baseline_usd` and `applied_calls` since migration `0023`, for router mode; the shadow-run sums since `0024`, with the request's `shadow` run as JSONB; since `0025` keyed by session and first reason too, with each row's `first_at`/`last_at`, so reports can read an archived day from them alone), `ai_gateway_request_archive` (request rows past `ai_gateway.request_retention_days`, as gzip JSON-lines chunks per UTC day; `ai_gateway_state.archived_before` marks the archived days), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (what was observed of each auxiliary-request kind; review status is a rule in the config, the only home of decisions), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, moved by triggers — migration `0021` — in the same transaction as any change to the live gateway keys, an account's enabled state, or a credential profile, whichever code path or hand-run SQL made it). Metadata only: no prompt or response content |
 
 The durable runtime keeps its checkpoint tables in a separate `dbos` schema in the same
 database — owned by its own migrator, never by Alembic.
@@ -291,6 +291,25 @@ truncation-flagged, lazy-loaded on click. Effective capture is
 `min(deployment ceiling, agent policy or topology default)` — hosted topology defaults to
 metadata so raw payloads never default into a shared database, and capture `off` is a
 hard stop: not even byte sizes are recorded.
+
+### Retention
+
+`retention.py`'s `RetentionSweeper` runs once an hour, starting an hour after boot. Each batch is
+its own transaction under `pg_try_advisory_xact_lock`, so one replica sweeps and the others skip.
+It does two things:
+
+- **AI gateway request rows past `ai_gateway.request_retention_days` (default 90; 0 keeps them)
+  move to `ai_gateway_request_archive`.** The rows are read back as the records the gateway sent
+  (`store.record_from_row`), written as gzip JSON lines per UTC day, then deleted.
+  `ai_gateway_state.archived_before` advances to the cutoff before any row moves. The reports
+  (`ai_gateway/reports.py`) sum *units*: request rows on and after that day, and the daily
+  aggregates before it. So a report reads the same before, during and after a sweep, and a late
+  record for an archived day counts through the aggregates at once. Warnings, seat readings,
+  prices and timelines need request rows, so they cover the detailed days only.
+  `GET /gateway/archive[/{day}]` lists and serves the archive.
+- **`node_io` rows expire.** Rows older than their agent's `io_retention_seconds` (joined
+  through `run.graph_id`) are deleted, or older than `telemetry.io_retention_days` for agents
+  without a retention of their own (0 keeps them). Runs and spans stay.
 
 ### Import/export (the transfer bundle)
 

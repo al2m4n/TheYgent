@@ -205,6 +205,11 @@ status for kinds it recognises by shape (quota check, main-prefix side request, 
 
 ## Configuration, keys and records
 
+- **Retention.** The control plane keeps request rows in detail for
+  `ai_gateway.request_retention_days` (90 by default), then archives whole days into compressed
+  JSON lines. The daily aggregates carry every report grouping, session and reason included, so a
+  report over archived days reads exactly as it did. See
+  [control-plane.md](./control-plane.md#retention).
 - **Config.** Immutable versions on the control plane (`GET /gateway/config`, the version as ETag).
   Every heartbeat (`POST /gateway/heartbeat`, `THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS`, 30 s)
   learns the latest version and the gateway pulls only when it differs. The applied config is kept
