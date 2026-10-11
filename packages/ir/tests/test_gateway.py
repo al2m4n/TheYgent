@@ -690,6 +690,68 @@ def test_a_record_without_a_shadow_adds_none() -> None:
     )
 
 
+# ── local models and the local dials ─────────────────────────────────────────
+
+
+def test_a_phase_two_config_routes_nothing_new_locally() -> None:
+    policy = GatewayConfig.model_validate(_config()).policy
+    assert policy.local_models == []
+    dials = policy.local_routing
+    # A reviewed side request still goes local as before; agent turns start at none.
+    assert (dials.side_requests.share, dials.subagents.share, dials.main.share) == (1.0, 0.0, 0.0)
+
+
+def _policy(**fields: Any) -> PolicyConfig:
+    return PolicyConfig.model_validate(
+        {
+            "local_models": [
+                {"model": "aux-small", "context_tokens": 32_768},
+                {"model": "coder-medium", "context_tokens": 131_072, "tools": True},
+            ],
+            **fields,
+        }
+    )
+
+
+def test_local_models_and_dials_validate() -> None:
+    policy = _policy(
+        local_routing={
+            "subagents": {"share": 0.25, "agent_types": ["Explore"]},
+            "main": {"share": 0.1, "model": "coder-medium"},
+        }
+    )
+    assert [m.model for m in policy.local_models] == ["aux-small", "coder-medium"]
+    assert policy.local_routing.subagents.agent_types == ["Explore"]
+    assert policy.local_models[1].tools and not policy.local_models[0].images
+
+
+@pytest.mark.parametrize(
+    ("fields", "problem"),
+    [
+        ({"local_models": [{"model": "a"}, {"model": "a"}]}, "listed more than once"),
+        ({"local_models": [{"model": "llamacpp"}]}, "engine name"),
+        ({"local_routing": {"main": {"share": 0.5, "model": "unlisted"}}}, "not a listed"),
+        # Agent turns carry tools: a share needs a model that follows them.
+        ({"local_routing": {"subagents": {"share": 0.5, "model": "aux-small"}}}, "tool calls"),
+        ({"local_routing": {"subagents": {"share": 1.5}}}, "less than or equal"),
+        ({"local_models": [{"model": "tiny", "context_tokens": 10}]}, "greater than or equal"),
+    ],
+)
+def test_a_local_dial_that_cannot_be_served_is_refused(
+    fields: dict[str, Any], problem: str
+) -> None:
+    with pytest.raises(ValidationError, match=problem):
+        _policy(**fields)  # a case listing local_models replaces the default two
+
+
+def test_the_side_request_model_may_be_the_classic_local_target() -> None:
+    policy = PolicyConfig(
+        local_target="aux-local",
+        local_routing={"side_requests": {"share": 1.0, "model": "aux-local"}},  # type: ignore[arg-type]
+    )
+    assert policy.local_routing.side_requests.model == "aux-local"
+
+
 def test_totals_add_field_by_field() -> None:
     one = GatewayTotals.of(_built(usage={"input_tokens": 1}, cost_usd=0.25))
     total = one + one + GatewayTotals()

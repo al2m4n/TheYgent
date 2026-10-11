@@ -113,6 +113,8 @@ ReasonCode = Literal[
     "target_refused",
     "pinned_after_refusal",
     "target_not_cheaper",
+    "local_share",
+    "no_local_model_fits",
 ]
 
 
@@ -519,6 +521,46 @@ class FingerprintRule(_GatewayWire):
     label: Token | None = None
 
 
+class LocalModel(_GatewayWire):
+    """A model on the inference plane the gateway may route to, and what it can take. Listed small
+    to large: "the smallest that fits" is the first that can take a request."""
+
+    #: A logical model id on the inference plane (never an engine name).
+    model: Token
+    #: The prompt it takes, in tokens; a larger request never goes to it.
+    context_tokens: int = Field(default=32_768, ge=1_024)
+    #: Follows tool calls well enough for Claude Code's agent turns (subagents, the main loop).
+    tools: bool = False
+    #: Takes images.
+    images: bool = False
+
+    @model_validator(mode="after")
+    def _logical(self) -> LocalModel:
+        _check_logical_id(self.model)
+        return self
+
+
+class LocalShare(_GatewayWire):
+    """How much of one kind of request goes to a local model: a share of eligible conversations,
+    sampled per conversation, and the model that serves them."""
+
+    share: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: A listed local model; ``None``: the smallest listed model that can take the request.
+    model: Token | None = None
+    #: Subagents only: the agent types eligible (empty: every type).
+    agent_types: list[Token] = Field(default_factory=list)
+
+
+class LocalRouting(_GatewayWire):
+    """The local dials, per kind of request. Side requests go local only for the kinds reviewed
+    ``allow_local`` in the Catalog — that review is the opt-in, so their share starts at all of
+    them; agent turns start at none."""
+
+    side_requests: LocalShare = Field(default_factory=lambda: LocalShare(share=1.0))
+    subagents: LocalShare = Field(default_factory=LocalShare)
+    main: LocalShare = Field(default_factory=LocalShare)
+
+
 class PolicyConfig(_GatewayWire):
     """Targets the policy may consider. ``None`` means no candidate of that kind."""
 
@@ -540,10 +582,37 @@ class PolicyConfig(_GatewayWire):
     #: team mode), and stops for the day at ``shadow_cloud_daily_usd`` per gateway instance.
     shadow_cloud: bool = False
     shadow_cloud_daily_usd: float = Field(default=1.0, ge=0)
+    #: Local models the gateway may route to, small to large (see ``LocalModel``).
+    local_models: list[LocalModel] = Field(default_factory=list)
+    local_routing: LocalRouting = Field(default_factory=LocalRouting)
 
     @model_validator(mode="after")
     def _local_is_logical(self) -> PolicyConfig:
         _check_logical_id(self.local_target)
+        return self
+
+    @model_validator(mode="after")
+    def _local_routing_is_servable(self) -> PolicyConfig:
+        listed = [m.model for m in self.local_models]
+        if len(listed) != len(set(listed)):
+            raise ValueError("local_models: a model is listed more than once")
+        known = set(listed) | ({self.local_target} if self.local_target else set())
+        dials = self.local_routing
+        for kind, dial in (
+            ("side_requests", dials.side_requests),
+            ("subagents", dials.subagents),
+            ("main", dials.main),
+        ):
+            if dial.model is not None and dial.model not in known:
+                raise ValueError(f"local_routing.{kind}.model: not a listed local model")
+        for kind, dial in (("subagents", dials.subagents), ("main", dials.main)):
+            if dial.share <= 0:
+                continue
+            chosen = [m for m in self.local_models if dial.model in (None, m.model)]
+            if not any(m.tools for m in chosen):
+                raise ValueError(
+                    f"local_routing.{kind}: agent turns need a local model that follows tool calls"
+                )
         return self
 
 

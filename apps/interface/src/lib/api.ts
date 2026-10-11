@@ -1124,11 +1124,37 @@ export interface GatewayConfig {
     /** Shadow runs on a cloud target: real spend, off by default, capped per day per gateway. */
     shadow_cloud: boolean;
     shadow_cloud_daily_usd: number;
+    /** Local models the gateway may route to, small to large. */
+    local_models: GatewayLocalModel[];
+    /** The local dials, per kind of request. */
+    local_routing: {
+      side_requests: GatewayLocalShare;
+      subagents: GatewayLocalShare;
+      main: GatewayLocalShare;
+    };
   };
   fingerprints: { fingerprint: string; status: FingerprintStatus; label: string | null }[];
   pricing_overrides: Record<string, GatewayModelRates>;
   updated_at: string;
   updated_by: string | null;
+}
+
+/** A model on the inference plane the gateway may route to, and what it can take. */
+export interface GatewayLocalModel {
+  model: string;
+  context_tokens: number;
+  /** Follows tool calls well enough for Claude Code's agent turns. */
+  tools: boolean;
+  images: boolean;
+}
+
+/** How much of one kind of request goes local: a share of conversations, and the model. */
+export interface GatewayLocalShare {
+  share: number;
+  /** A listed local model, or null for the smallest that fits. */
+  model: string | null;
+  /** Subagents only: the eligible agent types (empty: every type). */
+  agent_types: string[];
 }
 
 /** A developer's gateway key. The token itself is returned once, at creation. Gateway keys carry
@@ -1306,7 +1332,9 @@ export type GatewayReasonCode =
   | "warm_switch_pays"
   | "target_refused"
   | "pinned_after_refusal"
-  | "target_not_cheaper";
+  | "target_not_cheaper"
+  | "local_share"
+  | "no_local_model_fits";
 
 export interface GatewaySessionSummary {
   session_id: string;

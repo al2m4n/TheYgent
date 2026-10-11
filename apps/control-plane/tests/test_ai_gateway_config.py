@@ -203,6 +203,50 @@ def test_a_target_no_claude_code_request_could_go_to_is_refused(
     assert client.get("/gateway/config").status_code == 404
 
 
+LOCAL_MODELS = [
+    {"model": "aux-small", "context_tokens": 32768},
+    {"model": "coder-medium", "context_tokens": 131072, "tools": True},
+]
+
+
+def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
+    routing = {
+        "side_requests": {"share": 1.0, "model": "aux-small", "agent_types": []},
+        "subagents": {"share": 0.25, "model": None, "agent_types": ["Explore"]},
+        "main": {"share": 0.0, "model": None, "agent_types": []},
+    }
+    saved = put(
+        client,
+        {"mode": "router", "policy": {"local_models": LOCAL_MODELS, "local_routing": routing}},
+    )
+    assert saved.status_code == 201, saved.text
+    policy = client.get("/gateway/config").json()["policy"]
+    assert policy["local_routing"] == routing
+    assert [m["model"] for m in policy["local_models"]] == ["aux-small", "coder-medium"]
+    assert policy["local_models"][1] == {
+        "model": "coder-medium",
+        "context_tokens": 131072,
+        "tools": True,
+        "images": False,
+    }
+
+
+def test_a_local_dial_no_model_can_serve_is_refused(client: TestClient) -> None:
+    refused = put(
+        client,
+        {
+            "mode": "router",
+            "policy": {
+                "local_models": LOCAL_MODELS[:1],
+                "local_routing": {"subagents": {"share": 0.5}},
+            },
+        },
+    )
+    assert refused.status_code == 422
+    assert refused.json()["error"]["code"] == "invalid_gateway_config"
+    assert client.get("/gateway/config").status_code == 404
+
+
 def test_router_mode_with_a_measured_target_saves(client: TestClient) -> None:
     saved = put(
         client,

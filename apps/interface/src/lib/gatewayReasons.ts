@@ -99,6 +99,16 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
     detail:
       "The target refused this request before answering, or the local model could not answer it, so the gateway sent it to the requested model instead — Claude Code never saw the difference.",
   },
+  local_share: {
+    label: "local share",
+    detail:
+      "This conversation is in the share of its kind that the configuration sends to a local model.",
+  },
+  no_local_model_fits: {
+    label: "no local model fits",
+    detail:
+      "The conversation is in the local share, but no listed local model can take this request (tool calls, images or prompt size), so it stays with Anthropic.",
+  },
   target_not_cheaper: {
     label: "target not cheaper",
     detail:

@@ -42,6 +42,12 @@ export function draftOf(config: GatewayConfig | null): GatewayConfigDraft {
         shadow_local: true,
         shadow_cloud: false,
         shadow_cloud_daily_usd: 1,
+        local_models: [],
+        local_routing: {
+          side_requests: { share: 1, model: null, agent_types: [] },
+          subagents: { share: 0, model: null, agent_types: [] },
+          main: { share: 0, model: null, agent_types: [] },
+        },
       },
       fingerprints: [],
       pricing_overrides: {},
@@ -90,6 +96,8 @@ export interface SettingsForm {
   shadowLocal: boolean;
   shadowCloud: boolean;
   shadowCap: string;
+  localModels: GatewayConfigDraft["policy"]["local_models"];
+  localRouting: GatewayConfigDraft["policy"]["local_routing"];
   rates: RateRow[];
 }
 
@@ -103,6 +111,8 @@ export function formOf(draft: GatewayConfigDraft): SettingsForm {
     shadowLocal: draft.policy.shadow_local,
     shadowCloud: draft.policy.shadow_cloud,
     shadowCap: String(draft.policy.shadow_cloud_daily_usd),
+    localModels: draft.policy.local_models.map((m) => ({ ...m })),
+    localRouting: structuredClone(draft.policy.local_routing),
     rates: rowsOf(draft.pricing_overrides),
   };
 }
@@ -170,6 +180,8 @@ export function draftFromForm(
         shadow_local: form.shadowLocal,
         shadow_cloud: form.shadowCloud,
         shadow_cloud_daily_usd: cap ?? 0,
+        local_models: form.localModels,
+        local_routing: form.localRouting,
       },
       fingerprints,
       pricing_overrides: overrides,
@@ -190,6 +202,8 @@ export function sameSettings(a: GatewayConfigDraft, b: GatewayConfigDraft): bool
       d.policy.shadow_local,
       d.policy.shadow_cloud,
       d.policy.shadow_cloud_daily_usd,
+      d.policy.local_models,
+      d.policy.local_routing,
       Object.keys(d.pricing_overrides)
         .sort()
         .map((model) => [model, RATE_FIELDS.map(({ key }) => d.pricing_overrides[model][key])]),

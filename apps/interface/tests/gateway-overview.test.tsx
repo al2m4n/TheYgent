@@ -23,6 +23,12 @@ const CONFIG = {
     shadow_local: true,
     shadow_cloud: false,
     shadow_cloud_daily_usd: 1,
+    local_models: [],
+    local_routing: {
+      side_requests: { share: 1, model: null, agent_types: [] },
+      subagents: { share: 0, model: null, agent_types: [] },
+      main: { share: 0, model: null, agent_types: [] },
+    },
   },
   fingerprints: [],
   pricing_overrides: {},

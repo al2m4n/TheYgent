@@ -36,6 +36,12 @@ function config(version: number, over: Record<string, unknown> = {}) {
       shadow_local: true,
       shadow_cloud: false,
       shadow_cloud_daily_usd: 1,
+      local_models: [],
+      local_routing: {
+        side_requests: { share: 1, model: null, agent_types: [] },
+        subagents: { share: 0, model: null, agent_types: [] },
+        main: { share: 0, model: null, agent_types: [] },
+      },
     },
     fingerprints: RULES,
     pricing_overrides: {
@@ -182,6 +188,12 @@ function mockPlanes({
               shadow_local: false,
               shadow_cloud: true,
               shadow_cloud_daily_usd: 3,
+              local_models: [],
+              local_routing: {
+                side_requests: { share: 1, model: null, agent_types: [] },
+                subagents: { share: 0, model: null, agent_types: [] },
+                main: { share: 0, model: null, agent_types: [] },
+              },
             },
             pricing_overrides: {},
           }),
@@ -306,6 +318,12 @@ describe("AI Gateway settings: the config", () => {
         shadow_local: true,
         shadow_cloud: false,
         shadow_cloud_daily_usd: 1,
+        local_models: [],
+        local_routing: {
+          side_requests: { share: 1, model: null, agent_types: [] },
+          subagents: { share: 0, model: null, agent_types: [] },
+          main: { share: 0, model: null, agent_types: [] },
+        },
       },
       fingerprints: RULES,
       pricing_overrides: {
@@ -365,6 +383,12 @@ describe("AI Gateway settings: the config", () => {
       shadow_local: false,
       shadow_cloud: true,
       shadow_cloud_daily_usd: 2.5,
+      local_models: [],
+      local_routing: {
+        side_requests: { share: 1, model: null, agent_types: [] },
+        subagents: { share: 0, model: null, agent_types: [] },
+        main: { share: 0, model: null, agent_types: [] },
+      },
     });
   });
 

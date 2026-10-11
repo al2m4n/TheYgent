@@ -58,7 +58,7 @@ Status: `todo` · `doing` · `done`.
 | ID | Task | Depends | Done when | Status |
 |---|---|---|---|---|
 | L1 | Stream the local route: open a stream to the inference plane, relay Anthropic server-sent events incrementally (text deltas, pings), a first-token timeout that falls back before any byte is sent, the client's disconnect closing the engine's stream, a prompt-size cap from the model's context | R6 | Tests: incremental relay (bytes reach the client before the model finishes), fallback on a slow first token, disconnect cancels the upstream stream, oversized prompt never sent; R6's tests still green. Checked answers (schema, or a non-streaming client) are streamed from the engine and read whole; others relay once visible text starts within 15 s — opening the stream shares that deadline. Pings every 5 s, a leading reasoning block filtered across pieces, prompts over 32K tokens refused; closing an answer never read stops the engine. Real run (Qwen3-4B, llama.cpp): first words in 0.29 s, whole answer in 1.85 s, 74 deltas, usage recorded. Mutants caught | done |
-| L2 | Contract: `PolicyConfig.local_models` (logical id, context tokens, tools, images) and per-kind local routing (share, model or smallest-that-fits, subagent types); `local_target` stays as the single side-request model it is today; reason codes for local routes and their refusals | L1 | Wire tests; a Phase 2 config still loads and behaves the same; validation names the field | todo |
+| L2 | Contract: `PolicyConfig.local_models` (logical id, context tokens, tools, images) and per-kind local routing (share, model or smallest-that-fits, subagent types); `local_target` stays as the single side-request model it is today; reason codes for local routes and their refusals | L1 | Wire tests; a Phase 2 config still loads and behaves the same; validation names the field. `LocalModel` (logical id, `context_tokens` ≥ 1,024, `tools`, `images`), `LocalShare` (share 0–1, model or smallest-that-fits, subagent `agent_types`), `LocalRouting` (side requests default 1.0 — the Catalog review is the opt-in — agent turns 0.0); validated: unique ids, never an engine name, a dial's model must be listed (or be `local_target`), an agent-turn share needs a model that follows tool calls. Reason codes `local_share`, `no_local_model_fits`. The interface passes them through its editor unchanged until L6 | done |
 | L3 | Tool calling both ways: Anthropic `tools`/`tool_choice` → OpenAI tools; `tool_use`/`tool_result` blocks → assistant `tool_calls` and `tool` messages; streamed `tool_calls` deltas → `tool_use` blocks with `input_json_delta`; thinking and cache markers dropped; images to a model that takes them; server tools and anything else untranslatable | L1 | Translation tests on the recorded subagent and main exchanges (round-trip shapes, streamed tool calls reassembled to the same input), refusal tests | todo |
 | L4 | The policy: per-kind share sampled per conversation, the model chosen by fit, cold boundaries only, pinned to Anthropic after a local failure; observer mode records what local routing would do | L2, L3 | Policy tests: share 0 and 100, stickiness across a tool loop, fit (tools, images, context), pin after failure, observer counterfactuals | todo |
 | L5 | Shadow runs for agent turns: same-next-action, time to first token and total time recorded per local model; the report and the interface show share, quality and saving per local model and kind | L4, R7 | Report tests; interface tests; a visual check | todo |
@@ -69,8 +69,9 @@ Status: `todo` · `doing` · `done`.
 
 Each one is deliberate, named here, and covered by tests:
 
-- `PolicyConfig.local_models` and the per-kind local routing settings (L2).
-- New `ReasonCode` values for local routes and their refusals (L2).
+- `PolicyConfig.local_models` (`LocalModel`) and `PolicyConfig.local_routing` (`LocalRouting`,
+  `LocalShare`) (L2).
+- New `ReasonCode` values `local_share` and `no_local_model_fits` (L2).
 - Shadow runs record agent-turn agreement and timing (L5).
 
 The binding enum, the IR graph, and the inference plane's `/v1/*` are unchanged.
