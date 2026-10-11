@@ -94,6 +94,16 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
     detail:
       "The conversation keeps the model its cache is on until the cache goes cold (compaction, or expiry).",
   },
+  target_refused: {
+    label: "target refused",
+    detail:
+      "The cheaper model refused this request before answering, so the gateway sent it to the requested model instead — Claude Code never saw the refusal.",
+  },
+  pinned_after_refusal: {
+    label: "kept on requested",
+    detail:
+      "Its target refused an earlier request of this conversation, so the conversation stays on the model Claude Code asked for.",
+  },
   warm_switch_pays: {
     label: "switch pays",
     detail:

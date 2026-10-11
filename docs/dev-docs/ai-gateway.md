@@ -36,7 +36,7 @@ measurements behind them in [apps/ai-gateway/spike/FINDINGS.md](../../apps/ai-ga
 | Axis | Values | Set by |
 |------|--------|--------|
 | Auth mode | `personal` — loopback only, no keys, the caller's own credential · `team` — developers authenticated by gateway keys from the control plane | `THEYGENT_AI_GATEWAY_AUTH_MODE` at startup |
-| Traffic mode | `observer` — record every exchange with a decision · `passthrough` — forward without recording | the gateway config (an admin, on the control plane) |
+| Traffic mode | `observer` — record every exchange with a decision · `passthrough` — forward without recording · `router` — also apply the decisions (see [PHASE2.md](../../apps/ai-gateway/PHASE2.md); until it lands a router config is observed) | the gateway config (an admin, on the control plane) |
 
 A standalone personal gateway (no control plane) has no one to configure it, so it observes from
 the start with the default policy. A gateway attached to a control plane forwards in passthrough
@@ -124,7 +124,7 @@ conversation's cache, requests carrying `safeguards`, and side requests whose fi
 has not reviewed. A target must accept the request's shape: Sonnet 5.5 is a drop-in for Opus 5.5;
 Haiku 4.5 rejects Claude Code's request shape.
 
-Each decision carries reason codes (`ReasonCode`, 25 of them; the interface's
+Each decision carries reason codes (`ReasonCode`, 27 of them; the interface's
 `lib/gatewayReasons.ts` explains every one, and a test in `packages/ir` keeps the two in step) and
 a counterfactual cost, priced once the response's usage is known. Counterfactuals assume the other
 model would use the same tokens — an estimate.

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Activity, Inbox, Server, SlidersHorizontal } from "lucide-react";
 import { type GatewayConfig, type GatewayInstance, api } from "../../lib/api";
 import { toneOf } from "../../lib/categories";
+import { MODE_SUMMARY } from "../../lib/gatewayConfig";
 import { TimeAgo } from "../TimeAgo";
 import { Badge, ErrorBanner, NoteBanner } from "../ui";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -72,13 +73,7 @@ function Summary({
         icon={SlidersHorizontal}
         label="Mode"
         value={config ? config.mode : "passthrough"}
-        hint={
-          config === null
-            ? "not configured"
-            : config.mode === "observer"
-              ? "records every exchange"
-              : "forwards without recording"
-        }
+        hint={config === null ? "not configured" : MODE_SUMMARY[config.mode].hint}
       />
       <StatTile
         icon={Activity}
@@ -152,7 +147,7 @@ function InstanceRow({ instance, latest }: { instance: GatewayInstance; latest: 
             <Badge tone={instance.online ? "green" : "slate"}>
               {instance.online ? "online" : "offline"}
             </Badge>
-            <Badge tone={instance.mode === "observer" ? "blue" : "slate"}>{instance.mode}</Badge>
+            <Badge tone={MODE_SUMMARY[instance.mode].tone}>{instance.mode}</Badge>
             <Badge tone={instance.config_current ? "slate" : "amber"}>
               {configLabel}
               {!instance.config_current && latest !== null && ` · latest v${latest}`}

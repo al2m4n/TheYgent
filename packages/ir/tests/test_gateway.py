@@ -490,6 +490,78 @@ def test_a_local_route_avoids_an_api_call() -> None:
     )
 
 
+def test_an_applied_route_saved_what_its_baseline_says() -> None:
+    # Router mode: Sonnet served it for 0.2; on the requested Opus it would have cost 0.5.
+    applied = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "applied": True,
+    }
+    totals = GatewayTotals.of(
+        _built(
+            usage={"output_tokens": 100},
+            requested_model="claude-opus-5-5",
+            served_model="claude-sonnet-5-5",
+            cost_usd=0.2,
+            baseline_usd=0.5,
+            decision=applied,
+        )
+    )
+    assert (totals.cost_usd, totals.baseline_usd, totals.with_routing_usd) == (0.2, 0.5, 0.2)
+    assert totals.saving_usd == pytest.approx(0.3)
+    assert (totals.routed_calls, totals.applied_calls) == (1, 1)
+
+
+def test_observer_and_router_savings_read_the_same_way() -> None:
+    # The same work, observed (a counterfactual) and routed (a baseline): the same saving.
+    observed = GatewayTotals.of(
+        _built(
+            cost_usd=0.5,
+            decision={
+                "action": "route",
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "reasons": ["subagent_at_spawn"],
+                "counterfactual_usd": 0.2,
+            },
+        )
+    )
+    routed = GatewayTotals.of(
+        _built(
+            cost_usd=0.2,
+            baseline_usd=0.5,
+            decision={
+                "action": "route",
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "reasons": ["subagent_at_spawn"],
+                "applied": True,
+            },
+        )
+    )
+    assert observed.saving_usd == pytest.approx(routed.saving_usd)
+    assert (observed.applied_calls, routed.applied_calls) == (0, 1)
+    assert observed.baseline_usd == observed.cost_usd == 0.5
+
+
+def test_an_applied_decision_has_no_counterfactual() -> None:
+    with pytest.raises(ValidationError, match="no counterfactual"):
+        Decision.model_validate(
+            {
+                "action": "route",
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "reasons": ["subagent_at_spawn"],
+                "counterfactual_usd": 0.2,
+                "applied": True,
+            }
+        )
+
+
+def test_a_phase_one_record_still_validates_and_adds_up() -> None:
+    record = _built(cost_usd=0.5)
+    assert record.baseline_usd is None
+    assert GatewayTotals.of(record).baseline_usd == 0.5
+
+
 def test_an_unpriced_call_is_counted_not_free() -> None:
     totals = GatewayTotals.of(_built(usage={"output_tokens": 3}))
     assert (totals.unpriced_calls, totals.cost_usd) == (1, 0.0)

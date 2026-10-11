@@ -120,6 +120,30 @@ def varied(ada: str, bob: str) -> list[dict[str, Any]]:
     ]
 
 
+def routed(ada: str, bob: str) -> list[dict[str, Any]]:
+    """Router mode: routes the gateway applied, served elsewhere, with a baseline (or none)."""
+    return [
+        record(
+            9,
+            developer_id=ada,
+            session_id="s-ada-1",
+            request_class="subagent",
+            served_model="claude-sonnet-5-5",
+            cost_usd=0.0012,
+            baseline_usd=0.0024,
+            decision={**route(SONNET, None, "subagent_at_spawn"), "applied": True},
+        ),
+        record(
+            10,
+            developer_id=bob,
+            session_id="s-bob-1",
+            served_model="claude-sonnet-5-5",
+            cost_usd=0.0012,
+            decision={**route(SONNET, None, "follows_warm_cache"), "applied": True},
+        ),
+    ]
+
+
 def python_key(dimension: str, raw: dict[str, Any]) -> str:
     """What each report dimension means, computed from a record in Python."""
     r = GatewayRequestRecord.model_validate(raw)
@@ -164,10 +188,13 @@ def test_the_totals_cover_every_field() -> None:
     assert set(TOTALS) == set(GatewayTotals.model_fields)
 
 
-def test_the_report_sql_equals_the_shared_totals(client: TestClient) -> None:
+@pytest.mark.parametrize("with_router_records", [False, True], ids=["observer", "router"])
+def test_the_report_sql_equals_the_shared_totals(
+    client: TestClient, with_router_records: bool
+) -> None:
     ada, _ = make_user(client, "ada", "editor")
     bob, _ = make_user(client, "bob", "editor")
-    records = varied(ada, bob)
+    records = varied(ada, bob) + (routed(ada, bob) if with_router_records else [])
     seed(client, records)
     result = report(client, by=",".join(DIMENSIONS))
     assert numbers(result["total"]) == pytest.approx(python_totals(records).model_dump())

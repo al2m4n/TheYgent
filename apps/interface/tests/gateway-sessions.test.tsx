@@ -25,9 +25,11 @@ function totals(over: Record<string, number> = {}) {
     cache_write_tokens: 0,
     cost_usd: 0,
     unpriced_calls: 0,
+    baseline_usd: 0,
     with_routing_usd: 0,
     saving_usd: 0,
     routed_calls: 0,
+    applied_calls: 0,
     routed_tokens: 0,
     routed_local_calls: 0,
     routed_local_tokens: 0,
@@ -72,6 +74,7 @@ function entry(id: string, seconds: number, over: Record<string, unknown> = {}) 
       cache_write_1h_tokens: 900,
     },
     cost_usd: 0.0154,
+    baseline_usd: null,
     timing: {},
     decision: {
       action: "stay",
@@ -304,6 +307,6 @@ describe("AI Gateway sessions", () => {
       expect(reason.label, code).not.toBe("");
       expect(reason.detail.length, code).toBeGreaterThan(20);
     }
-    expect(Object.keys(REASONS)).toHaveLength(25);
+    expect(Object.keys(REASONS)).toHaveLength(27);
   });
 });

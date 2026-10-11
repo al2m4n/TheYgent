@@ -1094,7 +1094,7 @@ export interface InferenceDiagnostics {
 // The gateway proxies coding agents' model traffic; the control plane holds its config versions,
 // the heartbeats of its instances, and the metadata it records (never prompt content).
 
-export type GatewayMode = "passthrough" | "observer";
+export type GatewayMode = "passthrough" | "observer" | "router";
 export type FingerprintStatus =
   | "unreviewed"
   | "observe_only"
@@ -1167,10 +1167,15 @@ export interface GatewayTotals {
   cost_usd: number;
   /** Calls on a model with no known price: tokens counted, dollars not. */
   unpriced_calls: number;
-  /** What it would have cost with every decision applied. */
+  /** What it would have cost without routing: the actual cost, unless an applied route moved it. */
+  baseline_usd: number;
+  /** What it costs with every decision applied (in router mode, applied ones cost what ran). */
   with_routing_usd: number;
+  /** Baseline minus with-routing: what routing would save (observer) or saved (router). */
   saving_usd: number;
   routed_calls: number;
+  /** Routes the gateway applied: calls a cheaper model actually served. */
+  applied_calls: number;
   routed_tokens: number;
   /** API calls a local model would have answered. */
   routed_local_calls: number;
@@ -1249,7 +1254,9 @@ export type GatewayReasonCode =
   | "already_on_target"
   | "no_target_configured"
   | "follows_warm_cache"
-  | "warm_switch_pays";
+  | "warm_switch_pays"
+  | "target_refused"
+  | "pinned_after_refusal";
 
 export interface GatewaySessionSummary {
   session_id: string;
@@ -1286,6 +1293,8 @@ export interface GatewayTimelineEntry {
     cache_write_1h_tokens: number;
   };
   cost_usd: number | null;
+  /** What it would have cost on the requested model, where an applied route served it elsewhere. */
+  baseline_usd: number | null;
   timing: { headers_ms?: number | null; first_byte_ms?: number | null; total_ms?: number | null };
   decision: {
     action: "stay" | "route";

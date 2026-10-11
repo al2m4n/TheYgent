@@ -153,9 +153,14 @@ The plane boundary is enforced by the types:
   shared, so the gateway's own report and the control plane's flag the same problems by the same
   rule.
 - **One definition of the totals.** `GatewayTotals.of(record)` is a record's contribution
-  (calls, errors, tokens, cost, the cost with routing applied, calls and tokens routed, API calls
-  avoided), and totals add field by field. The gateway's own report and the control plane's
-  per-day aggregates are both sums of it, so they agree by construction.
+  (calls, errors, tokens, cost, the cost without and with routing, calls and tokens routed, routes
+  applied, API calls avoided), and totals add field by field. The gateway's own report and the
+  control plane's per-day aggregates are both sums of it, so they agree by construction.
+- **Observer and router savings read the same way.** A record carries `cost_usd` (what ran) and,
+  where an applied route served it on another model, `baseline_usd` (its cost on the requested
+  model); an applied decision has no counterfactual, since its cost is the actual one. The saving
+  is baseline minus with-routing: what routing would save in observer mode, what it saved in
+  router mode. A record from before router mode (no baseline) adds up exactly as it did.
 
 None of these models is hashed, and `packages/ir-types` does not generate them.
 

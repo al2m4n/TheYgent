@@ -62,8 +62,9 @@ CredentialKind = Literal["oauth", "api_key", "gateway_key", "none", "other"]
 #: subscription seats) or swap in the organization's Anthropic key (org-billed developers).
 CredentialProfile = Literal["passthrough", "org_key"]
 #: ``passthrough`` forwards without recording exchanges; ``observer`` records every exchange and
-#: what the policy would have done with it. Neither mode changes a request.
-GatewayMode = Literal["passthrough", "observer"]
+#: what the policy would have done with it, changing nothing; ``router`` also applies the policy's
+#: decisions — a routed request's model is the only thing that changes.
+GatewayMode = Literal["passthrough", "observer", "router"]
 #: How an exchange ended: ``rejected`` means the gateway refused it before forwarding (e.g. an
 #: unknown gateway key); ``upstream_broke`` means the upstream stream ended early.
 Outcome = Literal[
@@ -108,6 +109,8 @@ ReasonCode = Literal[
     "no_target_configured",
     "follows_warm_cache",
     "warm_switch_pays",
+    "target_refused",
+    "pinned_after_refusal",
 ]
 
 
@@ -146,7 +149,8 @@ class Decision(_GatewayWire):
     action: DecisionAction
     target: Target | None = None
     reasons: list[ReasonCode] = Field(min_length=1)
-    #: Estimated cost (USD, list price) had the decision been applied; ``None`` when unknown.
+    #: Estimated cost (USD, list price) had the decision been applied; ``None`` when unknown, and
+    #: always once it was applied — what ran is then the record's actual cost.
     counterfactual_usd: float | None = Field(default=None, ge=0)
     applied: bool = False
 
@@ -158,6 +162,8 @@ class Decision(_GatewayWire):
             raise ValueError("a stay decision has no target")
         if self.applied and self.action != "route":
             raise ValueError("only a route decision can be applied")
+        if self.applied and self.counterfactual_usd is not None:
+            raise ValueError("an applied decision has no counterfactual: its cost is the actual")
         return self
 
 
@@ -258,6 +264,9 @@ class GatewayRequestRecord(_GatewayWire):
 
     #: Estimated cost of what actually ran (USD, list price unless the config overrides rates).
     cost_usd: float | None = Field(default=None, ge=0)
+    #: What it would have cost on the model Claude Code asked for, where something else served it
+    #: (an applied route). ``None`` means it ran on the requested model: ``cost_usd`` is the answer.
+    baseline_usd: float | None = Field(default=None, ge=0)
     pricing_version: Token | None = None
     decision: Decision
 
@@ -309,9 +318,13 @@ class GatewayTotals(_GatewayWire):
     """What records add up to. One definition, so the gateway's own report and the control
     plane's aggregates agree by construction.
 
-    "With routing" counts a record's counterfactual where its decision was to route and its
-    actual cost otherwise. A call to a model with no known price adds tokens but no cost, and is
-    counted in ``unpriced_calls`` instead of passing as free."""
+    Three costs: ``cost_usd`` is what ran; ``baseline_usd`` what it would have cost without
+    routing (the actual cost, unless an applied route moved it); ``with_routing_usd`` what it
+    costs with the policy applied (a record's counterfactual where its decision was a route not
+    applied, its actual cost otherwise). The saving is baseline minus with-routing: what routing
+    would save in observer mode, what it saved in router mode. A call to a model with no known
+    price adds tokens but no cost, and is counted in ``unpriced_calls`` instead of passing as
+    free."""
 
     calls: int = Field(default=0, ge=0)
     #: Exchanges that did not complete with a 2xx/3xx answer.
@@ -323,8 +336,11 @@ class GatewayTotals(_GatewayWire):
     cache_write_1h_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0)
     unpriced_calls: int = Field(default=0, ge=0)
+    baseline_usd: float = Field(default=0.0, ge=0)
     with_routing_usd: float = Field(default=0.0, ge=0)
     routed_calls: int = Field(default=0, ge=0)
+    #: Routes the gateway applied (router mode): calls a cheaper model actually served.
+    applied_calls: int = Field(default=0, ge=0)
     routed_tokens: int = Field(default=0, ge=0)
     #: Calls a local model would have answered: API calls that would not have been made.
     routed_local_calls: int = Field(default=0, ge=0)
@@ -336,7 +352,7 @@ class GatewayTotals(_GatewayWire):
 
     @property
     def saving_usd(self) -> float:
-        return self.cost_usd - self.with_routing_usd
+        return self.baseline_usd - self.with_routing_usd
 
     @classmethod
     def of(cls, record: GatewayRequestRecord) -> GatewayTotals:
@@ -352,11 +368,13 @@ class GatewayTotals(_GatewayWire):
         actual = record.cost_usd
         decision = record.decision
         target = decision.target if decision.action == "route" else None
+        # An applied decision has no counterfactual (validated): it costs what ran.
         with_routing = (
             decision.counterfactual_usd
             if target is not None and decision.counterfactual_usd is not None
             else actual or 0.0
         )
+        baseline = record.baseline_usd if record.baseline_usd is not None else actual or 0.0
         local = target is not None and target.kind == "local"
         failed = record.outcome != "complete" or (
             record.status is not None and record.status >= 400
@@ -371,8 +389,10 @@ class GatewayTotals(_GatewayWire):
             cache_write_1h_tokens=usage.cache_write_1h_tokens,
             cost_usd=actual or 0.0,
             unpriced_calls=int(actual is None and tokens > 0),
+            baseline_usd=baseline,
             with_routing_usd=with_routing,
             routed_calls=int(target is not None),
+            applied_calls=int(target is not None and decision.applied),
             routed_tokens=tokens if target is not None else 0,
             routed_local_calls=int(local),
             routed_local_tokens=tokens if local else 0,

@@ -31,6 +31,7 @@ _TOKENS = (R.input_tokens + R.output_tokens + R.cache_read_tokens) + (
     R.cache_write_5m_tokens + R.cache_write_1h_tokens
 )
 _ROUTED = R.decision_action == "route"
+_APPLIED = and_(_ROUTED, R.decision_applied.is_(True))
 _LOCAL = and_(_ROUTED, R.decision_target_kind == "local")
 _FAILED = or_(R.outcome != "complete", R.status >= 400)
 _COST = func.coalesce(R.cost_usd, 0.0)
@@ -46,6 +47,7 @@ TOTALS: dict[str, ColumnElement[Any]] = {
     "cache_write_1h_tokens": func.coalesce(func.sum(R.cache_write_1h_tokens), 0),
     "cost_usd": func.coalesce(func.sum(_COST), 0.0),
     "unpriced_calls": func.count().filter(and_(R.cost_usd.is_(None), _TOKENS > 0)),
+    "baseline_usd": func.coalesce(func.sum(func.coalesce(R.baseline_usd, _COST)), 0.0),
     "with_routing_usd": func.coalesce(
         func.sum(
             case(
@@ -56,6 +58,7 @@ TOTALS: dict[str, ColumnElement[Any]] = {
         0.0,
     ),
     "routed_calls": func.count().filter(_ROUTED),
+    "applied_calls": func.count().filter(_APPLIED),
     "routed_tokens": func.coalesce(func.sum(case((_ROUTED, _TOKENS), else_=0)), 0),
     "routed_local_calls": func.count().filter(_LOCAL),
     "routed_local_tokens": func.coalesce(func.sum(case((_LOCAL, _TOKENS), else_=0)), 0),
@@ -405,6 +408,7 @@ class TimelineEntry(BaseModel):
     shares_main_prefix: bool | None
     usage: dict[str, int]
     cost_usd: float | None
+    baseline_usd: float | None
     timing: dict[str, Any]
     decision: dict[str, Any]
 
@@ -485,6 +489,7 @@ def _entry(row: R) -> TimelineEntry:
             "cache_write_1h_tokens": row.cache_write_1h_tokens,
         },
         cost_usd=row.cost_usd,
+        baseline_usd=row.baseline_usd,
         timing=row.timing,
         decision={
             "action": row.decision_action,

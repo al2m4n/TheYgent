@@ -2,7 +2,14 @@
 // starts from, and the checks the control plane will apply, run early so a form can say what is
 // wrong before saving. The control plane validates again and is the authority.
 
-import type { GatewayConfig, GatewayConfigDraft, GatewayModelRates } from "./api";
+import type { GatewayConfig, GatewayConfigDraft, GatewayMode, GatewayModelRates } from "./api";
+
+/** What each mode does, in a few words, and its badge tone — exhaustive over the modes. */
+export const MODE_SUMMARY: Record<GatewayMode, { hint: string; tone: string }> = {
+  passthrough: { hint: "forwards without recording", tone: "slate" },
+  observer: { hint: "records every exchange", tone: "blue" },
+  router: { hint: "routes to cheaper models", tone: "green" },
+};
 
 /** The control plane's identifier rule for model ids and labels: no spaces, at most 128. */
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:@+/[\]-]*$/;

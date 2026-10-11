@@ -26,6 +26,7 @@ import {
 import { useAuth } from "../../lib/auth";
 import {
   type FormErrors,
+  MODE_SUMMARY,
   RATE_FIELDS,
   type SettingsForm,
   blankRow,
@@ -515,7 +516,7 @@ function VersionHistory({
                   <ItemContent>
                     <ItemTitle className="flex items-center gap-2">
                       <span>Version {v.version}</span>
-                      <Badge tone={v.mode === "observer" ? "blue" : "slate"}>{v.mode}</Badge>
+                      <Badge tone={MODE_SUMMARY[v.mode].tone}>{v.mode}</Badge>
                       {v.version === current && <Badge tone="green">current</Badge>}
                     </ItemTitle>
                     <ItemDescription>

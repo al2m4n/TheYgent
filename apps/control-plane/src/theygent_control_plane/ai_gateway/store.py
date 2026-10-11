@@ -188,6 +188,7 @@ def _request_row(
             record.seat_allowance.model_dump(mode="json") if record.seat_allowance else None
         ),
         "cost_usd": record.cost_usd,
+        "baseline_usd": record.baseline_usd,
         "pricing_version": record.pricing_version,
         "decision_action": decision.action,
         "decision_target_kind": decision.target.kind if decision.target else None,

@@ -208,6 +208,20 @@ def test_daily_usage_is_the_shared_totals(
         rec(4, served_model="claude-imaginary-9", cost_usd=None),
         rec(5, developer_id=None, client=None),
         rec(60 * 24, outcome="upstream_broke"),  # the next day
+        # Router mode: an applied route, served by the target, with the requested model's cost.
+        rec(
+            6,
+            request_class="subagent",
+            served_model="claude-sonnet-5-5",
+            cost_usd=0.001,
+            baseline_usd=0.0024,
+            decision={
+                "action": "route",
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "reasons": ["subagent_at_spawn"],
+                "applied": True,
+            },
+        ),
     ]
     post(client, service_key, batch(*records))
     expected: dict[tuple[Any, ...], GatewayTotals] = {}
@@ -231,7 +245,13 @@ def test_daily_usage_is_the_shared_totals(
         assert totals.model_dump() == pytest.approx(expected[key].model_dump()), key
     days = {row["day"] for row in stored}
     assert days == {date(2026, 10, 10), date(2026, 10, 11)}
-    assert {row["decision_target"] for row in stored} == {"", "aux-local"}
+    assert {row["decision_target"] for row in stored} == {"", "aux-local", "claude-sonnet-5-5"}
+    [applied] = [row for row in stored if row["decision_target"] == "claude-sonnet-5-5"]
+    assert (applied["applied_calls"], applied["baseline_usd"]) == (1, pytest.approx(0.0024))
+    [stored_record] = rows(
+        pg_url, "SELECT baseline_usd FROM ai_gateway_request WHERE id = $1", "rec_00006"
+    )
+    assert stored_record["baseline_usd"] == pytest.approx(0.0024)
 
 
 def test_auxiliary_kinds_feed_the_catalog(

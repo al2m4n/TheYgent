@@ -141,6 +141,17 @@ describe("AI Gateway overview", () => {
     expect(screen.queryByText(/No gateway config has been saved yet/)).not.toBeInTheDocument();
   });
 
+  it("says what router mode does", async () => {
+    mockControlPlane(
+      () => json({ ...CONFIG, mode: "router" }),
+      () => json({ instances: [instance({ gateway_id: "gw-router", mode: "router" })] }),
+    );
+    renderTab();
+    const mode = await screen.findByRole("region", { name: "Mode" });
+    expect(within(mode).getByText("routes to cheaper models")).toBeInTheDocument();
+    expect(within(screen.getByTestId("gateway-gw-router")).getByText("router")).toBeInTheDocument();
+  });
+
   it("says when no config has been saved: gateways then record nothing", async () => {
     mockControlPlane(
       () =>
