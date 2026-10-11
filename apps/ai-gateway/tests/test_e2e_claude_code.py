@@ -512,3 +512,119 @@ async def test_a_local_subagent_that_fails_mid_loop_finishes_on_anthropic(
     assert "target_refused" in after[0].decision.reasons
     assert after[0].shape is not None and after[0].shape.thinking, "the case needs thinking on"
     assert_totals_match(records, result)
+
+
+#: Two logical ids, small to large, with the context each is served with: ``id:tokens,id:tokens``.
+#: The larger needs 125,000 or more, since Claude Code compacts no earlier than 100,000.
+LONG_LOCAL_MODELS = [
+    (name, int(tokens))
+    for name, _, tokens in (
+        item.strip().partition(":")
+        for item in os.environ.get("THEYGENT_E2E_LOCAL_MODELS", "").split(",")
+        if item.strip()
+    )
+]
+
+
+def filler(turn: int, lines: int = 1_600) -> str:
+    """About 22,000 tokens of text to keep in mind: what makes a conversation long."""
+    return "\n".join(
+        f"Entry {turn}-{n:04d}: the parser reads one line, checks it, and moves on."
+        for n in range(lines)
+    )
+
+
+@pytest.mark.skipif(
+    len(LONG_LOCAL_MODELS) < 2 or LONG_LOCAL_MODELS[-1][1] < 125_000,
+    reason="opt-in: set THEYGENT_E2E_LOCAL_MODELS to a small and a 125K+ model, id:context each",
+)
+async def test_a_long_conversation_stays_on_local_models(tmp_path: Path, workspace: Path) -> None:
+    # Every main conversation is served locally, on the small model first. As the conversation
+    # grows it outgrows that model and moves to the larger one; Claude Code, given the setup's
+    # auto-compact window, compacts while the conversation still fits there, and the compaction
+    # runs on the local model too. Nothing goes to Anthropic.
+    (small, small_context), (large, large_context) = LONG_LOCAL_MODELS[0], LONG_LOCAL_MODELS[-1]
+    window = max(100_000, int(large_context * 0.75) // 1000 * 1000)  # as Setup & keys sets it
+    settings = GatewaySettings(
+        state_dir=tmp_path / "state",
+        gateway_id="gw-e2e-long-local",
+        inference_plane_url=INFERENCE_URL,
+    )
+    router = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(
+            local_models=[
+                LocalModel(model=small, context_tokens=small_context, tools=True),
+                LocalModel(model=large, context_tokens=large_context, tools=True),
+            ],
+            local_routing=LocalRouting(main=LocalShare(share=1.0, model=small)),
+        ),
+        updated_at=datetime.now(UTC),
+    )
+    log_dir = settings.state_dir / "requests"
+    options = sdk.ClaudeAgentOptions(
+        model=MODEL,
+        cwd=str(workspace),
+        allowed_tools=[],
+        max_turns=3,
+        setting_sources=[],
+        strict_mcp_config=True,
+        env={
+            "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+            "ENABLE_TOOL_SEARCH": "true",
+            "CLAUDE_CODE_AUTO_COMPACT_WINDOW": str(window),
+        },
+    )
+    results: list[Any] = []
+    started = time.monotonic()
+    with serve(create_app(settings, config=router)) as url:
+        options.env["ANTHROPIC_BASE_URL"] = url
+        async with sdk.ClaudeSDKClient(options=options) as client:
+            ask = "Reply with exactly one word: OK. Use no tools."
+            prompts = [ask, *(f"Keep this log in mind. {ask}\n\n{filler(n)}" for n in range(1, 9))]
+            for n, prompt in enumerate(prompts):
+                await client.query(prompt)
+                async for message in client.receive_response():
+                    if isinstance(message, sdk.ResultMessage):
+                        results.append(message)
+                seen = list(LogReader(log_dir))
+                print(
+                    f"\nturn {n}: {int(time.monotonic() - started)} s, records {len(seen)}, "
+                    f"compactions {sum(r.request_class == 'compaction' for r in seen)}"
+                )
+                if any(r.request_class == "compaction" for r in seen):
+                    break  # the turn that compacted also sent the conversation on after it
+        records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    messages = sorted(
+        (r for r in records if r.endpoint == "messages" and r.requested_model),
+        key=lambda r: r.started_at,
+    )
+    print(
+        "\nrequests:",
+        [
+            (
+                r.request_class,
+                r.served_model,
+                r.decision.reasons,
+                r.usage.input_tokens,
+                r.timing.total_ms,
+            )
+            for r in messages
+        ],
+    )
+    assert results and not any(r.is_error for r in results), [r.result for r in results]
+    # A request Claude Code gave up waiting for (its watchdogs allow about five minutes) is
+    # retried; what counts is who answered the ones that completed.
+    conversation = [
+        r for r in messages if r.request_class in ("main", "compaction") and r.outcome == "complete"
+    ]
+    assert all(r.served_model in (small, large) for r in conversation), "Anthropic was asked"
+    assert any("outgrew_local_model" in r.decision.reasons for r in conversation)
+    compactions = [r for r in conversation if r.request_class == "compaction"]
+    assert compactions, "Claude Code never compacted"
+    assert compactions[0].served_model == large
+    assert compactions[0].decision.reasons[0] == "compaction"
+    # The conversation goes on from its summary on a local model, read in full, not on Anthropic.
+    after = [r for r in conversation if r.started_at > compactions[0].started_at]
+    assert after and after[0].served_model in (small, large)

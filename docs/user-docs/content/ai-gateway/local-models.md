@@ -141,12 +141,24 @@ replace it.
 ## Limits to know
 
 - **Answers have time limits.** A local model's answer must start within 15 seconds, plus the time
-  to read the prompt (counted at 200 tokens a second), or Anthropic answers instead. An answer that
+  to read the prompt, or Anthropic answers instead. Reading is counted at 100 tokens a second, or at
+  the model's own speed where the gateway has measured it slower: it measures each model on the
+  answers it serves, and a model reads a long conversation much slower than a short one. A long
+  prompt is therefore waited for at least as long as Claude Code itself waits. An answer that
   opens with a tool call is held back until the call is whole, so Anthropic can still step in: the
   model may pause no more than 30 seconds while writing it, and the call must be whole within 5
   minutes of the request. A large file written steadily is waited for; a model that stalls is
   not. Once an answer has gone out, Claude Code gets it to the end. A side request's answer is
   checked whole, so it must be complete within 30 seconds plus the reading time.
+- **Claude Code waits about five minutes for an answer to start.** Its stream watchdogs give up
+  on a response that sends nothing for that long, and then retry the request. A local model that
+  needs longer to read a prompt (a long conversation on modest hardware, after a compaction for
+  example) causes that: the engine usually finishes reading meanwhile, so the retry is answered
+  quickly from its cache, at no API spend, but the developer waits. To have Claude Code wait
+  instead, raise `CLAUDE_STREAM_IDLE_TIMEOUT_MS` (up to 30 minutes), set `API_FORCE_IDLE_TIMEOUT`
+  to `0`, and raise `API_TIMEOUT_MS` (see Claude Code's
+  [environment variables](https://code.claude.com/docs/en/env-vars)). A faster engine is the better
+  fix: a model that reads a few thousand tokens a second never comes near it.
 - **Answers have length limits.** A subagent or main-conversation turn can write up to the model's
   **max output** (16,384 tokens unless you raise it), and a side request up to 4,096.
 - **Claude Code compacts by the model it asked for**, unless its setup says otherwise: see

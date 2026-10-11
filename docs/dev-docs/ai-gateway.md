@@ -191,8 +191,21 @@ on the request:
   until the answer is committed: its first visible text, or its first tool call once whole and
   checked (an offered tool, arguments that are a JSON object). The first output must begin within
   15 seconds plus the prompt's reading time — a model reads all of it before its first token, so
-  200 tokens a second are allowed for, and a 10K-token agent turn gets 50 seconds more. Opening the
-  stream shares that deadline. After the first output, a first tool call is held until it is
+  100 tokens a second are allowed for, and a 10K-token agent turn gets 100 seconds more. A long
+  prompt is so waited for past Claude Code's own patience: the gateway's wait ends with the
+  client's anyway, and giving up first would send the turn to Anthropic. A model
+  measured slower is allowed its own speed: each answer that read 1,000 or more uncached tokens
+  is a sample (those tokens over the time to its first output), and the slowest of a model's last
+  five decides, since a model reads a long conversation far slower than a short one (a 4B model
+  on a laptop: about 310 tokens a second at 12K, 117 at 45K). Opening the stream shares that
+  deadline. The engine's cached prompt tokens (`prompt_tokens_details.cached_tokens`) are recorded
+  as cache reads, as Anthropic reports them. Claude Code's own stream watchdogs abort a response
+  that sends nothing for about five minutes and retry it, and nothing is sent before the commit, so
+  a prompt that takes longer to read becomes a client retry; llama.cpp finishes reading the prompt
+  anyway, so the retry hits its cache (measured: a 37K-token read, aborted at 358 s, retried and
+  answered in 3.8 s). Sending headers and pings early would not avoid it: Claude Code's event-level
+  watchdog also wants a parsed event within about five minutes, and the first one (`message_start`)
+  would commit the answer before the local model has started. After the first output, a first tool call is held until it is
   whole: the model may go 30 seconds between two pieces of it (`LOCAL_TIMEOUT_SECONDS`), so a long
   call written steadily — a whole file — is waited for and a stalled one is not, and the hold ends
   `HOLD_SECONDS` (300) after the request began. A bad tool call after the commit still goes out,

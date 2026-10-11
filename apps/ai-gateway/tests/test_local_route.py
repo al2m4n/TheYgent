@@ -541,7 +541,12 @@ def test_a_free_answer_reaches_the_client_as_it_is_written(tmp_path: Path) -> No
     assert text == "Fixing the parser now"
     [delta] = [d for n, d in events if n == "message_delta"]
     assert delta["delta"]["stop_reason"] == "end_turn"
-    assert delta["usage"] == {"input_tokens": 812, "output_tokens": 9}
+    assert delta["usage"] == {
+        "input_tokens": 812,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "output_tokens": 9,
+    }
     assert gw.upstream.requests == []
     assert observed.decision.applied and observed.response.model == LOCAL
     assert (observed.outcome, observed.cost_usd) == ("complete", 0.0)

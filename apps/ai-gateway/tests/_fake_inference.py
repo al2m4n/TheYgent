@@ -36,11 +36,24 @@ class FakeInference:
     tool_calls: list[tuple[str, list[str]]] = field(default_factory=list)
     #: Answer this many requests as told, then fail every later one (503).
     fail_after: int | None = None
+    #: The usage reported: the prompt's tokens, and how many of them the engine had cached.
+    prompt_tokens: int = USAGE["prompt_tokens"]
+    cached_tokens: int | None = None
     sent_pieces: int = 0
     abandoned: threading.Event = field(default_factory=threading.Event)
     requests: list[dict[str, Any]] = field(default_factory=list)
     asked: threading.Event = field(default_factory=threading.Event)
     base_url: str = ""
+
+    def usage(self) -> dict[str, Any]:
+        usage: dict[str, Any] = {
+            **USAGE,
+            "prompt_tokens": self.prompt_tokens,
+            "total_tokens": self.prompt_tokens + USAGE["completion_tokens"],
+        }
+        if self.cached_tokens is not None:
+            usage["prompt_tokens_details"] = {"cached_tokens": self.cached_tokens}
+        return usage
 
     async def completions(self, request: Request) -> Response:
         body = await request.json()
@@ -69,7 +82,7 @@ class FakeInference:
                         "finish_reason": self.finish_reason,
                     }
                 ],
-                "usage": USAGE,
+                "usage": self.usage(),
             }
         )
 
@@ -120,7 +133,7 @@ class FakeInference:
                     "created": 0,
                     "model": body["model"],
                     "choices": [],
-                    "usage": USAGE,
+                    "usage": self.usage(),
                 }
                 yield f"data: {json.dumps(usage)}\n\n".encode()
             yield b"data: [DONE]\n\n"

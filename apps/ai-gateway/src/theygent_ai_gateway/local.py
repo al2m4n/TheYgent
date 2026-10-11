@@ -32,6 +32,7 @@ import json
 import logging
 import secrets
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -79,9 +80,18 @@ HOLD_SECONDS = 300.0
 #: meanwhile).
 FIRST_TOKEN_SECONDS = 15.0
 #: A model reads the whole prompt before its first token, so the first-output deadline grows with
-#: the prompt: at least this reading speed is allowed for (tokens a second). A Claude Code agent
-#: turn is 10K to 20K tokens; a 4B model on a laptop reads about 300 a second.
-MIN_PROMPT_TOKENS_PER_SECOND = 200
+#: the prompt: at least this reading speed is allowed for (tokens a second). A 4B model on a laptop
+#: reads about 300 a second early in a conversation and about 110 deep into a long one, and a
+#: model measured slower is allowed its own speed. Waiting long costs nothing past Claude Code's
+#: own patience (about five minutes): a client that gives up retries, and the engine, which reads
+#: on, answers the retry from its cache. Giving up first would send the turn to Anthropic.
+MIN_PROMPT_TOKENS_PER_SECOND = 100
+#: A reading speed is learned only from an answer that read at least this many uncached tokens:
+#: fewer measure the engine's overhead, not its reading.
+LEARN_MIN_TOKENS = 1_000
+#: A model reads a long prompt slower than a short one, so the slowest of its last few measured
+#: speeds is the one allowed for.
+LEARN_SAMPLES = 5
 #: The HTTP client's own limit on a quiet engine: only a backstop, the deadlines above govern.
 CLIENT_TIMEOUT_SECONDS = 600.0
 #: A keep-alive ping while the local model is quiet, as the Anthropic API sends them.
@@ -146,7 +156,7 @@ def _message(
         "usage": {
             "input_tokens": usage.input_tokens,
             "cache_creation_input_tokens": 0,
-            "cache_read_input_tokens": 0,
+            "cache_read_input_tokens": usage.cache_read_tokens,
             "output_tokens": usage.output_tokens,
         },
     }
@@ -258,8 +268,18 @@ class _Writer:
     def feed(self, chunk: Any) -> list[bytes]:
         usage = getattr(chunk, "usage", None)
         if usage is not None:
+            # The prompt tokens the engine had cached are cache reads, as Anthropic counts them.
+            prompt = getattr(usage, "prompt_tokens", 0) or 0
+            details = getattr(usage, "prompt_tokens_details", None)
+            cached = (
+                details.get("cached_tokens")
+                if isinstance(details, dict)
+                else getattr(details, "cached_tokens", None)
+            )
+            cached = min(max(int(cached or 0), 0), prompt)
             self.usage = Usage(
-                input_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                input_tokens=prompt - cached,
+                cache_read_tokens=cached,
                 output_tokens=getattr(usage, "completion_tokens", 0) or 0,
             )
         choices = getattr(chunk, "choices", None) or []
@@ -379,17 +399,14 @@ class _Writer:
                     "delta": {"stop_reason": stop, "stop_sequence": None},
                     "usage": {
                         "input_tokens": self.usage.input_tokens,
+                        "cache_creation_input_tokens": 0,
+                        "cache_read_input_tokens": self.usage.cache_read_tokens,
                         "output_tokens": self.usage.output_tokens,
                     },
                 },
             ),
             _event("message_stop", {"type": "message_stop"}),
         ]
-
-
-def _reading_seconds(body: bytes) -> float:
-    """How long reading this prompt may take, at the slowest speed allowed for."""
-    return estimated_tokens(len(body)) / MIN_PROMPT_TOKENS_PER_SECOND
 
 
 def _too_large(body: bytes, context_tokens: int | None) -> bool:
@@ -410,6 +427,8 @@ class LocalRoute:
         # No retries: the fallback for a failure is the Anthropic API, not a second local attempt.
         self._timeout = timeout if timeout is not None else LOCAL_TIMEOUT_SECONDS
         self._first_token = first_token_seconds
+        #: Each model's last measured reading speeds (tokens a second), in memory.
+        self._speed: dict[str, deque[float]] = {}
         self._client = GatewayClient(base_url, timeout=CLIENT_TIMEOUT_SECONDS, max_retries=0)
 
     async def _open(self, model: str, translated: Translated) -> Any:
@@ -440,7 +459,7 @@ class LocalRoute:
         )
         if translated is None or _too_large(body, context_tokens):
             return None
-        reading = _reading_seconds(body)
+        reading = self._reading_seconds(model, body)
         if translated.stream and translated.schema is None:
             return await self._relay(model, translated, reading)
         return (await self._checked(model, translated, reading)).answer
@@ -461,7 +480,23 @@ class LocalRoute:
         )
         if translated is None or _too_large(body, context_tokens):
             return LocalAttempt("untranslatable")
-        return await self._checked(model, translated, _reading_seconds(body))
+        return await self._checked(model, translated, self._reading_seconds(model, body))
+
+    def _reading_seconds(self, model: str, body: bytes) -> float:
+        """How long reading this prompt may take: at the slowest speed allowed for, or at the
+        model's own where it was measured slower."""
+        speed = min([MIN_PROMPT_TOKENS_PER_SECOND, *self._speed.get(model, ())])
+        return estimated_tokens(len(body)) / speed
+
+    def _learn(self, model: str, usage: Usage, first_output_seconds: float | None) -> None:
+        """Measure how fast the model read this prompt: the tokens it had no cache for, over the
+        time to its first output."""
+        if first_output_seconds is None or first_output_seconds <= 0:
+            return
+        if usage.input_tokens < LEARN_MIN_TOKENS:
+            return
+        sample = usage.input_tokens / first_output_seconds
+        self._speed.setdefault(model, deque(maxlen=LEARN_SAMPLES)).append(sample)
 
     async def _checked(self, model: str, translated: Translated, reading: float) -> LocalAttempt:
         started = time.perf_counter()
@@ -482,6 +517,7 @@ class LocalRoute:
 
         try:
             await asyncio.wait_for(read(), self._timeout + reading)
+            self._learn(model, writer.usage, first[0] / 1000 if first else None)
         except _Unusable:
             log.warning("the local model called a tool it was not offered, or mangled one")
             return LocalAttempt("unusable", usage=writer.usage)
@@ -536,11 +572,12 @@ class LocalRoute:
         exhausted = False
         base = self._first_token if self._first_token is not None else FIRST_TOKEN_SECONDS
         first_deadline = base + reading
+        first_output: float | None = None  # seconds from the start to the first output
 
         async def start() -> AsyncIterator[Any]:
             # Opening the stream, the first output and the commit share the deadlines: a server
             # slow to answer at all is as late as a model slow to start.
-            nonlocal exhausted
+            nonlocal exhausted, first_output
             began = time.monotonic()
             last = began  # when the model last wrote something
             stream = await asyncio.wait_for(self._open(model, translated), first_deadline)
@@ -567,6 +604,8 @@ class LocalRoute:
                     break
                 held.extend(writer.feed(chunk))
                 last = time.monotonic()
+                if writer.started and first_output is None:
+                    first_output = last - began
             return chunks
 
         try:
@@ -594,6 +633,7 @@ class LocalRoute:
             for event in held:
                 yield event
             if exhausted:
+                self._learn(model, writer.usage, first_output)
                 return
             pending: asyncio.Future[Any] | None = None
             try:
@@ -618,6 +658,7 @@ class LocalRoute:
                     await _close(stream)
             for event in writer.finish():
                 yield event
+            self._learn(model, writer.usage, first_output)
 
         async def close() -> None:
             with anyio.CancelScope(shield=True):

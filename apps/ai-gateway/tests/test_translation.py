@@ -464,3 +464,92 @@ async def test_a_tool_call_held_past_the_hold_goes_to_anthropic(
             assert await relay(route, LOOP) is None
         finally:
             await route.aclose()
+
+
+async def test_the_prompt_tokens_the_engine_had_cached_are_cache_reads() -> None:
+    with fake_inference() as fake:
+        fake.pieces = ["Done."]
+        fake.prompt_tokens, fake.cached_tokens = 20_000, 18_500
+        route = LocalRoute(fake.base_url)
+        try:
+            answer = await relay(route, LOOP)
+            assert isinstance(answer, LocalStream)
+            events = events_of(await drain(answer))
+        finally:
+            await route.aclose()
+    [delta] = [data for name, data in events if name == "message_delta"]
+    usage = delta["usage"]
+    assert (usage["input_tokens"], usage["cache_read_input_tokens"]) == (1_500, 18_500)
+
+
+async def test_a_model_measured_slow_is_allowed_its_own_reading_speed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # With no reading time allowed by default, the second answer comes later than the first
+    # output may: the first one measured this model's speed, and that speed buys the time.
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 1.0)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)
+    with fake_inference() as fake:
+        fake.pieces = ["Done."]
+        fake.prompt_tokens, fake.cached_tokens = 2_000, 0
+        route = LocalRoute(fake.base_url)
+        try:
+            fake.delay = 0.5  # 2,000 tokens read in half a second: 4,000 a second
+            first = await relay(route, LOOP)
+            assert isinstance(first, LocalStream)
+            await drain(first)
+            fake.delay = 1.4  # past the bare second, within this prompt's reading at 4,000
+            second = await relay(route, LOOP)
+            assert isinstance(second, LocalStream)
+            await drain(second)
+            # Learned per model: another model is allowed no more than the default.
+            assert await route.answer("other-model", LOOP.request_bytes(), tools=True) is None
+        finally:
+            await route.aclose()
+
+
+async def test_a_cached_prompt_does_not_make_a_model_look_fast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 20,000 prompt tokens, 19,000 of them cached, answered in half a second: the model read
+    # 1,000 tokens in that time (2,000 a second), not 20,000.
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 1.0)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)
+    with fake_inference() as fake:
+        fake.pieces = ["Done."]
+        route = LocalRoute(fake.base_url)
+        try:
+            fake.prompt_tokens, fake.cached_tokens, fake.delay = 20_000, 19_000, 0.5
+            first = await relay(route, LOOP)
+            assert isinstance(first, LocalStream)
+            await drain(first)
+            fake.cached_tokens, fake.delay = 0, 1.8  # within this prompt's reading at 2,000/s
+            second = await relay(route, LOOP)
+            assert isinstance(second, LocalStream)
+            await drain(second)
+        finally:
+            await route.aclose()
+
+
+async def test_the_slowest_recent_speed_is_the_one_allowed_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Prompts read fast, and one read slowly: the slow one decides, since the next prompt like it
+    # will read as slowly.
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 1.0)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)
+    with fake_inference() as fake:
+        fake.pieces = ["Done."]
+        route = LocalRoute(fake.base_url)
+        try:
+            for prompt, delay in ((50_000, 0.5), (2_000, 0.9), (50_000, 0.5)):  # fast, slow, fast
+                fake.prompt_tokens, fake.cached_tokens, fake.delay = prompt, 0, delay
+                answer = await relay(route, LOOP)
+                assert isinstance(answer, LocalStream)
+                await drain(answer)
+            fake.delay = 1.8  # in time only at the slower speed
+            slow = await relay(route, LOOP)
+            assert isinstance(slow, LocalStream)
+            await drain(slow)
+        finally:
+            await route.aclose()

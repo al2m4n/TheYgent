@@ -233,6 +233,29 @@ local model.
   (`claude-haiku-4-5-20251001`); the price book knew only `claude-haiku-4-5`, so every such
   exchange was recorded unpriced. Prices and capabilities now resolve a snapshot to its model.
 
+## Q9 — a long conversation on local models (Phase 3, L10) — ✅
+
+Real Claude Code (Haiku 4.5 requested) through the gateway, every main conversation served
+locally: a 131K-context llama-server (Qwen3-4B Q4_K_M, 8-bit KV cache, about 9 GiB) registered on
+the inference plane as a remote model under two logical ids, listed at 40,960 and 131,072 tokens;
+the setup's auto-compact window of 100,000. Prompts of about 22K tokens each.
+
+- **It stays local.** The conversation started on the 40K model, outgrew it and moved to the
+  131K one; Claude Code compacted (at about 69K tokens: it keeps room under the window for its own
+  output), the compaction ran on the local model reading only 1,299 new tokens, and the
+  conversation went on locally. No main or compaction request reached Anthropic.
+- **Reading speed falls with length.** About 310 tokens/s at 12K, 117 at 45K, 107 near 47K on an
+  M3 Pro. A flat allowance measured on short prompts gave up on long ones and paid Anthropic after
+  the wait. The gateway now measures each model and allows the slowest recent speed, with a floor
+  of 100 tokens/s.
+- **Claude Code's patience is about five minutes.** Its stream watchdogs abort a response that
+  has sent nothing for that long (seen at 358 s; a 340 s wait passed) and retry. llama.cpp reads
+  the prompt to the end regardless, so the retry is answered from its cache (3.8 s). The gateway
+  sends nothing before the commit, so it can't keep Claude Code waiting longer; raising Claude
+  Code's watchdogs, or a faster engine, can.
+- **The engine reports cached prompt tokens** (`prompt_tokens_details.cached_tokens`): 47,241 of
+  48,540 for the compaction. They are recorded as cache reads.
+
 ## Q3 — desktop app — ✅ (it does not use the project settings)
 
 A desktop session in the test project (`entrypoint=claude-desktop`, 09:36:26–09:36:40 UTC) got

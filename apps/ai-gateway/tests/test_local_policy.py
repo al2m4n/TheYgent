@@ -590,17 +590,21 @@ def test_a_model_that_cannot_take_the_prompt_gives_way_to_a_larger_one() -> None
     policy = PolicyConfig.model_validate({"local_models": [SMALL_TOOLS, no_tools, LARGE]})
     signals = read_request(dict(LOOP.request_headers), LOOP.request_bytes(), has_messages_body=True)
     spawn = read_request(dict(SPAWN.request_headers), SPAWN.request_bytes(), has_messages_body=True)
-    pick = local_model_for
-    assert pick(policy, "coder-small", spawn, tools=True).model == "coder-small"  # type: ignore[union-attr]
+
+    def pick(chosen: str | None, request: Any) -> str | None:
+        found = local_model_for(policy, chosen, request, tools=True)
+        return found.model if found is not None else None
+
+    assert pick("coder-small", spawn) == "coder-small"
     # Too large for the chosen model: the first larger one that follows tool calls.
-    assert pick(policy, "coder-small", signals, tools=True).model == "coder-large"  # type: ignore[union-attr]
-    assert pick(policy, None, signals, tools=True).model == "coder-large"  # type: ignore[union-attr]
+    assert pick("coder-small", signals) == "coder-large"
+    assert pick(None, signals) == "coder-large"
     # Never a smaller one than the chosen model, and nothing for a model not listed.
-    assert pick(policy, "coder-large", spawn, tools=True).model == "coder-large"  # type: ignore[union-attr]
-    assert pick(policy, "unlisted", spawn, tools=True) is None
+    assert pick("coder-large", spawn) == "coder-large"
+    assert pick("unlisted", spawn) is None
     # A chosen model that can't take it (no tool calls) passes to a larger one, though a smaller
     # one could take it.
-    assert pick(policy, "vision-large", spawn, tools=True).model == "coder-large"  # type: ignore[union-attr]
+    assert pick("vision-large", spawn) == "coder-large"
 
 
 def test_a_local_conversation_that_outgrows_its_model_moves_to_a_larger_one() -> None:

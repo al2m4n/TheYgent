@@ -113,7 +113,8 @@ Router mode applies the policy's decisions; observer mode only records them.
   a non-streaming request would hold the engine to the end. A prompt larger than the model's
   context is never sent, and a model that has not started within the first-output deadline hands
   the request to Anthropic before any byte is out. The deadline grows with the prompt: a model
-  reads all of it before its first token. A first tool call held until it is whole is timed by the
+  reads all of it before its first token, at the slower of a floor speed and the model's own as
+  measured on the answers it served (a slow model is waited for, not abandoned after the wait). A first tool call held until it is whole is timed by the
   model's progress (a stall), within an overall hold, never by its length: a whole file written
   steadily is a legitimate answer.
 - **A local route answers only what translates faithfully, and only once the answer is checked.**
