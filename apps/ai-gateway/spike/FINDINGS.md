@@ -216,6 +216,23 @@ Anthropic.
   real Explore turns stands for this model. That is why shares start at zero and are raised on
   shadow evidence (*Same next action*), per local model.
 
+## Q8 — a local trial in router mode (Phase 3, L8) — ✅
+
+Router mode, the Explore dial at 0% served and 100% trial, `aux-local` as above; Claude Code on
+Haiku 4.5. Anthropic answered every subagent turn; after the first, the gateway tried it on the
+local model.
+
+- **It measures without costing anything.** The trial answered with the same next action (a
+  `Read` call) both times it ran; first output in 6.7 s on a warm engine (19.5 s colder), 8.7 s in
+  all. Claude Code saw nothing of it, and its usage still equalled the gateway's.
+- **Trials are samples.** The subagent's next turn ended while the first trial still held the
+  engine, so it was skipped: with one engine slot, a trial costs about a turn's reading time, and a
+  busy session is tried on a fraction of its turns. That is the intended trade: a served request
+  always pre-empts a trial.
+- **It found an accounting bug.** The API names the served model by its dated snapshot
+  (`claude-haiku-4-5-20251001`); the price book knew only `claude-haiku-4-5`, so every such
+  exchange was recorded unpriced. Prices and capabilities now resolve a snapshot to its model.
+
 ## Q3 — desktop app — ✅ (it does not use the project settings)
 
 A desktop session in the test project (`entrypoint=claude-desktop`, 09:36:26–09:36:40 UTC) got

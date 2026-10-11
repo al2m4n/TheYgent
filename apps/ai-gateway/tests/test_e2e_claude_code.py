@@ -147,6 +147,14 @@ def wait_for(read: Callable[[], list[GatewayRequestRecord]]) -> list[GatewayRequ
     return read()
 
 
+def shadows_done(shadows: Any, timeout: float = 300.0) -> None:
+    """Wait for the gateway's shadow runs to end: each holds its exchange's record until then (a
+    local model reading an agent turn takes a while)."""
+    deadline = time.monotonic() + timeout
+    while shadows.running and time.monotonic() < deadline:
+        time.sleep(0.5)
+
+
 def assert_totals_match(records: list[GatewayRequestRecord], result: Any) -> None:
     unnamed = {r.endpoint for r in records if r.requested_model is None}
     assert "messages" not in unnamed, "a Messages call was recorded without its model"
@@ -383,6 +391,65 @@ async def test_router_mode_serves_an_explore_subagent_on_a_local_model(
             )
             for r in subagent
         ],
+    )
+    assert_totals_match(records, result)
+
+
+@pytest.mark.skipif(
+    not LOCAL_MODEL,
+    reason="opt-in: set THEYGENT_E2E_LOCAL_MODEL to a logical chat model that follows tool calls",
+)
+async def test_router_mode_tries_an_explore_subagent_on_a_local_model(
+    tmp_path: Path, workspace: Path
+) -> None:
+    # A local trial in router mode: Anthropic serves every Explore subagent turn, and each is
+    # then tried on the local model. Claude Code sees nothing of it, the trial records whether the
+    # local model picked the same next action, and Claude Code's usage still equals the gateway's.
+    settings = GatewaySettings(
+        state_dir=tmp_path / "state",
+        gateway_id="gw-e2e-local-trial",
+        inference_plane_url=INFERENCE_URL,
+    )
+    router = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(
+            local_models=[LocalModel(model=LOCAL_MODEL, context_tokens=32_768, tools=True)],
+            local_routing=LocalRouting(subagents=LocalShare(trial=1.0, agent_types=["Explore"])),
+        ),
+        updated_at=datetime.now(UTC),
+    )
+    log_dir = settings.state_dir / "requests"
+    app = create_app(settings, config=router)
+    with serve(app) as url:
+        result = await drive_claude_code(
+            url, workspace, {}, prompt=EXPLORE_PROMPT, tools=("Agent", "Read"), max_turns=8
+        )
+        await asyncio.to_thread(shadows_done, app.state.shadows)
+        records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    subagent = sorted(
+        (r for r in records if r.endpoint == "messages" and r.request_class == "subagent"),
+        key=lambda r: r.started_at,
+    )
+    print(
+        "\ntrials:",
+        [
+            (
+                r.served_model,
+                r.shadow and (r.shadow.outcome, r.shadow.agreed, r.shadow.first_output_ms),
+                r.shadow and r.shadow.total_ms,
+            )
+            for r in subagent
+        ],
+    )
+    assert subagent, "Claude Code spawned no subagent"
+    assert all(r.served_model != LOCAL_MODEL and (r.cost_usd or 0) > 0 for r in subagent)
+    tried = [r for r in subagent if r.shadow is not None]
+    assert tried, "no trial ran"
+    assert all(
+        r.shadow.trial and r.shadow.target.model == LOCAL_MODEL and r.shadow.cost_usd == 0.0
+        for r in tried
+        if r.shadow is not None
     )
     assert_totals_match(records, result)
 

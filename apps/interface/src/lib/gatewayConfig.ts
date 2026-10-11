@@ -39,9 +39,9 @@ const DEFAULT_POLICY: GatewayConfigDraft["policy"] = {
   shadow_cloud_daily_usd: 1,
   local_models: [],
   local_routing: {
-    side_requests: { share: 1, model: null, agent_types: [] },
-    subagents: { share: 0, model: null, agent_types: [] },
-    main: { share: 0, model: null, agent_types: [] },
+    side_requests: { share: 1, trial: 0, model: null, agent_types: [] },
+    subagents: { share: 0, trial: 0, model: null, agent_types: [] },
+    main: { share: 0, trial: 0, model: null, agent_types: [] },
   },
 };
 
@@ -116,6 +116,8 @@ export const DIAL_KINDS: DialKind[] = ["side_requests", "subagents", "main"];
 export interface DialRow {
   /** Percent of eligible conversations, as text. */
   share: string;
+  /** Percent tried locally after Anthropic answers, as text. */
+  trial: string;
   /** A listed model, or "" for the smallest that fits. */
   model: string;
   /** Subagent types, comma-separated ("" for every type). */
@@ -160,6 +162,7 @@ export function formOf(draft: GatewayConfigDraft): SettingsForm {
           kind,
           {
             share: String(Math.round(dial.share * 1000) / 10),
+            trial: String(Math.round(dial.trial * 1000) / 10),
             model: dial.model ?? "",
             agentTypes: dial.agent_types.join(", "),
           },
@@ -227,6 +230,12 @@ export function draftFromForm(
     if (row.share.trim() === "" || !Number.isFinite(percent) || percent < 0 || percent > 100) {
       errors[`dial.${kind}.share`] = "A percentage from 0 to 100.";
     }
+    const trial = Number(row.trial.trim());
+    if (row.trial.trim() === "" || !Number.isFinite(trial) || trial < 0 || trial > 100) {
+      errors[`dial.${kind}.trial`] = "A percentage from 0 to 100.";
+    } else if (percent + trial > 100 + 1e-7) {
+      errors[`dial.${kind}.trial`] = "The share and the trial together exceed 100%.";
+    }
     const model = row.model.trim() || null;
     const known =
       model === null || listed.has(model) || (kind === "side_requests" && model === local);
@@ -238,14 +247,19 @@ export function draftFromForm(
     if (agentTypes.some((t) => !isToken(t))) {
       errors[`dial.${kind}.agentTypes`] = "Agent type names, separated by commas.";
     }
-    // Agent turns carry Claude Code's tools: a share needs a model that follows tool calls.
+    // Agent turns carry Claude Code's tools: a share, or a trial, needs a model that follows them.
     const candidates = localModels.filter((m) => model === null || m.model === model);
-    if (kind !== "side_requests" && percent > 0 && !candidates.some((m) => m.tools)) {
-      errors[`dial.${kind}.share`] ??=
+    if (
+      kind !== "side_requests" &&
+      (percent > 0 || trial > 0) &&
+      !candidates.some((m) => m.tools)
+    ) {
+      errors[`dial.${kind}.${percent > 0 ? "share" : "trial"}`] ??=
         "Agent turns need a listed local model that follows tool calls.";
     }
     dials[kind] = {
       share: percent / 100,
+      trial: trial / 100,
       model,
       agent_types: kind === "subagents" ? agentTypes : [],
     };

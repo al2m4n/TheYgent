@@ -40,6 +40,9 @@ from theygent_ir.gateway import (
     FingerprintStatus,
     GatewayConfig,
     GatewayMode,
+    LocalModel,
+    LocalRouting,
+    LocalShare,
     ModelRates,
     PolicyConfig,
     Target,
@@ -332,6 +335,26 @@ def test_the_main_conversation_moves_only_where_its_cache_is_cold() -> None:
     assert not new_prompt.cold
     assert after_prompt.reasons == ("mid_conversation", "follows_warm_cache")
     assert (expired.action, expired.reasons) == ("route", ("cold_cache_boundary",))
+
+
+def test_a_main_conversation_in_its_trial_keeps_it_through_warm_prompts() -> None:
+    medium = LocalModel(model="coder-medium", context_tokens=131_072, tools=True)
+    cfg = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(
+            local_models=[medium], local_routing=LocalRouting(main=LocalShare(trial=1.0))
+        ),
+        updated_at=NOW,
+    )
+    run = Run(cfg)
+    start, _ = run("main-bugfix-1")
+    loop, _ = run("main-bugfix-2")
+    warm, _ = run("main-bugfix-3", advance=60, x_claude_code_prompt_id="next-prompt")
+    tried = Target(kind="local", model="coder-medium")
+    assert (start.action, start.trial) == ("stay", tried)
+    assert (loop.trial, warm.trial) == (tried, tried)
+    assert warm.reasons == ("no_target_configured",)  # the decision itself is unchanged
 
 
 def test_a_warm_prompt_without_a_candidate_names_the_real_reason() -> None:

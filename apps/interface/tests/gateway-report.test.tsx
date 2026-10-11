@@ -250,7 +250,7 @@ describe("AI Gateway report", () => {
     expect(within(days).getAllByRole("listitem")).toHaveLength(2);
   });
 
-  it("shows what shadow runs measured, per target, only when there were any", async () => {
+  it("shows what shadow runs measured, per model, only when there were any", async () => {
     const shadows = { shadow_calls: 4, shadow_answered_calls: 3, shadow_cost_usd: 0.0123 };
     const sonnet = {
       ...shadows,
@@ -265,10 +265,12 @@ describe("AI Gateway report", () => {
           total: { ...TOTAL, ...sonnet, shadow_calls: 5 },
           groups: {
             ...reportBody().groups,
-            decision: [
-              { key: "stay", ...totals({ calls: 14 }) },
-              { key: "route:claude-sonnet-5-5", ...totals({ calls: 8, ...sonnet }) },
-              { key: "route:aux-local", ...totals({ calls: 3, shadow_calls: 1 }) },
+            // Grouped by the model a shadow ran on: a local trial's model is not its decision's
+            // target, so this is where the local model's evidence is.
+            "shadow-model": [
+              { key: "(none)", ...totals({ calls: 14 }) },
+              { key: "claude-sonnet-5-5", ...totals({ calls: 8, ...sonnet }) },
+              { key: "aux-local", ...totals({ calls: 3, shadow_calls: 1 }) },
             ],
           },
         }),
@@ -282,7 +284,7 @@ describe("AI Gateway report", () => {
     expect(sonnetRow?.textContent).toContain("66.7%"); // the same next action on 2 of 3 turns
     const localRow = within(table).getByText("aux-local").closest("tr");
     expect(localRow?.textContent).toContain("—"); // nothing usable to compare
-    expect(within(table).queryByText("stay")).toBeNull();
+    expect(within(table).queryByText("(none)")).toBeNull();
   });
 
   it("says from when the figures come from archived daily totals", async () => {
@@ -306,11 +308,11 @@ describe("AI Gateway report", () => {
     renderTab();
     const byClass = await screen.findByRole("table", { name: "By request class" });
     expect(within(byClass).getByText("subagent")).toBeInTheDocument();
-    expect(asked[0].searchParams.get("by")).toBe("day,class,decision");
+    expect(asked[0].searchParams.get("by")).toBe("day,class,shadow-model");
 
     await ui.selectOptions(screen.getByLabelText("Group by"), "model");
     await screen.findByRole("table", { name: "By model requested" });
-    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,model,decision");
+    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,model,shadow-model");
     expect(screen.getByText(/Grouped by the model Claude Code requested/)).toBeInTheDocument();
   });
 
@@ -338,7 +340,7 @@ describe("AI Gateway report", () => {
 
     await ui.selectOptions(screen.getByLabelText("Whose usage"), "org");
     await waitFor(() => expect(asked.at(-1)?.searchParams.get("scope")).toBe("org"));
-    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,class,decision"); // never by developer
+    expect(asked.at(-1)?.searchParams.get("by")).toBe("day,class,shadow-model"); // never by developer
     const orgGroupBy = screen.getByLabelText("Group by");
     expect(within(orgGroupBy).queryByRole("option", { name: "Developer" })).toBeNull();
     expect(within(orgGroupBy).queryByRole("option", { name: "Session" })).toBeNull();

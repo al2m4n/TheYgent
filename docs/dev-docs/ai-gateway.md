@@ -203,8 +203,8 @@ and checks the task completes with Claude Code's usage equal to the gateway's.
 
 `PolicyConfig.local_models` lists the models on the inference plane the gateway may use, small to
 large. Each has a logical id, the context it takes, and whether it follows tool calls and takes
-images. `local_routing` sets a dial per kind of request: a share of conversations, the model or
-"the smallest that fits", and for subagents an optional agent-type filter.
+images. `local_routing` sets a dial per kind of request: a share of conversations, a trial, the
+model or "the smallest that fits", and for subagents an optional agent-type filter.
 
 - **Sampling (`policy.in_share`).** A conversation is in a share when a SHA-256 of its key falls
   below it, so it lands the same way every time it is decided. Sampling happens only at cold
@@ -216,6 +216,12 @@ images. `local_routing` sets a dial per kind of request: a share of conversation
   takes Anthropic's decision with `no_local_model_fits` added.
 - **Side requests.** They keep their Catalog review. A Phase 2 config's `local_target` stays their
   model, and their dial starts at 100%.
+- **The trial (`LocalShare.trial`, `policy.in_trial`).** The conversations whose hash falls in
+  `[share, share + trial)` keep Anthropic's decision (a stay, or the cheaper target), and the plan
+  carries `Plan.trial`: the local model the dial would choose, picked like a share's. The plan
+  holds it across the loop and through warm prompts; after a local failure there is none. Raising
+  the share by the trial serves exactly the conversations tried. `share + trial ≤ 1` (to rounding),
+  and an agent dial with either above zero needs a model that follows tool calls.
 - **What the route receives.** The chosen model's capabilities (`capabilities_of`), so tools,
   images and the prompt cap match the model.
 - **When the local model cannot take the request.** `Policy.after_local_failure` re-decides on
@@ -229,13 +235,16 @@ images. `local_routing` sets a dial per kind of request: a share of conversation
 
 A counterfactual assumes the target writes as many tokens as the requested model did. Shadow runs
 (`shadow.py`) measure that. A complete, 2xx Messages exchange whose decision routed it somewhere it
-did not go has a copy sent to the decision's target, after the exchange ends. In practice that
-means observer mode. Nothing awaits the copy, and its answer goes only to the record: the
-exchange's observation is delivered when the shadow ends, with a `ShadowRun` holding the outcome,
-usage, cost and time. If the gateway stops first, it is delivered without one.
+did not go has a copy sent to the decision's target, after the exchange ends; in practice that
+means observer mode. One whose plan carries a local trial, and that a local model did not serve,
+has a copy sent to the trial's model instead (`ShadowRun.trial`), in either mode. The decision's
+own shadow comes first: a trial runs only where no other shadow starts. Nothing awaits the copy,
+and its answer goes only to the record: the exchange's observation is delivered when the shadow
+ends, with a `ShadowRun` holding the outcome, usage, cost and time. If the gateway stops first, it
+is delivered without one.
 
-- **Local targets** (`PolicyConfig.shadow_local`, default on) go through the local route's
-  `attempt()`. The outcome says whether the answer would have been used (`answered`), would have
+- **Local targets** (`PolicyConfig.shadow_local`, default on; a trial is its own opt-in and runs
+  regardless) go through the local route's `attempt()`. The outcome says whether the answer would have been used (`answered`), would have
   fallen back (`unusable`), never came (`failed`), or the request does not translate
   (`untranslatable`).
 - **Cloud targets** (`shadow_cloud`, default off) get the routed bytes (`with_model`), sent with
@@ -250,6 +259,10 @@ usage, cost and time. If the gateway stops first, it is delivered without one.
       error or the 300 s timeout is `failed`.
 - **Limits.** At most one local and two cloud shadows run at once. Beyond that a shadow is skipped,
   never queued.
+- **Served traffic first.** A local model serves real requests too. While the gateway serves one
+  locally (`Shadows.serving_started`/`serving_ended`, from the exchange), no local shadow starts,
+  and starting to serve cancels the running ones: the stream closes, the engine stops, and the
+  exchange is recorded without its shadow.
 
 A shadow of an agent turn (a request that offered tools) also gives a verdict, `ShadowRun.agreed`:
 did the target pick the same next action as the real answer? That means the same tool first, or
@@ -261,9 +274,11 @@ in memory only and never recorded, since a tool's name can name an organization'
 (calibration spend, outside `cost_usd`), and `shadow_output_tokens` against
 `shadowed_output_tokens` (the real exchanges' output for the same answered shadows), and
 `shadow_compared_calls` against `shadow_agreed_calls` (migration `0026`). The report shows both
-ratios per target, and does not adjust counterfactuals. Measuring a local model this way happens
-in observer mode, where every recorded decision can be shadowed. In router mode, the local share
-is what serves, and a local failure falls back before commit.
+ratios per model a shadow ran on (the `shadow-model` grouping: a trial's model is not its
+decision's target, so the daily aggregates are keyed by it since migration `0027`), and does not
+adjust counterfactuals. In observer mode every recorded decision can be shadowed; in router mode
+the share serves and the trial measures, so evidence for the next step of a share keeps coming
+while routing saves.
 
 ### Auxiliary requests and the fingerprint catalog
 

@@ -39,6 +39,7 @@ const DIMENSIONS: { value: GatewayDimension; label: string; identifying?: boolea
   { value: "session", label: "Session", identifying: true },
   { value: "decision", label: "Routing decision" },
   { value: "reason", label: "Reason" },
+  { value: "shadow-model", label: "Model a shadow ran on" },
 ];
 
 const WARNINGS: Record<GatewaySetupWarningCode, (values: string[]) => ReactNode> = {
@@ -127,11 +128,11 @@ export function ReportTab() {
 
   const report = useQuery({
     queryKey: ["gatewayReport", range, scope, by],
-    // "decision" also feeds the shadow runs' calibration, per target.
+    // "shadow-model" also feeds the shadow runs' calibration, per model.
     queryFn: () =>
       api.getGatewayReport({
         ...bounds(range),
-        by: [...new Set(["day", by, "decision"] as const)],
+        by: [...new Set(["day", by, "shadow-model"] as const)],
         scope,
       }),
     refetchInterval: 60_000,
@@ -415,31 +416,30 @@ function Breakdown({
   );
 }
 
-/** What shadow runs measured, per target: how often its answer would have been used, and how much
+/** What shadow runs measured, per model: how often its answer would have been used, and how much
  *  it wrote against the requested model — the counterfactuals assume the same. */
 function ShadowRuns({ report }: { report: GatewayReport }) {
-  const rows = (report.groups.decision ?? [])
-    .filter((row) => row.shadow_calls > 0)
-    .map((row) => ({ ...row, key: row.key.replace(/^route:/, "") }));
-  const shown = rows.length > 0 ? rows : [{ ...report.total, key: "All targets" }];
+  const rows = (report.groups["shadow-model"] ?? []).filter((row) => row.shadow_calls > 0);
+  const shown = rows.length > 0 ? rows : [{ ...report.total, key: "All models" }];
   return (
     <Card>
       <CardHeader className="border-b">
         <CardTitle>Shadow runs</CardTitle>
         <CardDescription>
-          After a request routing would have sent elsewhere, a copy went to that target, unseen by
-          Claude Code. The savings above assume a target writes as much as the model Claude Code
-          asked for; here is what the targets actually did. On agent turns, "same next action" says
-          how often the target chose the tool, or the answer, that the real reply did: how far a
-          model, a local one above all, can be trusted with agent work. Shadow runs cost{" "}
-          {usd(report.total.shadow_cost_usd)}, outside the spend above.
+          After a request routing would have sent elsewhere — or, in a local trial, one Anthropic
+          answered — a copy went to that model, unseen by Claude Code. The savings above assume a
+          target writes as much as the model Claude Code asked for; here is what the models actually
+          did. On agent turns, "same next action" says how often the target chose the tool, or the
+          answer, that the real reply did: how far a model, a local one above all, can be trusted
+          with agent work. Shadow runs cost {usd(report.total.shadow_cost_usd)}, outside the spend
+          above.
         </CardDescription>
       </CardHeader>
       <CardContent className="pt-2">
         <Table aria-label="Shadow runs">
           <TableHeader>
             <TableRow>
-              <TableHead>Target</TableHead>
+              <TableHead>Model</TableHead>
               <TableHead className="text-right">Shadows</TableHead>
               <TableHead className="text-right">Usable</TableHead>
               <TableHead className="text-right">Same next action</TableHead>

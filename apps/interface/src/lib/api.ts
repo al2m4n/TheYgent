@@ -1151,6 +1151,9 @@ export interface GatewayLocalModel {
 /** How much of one kind of request goes local: a share of conversations, and the model. */
 export interface GatewayLocalShare {
   share: number;
+  /** A further share, just above `share`, that Anthropic still answers and the local model is
+   *  tried on afterwards: the evidence for raising `share`. */
+  trial: number;
   /** A listed local model, or null for the smallest that fits. */
   model: string | null;
   /** Subagents only: the eligible agent types (empty: every type). */
@@ -1244,6 +1247,9 @@ export interface GatewayShadowRun {
   /** An agent turn's verdict: the same next action as the real answer. */
   agreed: boolean | null;
   first_output_ms: number | null;
+  /** A local trial: the decision named another target, or none. Absent on shadows recorded
+   *  before trials existed. */
+  trial?: boolean;
 }
 
 export type GatewayDimension =
@@ -1255,6 +1261,7 @@ export type GatewayDimension =
   | "developer"
   | "decision"
   | "reason"
+  | "shadow-model"
   | "day";
 
 export type GatewaySetupWarningCode =

@@ -106,7 +106,8 @@ Router mode applies the policy's decisions; observer mode only records them.
   the main conversation): a share, sampled per conversation and applied at cold boundaries only,
   served by a listed local model that can take the request (tool calls, images, prompt size).
   Agent-turn shares start at zero and are raised on shadow evidence; a side request goes local
-  only for a kind the review allows (`allow_local`).
+  only for a kind the review allows (`allow_local`). A dial's trial — the conversations just above
+  its share — is answered by Anthropic and then tried on the local model, in either mode.
 - **A local route always streams from the engine.** A client that leaves must stop the model, and
   a non-streaming request would hold the engine to the end. A prompt larger than the model's
   context is never sent, and a model that has not started within the first-output deadline hands
@@ -123,9 +124,11 @@ Router mode applies the policy's decisions; observer mode only records them.
   `cost_usd` priced on the served model and `baseline_usd` on the requested one. A local answer
   costs 0.0: no API spend, and local compute is not priced.
 - **A shadow run never touches the real exchange.**
-    - A copy of an unapplied route goes to its target only after the exchange ends. Nothing awaits
-      it, its answer goes only to the record, and the record is delivered when it ends (without it
-      if cut short).
+    - A copy of an unapplied route goes to its target only after the exchange ends, and so does a
+      local trial's copy to its local model. Nothing awaits it, its answer goes only to the
+      record, and the record is delivered when it ends (without it if cut short).
+    - A local model serves real traffic first: while a request is served locally no local shadow
+      starts, and one running is cancelled.
     - A cloud shadow is real spend. It runs only on a key the operator holds (the org key, or
       personal mode's own API key), never a seat or a team developer's own key. It stops at the
       daily budget, and pauses under rate-limit pressure.

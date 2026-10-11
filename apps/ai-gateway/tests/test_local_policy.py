@@ -11,7 +11,9 @@ What must hold:
 * a local failure re-decides on Anthropic's side — a subagent may still start on the cheaper
   target — and holds that until the next cold boundary;
 * through the gateway: an Explore subagent's turns are served locally, tools and all, and recorded
-  so; observer mode only records it.
+  so; observer mode only records it;
+* a trial takes the conversations just above the share: Anthropic answers them, whatever the
+  decision, and the local model is tried on each request afterwards — in router mode too.
 """
 
 from __future__ import annotations
@@ -34,11 +36,12 @@ from _prices import FROZEN_PRICES
 from theygent_ai_gateway.app import create_app
 from theygent_ai_gateway.conversations import ConversationTracker
 from theygent_ai_gateway.observe import Observation, ResponseObserver
-from theygent_ai_gateway.policy import Plan, Policy, in_share
+from theygent_ai_gateway.policy import Plan, Policy, in_share, in_trial
+from theygent_ai_gateway.requestlog import to_record
 from theygent_ai_gateway.routing import with_model
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ai_gateway.signals import read_request
-from theygent_ir.gateway import GatewayConfig, GatewayMode, PolicyConfig, Target
+from theygent_ir.gateway import GatewayConfig, GatewayMode, LocalShare, PolicyConfig, Target
 
 SONNET = "claude-sonnet-5-5"
 SMALL = {"model": "aux-small", "context_tokens": 32_768}
@@ -146,9 +149,8 @@ def test_the_main_conversation_goes_local_at_its_start() -> None:
     assert (plan.target, plan.reasons) == (LOCAL_MEDIUM, ("cold_cache_boundary", "local_share"))
 
 
-def test_a_partial_share_decides_by_the_conversation() -> None:
-    # Where this subagent's conversation falls in [0, 1): a share just above takes it local, one
-    # just below leaves it with Anthropic.
+def spawn_point() -> float:
+    """Where the Explore subagent's conversation falls in [0, 1)."""
     run = Run(config(subagents={"share": 1.0}))
     run(MAIN)
     _, (_, position) = run(SPAWN)
@@ -156,7 +158,14 @@ def test_a_partial_share_decides_by_the_conversation() -> None:
     for _ in range(40):
         middle = (low + high) / 2
         low, high = (low, middle) if in_share(position.key, middle) else (middle, high)
-    for share, local in ((min(high + 0.01, 1.0), True), (max(low - 0.01, 0.0), False)):
+    return high
+
+
+def test_a_partial_share_decides_by_the_conversation() -> None:
+    # A share just above the conversation's point takes it local, one just below leaves it with
+    # Anthropic.
+    point = spawn_point()
+    for share, local in ((min(point + 0.01, 1.0), True), (max(point - 0.01, 0.0), False)):
         run = Run(config(subagents={"share": share}))
         run(MAIN)
         plan, _ = run(SPAWN)
@@ -198,6 +207,65 @@ def test_a_side_requests_dial_picks_the_smallest_model_that_fits() -> None:
     off["policy"]["local_routing"]["side_requests"]["share"] = 0.0
     plan, _ = Run(GatewayConfig.model_validate(off))(title)
     assert plan.action == "stay" and plan.reasons == ("local_candidate",)
+
+
+def test_a_trial_takes_the_conversations_just_above_the_share() -> None:
+    keys = [("usr", f"session-{n}", "agent") for n in range(4_000)]
+    dial = LocalShare(share=0.2, trial=0.1)
+    tried = {key for key in keys if in_trial(key, dial)}
+    # Raising the share by the trial serves exactly the conversations tried.
+    assert tried == {k for k in keys if in_share(k, 0.3)} - {k for k in keys if in_share(k, 0.2)}
+    assert 0.08 < len(tried) / len(keys) < 0.12
+    assert not any(in_trial(key, LocalShare(share=0.2)) for key in keys)  # no trial unless chosen
+
+
+def test_a_subagent_in_the_trial_stays_with_anthropic_and_is_tried_for_its_loop() -> None:
+    point = spawn_point()
+    share = max(point - 0.01, 0.0)
+    run = Run(config(subagents={"share": share, "trial": 0.02}))
+    main, _ = run(MAIN)
+    spawn, _ = run(SPAWN)
+    loop, _ = run(LOOP)
+    assert main.trial is None  # the main dial has no trial
+    # Anthropic's side decides as without a trial: here the cheaper target.
+    assert (spawn.target, spawn.reasons) == (
+        Target(kind="anthropic", model=SONNET),
+        ("subagent_at_spawn",),
+    )
+    assert spawn.trial == LOCAL_MEDIUM and loop.trial == LOCAL_MEDIUM
+    # Below the trial, or once inside the share, there is nothing to try.
+    for dial in ({"share": 0.0, "trial": share}, {"share": min(point + 0.01, 1.0)}):
+        run = Run(config(subagents=dial))
+        run(MAIN)
+        plan, _ = run(SPAWN)
+        assert plan.trial is None, dial
+
+
+def test_a_trial_is_only_for_conversations_a_local_model_could_take() -> None:
+    tiny = {"model": "coder-tiny", "context_tokens": 1_024, "tools": True}
+    for cfg in (
+        config(subagents={"trial": 1.0, "agent_types": ["Plan"]}),  # an Explore subagent
+        config(models=[tiny], subagents={"trial": 1.0}),  # its prompt does not fit
+    ):
+        run = Run(cfg)
+        run(MAIN)
+        plan, _ = run(SPAWN)
+        assert plan.trial is None
+        assert plan.target == Target(kind="anthropic", model=SONNET)
+
+
+def test_a_side_request_in_the_trial_is_tried_on_its_model() -> None:
+    title = load("auxiliary-session-title")
+    signals = read_request(
+        dict(title.request_headers), title.request_bytes(), has_messages_body=True
+    )
+    assert signals.body is not None and signals.body.fingerprint is not None
+    cfg = config().model_dump()
+    cfg["fingerprints"] = [{"fingerprint": signals.body.fingerprint, "status": "allow_local"}]
+    cfg["policy"]["local_routing"]["side_requests"] = {"share": 0.0, "trial": 1.0}
+    plan, _ = Run(GatewayConfig.model_validate(cfg))(title)
+    assert (plan.action, plan.reasons) == ("stay", ("local_candidate",))
+    assert plan.trial == Target(kind="local", model="aux-small")
 
 
 # ── through the gateway ──────────────────────────────────────────────────────
@@ -342,3 +410,75 @@ def test_a_local_answer_where_the_real_one_called_a_tool_disagrees(tmp_path: Pat
         gw.send(SPAWN)
     run = gw.seen[-1].shadow
     assert run is not None and run.agreed is False
+
+
+# ── a local trial ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(("local_first", "agreed"), [("Bash", True), ("Grep", False)])
+def test_router_mode_tries_the_local_model_after_anthropic_answers(
+    tmp_path: Path, local_first: str, agreed: bool
+) -> None:
+    # Every Explore subagent is in the trial: served by Anthropic (on the cheaper target, as
+    # without a trial), then tried locally. Local shadows are off: a trial is its own opt-in.
+    cfg = config(subagents={"trial": 1.0, "agent_types": ["Explore"]})
+    assert not cfg.policy.shadow_local
+    with gateway(tmp_path, cfg) as gw:
+        gw.inference.pieces = []
+        gw.inference.tool_calls = [(local_first, ['{"command": "ls"}'])]
+        gw.send(MAIN)
+        answer = gw.send(SPAWN)
+        spawned = gw.seen[-1]
+        gw.send(LOOP)
+        looped = gw.seen[-1]
+    sent = [r.body for r in gw.upstream.requests]
+    assert sent[1:] == [
+        with_model(SPAWN.request_bytes(), SONNET),
+        with_model(LOOP.request_bytes(), SONNET),
+    ]
+    # Claude Code got Anthropic's answer, from the model it was routed to.
+    assert answer.status_code == 200 and f'"model":"{SONNET}"'.encode() in answer.content
+    assert len(gw.inference.requests) == 2  # each subagent request, tried once
+    for observed in (spawned, looped):
+        decision = observed.decision
+        assert decision.applied and decision.target == Target(kind="anthropic", model=SONNET)
+        run = observed.shadow
+        assert run is not None and run.trial and run.target == LOCAL_MEDIUM
+        assert run.outcome == "answered" and run.cost_usd == 0.0
+        record = to_record(observed, record_id="greq_trial", gateway_id="gw")
+        assert record.shadow == run  # a valid wire record
+    assert spawned.shadow is not None and spawned.shadow.agreed is agreed
+    assert gw.seen[0].shadow is None  # the main conversation has no trial
+
+
+def test_a_trial_also_follows_a_stay(tmp_path: Path) -> None:
+    with gateway(tmp_path, config(subagent_target=None, subagents={"trial": 1.0})) as gw:
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    observed = gw.seen[-1]
+    assert observed.decision.action == "stay"
+    assert gw.upstream.requests[1].body == SPAWN.request_bytes()
+    assert observed.shadow is not None and observed.shadow.trial
+
+
+def test_in_observer_mode_a_trial_runs_where_the_decision_has_no_shadow(tmp_path: Path) -> None:
+    # The decision names the cheaper target, but cloud shadows are off: the trial runs instead.
+    with gateway(tmp_path, config("observer", subagents={"trial": 1.0})) as gw:
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    observed = gw.seen[-1]
+    assert (observed.decision.action, observed.decision.applied) == ("route", False)
+    assert observed.shadow is not None and observed.shadow.trial
+    assert observed.shadow.target == LOCAL_MEDIUM
+    to_record(observed, record_id="greq_trial", gateway_id="gw")
+
+
+def test_a_conversation_served_locally_is_never_tried(tmp_path: Path) -> None:
+    # A served conversation is in the share, never the trial; and a local answer is not shadowed.
+    with gateway(tmp_path, config(subagents={"share": 0.5, "trial": 0.5})) as gw:
+        gw.inference.pieces = ["Done."]
+        gw.send(MAIN)
+        gw.send(SPAWN)
+    observed = gw.seen[-1]
+    assert observed.decision.applied and observed.decision.target == LOCAL_MEDIUM
+    assert observed.shadow is None and len(gw.inference.requests) == 1

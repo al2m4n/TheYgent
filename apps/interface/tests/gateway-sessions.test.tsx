@@ -383,6 +383,56 @@ describe("AI Gateway sessions", () => {
     expect(row).not.toHaveTextContent("next action");
   });
 
+  it("names a local trial for what it is", async () => {
+    // Router mode served it on Sonnet; the local model was tried on it afterwards.
+    const trial = {
+      target: { kind: "local", model: "coder-medium" },
+      outcome: "answered",
+      usage: {
+        input_tokens: 2,
+        output_tokens: 30,
+        cache_read_tokens: 0,
+        cache_write_5m_tokens: 0,
+        cache_write_1h_tokens: 0,
+      },
+      cost_usd: 0,
+      total_ms: 9100,
+      agreed: false,
+      first_output_ms: 8700,
+      trial: true,
+    };
+    mockControlPlane({
+      detail: () => ({
+        session_id: "aaaaaaaa-1111",
+        developer_id: "usr_dev",
+        totals: totals({ calls: 1 }),
+        requests: [
+          entry("rec_trial", 0, {
+            request_class: "subagent",
+            decision: {
+              action: "route",
+              target: { kind: "anthropic", model: "claude-sonnet-5-5" },
+              reasons: ["subagent_at_spawn"],
+              counterfactual_usd: null,
+              applied: true,
+            },
+            shadow: trial,
+          }),
+        ],
+        truncated: false,
+        archived_requests: 0,
+      }),
+    });
+    const ui = userEvent.setup();
+    renderTab();
+    await ui.click(await screen.findByRole("button", { name: "Open session aaaaaaaa-1111" }));
+    const row = await screen.findByTestId("request-rec_trial");
+    expect(row).toHaveTextContent(
+      "Local trial on coder-medium: its answer would have been used · a different next action",
+    );
+    expect(row).not.toHaveTextContent("Shadow run");
+  });
+
   it("says how many of a session's requests are archived", async () => {
     mockControlPlane({
       detail: () => ({

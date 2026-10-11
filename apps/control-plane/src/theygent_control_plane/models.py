@@ -898,11 +898,12 @@ class AiGatewayRequestRow(Base):
 
 class AiGatewayDailyUsageRow(Base):
     """Per-day (UTC) aggregates by every dimension a report groups by — developer, client, class,
-    requested and served model, decision target, session and first reason — maintained as records
-    arrive. Reports read them for the days whose request rows were archived (``archived_before``
-    on ``ai_gateway_state``), so archiving loses nothing a report shows. A missing dimension value
-    is ``''`` (the key cannot hold NULL), and ``decision_target`` ``''`` means the decision was to
-    stay. ``first_at``/``last_at`` bound the requests the row sums."""
+    requested and served model, decision target, session, first reason and the model a shadow ran
+    on — maintained as records arrive. Reports read them for the days whose request rows were
+    archived (``archived_before`` on ``ai_gateway_state``), so archiving loses nothing a report
+    shows. A missing dimension value is ``''`` (the key cannot hold NULL): ``decision_target``
+    ``''`` means the decision was to stay, ``shadow_model`` ``''`` that no shadow ran.
+    ``first_at``/``last_at`` bound the requests the row sums."""
 
     __tablename__ = "ai_gateway_daily_usage"
 
@@ -931,6 +932,7 @@ class AiGatewayDailyUsageRow(Base):
     routed_local_tokens: Mapped[int] = mapped_column(BigInteger)
     session_id: Mapped[str] = mapped_column(String)
     reason: Mapped[str] = mapped_column(String)
+    shadow_model: Mapped[str] = mapped_column(String)
     first_at: Mapped[datetime] = mapped_column(_TZ)
     last_at: Mapped[datetime] = mapped_column(_TZ)
     shadow_calls: Mapped[int] = mapped_column(BigInteger)
@@ -953,6 +955,7 @@ class AiGatewayDailyUsageRow(Base):
             "decision_target",
             "session_id",
             "reason",
+            "shadow_model",
             name="pk_ai_gateway_daily_usage",
         ),
         Index("ix_ai_gateway_daily_usage_session", "session_id"),

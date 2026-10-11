@@ -561,19 +561,26 @@ def test_retention_migration_rebuilds_the_daily_aggregates_exactly(pg_url: str) 
         command.upgrade(cfg, "0024_ai_gateway_shadows")
         asyncio.run(_insert_requests(scratch, records))
         command.upgrade(cfg, "0025_ai_gateway_retention")
+        stored = asyncio.run(_daily_rows(scratch))
+        # The key and the fields this revision has; later ones add their own columns.
+        columns = [c for c in DAILY_KEY_COLUMNS if c in stored[0]]
+
+        def key_at(record: Any) -> tuple[Any, ...]:
+            return tuple(
+                v for c, v in zip(DAILY_KEY_COLUMNS, daily_key(record), strict=True) if c in columns
+            )
+
         expected: dict[tuple[Any, ...], GatewayTotals] = {}
         for record in records:
-            key = daily_key(record)
+            key = key_at(record)
             expected[key] = expected.get(key, GatewayTotals()) + GatewayTotals.of(record)
-        stored = asyncio.run(_daily_rows(scratch))
         assert len(stored) == len(expected) == 5
         for row in stored:
-            key = tuple(row[c] for c in DAILY_KEY_COLUMNS)
-            # The fields this revision has; later ones add their own columns.
+            key = tuple(row[c] for c in columns)
             present = [f for f in GatewayTotals.model_fields if f in row]
             want = expected[key].model_dump()
             assert {f: row[f] for f in present} == pytest.approx({f: want[f] for f in present})
-            starts = [r.started_at for r in records if daily_key(r) == key]
+            starts = [r.started_at for r in records if key_at(r) == key]
             assert (row["first_at"], row["last_at"]) == (min(starts), max(starts))
         # Down a step: the narrower key, the same sums.
         command.downgrade(cfg, "-1")
@@ -583,6 +590,101 @@ def test_retention_migration_rebuilds_the_daily_aggregates_exactly(pg_url: str) 
         assert sum(r["cost_usd"] for r in narrow) == pytest.approx(0.15)
         command.upgrade(cfg, "head")
         assert len(asyncio.run(_daily_rows(scratch))) == 5
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous
+        asyncio.run(_drop_scratch(pg_url))
+
+
+async def _archive_first_day(url: str, first: Any) -> None:
+    """What the sweeper leaves of a day it archived: its daily rows, no request rows."""
+    conn = await asyncpg.connect(dsn=plain_dsn(url))
+    try:
+        await conn.execute(
+            "DELETE FROM ai_gateway_request WHERE (started_at AT TIME ZONE 'UTC')::date = $1",
+            first,
+        )
+        await conn.execute(
+            "INSERT INTO ai_gateway_state (id, key_set_version, archived_before) "
+            "VALUES (1, 1, $1) ON CONFLICT (id) DO UPDATE SET archived_before = $1",
+            first + timedelta(days=1),
+        )
+    finally:
+        await conn.close()
+
+
+def test_shadow_model_migration_keys_the_daily_aggregates_by_it(pg_url: str) -> None:
+    # 0027 adds the model a shadow ran on to the daily key: the days kept in detail are rebuilt
+    # exactly from the request rows (a local trial's model is not its decision's target); an
+    # archived day's rows with shadows take their decision's target, where every shadow ran then.
+    from theygent_control_plane.ai_gateway.store import DAILY_KEY_COLUMNS, daily_key
+    from theygent_ir.gateway import GatewayRequestRecord, GatewayTotals
+
+    trial = GatewayRequestRecord.model_validate(
+        {
+            **_retention_records()[4].model_dump(mode="json"),
+            "id": "rec_00007",
+            "request_class": "subagent",
+            "served_model": "claude-sonnet-5-5",
+            "decision": {
+                "action": "route",
+                "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+                "reasons": ["subagent_at_spawn"],
+                "applied": True,
+            },
+            "shadow": {
+                "target": {"kind": "local", "model": "coder-medium"},
+                "outcome": "answered",
+                "agreed": True,
+                "cost_usd": 0.0,
+                "trial": True,
+            },
+        }
+    )
+    records = [*_retention_records(), trial]
+    first = records[0].started_at.date()
+    kept = [r for r in records if r.started_at.date() > first]
+    archived = [r for r in records if r.started_at.date() == first]
+    scratch = _scratch_url(pg_url)
+    asyncio.run(_recreate_scratch(pg_url))
+    previous = os.environ.get("DATABASE_URL")
+    try:
+        os.environ["DATABASE_URL"] = scratch
+        cfg = Config(str(_ALEMBIC_INI))
+        command.upgrade(cfg, "0024_ai_gateway_shadows")
+        asyncio.run(_insert_requests(scratch, records[:-1]))
+        command.upgrade(cfg, "0025_ai_gateway_retention")  # builds the daily rows
+        command.upgrade(cfg, "0026_ai_gateway_shadow_agreement")
+        asyncio.run(_insert_requests(scratch, [trial]))  # a request row only, as at 0026 a
+        asyncio.run(_archive_first_day(scratch, first))  # trial could not yet be recorded
+        command.upgrade(cfg, "0027_ai_gateway_shadow_model")
+        expected: dict[tuple[Any, ...], GatewayTotals] = {}
+        for record in kept:
+            key = daily_key(record)
+            expected[key] = expected.get(key, GatewayTotals()) + GatewayTotals.of(record)
+        stored = {
+            tuple(row[c] for c in DAILY_KEY_COLUMNS): row
+            for row in asyncio.run(_daily_rows(scratch))
+        }
+        for key, totals in expected.items():
+            row = stored[key]
+            want = totals.model_dump()
+            assert {f: row[f] for f in want} == pytest.approx(want)
+        assert stored[daily_key(trial)]["shadow_agreed_calls"] == 1
+        assert daily_key(trial)[-1] == "coder-medium"
+        old = {k: r for k, r in stored.items() if k[0] == first}
+        assert sum(r["calls"] for r in old.values()) == len(archived)
+        shadowed = [k for k, r in old.items() if r["shadow_calls"]]
+        assert [k[-1] for k in shadowed] == ["claude-sonnet-5-5"]
+        assert len(stored) == len(expected) + len(old)
+        # Down a step: the narrower key, the same sums.
+        command.downgrade(cfg, "-1")
+        narrow = asyncio.run(_daily_rows(scratch))
+        assert "shadow_model" not in narrow[0]
+        assert sum(r["calls"] for r in narrow) == len(records)
+        command.upgrade(cfg, "head")
     finally:
         if previous is None:
             os.environ.pop("DATABASE_URL", None)

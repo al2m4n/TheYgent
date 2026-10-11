@@ -686,6 +686,38 @@ def test_a_shadow_runs_only_for_a_route_not_applied() -> None:
         _built(decision=SONNET_ROUTE, shadow=other)
 
 
+LOCAL_TRIAL = _shadow(target={"kind": "local", "model": "coder-medium"}, cost_usd=0.0, trial=True)
+
+
+def test_a_trial_runs_where_the_decision_named_another_target_or_none() -> None:
+    # Router mode keeps the conversation on Anthropic — staying, or routed to Sonnet and served
+    # there — and the local model is tried on it afterwards.
+    applied = {**SONNET_ROUTE, "counterfactual_usd": None, "applied": True}
+    for decision in (None, applied, SONNET_ROUTE):
+        fields = {} if decision is None else {"decision": decision}
+        record = _built(cost_usd=0.5, **fields, shadow={**LOCAL_TRIAL, "agreed": True})
+        totals = GatewayTotals.of(record)
+        assert (totals.shadow_calls, totals.shadow_agreed_calls, totals.shadow_cost_usd) == (
+            1,
+            1,
+            0.0,
+        )
+
+
+def test_a_trial_runs_only_on_a_local_model_that_did_not_serve() -> None:
+    cloud = _shadow(trial=True)
+    with pytest.raises(ValidationError, match="trial runs on a local model"):
+        _built(shadow=cloud)
+    served = {
+        "action": "route",
+        "target": {"kind": "local", "model": "coder-medium"},
+        "reasons": ["subagent_at_spawn", "local_share"],
+        "applied": True,
+    }
+    with pytest.raises(ValidationError, match="did not serve"):
+        _built(decision=served, shadow=LOCAL_TRIAL)
+
+
 def test_shadow_settings_default_to_local_only() -> None:
     policy = PolicyConfig()
     assert (policy.shadow_local, policy.shadow_cloud) == (True, False)
@@ -736,6 +768,12 @@ def test_local_models_and_dials_validate() -> None:
     assert [m.model for m in policy.local_models] == ["aux-small", "coder-medium"]
     assert policy.local_routing.subagents.agent_types == ["Explore"]
     assert policy.local_models[1].tools and not policy.local_models[0].images
+    assert policy.local_routing.subagents.trial == 0.0  # no trial unless chosen
+    trial = _policy(local_routing={"subagents": {"share": 0.4, "trial": 0.6}})
+    assert trial.local_routing.subagents.trial == 0.6
+    # 0.71% and 99.29% typed in a form add up to a hair over 1 as fractions: still 100%.
+    assert 0.71 / 100 + 99.29 / 100 > 1
+    _policy(local_routing={"main": {"share": 0.71 / 100, "trial": 99.29 / 100}})
 
 
 @pytest.mark.parametrize(
@@ -747,6 +785,10 @@ def test_local_models_and_dials_validate() -> None:
         # Agent turns carry tools: a share needs a model that follows them.
         ({"local_routing": {"subagents": {"share": 0.5, "model": "aux-small"}}}, "tool calls"),
         ({"local_routing": {"subagents": {"share": 1.5}}}, "less than or equal"),
+        # A trial is served by Anthropic, and tried on the same kind of model as a share.
+        ({"local_routing": {"main": {"share": 0.6, "trial": 0.5}}}, "together exceed 100%"),
+        ({"local_routing": {"side_requests": {"share": 1.0, "trial": 0.1}}}, "exceed 100%"),
+        ({"local_routing": {"subagents": {"trial": 0.2, "model": "aux-small"}}}, "tool calls"),
         ({"local_models": [{"model": "tiny", "context_tokens": 10}]}, "greater than or equal"),
     ],
 )

@@ -103,6 +103,7 @@ _KEYS = (
     "decision_target",
     "session_id",
     "reason",
+    "shadow_model",
 )
 
 
@@ -140,6 +141,7 @@ def _units(
         ),
         func.coalesce(R.session_id, "").label("session_id"),
         func.coalesce(R.decision_reasons.op("->>")(0), "").label("reason"),
+        func.coalesce(R.shadow["target"]["model"].astext, "").label("shadow_model"),
         R.started_at.label("first_at"),
         R.started_at.label("last_at"),
         *(expr.label(name) for name, expr in CONTRIB.items()),
@@ -199,6 +201,7 @@ def _dimensions(units: Any) -> dict[str, ColumnElement[Any]]:
             else_=literal("route:") + c.decision_target,
         ),
         "reason": func.nullif(c.reason, ""),
+        "shadow-model": func.nullif(c.shadow_model, ""),
         "day": c.day,
     }
 
@@ -213,6 +216,7 @@ DIMENSIONS: tuple[str, ...] = (
     "developer",
     "decision",
     "reason",
+    "shadow-model",
     "day",
 )
 #: ``GatewayTotals`` field by field, as the report sums them.

@@ -194,6 +194,23 @@ def shadowed(ada: str, bob: str) -> list[dict[str, Any]]:
             decision=route(SONNET, 0.0011, "subagent_at_spawn"),
             shadow=shadow(SONNET, "failed", 0, None),
         ),
+        # Router mode: served on Sonnet, then a local trial — a shadow on a model the decision
+        # did not name.
+        record(
+            15,
+            developer_id=ada,
+            session_id="s-ada-2",
+            request_class="subagent",
+            served_model="claude-sonnet-5-5",
+            baseline_usd=0.002,
+            decision={
+                "action": "route",
+                "target": SONNET,
+                "reasons": ["subagent_at_spawn"],
+                "applied": True,
+            },
+            shadow={**shadow(LOCAL, "answered", 30, 0.0, agreed=True), "trial": True},
+        ),
     ]
 
 
@@ -210,6 +227,7 @@ def python_key(dimension: str, raw: dict[str, Any]) -> str:
         "developer": r.developer_id,
         "decision": f"route:{target.model}" if r.decision.action == "route" and target else "stay",
         "reason": r.decision.reasons[0],
+        "shadow-model": r.shadow.target.model if r.shadow is not None else None,
         "day": r.started_at.astimezone(UTC).date().isoformat(),
     }[dimension]
     return value if value is not None else NONE_KEY
@@ -478,7 +496,17 @@ def test_a_timeline_entry_carries_its_shadow_run(client: TestClient) -> None:
         "total_ms": 900,
         "agreed": True,
         "first_output_ms": 300,
+        "trial": False,
     }
+
+
+def test_a_timeline_entry_says_when_its_shadow_was_a_local_trial(client: TestClient) -> None:
+    ada, ada_token = make_user(client, "ada", "editor")
+    bob, _ = make_user(client, "bob", "editor")
+    seed(client, shadowed(ada, bob))
+    entries = timeline(client, "s-ada-2", ada_token).json()["requests"]
+    trials = [e for e in entries if e["shadow"] and e["shadow"]["trial"]]
+    assert [(e["decision"]["applied"], e["shadow"]["target"]) for e in trials] == [(True, LOCAL)]
 
 
 def test_another_developers_session_is_not_there(

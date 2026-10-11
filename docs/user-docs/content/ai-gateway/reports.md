@@ -19,19 +19,21 @@ traffic; everyone else on their own (and can switch to organization totals).
 Below them: spend by day (the full bar is what each day cost as requested, the filled part with
 routing; the gap is the saving), and a
 breakdown you can group by request class, client, the model Claude Code requested, the model that
-served it, the routing decision or its reason — and, where you may see individuals, by developer
-or session. Grouping by requested model matches Claude Code's own usage summary, which files every
+served it, the routing decision or its reason, the model a shadow run ran on — and, where you may
+see individuals, by developer or session. Grouping by requested model matches Claude Code's own usage summary, which files every
 token under the model it asked for.
 
 **Shadow runs.** A saving is an estimate: it assumes the target would have written as much as
 the model Claude Code asked for. Shadow runs check it. After a request that routing would have sent
-elsewhere, the gateway sends a copy to that target. Claude Code never sees the copy, and it never
-delays Claude Code's answer. The **Shadow runs** table shows, per target, how many copies ran,
+elsewhere, the gateway sends a copy to that target; after a request in a local dial's *trial* (see
+Settings below), it sends a copy to the local model. Claude Code never sees the copy, and it never
+delays Claude Code's answer. The **Shadow runs** table shows, per model, how many copies ran,
 how many of their answers routing could have used, and how much the target wrote compared with
 the model Claude Code asked for. For agent turns (subagents and the main conversation) it also
 shows how often the target picked the same next action as the real reply: the same tool first, or
 the answer where the reply answered. That is the measure to watch before trusting a local model
-with agent work. It also shows what the copies cost, which is kept apart from the spend above. The Sessions timeline shows the shadow run under each request that had one.
+with agent work. It also shows what the copies cost, which is kept apart from the spend above. The
+Sessions timeline shows the shadow run under each request that had one, a trial named as such.
 
 **Subscription seats.** For developers on a claude.ai plan, the dollar figures are the
 API-equivalent value of their traffic, not a bill. The seats table shows each developer's latest
@@ -152,9 +154,9 @@ local model's tokens.
 - **Local models** — the models on your inference plane that may take Claude Code's work, listed
   small to large. Each has a [logical model id](../concepts/models-and-engines.md), its context
   size in tokens, and whether it follows tool calls and takes images. Beside each one is what the
-  last week shows: the requests it served, and how often its shadow runs picked the same next
-  action as Claude. Then one dial per kind of request, each a **share** of conversations and the
-  **model** (or "smallest that fits"):
+  last week shows: the requests it served, and how often its shadow runs and trials picked the
+  same next action as Claude. Then one dial per kind of request, each a **share** of
+  conversations, a **trial**, and the **model** (or "smallest that fits"):
     - *Side requests* (100% by default): the kinds reviewed *local model* in the Catalog.
     - *Subagents* (0% by default): a share of subagents, from their first request. You can limit
       it to some agent types (for example `Explore`).
@@ -162,14 +164,22 @@ local model's tokens.
       compaction.
 
     A conversation in the share stays on its local model for its task, and the rest go to
-    Anthropic as before. Agent turns need a model that follows tool calls. Raise a dial on
-    evidence: run in observer mode first and read the *same next action* rate. A local model that
-    fails before it starts answering hands the request to Anthropic, unseen by Claude Code.
+    Anthropic as before. Agent turns need a model that follows tool calls. A local model that fails
+    before it starts answering hands the request to Anthropic, unseen by Claude Code.
+
+    Raise a share on evidence. The **trial** is a further slice of conversations, just above the
+    share: Anthropic still answers them, and afterwards the gateway tries each of their requests on
+    the local model and records whether it picked the same next action. It works in router mode
+    too, so you keep routing's savings while you measure; it costs no API spend, and a request the
+    local model is serving always comes first (a trial running then is dropped). Raising the share
+    by the trial serves exactly the conversations that were tried. The share and the trial
+    together are at most 100%.
 - **Warm switch margin** — a conversation whose cache is warm moves only where staying would cost
   at least this many times rebuilding its cache on the other model (at least 1). Cache reads cost
   a fraction of cache writes, so in practice warm conversations stay put.
 - **Shadow runs** — which targets get shadow runs (see the Report tab above).
-    - *Local model* is on by default. It costs no API spend, only the local model's time.
+    - *Local model* is on by default. It costs no API spend, only the local model's time. (A
+      dial's trial is its own choice and runs whatever this says.)
     - *Cloud targets* are off by default, because each copy is a real API call. Cloud shadow runs
       use only the organization's key (on a personal gateway, your own API key), never a
       subscription seat's login or a developer's own key. They stop for the day at the **budget**

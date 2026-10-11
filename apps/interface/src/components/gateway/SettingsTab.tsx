@@ -370,7 +370,8 @@ function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
                 <span>
                   <span className="block font-medium text-foreground">Local model</span>
                   <span className="block text-xs text-muted-foreground">
-                    Side requests allowed to run locally. Costs no API spend.
+                    Requests a decision would send to a local model. Costs no API spend. A dial's
+                    trial is tried either way.
                   </span>
                 </span>
               </label>
@@ -1200,26 +1201,34 @@ const DIALS: { kind: DialKind; label: string; detail: string }[] = [
   },
 ];
 
+interface LocalEvidence {
+  served: number;
+  shadows: number;
+  compared: number;
+  agreed: number;
+}
+
 /** What the last week's records say about each local model: requests it served, and the shadow
- *  runs that measured it on agent turns. */
-function useLocalEvidence(): Map<
-  string,
-  { served: number; shadows: number; compared: number; agreed: number }
-> {
+ *  runs — trials included — that measured it on agent turns. */
+function useLocalEvidence(): Map<string, LocalEvidence> {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const report = useQuery({
     queryKey: ["gatewayReport", "localEvidence"],
-    queryFn: () => api.getGatewayReport({ since, by: ["decision"], scope: "org" }),
+    queryFn: () => api.getGatewayReport({ since, by: ["decision", "shadow-model"], scope: "org" }),
     staleTime: 60_000,
   });
-  const out = new Map<
-    string,
-    { served: number; shadows: number; compared: number; agreed: number }
-  >();
+  const out = new Map<string, LocalEvidence>();
+  const entry = (model: string): LocalEvidence => {
+    const found = out.get(model) ?? { served: 0, shadows: 0, compared: 0, agreed: 0 };
+    out.set(model, found);
+    return found;
+  };
   for (const row of report.data?.groups?.decision ?? []) {
-    if (!row.key.startsWith("route:")) continue;
-    out.set(row.key.slice(6), {
-      served: row.applied_calls,
+    if (row.key.startsWith("route:")) entry(row.key.slice(6)).served = row.applied_calls;
+  }
+  for (const row of report.data?.groups?.["shadow-model"] ?? []) {
+    if (row.shadow_calls === 0) continue;
+    Object.assign(entry(row.key), {
       shadows: row.shadow_calls,
       compared: row.shadow_compared_calls,
       agreed: row.shadow_agreed_calls,
@@ -1257,8 +1266,10 @@ function LocalModels({
       <p className="text-xs text-muted-foreground">
         Models on your inference plane that may take Claude Code's work, listed small to large: a
         request goes to the first that can take it. A local answer costs no API spend; one that
-        fails before it starts goes to Anthropic, unseen by Claude Code. Measure a model in observer
-        mode first — its shadow runs show how often it picks the same next action as Claude.
+        fails before it starts goes to Anthropic, unseen by Claude Code. Measure a model before it
+        serves: a dial's trial tries it on conversations Anthropic still answers — in router mode
+        too, never delaying anyone — and shows how often it picks the same next action as Claude.
+        Raising the share by the trial then serves exactly the conversations tried.
       </p>
       {rows.length > 0 && (
         <Table>
@@ -1363,14 +1374,18 @@ function LocalModels({
           return (
             <div
               key={kind}
-              className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_auto_auto]"
+              className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_auto_auto_auto]"
             >
               <div>
                 <span className="block text-sm font-medium text-foreground">{label}</span>
                 <span className="block text-xs text-muted-foreground">{detail}</span>
-                {(errors[`dial.${kind}.share`] || errors[`dial.${kind}.model`]) && (
+                {(errors[`dial.${kind}.share`] ||
+                  errors[`dial.${kind}.trial`] ||
+                  errors[`dial.${kind}.model`]) && (
                   <span className="block text-xs text-destructive">
-                    {errors[`dial.${kind}.share`] ?? errors[`dial.${kind}.model`]}
+                    {errors[`dial.${kind}.share`] ??
+                      errors[`dial.${kind}.trial`] ??
+                      errors[`dial.${kind}.model`]}
                   </span>
                 )}
               </div>
@@ -1382,6 +1397,17 @@ function LocalModels({
                   className="w-24 tabular-nums"
                   aria-invalid={errors[`dial.${kind}.share`] ? true : undefined}
                   onChange={(e) => setDial(kind, { share: e.target.value })}
+                />
+              </Field>
+              <Field label="Trial (%)">
+                <Input
+                  aria-label={`${label} trial`}
+                  title="Also tried on the local model after Anthropic answers: the conversations just above the share."
+                  value={dial.trial}
+                  inputMode="decimal"
+                  className="w-24 tabular-nums"
+                  aria-invalid={errors[`dial.${kind}.trial`] ? true : undefined}
+                  onChange={(e) => setDial(kind, { trial: e.target.value })}
                 />
               </Field>
               <Field label="Model">
@@ -1399,7 +1425,7 @@ function LocalModels({
                 </NativeSelect>
               </Field>
               {kind === "subagents" && (
-                <div className="md:col-span-3">
+                <div className="md:col-span-4">
                   <Field label="Only these agent types (comma-separated; empty: every type)">
                     <Input
                       aria-label="Subagent types"

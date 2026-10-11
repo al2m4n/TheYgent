@@ -265,7 +265,7 @@ What the [AI Gateway](../ai-gateway/index.md) page uses. Everyone manages their 
 | GET | `/gateway/me` | Your billing profile (`passthrough` or `org_key`) and live gateway-key count. |
 | POST / GET | `/gateway/keys` | Create a gateway key (`{name}`; the `tyg_…` token is in this response only) / list yours (`?all=true` for everyone's, admin). |
 | DELETE | `/gateway/keys/{id}` | Revoke a key; gateways refuse it within one key sync. |
-| GET | `/gateway/report` | Totals and groupings for a range: `since`, `until`, `by` (`class`, `client`, `session`, `model`, `served-model`, `developer`, `decision`, `reason`, `day`), `scope` (`mine` or `org`), plus setup `warnings` and subscription `seats`. |
+| GET | `/gateway/report` | Totals and groupings for a range: `since`, `until`, `by` (`class`, `client`, `session`, `model`, `served-model`, `developer`, `decision`, `reason`, `shadow-model`, `day`), `scope` (`mine` or `org`), plus setup `warnings` and subscription `seats`. |
 | GET | `/gateway/sessions` · `/gateway/sessions/{id}` | Sessions most recently active first (`since`, `before`, `limit`) · one session's timeline of requests and decisions (`after`, `limit`). |
 | GET / PUT | `/gateway/config` | The latest configuration (its version is the `ETag`; `404 gateway_config_not_found` before any) / save the next version (admin; `If-Match` refuses a stale edit with `412 config_version_conflict`; `422 invalid_gateway_config`). |
 | GET | `/gateway/config/versions` · `/gateway/config/versions/{n}` | The history · one version. |

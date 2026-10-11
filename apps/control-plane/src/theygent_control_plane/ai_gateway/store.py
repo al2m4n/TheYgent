@@ -137,8 +137,9 @@ class Developer(BaseModel):
 
 
 #: A day's aggregates are keyed by these, with ``''`` for a missing value: day, developer,
-#: client, class, requested and served model, decision target, session, first reason.
-DailyKey = tuple[date, str, str, str, str, str, str, str, str]
+#: client, class, requested and served model, decision target, session, first reason, and the
+#: model a shadow ran on.
+DailyKey = tuple[date, str, str, str, str, str, str, str, str, str]
 DAILY_KEY_COLUMNS = (
     "day",
     "developer_id",
@@ -149,6 +150,7 @@ DAILY_KEY_COLUMNS = (
     "decision_target",
     "session_id",
     "reason",
+    "shadow_model",
 )
 _TOTAL_FIELDS = tuple(GatewayTotals.model_fields)
 
@@ -287,6 +289,7 @@ def daily_key(record: GatewayRequestRecord) -> DailyKey:
         target,
         record.session_id or "",
         decision.reasons[0],
+        record.shadow.target.model if record.shadow is not None else "",
     )
 
 

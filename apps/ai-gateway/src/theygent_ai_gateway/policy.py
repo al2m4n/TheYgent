@@ -38,6 +38,7 @@ from theygent_ir.gateway import (
     GatewayConfig,
     GatewayMode,
     LocalModel,
+    LocalShare,
     PolicyConfig,
     ReasonCode,
     Target,
@@ -70,6 +71,9 @@ class Plan:
     target: Target | None = None
     #: The target holds none of this conversation's cache yet: moving there means rebuilding it.
     cold: bool = False
+    #: A local trial: the local model this conversation's dial would choose, tried on each of its
+    #: requests once the real answer is out (``LocalShare.trial``).
+    trial: Target | None = None
 
     @classmethod
     def stay(cls, *reasons: ReasonCode) -> Plan:
@@ -205,8 +209,11 @@ class Policy:
             dial = policy.local_routing.side_requests
             if policy.local_target is None and not policy.local_models:
                 return Plan.stay("local_candidate", "no_target_configured")
-            if not in_share((signals.hints.session_id, fingerprint), dial.share):
-                return Plan.stay("local_candidate")
+            key = (signals.hints.session_id, fingerprint)
+            if not in_share(key, dial.share):
+                tried = side_request_model(policy, signals) if in_trial(key, dial) else None
+                trial = Target(kind="local", model=tried.model) if tried is not None else None
+                return replace(Plan.stay("local_candidate"), trial=trial)
             model = side_request_model(policy, signals)
             if model is None:
                 return Plan.stay("local_candidate", "no_local_model_fits")
@@ -266,14 +273,19 @@ class Policy:
             not subagent or not dial.agent_types or (signals.hints.agent_type in dial.agent_types)
         )
         unfit: tuple[ReasonCode, ...] = ()
+        trial: Target | None = None
         if local and eligible and in_share(position.key, dial.share):
             model = local_model_for(policy, dial.model, signals, tools=True)
             if model is not None:
                 return Plan.route(Target(kind="local", model=model.model), why, "local_share")
             unfit = ("no_local_model_fits",)
+        elif local and eligible and in_trial(position.key, dial):
+            tried = local_model_for(policy, dial.model, signals, tools=True)
+            trial = Target(kind="local", model=tried.model) if tried is not None else None
         target = policy.subagent_target if subagent else policy.main_target
         plan = self._anthropic_target(signals, position, target, (why,), prices)
-        return plan.because(*plan.reasons, *unfit) if unfit else plan
+        plan = plan.because(*plan.reasons, *unfit) if unfit else plan
+        return replace(plan, trial=trial)
 
     def after_local_failure(
         self,
@@ -314,7 +326,8 @@ class Policy:
             if current.action == "route":
                 return current.because("follows_warm_cache")
             informative = tuple(r for r in preferred.reasons if r not in _BOUNDARY_REASONS)
-            return Plan.stay(*(informative or ("follows_warm_cache",)))
+            stay = Plan.stay(*(informative or ("follows_warm_cache",)))
+            return replace(stay, trial=preferred.trial)
         if self._warm_switch_pays(
             position, policy, prices, current, preferred, requested, fast=signals.fast
         ):
@@ -387,6 +400,14 @@ def in_share(key: object, share: float) -> bool:
         return False
     digest = hashlib.sha256(repr(key).encode()).digest()
     return int.from_bytes(digest[:8], "big") / 2**64 < share
+
+
+def in_trial(key: object, dial: LocalShare) -> bool:
+    """Whether a conversation falls in a dial's trial: the slice of conversations just above its
+    share, so raising the share by the trial serves exactly the conversations tried."""
+    return (
+        dial.trial > 0 and not in_share(key, dial.share) and in_share(key, dial.share + dial.trial)
+    )
 
 
 def _prompt_tokens(signals: RequestSignals) -> int:

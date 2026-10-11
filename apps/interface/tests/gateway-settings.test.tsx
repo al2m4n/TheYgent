@@ -227,10 +227,16 @@ function mockPlanes({
       if (parsed.pathname === "/gateway/report") {
         return json({
           groups: {
+            // Served: the routes applied to it. Measured: the shadows that ran on it — trials
+            // of conversations Anthropic answered among them.
             decision: [
+              { key: "stay", applied_calls: 0, shadow_calls: 0 },
+              { key: "route:coder-medium", applied_calls: 42, shadow_calls: 0 },
+            ],
+            "shadow-model": [
+              { key: "(none)", shadow_calls: 0, shadow_compared_calls: 0, shadow_agreed_calls: 0 },
               {
-                key: "route:coder-medium",
-                applied_calls: 42,
+                key: "coder-medium",
                 shadow_calls: 30,
                 shadow_compared_calls: 20,
                 shadow_agreed_calls: 15,
@@ -334,10 +340,11 @@ describe("AI Gateway settings: the config", () => {
         shadow_cloud: false,
         shadow_cloud_daily_usd: 1,
         local_models: [],
+        // A config read without trials saves them at zero.
         local_routing: {
-          side_requests: { share: 1, model: null, agent_types: [] },
-          subagents: { share: 0, model: null, agent_types: [] },
-          main: { share: 0, model: null, agent_types: [] },
+          side_requests: { share: 1, trial: 0, model: null, agent_types: [] },
+          subagents: { share: 0, trial: 0, model: null, agent_types: [] },
+          main: { share: 0, trial: 0, model: null, agent_types: [] },
         },
       },
       fingerprints: RULES,
@@ -862,6 +869,10 @@ describe("AI Gateway settings: developers' billing", () => {
       const share = screen.getByLabelText("Subagents share");
       await ui.clear(share);
       await ui.type(share, "25");
+      // The next 20% are tried on it after Anthropic answers, to measure it before it serves.
+      const trial = screen.getByLabelText("Subagents trial");
+      await ui.clear(trial);
+      await ui.type(trial, "20");
       await ui.type(screen.getByLabelText("Subagent types"), "Explore, Plan");
       // The evidence from the last week of records, beside the model.
       expect(screen.getByText(/served 42 · same next action 75% of 20/)).toBeInTheDocument();
@@ -872,10 +883,36 @@ describe("AI Gateway settings: developers' billing", () => {
         { model: "coder-medium", context_tokens: 131072, tools: true, images: false },
       ]);
       expect(policy.local_routing).toEqual({
-        side_requests: { share: 1, model: null, agent_types: [] },
-        subagents: { share: 0.25, model: null, agent_types: ["Explore", "Plan"] },
-        main: { share: 0, model: null, agent_types: [] },
+        side_requests: { share: 1, trial: 0, model: null, agent_types: [] },
+        subagents: { share: 0.25, trial: 0.2, model: null, agent_types: ["Explore", "Plan"] },
+        main: { share: 0, trial: 0, model: null, agent_types: [] },
       });
+    });
+
+    it("will not save a trial that overruns the share or has no model to try", async () => {
+      const calls = mockPlanes();
+      const ui = userEvent.setup();
+      renderTab();
+      const share = await screen.findByLabelText("Main conversation share");
+      const trial = screen.getByLabelText("Main conversation trial");
+      await ui.clear(trial);
+      await ui.type(trial, "5"); // no listed model follows tool calls
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      expect(
+        screen.getByText("Agent turns need a listed local model that follows tool calls."),
+      ).toBeInTheDocument();
+      expect(trial).toHaveAttribute("aria-invalid", "true");
+      expect(share).not.toHaveAttribute("aria-invalid");
+      await ui.click(screen.getByRole("button", { name: "Add a local model" }));
+      await ui.type(screen.getByLabelText("Local model (row 1)"), "coder-medium");
+      await ui.click(screen.getByRole("checkbox", { name: "Follows tool calls (row 1)" }));
+      await ui.clear(share);
+      await ui.type(share, "70");
+      await ui.clear(trial);
+      await ui.type(trial, "40");
+      await ui.click(screen.getByRole("button", { name: "Save" }));
+      expect(screen.getByText("The share and the trial together exceed 100%.")).toBeInTheDocument();
+      expect(puts(calls)).toHaveLength(0);
     });
 
     it("will not save a dial no listed model can serve", async () => {

@@ -19,8 +19,14 @@ Where a shadow goes:
   rate-limit pressure (a 429 or 529, or under half of any limit remaining) pauses cloud shadows for
   ten minutes, so they never crowd out real traffic.
 
+A local trial (``LocalShare.trial``) is a local shadow too: in either mode, a request of a
+conversation in a dial's trial slice is tried on the dial's local model once Anthropic has answered
+it, whatever its decision. A trial is its own opt-in, so ``shadow_local`` does not govern it.
+
 A few shadows run at once per kind; beyond that a shadow is skipped, never queued — a shadow is a
-sample, not an obligation.
+sample, not an obligation. A local model serves real traffic first: while a request is being
+served locally no local shadow starts, and one that is running is cancelled (its stream closes, so
+the engine stops) and its exchange recorded without it.
 """
 
 from __future__ import annotations
@@ -96,6 +102,8 @@ class ShadowJob:
     tools: bool = False
     images: bool = False
     context_tokens: int | None = None
+    #: A local trial: its decision named another target, or none.
+    trial: bool = False
 
 
 def _under_pressure(response: httpx.Response) -> bool:
@@ -131,10 +139,18 @@ class Shadows:
         self._clock = clock
         self._today = today
         self._tasks: set[asyncio.Task[None]] = set()
+        self._local_tasks: set[asyncio.Task[None]] = set()
         self._in_flight = {"local": 0, "anthropic": 0}
+        #: Requests a local model is serving now.
+        self._serving = 0
         self._day = today()
         self._spent = 0.0
         self._paused_until = 0.0
+
+    @property
+    def running(self) -> int:
+        """Shadows still running: each holds its exchange's record until it ends."""
+        return len(self._tasks)
 
     @property
     def spent_today(self) -> float:
@@ -142,11 +158,21 @@ class Shadows:
             self._day, self._spent = self._today(), 0.0
         return self._spent
 
-    def _may_run(self, target: Target, policy: PolicyConfig, cloud_allowed: bool) -> bool:
-        if target.kind == "local":
+    def serving_started(self) -> None:
+        """A local model starts serving a request: local shadows make way."""
+        self._serving += 1
+        for task in list(self._local_tasks):
+            task.cancel()
+
+    def serving_ended(self) -> None:
+        self._serving = max(0, self._serving - 1)
+
+    def _may_run(self, job: ShadowJob, policy: PolicyConfig, cloud_allowed: bool) -> bool:
+        if job.target.kind == "local":
             return (
-                policy.shadow_local
+                (policy.shadow_local or job.trial)
                 and self.local is not None
+                and self._serving == 0
                 and (self._in_flight["local"] < LOCAL_IN_FLIGHT)
             )
         return (
@@ -170,7 +196,7 @@ class Shadows:
     ) -> bool:
         """Run ``job`` in the background, then deliver ``observation`` with its result. ``False``
         when no shadow may run now: nothing was started, and the caller delivers."""
-        if not self._may_run(job.target, policy, cloud_allowed):
+        if not self._may_run(job, policy, cloud_allowed):
             return False
         try:
             loop = asyncio.get_running_loop()
@@ -181,6 +207,9 @@ class Shadows:
         task = loop.create_task(self._run(job, observation, hook, prices))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        if kind == "local":
+            self._local_tasks.add(task)
+            task.add_done_callback(self._local_tasks.discard)
         return True
 
     async def _run(
@@ -225,6 +254,7 @@ class Shadows:
             cost_usd=0.0,
             total_ms=int((time.perf_counter() - started) * 1000),
             first_output_ms=attempt.first_output_ms,
+            trial=job.trial,
         )
         return run, attempt.tool_calls
 

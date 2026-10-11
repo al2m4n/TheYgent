@@ -50,6 +50,7 @@ from theygent_ir.gateway import (
     PolicyConfig,
     ReasonCode,
     SeatAllowance,
+    Target,
     Timing,
 )
 
@@ -229,6 +230,10 @@ async def _unless_client_disconnects[T](request: Request, call: Coroutine[Any, A
     raise ClientDisconnected
 
 
+#: What a shadow sends: the request's body, its path and the outbound headers.
+_Kept = tuple[bytes, str, list[tuple[bytes, bytes]]]
+
+
 class _Exchange:
     """One exchange's observation, assembled as the exchange happens and delivered to the
     observe hook exactly once, however it ends. Every step is guarded: observing must never
@@ -264,8 +269,10 @@ class _Exchange:
         self._local = False
         self._shadows: Shadows | None = getattr(request.app.state, "shadows", None)
         #: What a shadow run needs, kept from the forward path (see ``keep_for_shadow``).
-        self._shadow_request: tuple[bytes, str, list[tuple[bytes, bytes]]] | None = None
+        self._shadow_request: _Kept | None = None
         self._cloud_shadow_allowed = False
+        #: A local model is serving this exchange: local shadows make way until it ends.
+        self._serving = False
 
     @property
     def credential(self) -> str:
@@ -302,24 +309,22 @@ class _Exchange:
         self, body: bytes, path: str, headers: list[tuple[bytes, bytes]], *, cloud_allowed: bool
     ) -> None:
         """Keep what a shadow of this request would send, should its decision be a route that is
-        not applied. ``cloud_allowed``: the credential is one the gateway's operator holds."""
+        not applied, or carry a local trial. ``cloud_allowed``: the credential is one the
+        gateway's operator holds."""
         self._shadow_request = (body, path, headers)
         self._cloud_shadow_allowed = cloud_allowed
 
-    def _shadow_job(self, outcome: Outcome) -> ShadowJob | None:
-        """A shadow of this exchange: only of a complete, successful Messages exchange whose
-        decision routed it somewhere it did not go."""
-        plan, kept = self.plan, self._shadow_request
-        if kept is None or plan is None or self._applied or outcome != "complete":
-            return None
-        if self._endpoint != "messages" or self._status is None or not 200 <= self._status < 300:
-            return None
-        if plan.action != "route" or plan.target is None:
-            return None
+    def wants_shadow(self) -> bool:
+        """Whether a shadow of this request could run: its decision is a route, or carries a
+        local trial."""
+        plan = self.plan
+        return plan is not None and (plan.action == "route" or plan.trial is not None)
+
+    def _job(self, target: Target, kept: _Kept, *, trial: bool = False) -> ShadowJob:
         body, path, headers = kept
-        capabilities = self.local_capabilities(plan.target.model)
+        capabilities = self.local_capabilities(target.model)
         return ShadowJob(
-            plan.target,
+            target,
             body,
             path,
             headers,
@@ -327,7 +332,35 @@ class _Exchange:
             tools=capabilities.tools,
             images=capabilities.images,
             context_tokens=capabilities.context_tokens,
+            trial=trial,
         )
+
+    def _shadow_jobs(self, outcome: Outcome) -> list[ShadowJob]:
+        """The shadows this exchange may have, first choice first: only of a complete, successful
+        Messages exchange — its decision's target, where it routed somewhere it did not go, then
+        a local trial, where a local model did not serve it."""
+        plan, kept = self.plan, self._shadow_request
+        if kept is None or plan is None or outcome != "complete":
+            return []
+        if self._endpoint != "messages" or self._status is None or not 200 <= self._status < 300:
+            return []
+        jobs: list[ShadowJob] = []
+        if plan.action == "route" and plan.target is not None and not self._applied:
+            jobs.append(self._job(plan.target, kept))
+        if plan.trial is not None and not self._local:
+            jobs.append(self._job(plan.trial, kept, trial=True))
+        return jobs
+
+    def serving_locally(self) -> None:
+        """A local model starts on this request: local shadows make way until it ends."""
+        if self._shadows is not None and not self._serving:
+            self._serving = True
+            self._shadows.serving_started()
+
+    def _served(self) -> None:
+        if self._serving and self._shadows is not None:
+            self._serving = False
+            self._shadows.serving_ended()
 
     def served_locally(self, answer: LocalAnswer | LocalStream) -> None:
         """The local model answers: the exchange is that answer, read like an upstream one (a
@@ -349,6 +382,7 @@ class _Exchange:
         """The local model could not take the request. A conversation gets the decision Anthropic's
         side would have made (a subagent may still start on the cheaper target), held until its
         next cold boundary; a side request goes to the requested model, pinning nothing."""
+        self._served()
         if self.plan is None:
             return
         refused = Plan.stay("target_refused", *self.plan.reasons)
@@ -464,6 +498,7 @@ class _Exchange:
         if self._done:
             return
         self._done = True
+        self._served()
         try:
             summary = self._observer.finish() if self._observer else ResponseSummary()
             if self._tracker is not None and self.position is not None and outcome == "complete":
@@ -513,16 +548,19 @@ class _Exchange:
         none runs."""
         shadows = self._shadows
         try:
-            job = self._shadow_job(outcome)
-            if shadows is None or job is None:
+            if shadows is None:
                 return False
-            return shadows.start(
-                job,
-                observation,
-                self._hook,
-                policy=self._config.policy if self._config is not None else PolicyConfig(),
-                prices=self._prices,
-                cloud_allowed=self._cloud_shadow_allowed,
+            policy = self._config.policy if self._config is not None else PolicyConfig()
+            return any(
+                shadows.start(
+                    job,
+                    observation,
+                    self._hook,
+                    policy=policy,
+                    prices=self._prices,
+                    cloud_allowed=self._cloud_shadow_allowed,
+                )
+                for job in self._shadow_jobs(outcome)
             )
         except Exception as exc:
             log.error("could not start a shadow run: %s", type(exc).__name__)
@@ -694,7 +732,7 @@ async def forward(request: Request) -> Response:
     outbound_headers = upstream_request_headers(
         list(request.headers.raw), profile=profile, org_api_key=org_api_key
     )
-    if endpoint == "messages" and exchange.plan is not None and exchange.plan.action == "route":
+    if endpoint == "messages" and exchange.wants_shadow():
         # A cloud shadow spends only a key the gateway's operator holds: the organization's, or in
         # personal mode the user's own API key. Never a seat's login, never a team developer's key.
         own_key = settings.auth_mode == "personal" and exchange.credential == "api_key"
@@ -716,6 +754,7 @@ async def forward(request: Request) -> Response:
         local: LocalRoute | None = getattr(request.app.state, "local", None)
         answered: LocalAnswer | LocalStream | None = None
         if local is not None:
+            exchange.serving_locally()
             capabilities = exchange.local_capabilities(local_model)
             try:
                 answered = await _unless_client_disconnects(

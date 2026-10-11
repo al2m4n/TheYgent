@@ -55,6 +55,8 @@ DIMENSIONS: dict[str, Callable[[GatewayRequestRecord], str | None]] = {
         else "stay"
     ),
     "reason": lambda r: r.decision.reasons[0],
+    # The model a shadow ran on: the decision's target, or a local trial's model.
+    "shadow-model": lambda r: r.shadow.target.model if r.shadow is not None else None,
 }
 DEFAULT_DIMENSIONS = ("class", "client", "model")
 

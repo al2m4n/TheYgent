@@ -211,9 +211,9 @@ LOCAL_MODELS = [
 
 def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
     routing = {
-        "side_requests": {"share": 1.0, "model": "aux-small", "agent_types": []},
-        "subagents": {"share": 0.25, "model": None, "agent_types": ["Explore"]},
-        "main": {"share": 0.0, "model": None, "agent_types": []},
+        "side_requests": {"share": 1.0, "trial": 0.0, "model": "aux-small", "agent_types": []},
+        "subagents": {"share": 0.25, "trial": 0.25, "model": None, "agent_types": ["Explore"]},
+        "main": {"share": 0.0, "trial": 0.0, "model": None, "agent_types": []},
     }
     saved = put(
         client,
@@ -231,20 +231,41 @@ def test_local_models_and_dials_save_and_read_back(client: TestClient) -> None:
     }
 
 
-def test_a_local_dial_no_model_can_serve_is_refused(client: TestClient) -> None:
+@pytest.mark.parametrize(
+    "dial",
+    [
+        {"share": 0.5},  # no listed model follows tool calls
+        {"trial": 0.5},  # a trial needs one just the same
+    ],
+)
+def test_a_local_dial_no_model_can_serve_is_refused(
+    client: TestClient, dial: dict[str, float]
+) -> None:
     refused = put(
         client,
         {
             "mode": "router",
-            "policy": {
-                "local_models": LOCAL_MODELS[:1],
-                "local_routing": {"subagents": {"share": 0.5}},
-            },
+            "policy": {"local_models": LOCAL_MODELS[:1], "local_routing": {"subagents": dial}},
         },
     )
     assert refused.status_code == 422
     assert refused.json()["error"]["code"] == "invalid_gateway_config"
     assert client.get("/gateway/config").status_code == 404
+
+
+def test_a_share_and_trial_over_everything_are_refused(client: TestClient) -> None:
+    refused = put(
+        client,
+        {
+            "mode": "router",
+            "policy": {
+                "local_models": LOCAL_MODELS,
+                "local_routing": {"subagents": {"share": 0.7, "trial": 0.4}},
+            },
+        },
+    )
+    assert refused.status_code == 422
+    assert refused.json()["error"]["code"] == "invalid_gateway_config"
 
 
 def test_router_mode_with_a_measured_target_saves(client: TestClient) -> None:

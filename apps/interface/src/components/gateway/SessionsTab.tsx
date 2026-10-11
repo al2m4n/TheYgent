@@ -356,7 +356,8 @@ function ShadowLine({ shadow, wrote }: { shadow: GatewayShadowRun; wrote: number
         : " · a different next action";
   return (
     <div className="mt-1 pl-16 text-[11px] text-muted-foreground">
-      Shadow run on {shadow.target.model}: {SHADOW_OUTCOME[shadow.outcome]}
+      {shadow.trial ? "Local trial" : "Shadow run"} on {shadow.target.model}:{" "}
+      {SHADOW_OUTCOME[shadow.outcome]}
       {verdict}
       {output} · {usd(shadow.cost_usd)}
     </div>

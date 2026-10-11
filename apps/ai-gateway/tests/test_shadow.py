@@ -10,11 +10,14 @@ What must hold:
 * local shadows run by default and cost nothing; a cloud shadow is real spend, so it is off unless
   chosen, never runs on a subscription seat or a team developer's own key, stops at the day's cap,
   and pauses when the target shows rate-limit pressure;
-* an applied route, a stay, or a failed exchange is never shadowed.
+* an applied route, a stay, or a failed exchange is never shadowed;
+* a local model serves real traffic first: a request it serves cancels a running local shadow, and
+  no local shadow starts while it serves one.
 """
 
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -43,6 +46,9 @@ from theygent_ir.gateway import (
     GatewayKey,
     GatewayKeySet,
     GatewayMode,
+    LocalModel,
+    LocalRouting,
+    LocalShare,
     PolicyConfig,
     Target,
 )
@@ -426,3 +432,66 @@ def test_local_shadows_can_be_turned_off(tmp_path: Path) -> None:
     with gateway(tmp_path, config(shadow_local=False)) as gw:
         gw.send(TITLE)
     assert gw.inference.requests == [] and gw.seen[-1].shadow is None
+
+
+# ── a local model serves real traffic first ──────────────────────────────────
+
+#: Router mode: the session title is served locally; every subagent is a local trial.
+TRIAL = {
+    "local_models": [LocalModel(model=LOCAL, context_tokens=200_000, tools=True)],
+    "local_routing": LocalRouting(subagents=LocalShare(trial=1.0)),
+}
+
+
+def in_background(gw: Gateway, exchange: Exchange) -> threading.Thread:
+    thread = threading.Thread(target=gw.send, args=(exchange,), kwargs={"wait": False})
+    thread.start()
+    return thread
+
+
+def test_a_request_served_locally_cancels_a_running_trial(tmp_path: Path) -> None:
+    with gateway(tmp_path, config("router", **TRIAL)) as gw:
+        gw.send(MAIN)
+        gw.inference.delay = 4
+        gw.send(SPAWN, wait=False)
+        assert gw.inference.asked.wait(WAIT_SEC)  # the trial is running…
+        assert len(gw.seen) == 1  # …and holds the subagent's record
+        started = time.monotonic()
+        title = in_background(gw, TITLE)
+        tried = gw.wait_for(2)
+        made_way_in = time.monotonic() - started
+        title.join(WAIT_SEC)
+        served = gw.wait_for(3)
+    assert tried.request.hints.request_class == "subagent" and tried.shadow is None
+    assert made_way_in < 2  # cancelled, not waited for
+    assert served.decision.applied and served.decision.target == Target(kind="local", model=LOCAL)
+    assert len(gw.inference.requests) == 2
+
+
+def test_no_trial_starts_while_a_local_model_serves(tmp_path: Path) -> None:
+    with gateway(tmp_path, config("router", **TRIAL)) as gw:
+        gw.send(MAIN)
+        gw.inference.delay = 2
+        title = in_background(gw, TITLE)
+        assert gw.inference.asked.wait(WAIT_SEC)
+        gw.send(SPAWN)  # Anthropic answers; the local model is busy serving the title
+        skipped = gw.seen[-1]
+        title.join(WAIT_SEC)
+        gw.wait_for(3)
+        gw.inference.delay = 0
+        gw.send(FOLLOW)
+        tried = gw.seen[-1]
+    assert skipped.request.hints.request_class == "subagent" and skipped.shadow is None
+    assert tried.shadow is not None and tried.shadow.trial
+
+
+def test_the_decisions_own_shadow_comes_before_a_trial(tmp_path: Path) -> None:
+    # Observer mode, cloud shadows on: the subagent's decision names the cheaper target, and its
+    # shadow measures that; the local trial waits for an exchange without one.
+    with gateway(tmp_path, config(**CLOUD, **TRIAL)) as gw:
+        gw.send(with_api_key(MAIN))
+        gw.send(with_api_key(SPAWN))
+    run = gw.seen[-1].shadow
+    assert run is not None and not run.trial
+    assert run.target == Target(kind="anthropic", model=SONNET)
+    assert gw.inference.requests == []

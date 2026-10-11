@@ -255,6 +255,9 @@ class ShadowRun(_GatewayWire):
     agreed: bool | None = None
     #: When the target's first output (text or a tool call) began.
     first_output_ms: int | None = Field(default=None, ge=0)
+    #: A local trial (``LocalShare.trial``): the copy went to the local model the conversation's
+    #: dial would choose, though its decision named another target, or none.
+    trial: bool = False
 
 
 class Timing(_GatewayWire):
@@ -365,6 +368,13 @@ class GatewayRequestRecord(_GatewayWire):
         if self.shadow is None:
             return self
         decision = self.decision
+        if self.shadow.trial:
+            if self.shadow.target.kind != "local":
+                raise ValueError("a trial runs on a local model")
+            served = decision.target if decision.applied else None
+            if served is not None and served.kind == "local":
+                raise ValueError("a trial runs only on a request a local model did not serve")
+            return self
         if decision.action != "route" or decision.applied:
             raise ValueError("a shadow runs only for a route that was not applied")
         if self.shadow.target != decision.target:
@@ -559,11 +569,20 @@ class LocalModel(_GatewayWire):
         return self
 
 
+#: Shares are typed as percentages and sent as fractions: 33.3% and 66.7% add up to 100%.
+_ROUNDING = 1e-9
+
+
 class LocalShare(_GatewayWire):
     """How much of one kind of request goes to a local model: a share of eligible conversations,
     sampled per conversation, and the model that serves them."""
 
     share: float = Field(default=0.0, ge=0.0, le=1.0)
+    #: A further share, just above ``share``, whose requests Anthropic still answers and the local
+    #: model is then tried on (shadow runs marked ``trial``): the evidence for raising ``share``,
+    #: gathered in router mode too. Raising ``share`` by ``trial`` serves exactly the
+    #: conversations tried.
+    trial: float = Field(default=0.0, ge=0.0, le=1.0)
     #: A listed local model; ``None``: the smallest listed model that can take the request.
     model: Token | None = None
     #: Subagents only: the agent types eligible (empty: every type).
@@ -624,8 +643,10 @@ class PolicyConfig(_GatewayWire):
         ):
             if dial.model is not None and dial.model not in known:
                 raise ValueError(f"local_routing.{kind}.model: not a listed local model")
+            if dial.share + dial.trial > 1 + _ROUNDING:
+                raise ValueError(f"local_routing.{kind}: share and trial together exceed 100%")
         for kind, dial in (("subagents", dials.subagents), ("main", dials.main)):
-            if dial.share <= 0:
+            if dial.share <= 0 and dial.trial <= 0:
                 continue
             chosen = [m for m in self.local_models if dial.model in (None, m.model)]
             if not any(m.tools for m in chosen):

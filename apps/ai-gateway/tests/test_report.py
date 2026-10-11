@@ -373,6 +373,36 @@ def test_shadow_runs_show_as_calibration() -> None:
     assert "Shadow runs" not in render_text(build_report(records[3:], dimensions=["model"]))
 
 
+def test_a_local_trial_calibrates_its_local_model() -> None:
+    # Router mode served the subagent on Sonnet; the local trial measured the local model.
+    served = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "applied": True,
+    }
+    trial = {
+        "target": {"kind": "local", "model": "coder-medium"},
+        "outcome": "answered",
+        "usage": {"output_tokens": 40},
+        "cost_usd": 0.0,
+        "agreed": True,
+        "trial": True,
+    }
+    records = [
+        rec(1, usage={"output_tokens": 50}, cost_usd=0.3, decision=served, shadow=trial),
+        rec(2, usage={"output_tokens": 50}, cost_usd=0.3, decision=served),
+    ]
+    report = build_report(records, dimensions=["shadow-model", "decision"])
+    by_shadow = report.groups["shadow-model"]
+    assert set(by_shadow) == {"coder-medium", NONE_KEY}
+    assert (by_shadow["coder-medium"].shadow_agreed_calls, by_shadow[NONE_KEY].calls) == (1, 1)
+    # The decision's grouping still says where the requests went.
+    assert set(report.groups["decision"]) == {"route:claude-sonnet-5-5"}
+    assert set(report.shadows) == {"coder-medium"}
+    assert "coder-medium" in render_text(report).split("Calibration (shadow runs)")[1]
+
+
 def test_json_round_trips() -> None:
     data = json.loads(render_json(build_report([rec(1, usage={"output_tokens": 5})])))
     assert data["total"]["calls"] == 1 and data["total"]["output_tokens"] == 5

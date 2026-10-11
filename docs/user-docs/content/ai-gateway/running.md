@@ -17,7 +17,7 @@ Read what it recorded with the report command:
 uv run --package theygent-ai-gateway theygent-ai-gateway report --since 24h
 ```
 
-`--by class,client,model` (also `session`, `served-model`, `decision`, `reason`) picks the
+`--by class,client,model` (also `session`, `served-model`, `decision`, `reason`, `shadow-model`) picks the
 groupings, `--since`/`--until` take `30m`, `24h`, `7d`, `2w` or a date, and `--json` prints JSON.
 It computes the same totals as the Report tab, with the same setup warnings.
 

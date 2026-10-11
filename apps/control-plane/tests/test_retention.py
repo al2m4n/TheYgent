@@ -42,7 +42,7 @@ NOW = datetime(2026, 10, 11, 12, tzinfo=UTC)
 SONNET = {"kind": "anthropic", "model": "claude-sonnet-5-5"}
 LOCAL = {"kind": "local", "model": "aux-local"}
 WINDOW = {"since": "2026-09-20T00:00:00Z", "until": "2026-10-12T00:00:00Z"}
-DIMENSIONS = "class,client,session,model,served-model,developer,decision,reason,day"
+DIMENSIONS = "class,client,session,model,served-model,developer,decision,reason,shadow-model,day"
 
 
 def record(n: int, when: datetime, **fields: Any) -> dict[str, Any]:
@@ -118,6 +118,17 @@ def history(ada: str, bob: str) -> list[dict[str, Any]]:
                     "reasons": ["cold_cache_boundary"],
                     "applied": True,
                 },
+                # Some days, a local trial measured the local model on it.
+                shadow={
+                    "target": LOCAL,
+                    "outcome": "answered",
+                    "usage": {"output_tokens": 12},
+                    "cost_usd": 0.0,
+                    "agreed": day % 4 == 0,
+                    "trial": True,
+                }
+                if day % 2 == 0
+                else None,
             ),
             record(
                 n + 5,
