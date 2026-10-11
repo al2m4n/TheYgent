@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/rag/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/rag/">
       
       
         <link rel="prev" href="../models/engines/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -2804,11 +2804,11 @@
 <tbody>
 <tr>
 <td><strong>Root URL</strong></td>
-<td>Where the crawl starts. The crawl stays on the same origin <strong>and under the root's path</strong> — pointing at <code>https://example.com/docs</code> never wanders into the rest of the site.</td>
+<td>Where the crawl starts. The crawl stays on the same origin <strong>and under the root's path</strong> — pointing at <code>https://example.com/docs</code> never wanders into the rest of the site. A root that names a page (<code>…/guide/intro.html</code>) covers its folder (<code>…/guide/</code>). If the root itself redirects (to <code>https://</code>, or from <code>example.com</code> to <code>www.example.com</code>), the crawl follows the site to its new address.</td>
 </tr>
 <tr>
 <td><strong>Max pages</strong></td>
-<td>The crawl budget (default 200). The crawl stops when it runs out, whatever is left.</td>
+<td>The crawl budget (default 200): the exact number of pages ingested at most. The crawl stops when it runs out, whatever is left. With <code>1</code>, only the root page is ingested.</td>
 </tr>
 <tr>
 <td><strong>Render JavaScript</strong></td>
@@ -2816,7 +2816,7 @@
 </tr>
 </tbody>
 </table>
-<p>The crawler respects <code>robots.txt</code>, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Click <strong>Crawl</strong> to start (creating the source starts the first crawl automatically) and <strong>Re-crawl</strong> any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.</p>
+<p>The crawler respects <code>robots.txt</code>, fetches politely (a few pages at a time), and strips navigation/boilerplate so only each page's main content is ingested. Only HTML pages are ingested: images and other files are skipped, a link that redirects outside the crawl's scope is dropped, and directory-listing sort links (<code>?C=N;O=D</code>) are not followed. Several crawls can run at once without mixing their pages. Click <strong>Crawl</strong> to start (creating the source in the UI starts the first crawl automatically; over the API, call <a href="../reference/api/"><code>POST /rag/sources/{id}:ingest</code></a> after creating it) and <strong>Re-crawl</strong> any time the site changes — unchanged pages are detected by content hash and skipped, so a re-crawl only re-embeds what actually changed.</p>
 <h2 id="watching-an-ingest">Watching an ingest<a class="headerlink" href="#watching-an-ingest" title="Permanent link">&para;</a></h2>
 <p>Ingestion runs in the background. A progress card appears bottom-right with live counters — pages fetched, documents embedded, chunks stored — and survives navigating away or reloading the page. You can <strong>Cancel</strong> from the card; the source row shows the same status (<code>ingesting</code> → <code>ready</code>, <code>failed</code>, or <code>cancelled</code>).</p>
 <p>Statuses are honest:</p>
@@ -2824,13 +2824,15 @@
 <li><strong>ready</strong> — the source has searchable content. If a few pages failed along the way, the source is still <code>ready</code> and the error note says what went wrong.</li>
 <li><strong>failed</strong> — nothing usable was ingested (site unreachable, embedding model down, …), or a restart interrupted the job.</li>
 <li>A failed re-ingest <strong>never destroys what you already had</strong>: new content replaces old only after it has embedded successfully, so a transient outage leaves the previous content serving.</li>
+<li>The error note always describes the <strong>latest</strong> ingest: once a later ingest succeeds, an earlier failure is cleared.</li>
 </ul>
+<p>Text is cut into chunks of about 450 tokens (the <code>rag.chunk_max_tokens</code> setting). Symbol-heavy text — tables of contents, config listings, code — is budgeted by its words and punctuation, so it gets shorter chunks. If the embedding server still rejects a chunk as too large for it, only that chunk is split until it fits; the rest of the document is unaffected.</p>
 <p>Expand a source row (click its name) to see every document with its status, chunk count, and any per-document error.</p>
 <h2 id="testing-retrieval">Testing retrieval<a class="headerlink" href="#testing-retrieval" title="Permanent link">&para;</a></h2>
 <p>Every source row has a <strong>Query</strong> button — an inline search box that runs <em>exactly</em> the retrieval a rag node would run, so you can check what an agent would see before wiring anything:</p>
 <ul>
 <li>Each match shows its score, the document it came from, its heading path (e.g. <code>Install &gt; macOS</code>), and the passage text.</li>
-<li><strong>sim</strong> is the semantic (cosine) similarity when the vector leg matched. Search is <strong>hybrid</strong>: meaning-based similarity is fused with keyword full-text search, so paraphrases <em>and</em> exact identifiers both rank.</li>
+<li><strong>sim</strong> is the semantic (cosine) similarity when the vector leg matched. Search is <strong>hybrid</strong>: meaning-based similarity is fused with keyword full-text search, so paraphrases <em>and</em> exact identifiers both rank. The keyword half prefers passages containing every word of the query; when none does (a word that only appears in a heading, say), it ranks passages by how many of the words they contain.</li>
 </ul>
 <p>If the results look wrong, that's a signal to fix the source (crawl scope, missing documents) — not the agent.</p>
 <h2 id="using-a-source-in-an-agent">Using a source in an agent<a class="headerlink" href="#using-a-source-in-an-agent" title="Permanent link">&para;</a></h2>
@@ -2953,7 +2955,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

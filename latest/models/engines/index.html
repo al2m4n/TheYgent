@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/models/engines/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/models/engines/">
       
       
         <link rel="prev" href="../remote/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1987,6 +1987,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="llama.cpp">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#llamacpp-launch-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        llama.cpp launch settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2805,6 +2822,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="llama.cpp">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#llamacpp-launch-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        llama.cpp launch settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2950,6 +2984,44 @@
 <li><strong>Speech-to-text</strong> — served by <strong>whisper.cpp</strong>'s <code>whisper-server</code>, registered under <code>binding: llamacpp</code> with <code>modality: audio.transcription</code>. With <code>ffmpeg</code> installed it also transcodes browser microphone recordings (webm/opus); without it, only WAV works. Whisper needs its own native <code>ggml-*.bin</code> weights — a chat-style GGUF won't work, and an ambiguous weights path raises a clear error telling you which file to point at.</li>
 <li><strong>Image generation</strong> — a bundled wrapper around stable-diffusion.cpp's <code>sd-cli</code> (see the note under <a href="#installing-the-engine-binaries">Installing the engine binaries</a>).</li>
 </ul>
+<h3 id="llamacpp-launch-settings">llama.cpp launch settings<a class="headerlink" href="#llamacpp-launch-settings" title="Permanent link">&para;</a></h3>
+<p>A llama.cpp chat, vision, or embeddings model starts with settings sized to fit a laptop rather than the model's maximum:</p>
+<table>
+<thead>
+<tr>
+<th>Setting (<code>params</code> key)</th>
+<th><code>llama-server</code> flag</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ctxSize</code></td>
+<td><code>-c</code></td>
+<td>Chat and vision: the model's trained context, capped at 32,768 tokens. Embeddings: the trained context, capped at 8,192 (2,048 when the file doesn't say).</td>
+</tr>
+<tr>
+<td><code>parallel</code></td>
+<td><code>-np</code></td>
+<td><code>1</code> — one request at a time, so the whole context serves it.</td>
+</tr>
+<tr>
+<td><code>batchSize</code></td>
+<td><code>-b</code></td>
+<td>Embeddings: the context size. Otherwise llama-server's own default.</td>
+</tr>
+<tr>
+<td><code>ubatchSize</code></td>
+<td><code>-ub</code></td>
+<td>Embeddings: the context size, so any input that fits the context fits one batch. Otherwise llama-server's own default.</td>
+</tr>
+</tbody>
+</table>
+<p>Set any of them in the model's registration <code>params</code> to override, for example <code>"params": {"ctxSize": 65536}</code> for a longer context, or <code>{"parallel": 4, "ctxSize": 65536}</code> to serve four requests at once (the context is shared by the slots). They configure the engine when it starts — they are never sent with a request — and a value that isn't a positive integer, or one set on a non-llama.cpp model, is refused when you register it. The context a running model actually has shows as <strong>max context</strong> in its capabilities.</p>
+<div class="admonition tip">
+<p class="admonition-title">Out of GPU memory</p>
+<p>If a large model fails with <code>Compute error</code> or runs out of GPU memory, lower its <code>ctxSize</code>: the context's cache is allocated up front, on top of the weights.</p>
+</div>
 <h2 id="mlx">MLX<a class="headerlink" href="#mlx" title="Permanent link">&para;</a></h2>
 <p><strong>MLX</strong> is Apple's array framework, and TheYgent's MLX engines run <strong>only on Apple Silicon</strong> (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.</p>
 <p>Under the <code>mlx</code> binding, the modalities map to distinct server programs:</p>
@@ -3025,9 +3097,12 @@
 <p>You never start or stop a managed engine by hand. TheYgent handles the whole lifecycle, and understanding it explains a few things you'll notice.</p>
 <p><strong>Lazy start.</strong> An engine spawns on the <strong>first call</strong> to one of its logical ids, on a free local port, and TheYgent waits for it to become healthy before forwarding your request. This is why the very first call to a model is slower than the ones after it — the model is loading. Large models take longer; startup waits allow a few minutes for llama.cpp and MLX, and up to ten for vLLM. Once loaded, the engine stays <strong>warm</strong> for subsequent calls.</p>
 <p><strong>A resident ceiling.</strong> Only a limited number of engines stay loaded at once — <strong>two by default</strong> (<code>THEYGENT_MAX_RESIDENT</code>). When a new engine is needed and the ceiling is full, TheYgent <strong>evicts</strong> one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is <strong>never</strong> evicted; if nothing can be freed, the new call is refused with a <code>no_capacity</code> error rather than thrashing.</p>
+<p><strong>Abandoned calls are cancelled.</strong> If the caller hangs up before an answer arrives — its client timed out, or the connection closed — TheYgent closes the request to the engine right away instead of holding it open for an answer nobody will read. That holds for every call that returns one answer rather than a stream: chat answers, embeddings, transcriptions, speech, and generated images. Engines that watch for a closed connection stop working on the request at once, so the engine is free for the next call — llama.cpp stops generating a chat answer, and the bundled image generator stops an abandoned render and skips one still waiting its turn, which matters most because a render can take minutes. Either way, a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.</p>
 <p><strong>Idle reaping.</strong> An engine left idle longer than its idle timeout (<strong>900 seconds</strong> by default) is torn down automatically by a background sweep, freeing its memory. Mark a model <strong>Keep warm</strong> to exempt it from reaping.</p>
 <p><strong>Manual control.</strong> From a model's row in <a href="../">Registries</a>, <strong>Warm</strong> preloads an engine (so the next call skips the cold start) and <strong>Evict</strong> frees it now. Both are safe no-ops for reachable endpoints and models that aren't loaded.</p>
 <p><strong>Missing binaries fail cleanly.</strong> If a model's engine binary isn't installed on the machine, the call returns <code>engine_unavailable</code> — a clear, up-front error — never a mysterious crash on first inference.</p>
+<p><strong>A failed engine is replaced.</strong> If an engine reports that it can no longer compute (llama.cpp's <code>Compute error</code>, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with <code>engine_failed</code> (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in <a href="../">Registries</a> shows a red <strong>failed</strong> badge, with the reason on hover, until the replacement starts.</p>
+<p><strong>Engine logs.</strong> Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (<code>~/.theygent/inference/logs/</code> by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the <strong>Logs</strong> button on the model's row, or with <code>GET /admin/models/{id}/logs</code>.</p>
 <pre class="mermaid"><code>stateDiagram-v2
   [*] --&gt; Cold
   Cold --&gt; Loading: first call to the id
@@ -3167,7 +3242,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

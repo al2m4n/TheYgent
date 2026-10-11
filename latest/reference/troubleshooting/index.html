@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/reference/troubleshooting/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/reference/troubleshooting/">
       
       
         <link rel="prev" href="../glossary/">
@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -2788,6 +2788,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#engine_failed-503" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        engine_failed (503)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#modality_not_supported-404" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3423,6 +3434,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#engine_failed-503" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        engine_failed (503)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#modality_not_supported-404" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3935,6 +3957,9 @@
 <h3 id="no_capacity-503"><code>no_capacity</code> (503)<a class="headerlink" href="#no_capacity-503" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> Every resident engine slot is full and busy — the inference plane keeps at most <code>THEYGENT_MAX_RESIDENT</code> engines loaded (default 2), and none could be evicted because they're all handling requests.</p>
 <p><strong>Fix.</strong> Wait for an in-flight request to finish, evict a model you're not using (the <strong>Evict</strong> action on Registries, or <code>POST /admin/models/{id}:evict</code>), or raise <code>THEYGENT_MAX_RESIDENT</code> if you have the RAM.</p>
+<h3 id="engine_failed-503"><code>engine_failed</code> (503)<a class="headerlink" href="#engine_failed-503" title="Permanent link">&para;</a></h3>
+<p><strong>Cause.</strong> The model's engine stopped being able to compute — llama.cpp answers <code>Compute error</code> once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.</p>
+<p><strong>Fix.</strong> Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the <code>ctxSize</code> <a href="../../models/engines/#llamacpp-launch-settings">launch setting</a>, pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's <strong>Logs</strong> button).</p>
 <h3 id="modality_not_supported-404"><code>modality_not_supported</code> (404)<a class="headerlink" href="#modality_not_supported-404" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> The engine answered the endpoint with a 404 — usually you called a modality the model can't do (embeddings against a chat-only model), or, for a remote <code>openai-compatible</code> model, the <code>baseUrl</code> is missing its <code>/v1</code> suffix.</p>
 <p><strong>Fix.</strong> Use a model registered for the right modality, or fix the base URL. Hosted APIs usually need a trailing <code>/v1</code>. See <a href="../../models/remote/">Remote models</a>.</p>
@@ -4121,7 +4146,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

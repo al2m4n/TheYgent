@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/models/remote/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/models/remote/">
       
       
         <link rel="prev" href="../installing/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -2941,7 +2941,7 @@
 <h3 id="some-hosts-reject-parameters-others-accept">Some hosts reject parameters others accept<a class="headerlink" href="#some-hosts-reject-parameters-others-accept" title="Permanent link">&para;</a></h3>
 <p>Hosted models don't all take the same parameters — one may reject <code>temperature</code>, another may not support a particular sampling knob. TheYgent doesn't second-guess this: it relays the request as you built it, and if the provider rejects a parameter, <strong>the provider's own error message and status come straight back to you</strong>, before the answer starts streaming. If a call fails with an "unexpected parameter" style error, remove that parameter from the model's or node's params. A failure that happens partway through a stream ends the stream with a structured error rather than a torn connection.</p>
 <h3 id="remote-models-have-no-lifecycle">Remote models have no lifecycle<a class="headerlink" href="#remote-models-have-no-lifecycle" title="Permanent link">&para;</a></h3>
-<p>There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its <strong>State</strong> stays effectively cold, and <strong>Warm</strong> / <strong>Evict</strong> are no-ops. Capability probing is also skipped — the model advertises only the modality you declared, so the fit and capability badges you see for local models don't apply.</p>
+<p>There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its <strong>State</strong> stays effectively cold, and <strong>Warm</strong> / <strong>Evict</strong> are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (<code>llama-server</code>), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked <strong>approx</strong> because TheYgent didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (<strong>approx</strong>), not as unsupported.</p>
 <h2 id="mixing-local-and-remote-in-one-agent">Mixing local and remote in one agent<a class="headerlink" href="#mixing-local-and-remote-in-one-agent" title="Permanent link">&para;</a></h2>
 <figure class="video">
   <iframe src="https://www.youtube-nocookie.com/embed/eHIHABKbwVg" title="Run Local + Remote AI Models in One Agent" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
@@ -3066,7 +3066,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

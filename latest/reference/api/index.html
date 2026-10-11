@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/reference/api/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/reference/api/">
       
       
         <link rel="prev" href="../../import-export/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -3570,7 +3570,7 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
 <tr>
 <td>POST</td>
 <td><code>/rag/sources</code></td>
-<td>Create. Body <code>{name, kind, embedding_model, config}</code>. <code>kind</code> is <code>upload</code> or <code>crawl</code>; for <code>crawl</code>, <code>config</code> carries <code>root_url</code> (required), <code>max_pages?</code>, <code>render_js?</code>. <code>embedding_model</code> is a logical id, never an engine name.</td>
+<td>Create. Body <code>{name, kind, embedding_model, config}</code>. <code>kind</code> is <code>upload</code> or <code>crawl</code>; for <code>crawl</code>, <code>config</code> carries <code>root_url</code> (required), <code>max_pages?</code>, <code>render_js?</code>. <code>embedding_model</code> is a logical id, never an engine name. Creating a <code>crawl</code> source does not start the crawl — call <code>:ingest</code>.</td>
 </tr>
 <tr>
 <td>GET</td>
@@ -3899,6 +3899,11 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
 </tr>
 <tr>
 <td>GET</td>
+<td><code>/admin/models/{id}/logs?lines=200</code></td>
+<td>The tail of a managed model's engine log: <code>{logicalId, path, lines}</code>. <code>404 engine_log_not_found</code> for a reachable model or one whose engine hasn't run.</td>
+</tr>
+<tr>
+<td>GET</td>
 <td><code>/admin/engines</code></td>
 <td>Currently resident engines and <code>maxResident</code>.</td>
 </tr>
@@ -4085,7 +4090,7 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

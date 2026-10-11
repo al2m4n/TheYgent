@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/building/nodes/llm/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/building/nodes/llm/">
       
       
         <link rel="prev" href="../input-output/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -3165,7 +3165,7 @@
 </tbody>
 </table>
 <p>Each field has a <strong>?</strong> help tooltip. The last two are <strong>capability-gated</strong> — the editor hides them unless the model reports it supports them, so you never set a switch the model will ignore.</p>
-<p>The stored keys are the OpenAI-style names (<code>temperature</code>, <code>top_p</code>, <code>max_tokens</code>, <code>presence_penalty</code>, <code>frequency_penalty</code>, <code>seed</code>, <code>stop</code>, <code>tool_choice</code>, <code>response_format</code>). The <strong>Reasoning</strong> switch is stored as <code>chat_template_kwargs</code> (<code>{ "enable_thinking": true }</code> or <code>false</code>) and <strong>Reasoning effort</strong> as <code>reasoning_effort</code>.</p>
+<p>The stored keys are the OpenAI-style names (<code>temperature</code>, <code>top_p</code>, <code>max_tokens</code>, <code>presence_penalty</code>, <code>frequency_penalty</code>, <code>seed</code>, <code>stop</code>, <code>tool_choice</code>, <code>response_format</code>). The <strong>Reasoning</strong> switch is stored as <code>chat_template_kwargs</code> (<code>{ "enable_thinking": true }</code> or <code>false</code>) and <strong>Reasoning effort</strong> as <code>reasoning_effort</code>. A local model (llama.cpp, MLX) also receives the effort as the chat-template variable <code>chat_template_kwargs.reasoning_effort</code>, which is where templates such as gpt-oss read it; a model reached by URL receives only the <code>reasoning_effort</code> field.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">&quot;models&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;default&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">&quot;binding&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;mlx&quot;</span><span class="p">,</span>
@@ -3231,6 +3231,7 @@
 <li>When at least one tool is wired, the panel exposes <strong>tool choice</strong> (auto — the model decides / required — it must call a tool / none — it never calls) and <strong>max tool iterations</strong> (the round limit, default 8).</li>
 <li>The model runs a <strong>bounded loop</strong>: it answers or calls a tool; each tool result is fed back; it calls again until it answers or hits the iteration limit.</li>
 <li>There is deliberately no compile-time capability check. A model that does not support tool-calling simply returns a plain answer and ignores the tools.</li>
+<li>Local models that write tool calls as text work too: Llama-style calls and gpt-oss's own reply format on MLX are turned into real tool calls, and gpt-oss's reasoning is kept out of the answer (it arrives as the reasoning stream).</li>
 </ul>
 <p>A tool node is <em>either</em> a capability (wired to an llm's <code>tools</code> port, the model supplies its arguments) <em>or</em> a plain pipeline step (wired with data edges, you template its arguments) — never both. See <a href="../tools/">Tools</a>.</p>
 <h2 id="streaming-and-reasoning-output">Streaming and reasoning output<a class="headerlink" href="#streaming-and-reasoning-output" title="Permanent link">&para;</a></h2>
@@ -3383,7 +3384,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

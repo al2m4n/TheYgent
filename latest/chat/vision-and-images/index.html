@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.1.1/chat/vision-and-images/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.0/chat/vision-and-images/">
       
       
         <link rel="prev" href="../voice/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/logo/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -3001,7 +3001,7 @@
 <p>A few behaviors worth knowing:</p>
 <ul>
 <li><strong>Size, count, steps.</strong> <code>size</code> is <code>WxH</code>, snapped to multiples of 64 (default <code>512x512</code>); <code>n</code> is clamped to 1–4; <code>steps</code> passes through.</li>
-<li><strong>Generation is serialized</strong> — one render at a time, so concurrent requests queue — and weights load per request, so every image pays the model-load cost. A slow render is kept alive with periodic keepalives so a long, delta-free generation is not mistaken for a dead connection.</li>
+<li><strong>Generation is serialized</strong> — one render at a time, so concurrent requests queue — and weights load per request, so every image pays the model-load cost. A render whose caller hangs up is stopped, and a queued request whose caller has left never starts, so an abandoned image never holds up the next one. A slow render is kept alive with periodic keepalives so a long, delta-free generation is not mistaken for a dead connection.</li>
 </ul>
 <h3 id="with-an-imagine-backed-agent">With an imagine-backed agent<a class="headerlink" href="#with-an-imagine-backed-agent" title="Permanent link">&para;</a></h3>
 <p>In a graph, the <a href="../../building/nodes/media/"><code>imagine</code> node</a> does the generating: text in → an image <strong>artifact reference</strong> out, feeding an <code>output</code> node whose <code>modality</code> is <code>image</code>.</p>
@@ -3147,7 +3147,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.footer", "navigation.indexes", "search.suggest", "search.highlight", "content.code.copy", "content.tabs.link", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
