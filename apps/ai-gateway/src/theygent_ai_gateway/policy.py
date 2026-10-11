@@ -27,7 +27,7 @@ the response's usage is known.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 
 from theygent_ir.gateway import (
     TARGET_CAPABILITIES,
@@ -173,7 +173,7 @@ class Policy:
         if body is not None and body.is_quota_probe:
             return Plan.stay("quota_check")
         if request_class == "auxiliary":
-            return self._side_request(signals, position, policy, rules)
+            return self._side_request(signals, position, policy, rules, prices)
         return self._conversation(signals, position, policy, prices)
 
     def _side_request(
@@ -182,6 +182,7 @@ class Policy:
         position: Position | None,
         policy: PolicyConfig,
         rules: dict[str, FingerprintStatus],
+        prices: PriceBook | None,
     ) -> Plan:
         if position is not None and position.shares_main_prefix:
             return Plan.stay("shares_main_prefix")
@@ -202,7 +203,7 @@ class Policy:
             return Plan.route(Target(kind="local", model=policy.local_target), "local_candidate")
         # allow_cheaper: a reviewed side request may go to the cheaper Anthropic target.
         return self._anthropic_target(
-            signals, position, policy.subagent_target, ("fingerprint_allow_cheaper",)
+            signals, position, policy.subagent_target, ("fingerprint_allow_cheaper",), prices
         )
 
     def _conversation(
@@ -219,7 +220,7 @@ class Policy:
         if held is not None and held.requested != requested:
             # Claude Code moved the conversation itself (a model switch, its fallback model): the
             # cache is cold on the model it asks for now, so this is a free point to decide afresh.
-            plan = self._at_cold_boundary(signals, position, policy)
+            plan = self._at_cold_boundary(signals, position, policy, prices)
         elif position.boundary == "continuation":
             if held is None:
                 return Plan.stay("mid_conversation")
@@ -231,12 +232,16 @@ class Policy:
             # asked for, and leaving it would rebuild that.
             plan = Plan.stay("warm_cache_switch_cost")
         else:
-            plan = self._at_cold_boundary(signals, position, policy)
+            plan = self._at_cold_boundary(signals, position, policy, prices)
         self._remember(position.key, _Held(plan, requested))
         return plan
 
     def _at_cold_boundary(
-        self, signals: RequestSignals, position: Position, policy: PolicyConfig
+        self,
+        signals: RequestSignals,
+        position: Position,
+        policy: PolicyConfig,
+        prices: PriceBook | None,
     ) -> Plan:
         if position.kind in ("subagent", "workflow"):
             why: ReasonCode = (
@@ -244,9 +249,9 @@ class Policy:
                 if position.boundary == "conversation_start"
                 else "cold_cache_boundary"
             )
-            return self._anthropic_target(signals, position, policy.subagent_target, (why,))
+            return self._anthropic_target(signals, position, policy.subagent_target, (why,), prices)
         return self._anthropic_target(
-            signals, position, policy.main_target, ("cold_cache_boundary",)
+            signals, position, policy.main_target, ("cold_cache_boundary",), prices
         )
 
     def _warm_prompt(
@@ -261,7 +266,7 @@ class Policy:
         """A new prompt while the cache is warm: stay on the model the cache is on, unless
         staying would cost at least ``warm_switch_margin`` times rebuilding it elsewhere."""
         current = held.plan
-        preferred = self._at_cold_boundary(signals, position, policy)
+        preferred = self._at_cold_boundary(signals, position, policy, prices)
         if preferred.serves(requested) == current.serves(requested):
             if current.action == "route":
                 return current.because("follows_warm_cache")
@@ -296,12 +301,15 @@ class Policy:
         position: Position | None,
         target: str | None,
         why: tuple[ReasonCode, ...],
+        prices: PriceBook | None,
     ) -> Plan:
         if target is None:
             return Plan.stay(*why, "no_target_configured")
         requested = signals.body.model if signals.body else None
         if requested is not None and base_model(requested) == base_model(target):
             return Plan.stay(*why, "already_on_target")
+        if prices is not None and not costs_less(prices, target, requested):
+            return Plan.stay(*why, "target_not_cheaper")
         if not accepts(target, signals):
             return Plan.stay(*why, "target_rejects_request_shape")
         if not fits(target, signals, position):
@@ -319,6 +327,17 @@ class Policy:
         self._held.move_to_end(key)
         while len(self._held) > self._max:
             self._held.popitem(last=False)
+
+
+def costs_less(prices: PriceBook, target: str, requested: str | None) -> bool:
+    """Whether ``target`` is known to cost less than ``requested``: no rate higher, one lower. A
+    route exists to save, so a model without known rates on either side is never moved to: a
+    request asking for a cheaper model (a subagent on Haiku) stays where it is."""
+    there, here = prices.rates(target), prices.rates(requested)
+    if there is None or here is None:
+        return False
+    pairs = [(getattr(there, f.name), getattr(here, f.name)) for f in fields(there)]
+    return all(t <= h for t, h in pairs) and any(t < h for t, h in pairs)
 
 
 def counterfactual_usd(

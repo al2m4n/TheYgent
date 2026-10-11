@@ -64,6 +64,7 @@ them:
 | switch pays | Staying would cost at least the configured margin times rebuilding the cache elsewhere |
 | no target set | The configuration names no target for this kind of request |
 | target can't take it | The target model would reject this request's shape |
+| target not cheaper | The target doesn't cost less than the model Claude Code asked for |
 | unreviewed kind | A side request whose kind an admin has not reviewed in the Catalog |
 
 ## How the policy decides
@@ -87,7 +88,9 @@ Some traffic never moves: compaction (it reads the main conversation's cache), C
 quota check, side requests that ride the main conversation's cache, auto mode's safety checks,
 and side requests of a kind nobody has reviewed. And a target must accept the request: Sonnet 5.5
 takes Claude Code's requests to Opus 5.5 as they are; Haiku 4.5 rejects them, so a move to it is
-turned down as *target can't take it*.
+turned down as *target can't take it*. A target must also cost less, at your contracted prices
+where you set them. A request that already asks for a cheaper model, such as a subagent on
+Haiku 4.5, or for a model with no known price, stays as *target not cheaper*.
 
 **Estimates.** A "with routing" figure assumes the target model would have used the same number
 of tokens. Models differ in how much they write, so treat savings as estimates; the actual

@@ -1288,7 +1288,8 @@ export type GatewayReasonCode =
   | "follows_warm_cache"
   | "warm_switch_pays"
   | "target_refused"
-  | "pinned_after_refusal";
+  | "pinned_after_refusal"
+  | "target_not_cheaper";
 
 export interface GatewaySessionSummary {
   session_id: string;

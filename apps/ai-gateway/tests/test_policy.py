@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -27,6 +27,7 @@ from theygent_ai_gateway.policy import (
     Plan,
     Policy,
     accepts,
+    costs_less,
     counterfactual_usd,
     fits,
     to_decision,
@@ -239,6 +240,52 @@ def test_haiku_is_refused_for_claude_codes_subagent_turns() -> None:
 def test_a_subagent_already_on_the_target_stays() -> None:
     plan, _ = Run(config(subagent="claude-opus-5-5"))("subagent-explore-1")
     assert plan.reasons == ("subagent_at_spawn", "already_on_target")
+
+
+def test_a_request_for_a_cheaper_model_is_never_moved_up() -> None:
+    # A subagent asking for Haiku 4.5 with Sonnet 5.5 as the target: moving would cost more.
+    plan, _ = Run(config())("subagent-explore-1", model="claude-haiku-4-5")
+    assert (plan.action, plan.reasons) == ("stay", ("subagent_at_spawn", "target_not_cheaper"))
+
+
+def test_a_model_without_known_prices_is_not_moved() -> None:
+    # Nothing shows that moving it would save anything.
+    plan, _ = Run(config())("subagent-explore-1", model="claude-imaginary-9")
+    assert (plan.action, plan.reasons) == ("stay", ("subagent_at_spawn", "target_not_cheaper"))
+
+
+def _rates(model: str, **changes: float) -> ModelRates:
+    rates = PRICES.rates(model)
+    assert rates is not None
+    return ModelRates(**{**asdict(rates), **changes})
+
+
+def test_contracted_prices_decide_what_is_cheaper() -> None:
+    # Contracted rates under which Sonnet's output costs more than Opus's: no saving to show.
+    opus = PRICES.rates("claude-opus-5-5")
+    assert opus is not None
+    dearer = PRICES.with_overrides(
+        {"claude-sonnet-5-5": _rates("claude-sonnet-5-5", output=opus.output + 1)}
+    )
+    plan, _ = Run(config(), dearer)("subagent-explore-1")
+    assert plan.reasons == ("subagent_at_spawn", "target_not_cheaper")
+
+
+@pytest.mark.parametrize(
+    ("changes", "cheaper"),
+    [
+        ({}, False),  # the same rates: nothing to save
+        ({"input": 1.0}, True),
+        ({"input": 1.0, "cache_read": 99.0}, False),  # one rate higher outweighs the rest
+    ],
+)
+def test_a_target_costs_less_only_with_no_rate_higher_and_one_lower(
+    changes: dict[str, float], cheaper: bool
+) -> None:
+    prices = PRICES.with_overrides({"claude-twin-1": _rates("claude-opus-5-5", **changes)})
+    assert costs_less(prices, "claude-twin-1", "claude-opus-5-5") is cheaper
+    assert costs_less(PRICES, "claude-sonnet-5-5", "claude-opus-5-5")
+    assert not costs_less(PRICES, "claude-sonnet-5-5", None)
 
 
 def test_no_target_configured() -> None:

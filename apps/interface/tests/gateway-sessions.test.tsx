@@ -388,6 +388,6 @@ describe("AI Gateway sessions", () => {
       expect(reason.label, code).not.toBe("");
       expect(reason.detail.length, code).toBeGreaterThan(20);
     }
-    expect(Object.keys(REASONS)).toHaveLength(27);
+    expect(Object.keys(REASONS)).toHaveLength(28);
   });
 });

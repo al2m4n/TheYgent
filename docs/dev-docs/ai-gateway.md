@@ -124,9 +124,12 @@ fallback model) is a fresh decision, since the cache there is cold anyway.
 Some traffic never moves: compaction, the quota check, side requests that ride the main
 conversation's cache, requests carrying `safeguards`, and side requests whose fingerprint an admin
 has not reviewed. A target must accept the request's shape: Sonnet 5.5 is a drop-in for Opus 5.5;
-Haiku 4.5 rejects Claude Code's request shape.
+Haiku 4.5 rejects Claude Code's request shape. A target must also cost less than the requested
+model (`costs_less`), at the config's contracted prices: no rate higher, and at least one lower.
+An unpriced model on either side is never moved (`target_not_cheaper`), so nothing is ever
+routed up to a dearer model.
 
-Each decision carries reason codes (`ReasonCode`, 27 of them; the interface's
+Each decision carries reason codes (`ReasonCode`, 28 of them; the interface's
 `lib/gatewayReasons.ts` explains every one, and a test in `packages/ir` keeps the two in step) and
 a counterfactual cost, priced once the response's usage is known. Counterfactuals assume the other
 model would use the same tokens — an estimate.

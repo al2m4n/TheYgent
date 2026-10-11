@@ -92,8 +92,10 @@ Router mode applies the policy's decisions; observer mode only records them.
   mid-conversation switch usually costs more than it saves. A decision holds until the next cold
   boundary: "stay" means stay on the model the cache is on, which for a routed conversation is the
   target — moving back is a switch too.
-- **Targets must accept the request's shape.** Sonnet 5.5 is a drop-in for Opus 5.5; Haiku 4.5
-  is not.
+- **Targets must accept the request's shape, and cost less.** Sonnet 5.5 is a drop-in for
+  Opus 5.5; Haiku 4.5 is not. A route goes only to a target with no rate higher than the
+  requested model's and one lower, at the config's prices. A request already on a cheaper model,
+  or on an unpriced one, stays (`target_not_cheaper`).
 - **A routed request the target rejects is retried on the original model before Claude Code sees
   anything.** Claude Code disables a rejected capability for the rest of the conversation. A
   refusal before the answer starts (400, 404, 413, 422, 429, 529) sends the original bytes to the

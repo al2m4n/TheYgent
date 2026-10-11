@@ -60,6 +60,8 @@ Each one is deliberate, named here, and covered by tests:
   refused and the retry that followed (R3).
 - `TARGET_CAPABILITIES`, `base_model` and `target_problem` move into `theygent_ir.gateway`, and
   `PUT /gateway/config` refuses a target no Claude Code request could go to (R5).
+- `ReasonCode` gains `target_not_cheaper`: a route goes only to a target known to cost less than the
+  requested model, so nothing is routed up to a dearer one.
 - Shadow runs (R7): `ShadowOutcome`, `ShadowRun` and `GatewayRequestRecord.shadow` (only on a
   route not applied, on its target); `PolicyConfig.shadow_local`, `shadow_cloud`,
   `shadow_cloud_daily_usd`; `GatewayTotals.shadow_calls`, `shadow_answered_calls`,

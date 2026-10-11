@@ -99,6 +99,11 @@ export const REASONS: Record<GatewayReasonCode, { label: string; detail: string 
     detail:
       "The target refused this request before answering, or the local model could not answer it, so the gateway sent it to the requested model instead — Claude Code never saw the difference.",
   },
+  target_not_cheaper: {
+    label: "target not cheaper",
+    detail:
+      "The target is not known to cost less than the model Claude Code asked for (or that model has no known price), so moving there would not be shown to save anything.",
+  },
   pinned_after_refusal: {
     label: "kept on requested",
     detail:
