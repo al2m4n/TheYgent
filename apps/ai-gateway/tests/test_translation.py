@@ -369,3 +369,44 @@ async def test_a_shadow_attempt_with_a_bad_call_is_unusable() -> None:
         finally:
             await route.aclose()
     assert attempt.outcome == "unusable"
+
+
+async def test_a_large_prompt_earns_reading_time_before_the_first_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A model reads the whole prompt before it writes: the first-output deadline grows with it.
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 0.3)
+    reading = len(LOOP.request_bytes()) / 4 / local.MIN_PROMPT_TOKENS_PER_SECOND
+    assert reading > 1.0  # this prompt earns over a second
+    with fake_inference() as fake:
+        fake.pieces = ["Reading."]
+        fake.delay = 0.9  # past the base deadline, within the prompt's reading time
+        route = LocalRoute(fake.base_url)
+        try:
+            answer = await relay(route, LOOP)
+            assert isinstance(answer, LocalStream)
+            await drain(answer)
+        finally:
+            await route.aclose()
+
+
+async def test_a_tool_call_begun_late_still_gets_its_own_time_to_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Output began near the first-output deadline; the call's arguments then take a while. The
+    # commit is timed from when output began, not from the start.
+    monkeypatch.setattr(local, "FIRST_TOKEN_SECONDS", 0.3)
+    monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 1.0)
+    with fake_inference() as fake:
+        fake.pieces = []
+        fake.delay = 0.9
+        fake.piece_delay = 0.4
+        fake.tool_calls = [("Read", ['{"file_path": ', '"a.py"}'])]
+        route = LocalRoute(fake.base_url)
+        try:
+            answer = await relay(route, LOOP)
+            assert isinstance(answer, LocalStream)
+            blocks = assembled(events_of(await drain(answer)))
+        finally:
+            await route.aclose()
+    assert [b["name"] for b in blocks] == ["Read"]

@@ -390,6 +390,7 @@ def test_an_inference_error_falls_back(tmp_path: Path, status: int) -> None:
 
 def test_a_slow_local_model_falls_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(local, "LOCAL_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(local, "MIN_PROMPT_TOKENS_PER_SECOND", 10**9)  # no reading time
     with gateway(tmp_path) as gw:
         gw.inference.delay = 3
         started = time.monotonic()

@@ -31,7 +31,7 @@ PACKAGED = Path(__file__).resolve().parents[1] / "src" / "theygent_ai_gateway" /
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("--check", action="store_true", help="report, change nothing")
     parser.add_argument("--source", type=Path, help="a saved copy of the pricing page (Markdown)")
     parser.add_argument("--output", type=Path, default=PACKAGED, help="the pricing.json to update")

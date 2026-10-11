@@ -42,6 +42,9 @@ from theygent_ir.gateway import (
     GatewayKey,
     GatewayKeySet,
     GatewayRequestRecord,
+    LocalModel,
+    LocalRouting,
+    LocalShare,
     PolicyConfig,
 )
 
@@ -312,4 +315,71 @@ async def test_router_mode_serves_an_explore_subagent_on_sonnet(
     assert main and not any(r.decision.applied for r in main)
     assert all(r.served_model and r.served_model.startswith(ROUTER_REQUESTED) for r in main)
     assert not [r for r in messages if "target_refused" in r.decision.reasons]
+    assert_totals_match(records, result)
+
+
+LOCAL_MODEL = os.environ.get("THEYGENT_E2E_LOCAL_MODEL", "").strip()
+INFERENCE_URL = (
+    os.environ.get("THEYGENT_E2E_INFERENCE_PLANE_URL", "").strip() or "http://127.0.0.1:8081/v1"
+)
+
+
+@pytest.mark.skipif(
+    not LOCAL_MODEL,
+    reason="opt-in: set THEYGENT_E2E_LOCAL_MODEL to a logical chat model that follows tool calls",
+)
+async def test_router_mode_serves_an_explore_subagent_on_a_local_model(
+    tmp_path: Path, workspace: Path
+) -> None:
+    # Claude Code's main conversation stays with Anthropic; every Explore subagent it spawns is
+    # served by a model on the inference plane, tools and all. The task must still complete, and
+    # Claude Code's own usage must still equal the gateway's.
+    settings = GatewaySettings(
+        state_dir=tmp_path / "state",
+        gateway_id="gw-e2e-local-subagent",
+        inference_plane_url=INFERENCE_URL,
+    )
+    router = GatewayConfig(
+        version=1,
+        mode="router",
+        policy=PolicyConfig(
+            local_models=[LocalModel(model=LOCAL_MODEL, context_tokens=32_768, tools=True)],
+            local_routing=LocalRouting(subagents=LocalShare(share=1.0, agent_types=["Explore"])),
+        ),
+        updated_at=datetime.now(UTC),
+    )
+    log_dir = settings.state_dir / "requests"
+    with serve(create_app(settings, config=router)) as url:
+        result = await drive_claude_code(
+            url, workspace, {}, prompt=EXPLORE_PROMPT, tools=("Agent", "Read"), max_turns=8
+        )
+        records = await asyncio.to_thread(wait_for, lambda: list(LogReader(log_dir)))
+    messages = sorted(
+        (r for r in records if r.endpoint == "messages" and r.requested_model),
+        key=lambda r: r.started_at,
+    )
+    subagent = [r for r in messages if r.request_class == "subagent"]
+    assert subagent, "Claude Code spawned no subagent"
+    served = [r for r in subagent if r.decision.applied]
+    assert served, [r.decision.reasons for r in subagent]
+    assert all(
+        r.served_model == LOCAL_MODEL
+        and r.decision.target is not None
+        and r.decision.target.kind == "local"
+        and r.cost_usd == 0.0
+        for r in served
+    )
+    print(
+        "\nlocal subagent turns:",
+        [
+            (
+                r.decision.reasons,
+                r.timing.total_ms,
+                r.usage.input_tokens,
+                r.usage.output_tokens,
+                r.baseline_usd,
+            )
+            for r in subagent
+        ],
+    )
     assert_totals_match(records, result)

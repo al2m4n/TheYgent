@@ -182,6 +182,34 @@ The route is Anthropic format → LiteLLM's Anthropic adapter → inference plan
   should map the schema onto llama.cpp's JSON-schema constraint so validity is guaranteed, not
   hoped for.
 
+## Q7 — an Explore subagent served locally through the gateway (Phase 3, L7) — ✅
+
+Claude Code (the Agent SDK) asked an Explore subagent to read a file and report its contents. The
+gateway ran in router mode with `aux-local` (the same Qwen3-4B-Instruct-2507 Q4_K_M on llama.cpp)
+listed as a tools model and the subagent dial at 100% for Explore. The main conversation stayed on
+Anthropic.
+
+- **It completes, end to end, twice out of two.** Both subagent turns were served locally at no
+  API spend; the main conversation got the file's contents and Claude Code's `modelUsage` still
+  equalled the gateway's totals.
+
+  | Turn | Prompt | Local time | Output | Haiku 4.5 avoided |
+  |---|---|---|---|---|
+  | 1 (spawn: calls `Read`) | 7,221 tokens | 8.7–9.1 s | 76 tokens | $0.0076 |
+  | 2 (answers from the result) | 7,326 tokens | 1.0–1.8 s | 31–59 tokens | $0.0076 |
+
+  Turn 2 is fast because llama.cpp reuses the shared prefix from turn 1.
+- **The first-output deadline must grow with the prompt.** The first attempt used a flat 15 s
+  first-output deadline and fell back to the cloud (correctly, with no byte out): the model reads
+  the whole prompt before its first token, at about 300 tokens a second on this laptop. The deadline
+  now adds the prompt's reading time at 200 tokens a second, and once output starts, the commit (a
+  first tool call whole) gets its own deadline from that moment.
+- **What this does and doesn't show.** It proves the path: tool definitions, a tool call and its
+  result translate both ways and stream, and the fallback and accounting hold. It says nothing
+  new about quality: a one-file read is the easiest Explore task, and Q5's 1-in-6 agreement on
+  real Explore turns stands for this model. That is why shares start at zero and are raised on
+  shadow evidence (*Same next action*), per local model.
+
 ## Q3 — desktop app — ✅ (it does not use the project settings)
 
 A desktop session in the test project (`entrypoint=claude-desktop`, 09:36:26–09:36:40 UTC) got

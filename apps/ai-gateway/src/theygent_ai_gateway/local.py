@@ -72,6 +72,12 @@ LOCAL_TIMEOUT_SECONDS = 30.0
 #: request goes to Anthropic (a model still loading takes about a minute; the cloud answers
 #: meanwhile).
 FIRST_TOKEN_SECONDS = 15.0
+#: A model reads the whole prompt before its first token, so the first-output deadline grows with
+#: the prompt: at least this reading speed is allowed for (tokens a second). A Claude Code agent
+#: turn is 10K to 20K tokens; a 4B model on a laptop reads about 300 a second.
+MIN_PROMPT_TOKENS_PER_SECOND = 200
+#: The HTTP client's own limit on a quiet engine: only a backstop, the deadlines above govern.
+CLIENT_TIMEOUT_SECONDS = 600.0
 #: A keep-alive ping while the local model is quiet, as the Anthropic API sends them.
 PING_SECONDS = 5.0
 #: A prompt larger than this, at about four bytes a token, is never sent to a local model.
@@ -374,6 +380,11 @@ class _Writer:
         ]
 
 
+def _reading_seconds(body: bytes) -> float:
+    """How long reading this prompt may take, at the slowest speed allowed for."""
+    return (len(body) / 4) / MIN_PROMPT_TOKENS_PER_SECOND
+
+
 def _too_large(body: bytes, context_tokens: int | None) -> bool:
     limit = LOCAL_MAX_PROMPT_TOKENS if context_tokens is None else context_tokens
     return len(body) // 4 > limit
@@ -392,7 +403,7 @@ class LocalRoute:
         # No retries: the fallback for a failure is the Anthropic API, not a second local attempt.
         self._timeout = timeout if timeout is not None else LOCAL_TIMEOUT_SECONDS
         self._first_token = first_token_seconds
-        self._client = GatewayClient(base_url, timeout=self._timeout, max_retries=0)
+        self._client = GatewayClient(base_url, timeout=CLIENT_TIMEOUT_SECONDS, max_retries=0)
 
     async def _open(self, model: str, translated: Translated) -> Any:
         return await self._client.open_stream(
@@ -418,9 +429,10 @@ class LocalRoute:
         translated = translate(body, tools=tools, images=images)
         if translated is None or _too_large(body, context_tokens):
             return None
+        reading = _reading_seconds(body)
         if translated.stream and translated.schema is None:
-            return await self._relay(model, translated)
-        return (await self._checked(model, translated)).answer
+            return await self._relay(model, translated, reading)
+        return (await self._checked(model, translated, reading)).answer
 
     async def attempt(
         self,
@@ -435,19 +447,19 @@ class LocalRoute:
         translated = translate(body, tools=tools, images=images)
         if translated is None or _too_large(body, context_tokens):
             return LocalAttempt("untranslatable")
-        return await self._checked(model, translated)
+        return await self._checked(model, translated, _reading_seconds(body))
 
-    async def _checked(self, model: str, translated: Translated) -> LocalAttempt:
+    async def _checked(self, model: str, translated: Translated, reading: float) -> LocalAttempt:
         started = time.perf_counter()
         first: list[int] = []
-        try:
-            stream = await self._open(model, translated)
-        except Exception as exc:
-            log.warning("the local model did not answer: %s", type(exc).__name__)
-            return LocalAttempt("failed")
+        opened: list[Any] = []
         writer = _Writer(translated.tool_names)
 
         async def read() -> None:
+            # Opening the stream shares the deadline: a server slow to answer at all is as late
+            # as a model slow to finish.
+            stream = await self._open(model, translated)
+            opened.append(stream)
             async for chunk in stream:
                 writer.feed(chunk)
                 if writer.started and not first:
@@ -455,16 +467,18 @@ class LocalRoute:
             writer.finish()
 
         try:
-            await asyncio.wait_for(read(), self._timeout)
+            await asyncio.wait_for(read(), self._timeout + reading)
         except _Unusable:
             log.warning("the local model called a tool it was not offered, or mangled one")
             return LocalAttempt("unusable", usage=writer.usage)
         except Exception as exc:
-            log.warning("the local model did not finish: %s", type(exc).__name__)
+            what = "finish" if opened else "answer"
+            log.warning("the local model did not %s: %s", what, type(exc).__name__)
             return LocalAttempt("failed")
         finally:
             with anyio.CancelScope(shield=True):
-                await _close(stream)
+                for stream in opened:
+                    await _close(stream)
         timing = first[0] if first else None
         usage = writer.usage
         calls = tuple(writer.called)
@@ -499,24 +513,34 @@ class LocalRoute:
             )
         return LocalAttempt("answered", answer, usage, calls, timing)
 
-    async def _relay(self, model: str, translated: Translated) -> LocalStream | None:
+    async def _relay(
+        self, model: str, translated: Translated, reading: float
+    ) -> LocalStream | None:
         opened: list[Any] = []
         writer = _Writer(translated.tool_names)
         held: list[bytes] = []  # events written before the answer was committed
         exhausted = False
-        first_deadline = self._first_token if self._first_token is not None else FIRST_TOKEN_SECONDS
+        base = self._first_token if self._first_token is not None else FIRST_TOKEN_SECONDS
+        first_deadline = base + reading
 
         async def start() -> AsyncIterator[Any]:
             # Opening the stream, the first output and the commit share the deadlines: a server
             # slow to answer at all is as late as a model slow to start.
             nonlocal exhausted
             began = time.monotonic()
+            started_at: float | None = None
             stream = await asyncio.wait_for(self._open(model, translated), first_deadline)
             opened.append(stream)
             chunks = stream.__aiter__()
             while not writer.committed:
-                limit = first_deadline if not writer.started else self._timeout
-                remaining = limit - (time.monotonic() - began)
+                if writer.started and started_at is None:
+                    started_at = time.monotonic()
+                # Before any output: the first-output deadline from the start. After it: the
+                # commit (a first tool call whole) gets its own time from when output began.
+                deadline = (
+                    began + first_deadline if started_at is None else started_at + self._timeout
+                )
+                remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError
                 try:

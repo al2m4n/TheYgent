@@ -298,7 +298,8 @@ def test_a_subagent_the_local_model_cannot_take_starts_on_the_cheaper_target(
     assert failed.decision.reasons == ["target_refused", "subagent_at_spawn"]
     # The rest of its loop stays there: the local model is not asked again.
     assert sent[2] == with_model(LOOP.request_bytes(), SONNET)
-    assert len(gw.inference.requests) == 1 and after.decision.target.model == SONNET  # type: ignore[union-attr]
+    assert len(gw.inference.requests) == 1
+    assert after.decision.target is not None and after.decision.target.model == SONNET
 
 
 def test_observer_mode_only_records_what_local_routing_would_do(tmp_path: Path) -> None:

@@ -147,8 +147,8 @@ the policy pins the conversation to the requested model until its next cold boun
 saved. Proven against the real API by the opt-in end-to-end test: Claude Code asking for
 Opus 5.5 completes its work served by Sonnet 5.5.
 
-A local-target route (an `allow_local` side request — the session title, typically) is answered
-by the inference plane instead (`local.py`, at `THEYGENT_INFERENCE_PLANE_URL` through
+A local-target route (an `allow_local` side request — the session title, typically — or a
+conversation a local dial sends there, below) is answered by the inference plane instead (`local.py`, at `THEYGENT_INFERENCE_PLANE_URL` through
 `packages/gateway-client`). `translation.py` turns the request into a chat completion, and does so
 faithfully or not at all:
 
@@ -180,19 +180,24 @@ on the request:
   with pings while the model is quiet and a leading reasoning block dropped. Nothing is relayed
   until the answer is committed: its first visible text, or its first tool call once whole and
   checked (an offered tool, arguments that are a JSON object). The first output must begin within
-  15 seconds — opening the stream shares that deadline — and the commit must come within 30. A bad
+  15 seconds plus the prompt's reading time — a model reads all of it before its first token, so
+  200 tokens a second are allowed for, and a 10K-token agent turn gets 50 seconds more. Opening the
+  stream shares that deadline. The commit must come within 30 seconds of the first output. A bad
   tool call after the commit still goes out, with empty input, and Claude Code answers it with a
   tool error as it would for any model.
 
 Anything that fails before an answer is committed sends the original bytes upstream and records
-`target_refused`, without pinning anything (a side request holds no conversation cache). That
-covers a request that does not translate, no inference plane, an error, no first token in time, a
-checked answer over 30 seconds or one that does not fit. A local answer is recorded as
+`target_refused`. A side request pins nothing (it holds no conversation cache); an agent turn's
+conversation stays on Anthropic's side until its next cold boundary (below). That covers a request
+that does not translate, no inference plane, an error, no first output in time, a checked answer
+over 30 seconds plus the prompt's reading time, or one that does not fit. A local answer is recorded as
 applied, served by the logical id, `cost_usd` 0.0 (no API spend; local compute is not priced) and
 `baseline_usd` priced on the requested model with the local model's token counts — a different
 tokenizer, so an estimate. Claude Code sends side requests only in interactive sessions, so its
 opt-in test (`THEYGENT_E2E_LOCAL_MODEL`) drives the gateway with the recorded title request's
-shape against a real local model and a fake upstream.
+shape against a real local model and a fake upstream. With the same variable, the Claude Code
+end-to-end test also serves an Explore subagent on that model in router mode, tool call and all,
+and checks the task completes with Claude Code's usage equal to the gateway's.
 
 ### Local models, by share
 

@@ -102,15 +102,23 @@ Router mode applies the policy's decisions; observer mode only records them.
   refusal before the answer starts (400, 404, 413, 422, 429, 529) sends the original bytes to the
   requested model and pins the conversation there until its next cold boundary; 401/403 are
   credential problems and are not retried. A mid-stream error cannot be retried — bytes are out.
+- **How much goes local is the admin's dial.** Per kind of request (side requests, subagents,
+  the main conversation): a share, sampled per conversation and applied at cold boundaries only,
+  served by a listed local model that can take the request (tool calls, images, prompt size).
+  Agent-turn shares start at zero and are raised on shadow evidence; a side request goes local
+  only for a kind the review allows (`allow_local`).
 - **A local route always streams from the engine.** A client that leaves must stop the model, and
   a non-streaming request would hold the engine to the end. A prompt larger than the model's
-  budget is never sent, and a model that has not started within the first-token deadline hands
-  the request to Anthropic before any byte is out.
+  context is never sent, and a model that has not started within the first-output deadline hands
+  the request to Anthropic before any byte is out. The deadline grows with the prompt: a model
+  reads all of it before its first token.
 - **A local route answers only what translates faithfully, and only once the answer is checked.**
-  An `allow_local` side request goes to the inference plane as a chat completion when it is text
-  only (no tools, images or documents). The answer must be text, and JSON that fits the schema
-  where one was asked for. Any failure sends the original bytes upstream (`target_refused`).
-  Nothing is pinned, and Claude Code never sees a local error.
+  Text, tool definitions, tool calls and their results translate both ways, and images go only to
+  a model that takes them; server tools, documents and anything unknown keep the request on
+  Anthropic. A checked answer (a schema, or a non-streaming client) is read whole and must fit; a
+  relayed one commits at its first visible text, or its first tool call once whole and offered.
+  Any failure before the commit sends the original bytes upstream (`target_refused`) and keeps the
+  conversation on Anthropic until its next cold boundary. Claude Code never sees a local error.
 - **An applied route records what served it.** `served_model` from the response, `applied`,
   `cost_usd` priced on the served model and `baseline_usd` on the requested one. A local answer
   costs 0.0: no API spend, and local compute is not priced.
@@ -174,5 +182,7 @@ THEYGENT_E2E_CLAUDE_CODE=1 uv run --package theygent-ai-gateway \
 It requires the gateway's per-model totals to equal Claude Code's own `modelUsage`, cache reads
 and writes included: a change to how usage is parsed, recorded or summed must keep it green. Its
 router runs (a conversation, and an Explore subagent, served by Sonnet 5.5 where Claude Code asked
-for Opus 5.5) must too. The local route has its own opt-in test against a real local model
-(`THEYGENT_E2E_LOCAL_MODEL=<logical id> … tests/test_e2e_local_model.py`), with a faked upstream.
+for Opus 5.5) must too, and so must the local one: with `THEYGENT_E2E_LOCAL_MODEL=<logical id>`
+(and `THEYGENT_E2E_INFERENCE_PLANE_URL` when the plane is not on :8081), an Explore subagent is
+served by that model, tools and all. The local route also has its own opt-in test against a real
+local model (`… tests/test_e2e_local_model.py`), with a faked upstream.
