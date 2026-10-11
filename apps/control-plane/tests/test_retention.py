@@ -24,6 +24,7 @@ import asyncpg
 import pytest
 from _db import plain_dsn
 from _ir import trivial_ir
+from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from test_ai_gateway_events import rows
 from test_ai_gateway_reports import bearer, make_user, route, seed
@@ -144,8 +145,13 @@ def sweeper(client: TestClient, *, days: int, io_days: int = 0, now: datetime = 
     return RetentionSweeper(client.app.state.sessionmaker, setting, clock=lambda: now)
 
 
+def portal(client: TestClient) -> BlockingPortal:
+    assert client.portal is not None, "the client is used outside its context"
+    return client.portal
+
+
 def sweep(client: TestClient, **kwargs: Any) -> SweepResult:
-    return client.portal.call(sweeper(client, **kwargs).sweep)
+    return portal(client).call(sweeper(client, **kwargs).sweep)
 
 
 def everything(client: TestClient) -> dict[str, Any]:
@@ -317,7 +323,7 @@ def test_one_instance_sweeps_at_a_time(client: TestClient, pg_url: str) -> None:
         finally:
             await conn.close()
 
-    assert client.portal.call(held) == SweepResult()
+    assert portal(client).call(held) == SweepResult()
     assert sweep(client, days=10).archived_requests == 60
 
 

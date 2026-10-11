@@ -36,6 +36,7 @@ from sqlalchemy import (
     union_all,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.sql.elements import ColumnElement
 from theygent_ir.gateway import TOOL_SEARCH_OFF_MIN_TOOLS, GatewayTotals, SetupWarningCode
 
@@ -62,7 +63,7 @@ _SHADOW_COST = func.coalesce(R.shadow["cost_usd"].astext.cast(Float), 0.0)
 _SHADOW_OUTPUT = func.coalesce(R.shadow["usage"]["output_tokens"].astext.cast(BigInteger), 0)
 
 #: One request row's contribution, field by field: ``GatewayTotals.of`` in SQL.
-CONTRIB: dict[str, ColumnElement[Any]] = {
+CONTRIB: dict[str, ColumnElement[Any] | InstrumentedAttribute[Any]] = {
     "calls": literal(1),
     "errors": case((_FAILED, 1), else_=0),
     "input_tokens": R.input_tokens,
