@@ -11,12 +11,13 @@ traffic; everyone else on their own (and can switch to organization totals).
 
 | Tile | Means |
 |---|---|
-| **Spend** | What the traffic cost, at list prices plus any contracted rates an admin entered |
-| **With routing** | What it would have cost had the policy's decisions been applied: a routed request at the target model's price, everything else as it ran |
-| **Saving** | The difference, and its share of spend |
-| **Calls** | API calls, how many would have been routed, and how many could have been answered by a local model instead |
+| **Spend** | What the traffic cost, at list prices plus any contracted rates an admin entered. Once the gateway routes, its hint shows what the same traffic would have cost *without routing* — on the models Claude Code asked for |
+| **With routing** | What it costs with the policy's decisions applied: a request the gateway routed costs what it cost, one it only would have routed costs the target's price, everything else as it ran |
+| **Saving** | Without routing minus with routing: what routing saved (router mode) or would save (observer mode), and its share |
+| **Calls** | API calls, how many were routed, how many would have been, and how many could have been answered by a local model instead |
 
-Below them: spend by day (the gap between spend and *with routing* is the saving), and a
+Below them: spend by day (the full bar is what each day cost as requested, the filled part with
+routing; the gap is the saving), and a
 breakdown you can group by request class, client, the model Claude Code requested, the model that
 served it, the routing decision or its reason — and, where you may see individuals, by developer
 or session. Grouping by requested model matches Claude Code's own usage summary, which files every
@@ -40,8 +41,9 @@ reading of the plan's five-hour and weekly allowance and how much of it was used
 Sessions are listed most recently active first — yours, or everyone's for admins. Open one for its
 timeline: each request in order with its offset from the session start, its class (main,
 subagent, compaction, auxiliary), the agent type for subagents, the model requested and the one
-that served it, tokens, cost, errors, and the decision — *stays*, or *would route →* a target, with
-what that would have cost. Every reason is a short label; hover it for the explanation. A few of
+that served it, tokens, cost, errors, and the decision — *stays*; *routed →* a target, with what that
+saved against the requested model (router mode); or *would route →* a target, with what that would
+have cost (observer mode). Every reason is a short label; hover it for the explanation. A few of
 them:
 
 | Reason | Means |

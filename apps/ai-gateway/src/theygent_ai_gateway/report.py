@@ -330,7 +330,7 @@ def _table(headers: list[str], rows: list[list[str]]) -> list[str]:
 
 def render_text(report: Report, *, top: int = 20) -> str:
     total = report.total
-    out: list[str] = ["TheYgent AI gateway — observer report"]
+    out: list[str] = ["TheYgent AI gateway — report"]
     if not total.calls:
         out.append("No records in this window.")
         out.extend(f"! {w.message}" for w in report.warnings)
@@ -340,20 +340,25 @@ def render_text(report: Report, *, top: int = 20) -> str:
     out.append(f"Window: {first} → {last} UTC · {_int(total.calls)} calls")
     if report.pricing_versions:
         out.append(f"Prices: {', '.join(sorted(report.pricing_versions))}")
-    saving_share = total.saving_usd / total.cost_usd if total.cost_usd else 0.0
+    saving_share = total.saving_usd / total.baseline_usd if total.baseline_usd else 0.0
     unpriced = f" ({total.unpriced_calls} calls unpriced)" if total.unpriced_calls else ""
+    applied = total.applied_calls
+    out += ["", f"Spend            {_usd(total.cost_usd)}{unpriced}"]
+    if applied:
+        # Router mode moved some of it: what the same traffic would have cost as requested.
+        out.append(f"Without routing  {_usd(total.baseline_usd)}")
     out += [
-        "",
-        f"Spend         {_usd(total.cost_usd)}{unpriced}",
-        f"With routing  {_usd(total.with_routing_usd)}",
-        f"Saving        {_usd(total.saving_usd)} ({saving_share:.1%})",
-        f"Calls         {_int(total.calls)} ({_int(total.errors)} errors) · would route "
-        f"{_int(total.routed_calls)} · API calls avoided {_int(total.routed_local_calls)}",
-        f"Tokens        input {_int(total.input_tokens)} · output {_int(total.output_tokens)} · "
+        f"With routing     {_usd(total.with_routing_usd)}",
+        f"Saving           {_usd(total.saving_usd)} ({saving_share:.1%})",
+        f"Calls            {_int(total.calls)} ({_int(total.errors)} errors) · "
+        + (f"routed {_int(applied)} · " if applied else "")
+        + f"would route {_int(total.routed_calls - applied)} · "
+        f"API calls avoided {_int(total.routed_local_calls)}",
+        f"Tokens           input {_int(total.input_tokens)} · output {_int(total.output_tokens)} · "
         f"cache read {_int(total.cache_read_tokens)} · cache write "
         f"{_int(total.cache_write_tokens)} (5m {_int(total.cache_write_5m_tokens)}, "
         f"1h {_int(total.cache_write_1h_tokens)})",
-        f"Tokens moved  {_int(total.routed_tokens)} to another model, "
+        f"Tokens moved     {_int(total.routed_tokens)} to another model, "
         f"{_int(total.routed_local_tokens)} of them off the API",
     ]
     if report.seats:
@@ -388,6 +393,7 @@ def render_text(report: Report, *, top: int = 20) -> str:
                     "cache read",
                     "cache write",
                     "spend",
+                    *(["without routing"] if applied else []),
                     "with routing",
                     "saving",
                 ],
@@ -400,6 +406,7 @@ def render_text(report: Report, *, top: int = 20) -> str:
                         _int(t.cache_read_tokens),
                         _int(t.cache_write_tokens),
                         _usd(t.cost_usd),
+                        *([_usd(t.baseline_usd)] if applied else []),
                         _usd(t.with_routing_usd),
                         _usd(t.saving_usd),
                     ]

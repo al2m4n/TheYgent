@@ -150,7 +150,11 @@ function SessionRow({
             <span className="font-mono">{session.session_id.slice(0, 8)}</span>
             {who && <Badge tone="slate">{who}</Badge>}
             {session.client && <Badge tone="slate">{session.client}</Badge>}
-            {t.saving_usd > 0 && <Badge tone="green">routing would save {usd(t.saving_usd)}</Badge>}
+            {t.saving_usd > 0 && (
+              <Badge tone="green">
+                routing {t.applied_calls > 0 ? "saved" : "would save"} {usd(t.saving_usd)}
+              </Badge>
+            )}
           </ItemTitle>
           <ItemDescription className="flex flex-wrap gap-x-4">
             <span>{t.calls.toLocaleString()} requests</span>
@@ -283,7 +287,14 @@ function TimelineRow({ entry, offsetMs }: { entry: GatewayTimelineEntry; offsetM
         {(u.cache_write_5m_tokens + u.cache_write_1h_tokens).toLocaleString()} cache written
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-16 text-xs">
-        {decision.action === "route" && decision.target ? (
+        {decision.action === "route" && decision.target && decision.applied ? (
+          <Badge tone="green">
+            routed → {decision.target.model}
+            {entry.baseline_usd !== null &&
+              entry.cost_usd !== null &&
+              ` (saved ${usd(entry.baseline_usd - entry.cost_usd)})`}
+          </Badge>
+        ) : decision.action === "route" && decision.target ? (
           <Badge tone="green">
             would route → {decision.target.model}
             {decision.counterfactual_usd !== null && ` (${usd(decision.counterfactual_usd)})`}

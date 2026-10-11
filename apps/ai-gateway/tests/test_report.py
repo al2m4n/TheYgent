@@ -299,6 +299,29 @@ def test_text_names_requested_models_and_trims_long_groups() -> None:
     assert "… 1 more" in text
 
 
+def test_router_mode_shows_what_routing_saved() -> None:
+    applied = {
+        "action": "route",
+        "target": {"kind": "anthropic", "model": "claude-sonnet-5-5"},
+        "reasons": ["subagent_at_spawn"],
+        "applied": True,
+    }
+    records = [
+        rec(1, served_model="claude-sonnet-5-5", cost_usd=0.2, baseline_usd=0.5, decision=applied),
+        rec(2, cost_usd=0.3),
+    ]
+    report = build_report(records, dimensions=["model"])
+    assert (report.total.baseline_usd, report.total.cost_usd) == (pytest.approx(0.8), 0.5)
+    text = render_text(report)
+    assert "Without routing  $0.8000" in text
+    assert "Saving           $0.3000 (37.5%)" in text
+    assert "routed 1 · would route 0" in text
+    assert "without routing" in text.split("By model")[1]
+    # Observer-only traffic shows no "without routing": it is the spend.
+    observed = render_text(build_report([rec(3, cost_usd=0.3)], dimensions=["model"]))
+    assert "Without routing" not in observed and "routed" not in observed.replace("would route", "")
+
+
 def test_json_round_trips() -> None:
     data = json.loads(render_json(build_report([rec(1, usage={"output_tokens": 5})])))
     assert data["total"]["calls"] == 1 and data["total"]["output_tokens"] == 5

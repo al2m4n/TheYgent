@@ -23,7 +23,6 @@ function totals(over: Record<string, number> = {}) {
     cache_write_tokens: 0,
     cost_usd: 0,
     unpriced_calls: 0,
-    baseline_usd: 0,
     with_routing_usd: 0,
     saving_usd: 0,
     routed_calls: 0,
@@ -32,6 +31,8 @@ function totals(over: Record<string, number> = {}) {
     routed_local_calls: 0,
     routed_local_tokens: 0,
     ...over,
+    // Without applied routes, what it would cost as requested is what it cost.
+    baseline_usd: over.baseline_usd ?? over.cost_usd ?? 0,
   };
 }
 
@@ -171,6 +172,57 @@ describe("AI Gateway report", () => {
     expect(tile("Saving")).toHaveTextContent("2.9% of spend");
     expect(tile("Calls")).toHaveTextContent("25");
     expect(tile("Calls")).toHaveTextContent("11 would route · 1 would not reach the API");
+  });
+
+  it("shows what routing saved once the gateway routes", async () => {
+    // Router mode: 2.00 spent, 3.00 as requested; 4 of 6 routes applied, 2 only observed.
+    const routedTotals = totals({
+      calls: 10,
+      cost_usd: 2,
+      baseline_usd: 3,
+      with_routing_usd: 1.8,
+      saving_usd: 1.2,
+      routed_calls: 6,
+      applied_calls: 4,
+    });
+    mockControlPlane("admin", () =>
+      json(
+        reportBody({
+          total: routedTotals,
+          groups: {
+            day: [{ key: "2026-10-07", ...routedTotals }],
+            class: [{ key: "subagent", ...routedTotals }],
+          },
+          warnings: [],
+        }),
+      ),
+    );
+    renderTab();
+    expect(await screen.findByRole("region", { name: "Spend" })).toHaveTextContent(
+      "$3.00 without routing",
+    );
+    expect(tile("Saving")).toHaveTextContent("40.0% of the cost without routing");
+    expect(tile("Calls")).toHaveTextContent("4 routed · 2 would route");
+    const byClass = screen.getByRole("table", { name: "By request class" });
+    expect(within(byClass).getByText("Without routing")).toBeInTheDocument();
+    const days = screen.getByRole("list", { name: "Spend by day" });
+    expect(
+      within(days).getByLabelText(
+        "2026-10-07: $2.00 spent, $3.00 without routing, $1.80 with routing",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps the observer view when nothing was routed", async () => {
+    mockControlPlane("admin", () => json(reportBody()));
+    renderTab();
+    await screen.findByRole("region", { name: "Spend" });
+    expect(tile("Spend")).not.toHaveTextContent("without routing");
+    expect(
+      within(screen.getByRole("table", { name: "By request class" })).queryByText(
+        "Without routing",
+      ),
+    ).toBeNull();
   });
 
   it("flags setup problems with their fix", async () => {

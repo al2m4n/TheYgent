@@ -193,6 +193,9 @@ function ReportBody({
   seesIndividuals: boolean;
 }) {
   const total = report.total;
+  // Router mode served some calls elsewhere: spend is no longer what the traffic would cost as
+  // requested, so that figure gets its own place.
+  const routed = total.applied_calls > 0;
   return (
     <div className="space-y-4">
       {report.warnings.map((w) => (
@@ -209,26 +212,36 @@ function ReportBody({
           hint={
             total.unpriced_calls > 0
               ? `${total.unpriced_calls.toLocaleString()} calls unpriced`
-              : "at the configured prices"
+              : routed
+                ? `${usd(total.baseline_usd)} without routing`
+                : "at the configured prices"
           }
         />
         <StatTile
           icon={Repeat2}
           label="With routing"
           value={usd(total.with_routing_usd)}
-          hint="had the policy's decisions been applied"
+          hint={
+            routed
+              ? "as routed, plus the decisions not applied"
+              : "had the policy's decisions been applied"
+          }
         />
         <StatTile
           icon={PiggyBank}
           label="Saving"
           value={usd(total.saving_usd)}
-          hint={`${percent(total.saving_usd, total.cost_usd)} of spend`}
+          hint={
+            routed
+              ? `${percent(total.saving_usd, total.baseline_usd)} of the cost without routing`
+              : `${percent(total.saving_usd, total.cost_usd)} of spend`
+          }
         />
         <StatTile
           icon={Coins}
           label="Calls"
           value={total.calls.toLocaleString()}
-          hint={`${total.routed_calls.toLocaleString()} would route · ${total.routed_local_calls.toLocaleString()} would not reach the API`}
+          hint={`${routed ? `${total.applied_calls.toLocaleString()} routed · ` : ""}${(total.routed_calls - total.applied_calls).toLocaleString()} would route · ${total.routed_local_calls.toLocaleString()} would not reach the API`}
         />
       </div>
       <SavingsByDay rows={report.groups.day ?? []} />
@@ -251,17 +264,19 @@ function ReportBody({
   );
 }
 
-/** Each day's spend, with the part routing would have kept: the band between them is the
- *  saving. */
+/** Each day's cost without routing (its spend, unless routes were applied), with the part routing
+ *  keeps: the band between them is the saving. */
 function SavingsByDay({ rows }: { rows: ({ key: string } & GatewayTotals)[] }) {
   const days = [...rows].sort((a, b) => a.key.localeCompare(b.key));
-  const max = Math.max(...days.map((d) => Math.max(d.cost_usd, d.with_routing_usd)), 0);
+  const max = Math.max(...days.map((d) => Math.max(d.baseline_usd, d.with_routing_usd)), 0);
+  const label = (d: GatewayTotals & { key: string }) =>
+    `${d.key}: ${usd(d.cost_usd)} spent${d.applied_calls > 0 ? `, ${usd(d.baseline_usd)} without routing` : ""}, ${usd(d.with_routing_usd)} with routing`;
   return (
     <Card>
       <CardHeader className="border-b">
         <CardTitle>Spend by day</CardTitle>
         <CardDescription>
-          Full bar: what was spent. Filled part: what it would have cost with routing. The
+          Full bar: what the day cost as Claude Code requested it. Filled part: with routing. The
           difference is the saving.
         </CardDescription>
       </CardHeader>
@@ -271,12 +286,12 @@ function SavingsByDay({ rows }: { rows: ({ key: string } & GatewayTotals)[] }) {
             <li
               key={d.key}
               className="relative flex h-full min-w-2 flex-1 flex-col justify-end"
-              title={`${d.key}: ${usd(d.cost_usd)} spent, ${usd(d.with_routing_usd)} with routing`}
-              aria-label={`${d.key}: ${usd(d.cost_usd)} spent, ${usd(d.with_routing_usd)} with routing`}
+              title={label(d)}
+              aria-label={label(d)}
             >
               <div
                 className="w-full rounded-t-sm bg-muted"
-                style={{ height: `${max > 0 ? (d.cost_usd / max) * 100 : 0}%` }}
+                style={{ height: `${max > 0 ? (d.baseline_usd / max) * 100 : 0}%` }}
               />
               <div
                 className="absolute bottom-0 w-full rounded-t-sm bg-primary/70"
@@ -310,6 +325,7 @@ function Breakdown({
   const rows = report.groups[dimension] ?? [];
   const label = DIMENSIONS.find((d) => d.value === dimension)?.label ?? dimension;
   const nameOf = useDeveloperNames();
+  const routed = report.total.applied_calls > 0;
   return (
     <Card>
       <CardHeader className="border-b">
@@ -342,6 +358,7 @@ function Breakdown({
               <TableHead className="text-right">Calls</TableHead>
               <TableHead className="text-right">Tokens</TableHead>
               <TableHead className="text-right">Spend</TableHead>
+              {routed && <TableHead className="text-right">Without routing</TableHead>}
               <TableHead className="text-right">With routing</TableHead>
               <TableHead className="text-right">Saving</TableHead>
             </TableRow>
@@ -362,6 +379,9 @@ function Breakdown({
                   {tokens(row).toLocaleString()}
                 </TableCell>
                 <TableCell className="text-right tabular-nums">{usd(row.cost_usd)}</TableCell>
+                {routed && (
+                  <TableCell className="text-right tabular-nums">{usd(row.baseline_usd)}</TableCell>
+                )}
                 <TableCell className="text-right tabular-nums">
                   {usd(row.with_routing_usd)}
                 </TableCell>

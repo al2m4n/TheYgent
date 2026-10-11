@@ -25,7 +25,6 @@ function totals(over: Record<string, number> = {}) {
     cache_write_tokens: 0,
     cost_usd: 0,
     unpriced_calls: 0,
-    baseline_usd: 0,
     with_routing_usd: 0,
     saving_usd: 0,
     routed_calls: 0,
@@ -34,6 +33,8 @@ function totals(over: Record<string, number> = {}) {
     routed_local_calls: 0,
     routed_local_tokens: 0,
     ...over,
+    // Without applied routes, what it would cost as requested is what it cost.
+    baseline_usd: over.baseline_usd ?? over.cost_usd ?? 0,
   };
 }
 
@@ -109,6 +110,19 @@ const TIMELINE = [
     },
   }),
   entry("rec_3", 95, { status: 429, error_type: "rate_limit_error", cost_usd: null }),
+  entry("rec_routed", 160, {
+    request_class: "subagent",
+    served_model: "claude-sonnet-5-5",
+    cost_usd: 0.004,
+    baseline_usd: 0.0154,
+    decision: {
+      action: "route",
+      target: { kind: "anthropic", model: "claude-sonnet-5-5" },
+      reasons: ["subagent_at_spawn"],
+      counterfactual_usd: null,
+      applied: true,
+    },
+  }),
   entry("rec_4", 130, {
     served_model: "claude-sonnet-5-5",
     decision: {
@@ -213,6 +227,24 @@ describe("AI Gateway sessions", () => {
     );
   });
 
+  it("says what routing saved once a session was routed", async () => {
+    mockControlPlane({
+      sessions: () => [
+        session("aaaaaaaa-1111", 600, {
+          totals: totals({
+            calls: 4,
+            cost_usd: 0.3,
+            baseline_usd: 0.42,
+            saving_usd: 0.12,
+            applied_calls: 2,
+          }),
+        }),
+      ],
+    });
+    renderTab();
+    expect(await screen.findByText("routing saved $0.1200")).toBeInTheDocument();
+  });
+
   it("gives admins everyone's sessions", async () => {
     const asked = mockControlPlane({ role: "admin" });
     renderTab();
@@ -251,8 +283,11 @@ describe("AI Gateway sessions", () => {
       "request-rec_1",
       "request-rec_2",
       "request-rec_3",
+      "request-rec_routed",
       "request-rec_4",
     ]);
+    // Applied in router mode: routed, and what it saved against the requested model.
+    expect(within(rows[3]).getByText("routed → claude-sonnet-5-5 (saved $0.0114)")).toBeTruthy();
     expect(rows[1]).toHaveTextContent("+0:42");
     expect(rows[1]).toHaveTextContent("Explore");
     expect(within(rows[1]).getByText("would route → claude-sonnet-5-5 ($0.0011)")).toBeTruthy();
@@ -262,9 +297,9 @@ describe("AI Gateway sessions", () => {
     expect(within(rows[0]).getByText("cold cache")).toBeInTheDocument();
     expect(within(rows[0]).getByText("no target set")).toBeInTheDocument();
     expect(within(rows[2]).getByText("rate_limit_error · 429")).toBeInTheDocument();
-    expect(rows[3]).toHaveTextContent("served by claude-sonnet-5-5");
+    expect(rows[4]).toHaveTextContent("served by claude-sonnet-5-5");
     // A reason this interface does not know yet shows as itself rather than disappearing.
-    expect(within(rows[3]).getByText("speculative_new_reason")).toBeInTheDocument();
+    expect(within(rows[4]).getByText("speculative_new_reason")).toBeInTheDocument();
     expect(screen.getByText(/0\.1200 saving/)).toBeInTheDocument();
   });
 
