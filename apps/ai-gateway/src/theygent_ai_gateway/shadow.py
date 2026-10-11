@@ -76,6 +76,10 @@ class ShadowJob:
     headers: list[tuple[bytes, bytes]]
     #: The request was sent in fast mode, and its copy is too.
     fast: bool = False
+    #: A local target's capabilities (see ``LocalModel``).
+    tools: bool = False
+    images: bool = False
+    context_tokens: int | None = None
 
 
 def _under_pressure(response: httpx.Response) -> bool:
@@ -188,7 +192,13 @@ class Shadows:
         local = self.local
         assert local is not None
         started = time.perf_counter()
-        attempt = await local.attempt(job.target.model, job.body)
+        attempt = await local.attempt(
+            job.target.model,
+            job.body,
+            tools=job.tools,
+            images=job.images,
+            context_tokens=job.context_tokens,
+        )
         return ShadowRun(
             target=job.target,
             outcome=attempt.outcome,

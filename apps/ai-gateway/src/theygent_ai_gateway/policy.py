@@ -26,6 +26,7 @@ the response's usage is known.
 
 from __future__ import annotations
 
+import hashlib
 from collections import OrderedDict
 from dataclasses import dataclass, fields, replace
 
@@ -36,6 +37,7 @@ from theygent_ir.gateway import (
     FingerprintStatus,
     GatewayConfig,
     GatewayMode,
+    LocalModel,
     PolicyConfig,
     ReasonCode,
     Target,
@@ -200,9 +202,15 @@ class Policy:
         if status == "observe_only":
             return Plan.stay("fingerprint_observe_only", *candidate)
         if status == "allow_local":
-            if policy.local_target is None:
+            dial = policy.local_routing.side_requests
+            if policy.local_target is None and not policy.local_models:
                 return Plan.stay("local_candidate", "no_target_configured")
-            return Plan.route(Target(kind="local", model=policy.local_target), "local_candidate")
+            if not in_share((signals.hints.session_id, fingerprint), dial.share):
+                return Plan.stay("local_candidate")
+            model = side_request_model(policy, signals)
+            if model is None:
+                return Plan.stay("local_candidate", "no_local_model_fits")
+            return Plan.route(Target(kind="local", model=model.model), "local_candidate")
         # allow_cheaper: a reviewed side request may go to the cheaper Anthropic target.
         return self._anthropic_target(
             signals, position, policy.subagent_target, ("fingerprint_allow_cheaper",), prices
@@ -244,17 +252,50 @@ class Policy:
         position: Position,
         policy: PolicyConfig,
         prices: PriceBook | None,
+        *,
+        local: bool = True,
     ) -> Plan:
-        if position.kind in ("subagent", "workflow"):
-            why: ReasonCode = (
-                "subagent_at_spawn"
-                if position.boundary == "conversation_start"
-                else "cold_cache_boundary"
-            )
-            return self._anthropic_target(signals, position, policy.subagent_target, (why,), prices)
-        return self._anthropic_target(
-            signals, position, policy.main_target, ("cold_cache_boundary",), prices
+        subagent = position.kind in ("subagent", "workflow")
+        why: ReasonCode = (
+            "subagent_at_spawn"
+            if subagent and position.boundary == "conversation_start"
+            else "cold_cache_boundary"
         )
+        dial = policy.local_routing.subagents if subagent else policy.local_routing.main
+        eligible = (
+            not subagent or not dial.agent_types or (signals.hints.agent_type in dial.agent_types)
+        )
+        unfit: tuple[ReasonCode, ...] = ()
+        if local and eligible and in_share(position.key, dial.share):
+            model = local_model_for(policy, dial.model, signals, tools=True)
+            if model is not None:
+                return Plan.route(Target(kind="local", model=model.model), why, "local_share")
+            unfit = ("no_local_model_fits",)
+        target = policy.subagent_target if subagent else policy.main_target
+        plan = self._anthropic_target(signals, position, target, (why,), prices)
+        return plan.because(*plan.reasons, *unfit) if unfit else plan
+
+    def after_local_failure(
+        self,
+        signals: RequestSignals,
+        position: Position | None,
+        config: GatewayConfig | None,
+        prices: PriceBook | None,
+        plan: Plan,
+    ) -> Plan:
+        """A local model could not take a request: the decision Anthropic's side would have made,
+        held for the rest of the conversation's segment (its next cold boundary considers a local
+        model again). A side request simply stays."""
+        refused = Plan.stay("target_refused", *plan.reasons)
+        if position is None or position.key is None or config is None:
+            return refused
+        if signals.hints.request_class not in ("main", "subagent"):
+            return refused
+        cloud = self._at_cold_boundary(signals, position, config.policy, prices, local=False)
+        cloud = cloud.because("target_refused", *cloud.reasons)
+        requested = signals.body.model if signals.body else None
+        self._remember(position.key, _Held(cloud, requested))
+        return cloud
 
     def _warm_prompt(
         self,
@@ -335,6 +376,61 @@ class Policy:
         self._held.move_to_end(key)
         while len(self._held) > self._max:
             self._held.popitem(last=False)
+
+
+def in_share(key: object, share: float) -> bool:
+    """Whether a conversation falls in a share: a stable hash of its key, so it lands the same way
+    every time it is decided."""
+    if share >= 1:
+        return True
+    if share <= 0:
+        return False
+    digest = hashlib.sha256(repr(key).encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64 < share
+
+
+def _prompt_tokens(signals: RequestSignals) -> int:
+    return signals.body.shape.body_bytes // 4 if signals.body else 0
+
+
+def local_model_for(
+    policy: PolicyConfig, chosen: str | None, signals: RequestSignals, *, tools: bool
+) -> LocalModel | None:
+    """The listed local model a request goes to: the chosen one if it can take it, else the
+    smallest listed that can (the list is small to large)."""
+    size = _prompt_tokens(signals)
+    for model in policy.local_models:
+        if chosen is not None and model.model != chosen:
+            continue
+        if tools and not model.tools:
+            continue
+        if size > model.context_tokens:
+            continue
+        return model
+    return None
+
+
+def side_request_model(policy: PolicyConfig, signals: RequestSignals) -> LocalModel | None:
+    """The local model a reviewed side request goes to: the dial's, else ``local_target`` (a
+    Phase 2 configuration's one local model), else the smallest listed that fits."""
+    dial = policy.local_routing.side_requests
+    tools = bool(signals.body and signals.body.shape.tool_count)
+    chosen = dial.model or policy.local_target
+    if chosen is not None and chosen not in {m.model for m in policy.local_models}:
+        # The classic single local model: no declared tools, the default context.
+        classic = LocalModel(model=chosen)
+        if tools or _prompt_tokens(signals) > classic.context_tokens:
+            return None
+        return classic
+    return local_model_for(policy, chosen, signals, tools=tools)
+
+
+def capabilities_of(policy: PolicyConfig | None, model: str) -> LocalModel:
+    """What a local model can take: as listed, or the classic single local model's defaults."""
+    for listed in policy.local_models if policy is not None else []:
+        if listed.model == model:
+            return listed
+    return LocalModel(model=model)
 
 
 def costs_less(prices: PriceBook, target: str, requested: str | None) -> bool:

@@ -312,8 +312,9 @@ class _Writer:
             self._current = index
             self.started = True
         call = self._calls[index]
-        if not call.name and getattr(function, "name", None):
-            call.name = function.name
+        name = getattr(function, "name", None)
+        if not call.name and name:
+            call.name = name
         call.arguments += getattr(function, "arguments", None) or ""
         return out
 
@@ -373,8 +374,9 @@ class _Writer:
         ]
 
 
-def _too_large(body: bytes) -> bool:
-    return len(body) // 4 > LOCAL_MAX_PROMPT_TOKENS
+def _too_large(body: bytes, context_tokens: int | None) -> bool:
+    limit = LOCAL_MAX_PROMPT_TOKENS if context_tokens is None else context_tokens
+    return len(body) // 4 > limit
 
 
 class LocalRoute:
@@ -403,23 +405,35 @@ class LocalRoute:
         )
 
     async def answer(
-        self, model: str, body: bytes, *, tools: bool = False, images: bool = False
+        self,
+        model: str,
+        body: bytes,
+        *,
+        tools: bool = False,
+        images: bool = False,
+        context_tokens: int | None = None,
     ) -> LocalAnswer | LocalStream | None:
-        """What Claude Code gets, or ``None`` when the request goes upstream instead. ``tools``
-        and ``images``: what the model can take."""
+        """What Claude Code gets, or ``None`` when the request goes upstream instead. ``tools``,
+        ``images`` and ``context_tokens``: what the model can take."""
         translated = translate(body, tools=tools, images=images)
-        if translated is None or _too_large(body):
+        if translated is None or _too_large(body, context_tokens):
             return None
         if translated.stream and translated.schema is None:
             return await self._relay(model, translated)
         return (await self._checked(model, translated)).answer
 
     async def attempt(
-        self, model: str, body: bytes, *, tools: bool = False, images: bool = False
+        self,
+        model: str,
+        body: bytes,
+        *,
+        tools: bool = False,
+        images: bool = False,
+        context_tokens: int | None = None,
     ) -> LocalAttempt:
         """How the local model does on this request, read whole and checked (a shadow run)."""
         translated = translate(body, tools=tools, images=images)
-        if translated is None or _too_large(body):
+        if translated is None or _too_large(body, context_tokens):
             return LocalAttempt("untranslatable")
         return await self._checked(model, translated)
 

@@ -45,6 +45,7 @@ from theygent_ir.gateway import (
     Endpoint,
     GatewayConfig,
     GatewayMode,
+    LocalModel,
     Outcome,
     PolicyConfig,
     ReasonCode,
@@ -72,7 +73,13 @@ from theygent_ai_gateway.observe import (
     deliver,
     seat_allowance,
 )
-from theygent_ai_gateway.policy import Plan, Policy, counterfactual_usd, to_decision
+from theygent_ai_gateway.policy import (
+    Plan,
+    Policy,
+    capabilities_of,
+    counterfactual_usd,
+    to_decision,
+)
 from theygent_ai_gateway.routing import RETRY_ON_REQUESTED, with_model
 from theygent_ai_gateway.settings import GatewaySettings
 from theygent_ai_gateway.shadow import ShadowJob, Shadows
@@ -310,7 +317,17 @@ class _Exchange:
         if plan.action != "route" or plan.target is None:
             return None
         body, path, headers = kept
-        return ShadowJob(plan.target, body, path, headers, fast=self._signals.fast)
+        capabilities = self.local_capabilities(plan.target.model)
+        return ShadowJob(
+            plan.target,
+            body,
+            path,
+            headers,
+            fast=self._signals.fast,
+            tools=capabilities.tools,
+            images=capabilities.images,
+            context_tokens=capabilities.context_tokens,
+        )
 
     def served_locally(self, answer: LocalAnswer | LocalStream) -> None:
         """The local model answers: the exchange is that answer, read like an upstream one (a
@@ -325,11 +342,26 @@ class _Exchange:
         if isinstance(answer, LocalAnswer):
             self.chunk(answer.body)
 
+    def local_capabilities(self, model: str) -> LocalModel:
+        return capabilities_of(self._config.policy if self._config else None, model)
+
     def local_failed(self) -> None:
-        """The local model could not answer; the request goes to the requested model. Unlike a
-        refused Anthropic route nothing is pinned: a side request holds no conversation cache."""
-        if self.plan is not None:
-            self.plan = Plan.stay("target_refused", *self.plan.reasons)
+        """The local model could not take the request. A conversation gets the decision Anthropic's
+        side would have made (a subagent may still start on the cheaper target), held until its
+        next cold boundary; a side request goes to the requested model, pinning nothing."""
+        if self.plan is None:
+            return
+        refused = Plan.stay("target_refused", *self.plan.reasons)
+        if self._policy is None:
+            self.plan = refused
+            return
+        try:
+            self.plan = self._policy.after_local_failure(
+                self._signals, self.position, self._config, self._prices, self.plan
+            )
+        except Exception as exc:
+            log.error("could not re-decide after a local failure: %s", type(exc).__name__)
+            self.plan = refused
 
     def target_refused(self) -> None:
         """The target refused the routed request before answering; it goes to the requested model
@@ -684,9 +716,17 @@ async def forward(request: Request) -> Response:
         local: LocalRoute | None = getattr(request.app.state, "local", None)
         answered: LocalAnswer | LocalStream | None = None
         if local is not None:
+            capabilities = exchange.local_capabilities(local_model)
             try:
                 answered = await _unless_client_disconnects(
-                    request, local.answer(local_model, body)
+                    request,
+                    local.answer(
+                        local_model,
+                        body,
+                        tools=capabilities.tools,
+                        images=capabilities.images,
+                        context_tokens=capabilities.context_tokens,
+                    ),
                 )
             except ClientDisconnected:
                 exchange.finish("client_disconnected")

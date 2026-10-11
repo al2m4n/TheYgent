@@ -194,6 +194,29 @@ tokenizer, so an estimate. Claude Code sends side requests only in interactive s
 opt-in test (`THEYGENT_E2E_LOCAL_MODEL`) drives the gateway with the recorded title request's
 shape against a real local model and a fake upstream.
 
+### Local models, by share
+
+`PolicyConfig.local_models` lists the models on the inference plane the gateway may use, small to
+large. Each has a logical id, the context it takes, and whether it follows tool calls and takes
+images. `local_routing` sets a dial per kind of request: a share of conversations, the model or
+"the smallest that fits", and for subagents an optional agent-type filter.
+
+- **Sampling (`policy.in_share`).** A conversation is in a share when a SHA-256 of its key falls
+  below it, so it lands the same way every time it is decided. Sampling happens only at cold
+  boundaries: a subagent's spawn, the main conversation's start or after compaction. The decision
+  then holds across the tool loop, and a warm prompt stays where its cache is. Moving to a local
+  model mid-cache is never priced as paying.
+- **Choosing the model (`local_model_for`).** An agent turn needs a model that follows tool calls,
+  with the prompt (about four bytes a token) within its context. When nothing fits, the request
+  takes Anthropic's decision with `no_local_model_fits` added.
+- **Side requests.** They keep their Catalog review. A Phase 2 config's `local_target` stays their
+  model, and their dial starts at 100%.
+- **What the route receives.** The chosen model's capabilities (`capabilities_of`), so tools,
+  images and the prompt cap match the model.
+- **When the local model cannot take the request.** `Policy.after_local_failure` re-decides on
+  Anthropic's side (a subagent may still start on the cheaper target), with `target_refused`
+  first, and holds that until the next cold boundary.
+
 ### Shadow runs
 
 A counterfactual assumes the target writes as many tokens as the requested model did. Shadow runs

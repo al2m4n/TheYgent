@@ -291,7 +291,8 @@ def test_a_fast_mode_exchange_is_priced_at_fast_rates(tmp_path: Path) -> None:
     standard = PACKAGED.cost(model, usage)
     assert observation.request.fast
     assert observation.cost_usd == pytest.approx(PACKAGED.cost(model, usage, fast=True))
-    assert standard is not None and observation.cost_usd > standard
+    assert standard is not None and observation.cost_usd is not None
+    assert observation.cost_usd > standard
 
 
 def test_observations_carry_their_cost(tmp_path: Path) -> None:
