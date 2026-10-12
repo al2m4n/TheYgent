@@ -315,3 +315,12 @@ a.cap .cap-more {
     width: auto;
   }
 }
+
+/* ── Home: go-deeper cards ───────────────────────────────────────────────── */
+/* Continues the Watch section's canvas, so it drops its own top padding. */
+.section.deeper {
+  padding-top: 0;
+}
+.deeper .card-grid {
+  margin-top: 30px;
+}
