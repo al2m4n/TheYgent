@@ -11,7 +11,8 @@ Key facts:
 - Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
 - Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
 - Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
-- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && make up` brings up three local services (interface :5174, control plane :8080, inference plane :8081). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
+- AI Gateway (new in 1.0): an optional service the user runs between Claude Code and the Anthropic API to cut what Claude Code costs. Observer mode records every exchange (its cost, its kind of request: main conversation, subagent, compaction or side request, and what routing would have saved) without changing it. Router mode moves subagents and cold-cache turns to a cheaper Claude model, and a share the user chooses to models on their own inference plane, each measured on the user's own traffic first. It runs on the user's machine or cluster, personal (loopback, no keys) or team (per-developer gateway keys); the control plane receives metadata only, never prompt or response text.
+- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && make up` brings up four local services (interface :5174, control plane :8080, inference plane :8081, AI Gateway :8082). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
 - License: the Sustainable Use License (fair-code). Free to use, modify, and self-host for internal business, personal, and non-commercial purposes; selling it — including offering it as a hosted service — is not permitted.
 
 ## Docs
@@ -27,6 +28,8 @@ Key facts:
 - [Durable Runs](https://docs.theygent.ai/latest/running/durable/): crash-resumable execution
 - [Triggers & Webhooks](https://docs.theygent.ai/latest/running/triggers/): token endpoints, HMAC-signed webhooks, cron schedules
 - [Observability](https://docs.theygent.ai/latest/running/observability/): run waterfalls and OTLP export
+- [AI Gateway](https://docs.theygent.ai/latest/ai-gateway/): observe, route and cut what Claude Code costs; personal and team gateways
+- [AI Gateway: Local Models](https://docs.theygent.ai/latest/ai-gateway/local-models/): serving a share of Claude Code's requests with models you run, measured by trials first
 - [API Reference](https://docs.theygent.ai/latest/reference/api/): control-plane and inference-plane HTTP APIs
 - [Troubleshooting](https://docs.theygent.ai/latest/reference/troubleshooting/): common issues and fixes
 

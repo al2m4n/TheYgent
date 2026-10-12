@@ -107,6 +107,7 @@
               "Durable runs that checkpoint every step and resume after a crash",
               "Observability: per-run span waterfalls with opt-in OTLP export",
               "Voice, vision, and image generation in agent graphs",
+              "AI Gateway for Claude Code: spend reports, routing to cheaper models, and a share served by your own models",
               "Self-hosted: bare metal, Docker Compose, or Kubernetes"
             ],
             "author": { "@id": "https://theygent.ai/#organization" },
@@ -177,7 +178,7 @@
                 "name": "Does TheYgent send my data to the cloud?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "TheYgent never proxies your prompts, payloads, or model weights through anyone's servers — you own every hop. By default everything runs on your machine: local engines, your own Postgres, localhost interfaces. If you register a hosted API for a model, that traffic goes directly from your machine to the provider you chose — it crosses the wire only because you sent it there."
+                  "text": "TheYgent never routes your prompts, payloads, or model weights through anyone else's servers — you own every hop. By default everything runs on your machine: local engines, your own Postgres, localhost interfaces. If you register a hosted API for a model, that traffic goes directly from your machine to the provider you chose — it crosses the wire only because you sent it there."
                 }
               },
               {
@@ -217,7 +218,7 @@
                 "name": "How do I self-host TheYgent?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Clone the repo and run make up for bare metal, or deploy the same three services with Docker Compose or Kubernetes — it's one architecture in every topology. There's no vendor account and no cloud dependency — the only account is the local admin you create in the first-run wizard; the stack listens on localhost by default and stores everything in your own Postgres."
+                  "text": "Clone the repo and run make up for bare metal, or deploy the same services with Docker Compose or Kubernetes — it's one architecture in every topology. There's no vendor account and no cloud dependency — the only account is the local admin you create in the first-run wizard; the stack listens on localhost by default and stores everything in your own Postgres."
                 }
               },
               {
@@ -234,6 +235,22 @@
                 "acceptedAnswer": {
                   "@type": "Answer",
                   "text": "Yes — engine choice is per node, not per app. A common pattern is a fast local model handling triage on-device while a larger hosted model, reached through an API you registered, takes the escalations. Because nodes reference logical model IDs, swapping any binding later doesn't touch a single edge."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "What is the AI Gateway?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The AI Gateway is a TheYgent service you run between Claude Code and the Anthropic API to cut what Claude Code costs. In observer mode it records every exchange — its cost, its kind of request, and what routing would have saved — without changing it. In router mode it moves work where that is a drop-in: subagents and cold-cache turns to a cheaper Claude model, and a share you choose to models on your own inference plane, each measured on your own traffic first."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does the AI Gateway see my code and prompts?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes — it relays them, so it runs where you run it: your machine or your cluster, in the same trust domain as Claude Code. It never writes a prompt or a response anywhere. What it sends to the control plane is metadata only: timings, model names, token counts, costs, and the reasons behind each routing decision — never prompt or response text."
                 }
               }
             ]
@@ -294,6 +311,7 @@
           <a href="#multi-engine">Engines</a>
           <a href="#capabilities">Capabilities</a>
           <a href="#production">Production</a>
+          <a href="#ai-gateway">Gateway</a>
           <a href="#watch">Watch</a>
           <a href="#faq">FAQ</a>
           <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
@@ -328,6 +346,7 @@
         <a href="#multi-engine">Engines</a>
         <a href="#capabilities">Capabilities</a>
         <a href="#production">Production</a>
+        <a href="#ai-gateway">AI Gateway</a>
         <a href="#watch">Watch</a>
         <a href="#faq">FAQ</a>
         <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
@@ -341,7 +360,12 @@
         <svg class="ghost-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
         <div class="wrap hero-grid">
           <div class="hero-copy">
-            <p class="eyebrow mono"><i class="dia"></i>Local-First · Fair-Code · You Own Every Hop</p>
+            <div class="hero-tags">
+              <p class="eyebrow mono"><i class="dia"></i>Local-First · Fair-Code · You Own Every Hop</p>
+              <a class="announce mono" href="#ai-gateway"
+                ><span class="announce-tag">New in 1.0</span>AI Gateway for Claude Code&nbsp;→</a
+              >
+            </div>
             <h1 id="hero-h">
               Build AI Agents on a Canvas.<br />
               <span class="ramp-text">Run Them Where You Point.</span>
@@ -350,7 +374,8 @@
               A no-code, local-first studio for building and running AI agents. Inference runs on your machine —
               <span class="tok">llama.cpp</span>, <span class="tok">MLX</span>, or <span class="tok">vLLM</span> — or any
               OpenAI-compatible API you register, chosen per agent and per call by a logical ID like
-              <span class="pill mono">triage-fast</span>. TheYgent never proxies your prompts, payloads, or weights.
+              <span class="pill mono">triage-fast</span>. TheYgent never routes your prompts, payloads, or weights through
+              anyone else&rsquo;s servers.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="https://github.com/al2m4n/TheYgent" rel="noopener">
@@ -451,7 +476,7 @@
               </div>
             </div>
 
-            <!-- Terminal: the three planes coming online. -->
+            <!-- Terminal: the local services coming online. -->
             <div class="panel term cut-card" aria-label="Terminal showing make up bringing the local services online">
               <div class="panel-bar">
                 <span class="dots"><i></i><i></i><i></i></span>
@@ -462,6 +487,7 @@
 <span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>  <span class="c-dim">mlx · vllm · llama.cpp</span>
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>  <span class="c-dim">postgres :5432</span>
 <span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>  <span class="c-accent">→ http://localhost:5174</span>
+<span class="c-ok">✓</span> ai-gateway        <span class="c-dim">:8082</span>  <span class="c-dim">claude code → your models</span>
 <span class="c-prompt">$</span> <span class="caret"> </span></code></pre>
             </div>
           </div>
@@ -537,8 +563,8 @@
           <p class="eyebrow mono"><i class="dia"></i>Sovereignty, Not Surveillance</p>
           <h2 id="sov-h" class="statement">You Own <span class="ramp-text">Every Hop.</span></h2>
           <p class="section-lede">
-            TheYgent is never the man-in-the-middle. No proxied prompts, no captured weights — every hop runs where you
-            point it.
+            TheYgent is never a middleman you didn&rsquo;t choose. No prompts routed through anyone else&rsquo;s servers,
+            no captured weights — every hop runs where you point it.
           </p>
 
           <ul class="pointset">
@@ -547,8 +573,8 @@
               <span class="pt-v">The vendor is never an involuntary hop between you and your model.</span>
             </li>
             <li>
-              <span class="pt-k mono"><i class="dia"></i>Nothing Proxied</span>
-              <span class="pt-v">Prompts, payloads, and weights are never routed through anyone's servers.</span>
+              <span class="pt-k mono"><i class="dia"></i>No Hidden Hops</span>
+              <span class="pt-v">Prompts, payloads, and weights never pass through a server you didn&rsquo;t choose.</span>
             </li>
             <li>
               <span class="pt-k mono"><i class="dia"></i>Per-Agent, Per-Call</span>
@@ -805,7 +831,7 @@
               </li>
               <li>
                 <span class="pt-k mono"><i class="dia dia-violet"></i>Deployable</span>
-                <span class="pt-v">The same three services, self-hosted in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
+                <span class="pt-v">The same services, self-hosted in every topology: <span class="pill mono">make up</span> on bare metal, Docker Compose, or Kubernetes — never two architectures.</span>
               </li>
             </ul>
           </div>
@@ -856,6 +882,145 @@
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── AI GATEWAY ─────────────────────
+           Two sections, a canvas then a band, so the page keeps its plain/band rhythm.
+           The session panel uses the product's own reason labels. -->
+      <section class="section gateway" id="ai-gateway" aria-labelledby="gw-h">
+        <div class="wrap gw-grid">
+          <div class="gw-copy reveal">
+            <p class="eyebrow mono"><i class="dia"></i>New in 1.0 · The AI Gateway</p>
+            <h2 id="gw-h">See What Claude Code Costs. <span class="ramp-text">Then Cut&nbsp;It.</span></h2>
+            <p class="section-lede">
+              The AI Gateway sits between Claude Code and the Anthropic API. It records what every exchange cost and
+              what routing would have saved — then, when you choose, moves work to cheaper models: a cheaper Claude
+              where that&rsquo;s a drop-in, or models you run yourself.
+            </p>
+            <ul class="pointset gw-points">
+              <li>
+                <span class="pt-k mono"><i class="dia dia-green"></i>Observe First</span>
+                <span class="pt-v">Every exchange is recorded with its cost and its kind — main conversation, subagent, compaction, or side request — without changing a byte.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-accent"></i>Route When You Choose</span>
+                <span class="pt-v">Subagents and cold-cache turns move to a cheaper Claude model: Sonnet 5.5 is half the list price of Opus 5.5. A model that refuses hands the request back before Claude Code sees anything.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-violet"></i>Your Own Models</span>
+                <span class="pt-v">Send a share of each kind of request to models on your inference plane, at no API spend. A trial measures each model on your own traffic first.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-amber"></i>Honest Reports</span>
+                <span class="pt-v">Spend and savings per day, model, developer, and session, with the reason behind every decision.</span>
+              </li>
+            </ul>
+            <div class="cta-row">
+              <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/ai-gateway/" rel="noopener">Read the AI Gateway Guide&nbsp;→</a>
+            </div>
+          </div>
+
+          <div class="gw-visual reveal">
+            <div class="panel gw-panel cut-card" role="img" aria-label="A Claude Code session in the AI Gateway: the main conversation stays on the model it asked for, one subagent moves to a cheaper Claude model, and an Explore subagent and a side request are answered by local models at no API spend.">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">AI Gateway · Session 4c1e… · Router</span>
+                <span class="run-pill mono"><span class="run-dot"></span>Routing</span>
+              </div>
+              <div class="gw-body mono" aria-hidden="true">
+                <div class="gw-head">
+                  <span>request</span>
+                  <span>asked → served</span>
+                  <span class="gw-cost">cost</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">main</span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5</span>
+                    <span class="gw-why"><i class="dia dia-slate"></i>warm cache</span>
+                  </span>
+                  <span class="gw-cost">$0.054</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">subagent</span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5 <span class="gw-to">→</span> <span class="gw-cheaper">sonnet-5-5</span></span>
+                    <span class="gw-why"><i class="dia dia-accent"></i>subagent spawn</span>
+                  </span>
+                  <span class="gw-cost">$0.041</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">subagent<em>Explore</em></span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5 <span class="gw-to">→</span> <span class="gw-local">coder-medium</span></span>
+                    <span class="gw-why"><i class="dia dia-violet"></i>local share</span>
+                  </span>
+                  <span class="gw-cost gw-free">$0</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">side<em>title</em></span>
+                  <span class="gw-route">
+                    <span class="gw-model">haiku-5-5 <span class="gw-to">→</span> <span class="gw-local">aux-small</span></span>
+                    <span class="gw-why"><i class="dia dia-violet"></i>local share</span>
+                  </span>
+                  <span class="gw-cost gw-free">$0</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">compaction</span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5</span>
+                    <span class="gw-why"><i class="dia dia-slate"></i>compaction</span>
+                  </span>
+                  <span class="gw-cost">$0.112</span>
+                </div>
+              </div>
+              <div class="panel-foot mono">
+                <span>5 requests</span>
+                <span class="hash">metadata → control plane</span>
+                <span class="dur"><i class="dia dia-green"></i>Falls back unseen</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band section gw-trust" id="ai-gateway-trust" aria-labelledby="gw-trust-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Where It Runs</p>
+          <h2 id="gw-trust-h">Your Gateway. <span class="ramp-text">Your Trust Domain.</span></h2>
+          <p class="section-lede">
+            The gateway relays Claude Code&rsquo;s prompts and code, so it runs where you run it: your machine or your
+            cluster, beside Claude Code. It never writes a prompt or a response anywhere.
+          </p>
+
+          <ul class="pointset">
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>Personal</span>
+              <span class="pt-v">Yours alone, on loopback, with no keys: <span class="pill mono">make up</span> starts one on <span class="pill mono">:8082</span>.</span>
+            </li>
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>Team</span>
+              <span class="pt-v">A gateway key per developer. Each is billed to their own Claude login or API key, or to the organization&rsquo;s key.</span>
+            </li>
+            <li>
+              <span class="pt-k mono"><i class="dia"></i>Metadata Only</span>
+              <span class="pt-v">The control plane gets timings, models, tokens, costs, and the reasons behind each decision — never prompt or response text.</span>
+            </li>
+          </ul>
+
+          <div class="swap-tip cut-chip">
+            <span class="swap-tip-k mono"><i class="dia"></i>Runs Everywhere</span>
+            <span class="swap-tip-v mono">
+              <span class="pill mono">make up</span> · Docker Compose <span class="pill mono">--profile gateway</span> · Kubernetes
+            </span>
+          </div>
+
+          <p class="honesty">
+            The gateway is a hop you add on purpose, and the Anthropic API stays its upstream: whatever a local model
+            doesn&rsquo;t answer — and some requests it never takes, such as Claude Code&rsquo;s quota check — goes to
+            Anthropic as before. Local models are verified with llama.cpp.
+          </p>
         </div>
       </section>
 
@@ -956,10 +1121,10 @@
             <h2 id="qs-h">Up in <span class="ramp-text">Two Commands.</span></h2>
             <p class="section-lede">
               Clone the repo and run <span class="pill mono">make up</span>. The interface, control plane, inference
-              plane, and Postgres come online locally; engines start lazily when a model is first called.
+              plane, AI Gateway, and Postgres come online locally; engines start lazily when a model is first called.
             </p>
             <ul class="qs-facts mono">
-              <li><i class="dia"></i>Three local services + your Postgres</li>
+              <li><i class="dia"></i>Four local services + your Postgres</li>
               <li><i class="dia"></i>Bring your own models, or register an API</li>
               <li><i class="dia"></i>No vendor account — localhost by default</li>
             </ul>
@@ -977,6 +1142,7 @@
 <span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>   <span class="c-dim">postgres :5432</span>
 <span class="c-ok">✓</span> interface         <span class="c-dim">:5174</span>
+<span class="c-ok">✓</span> ai-gateway        <span class="c-dim">:8082</span>
 <span class="c-dim"># open</span> <span class="c-accent">http://localhost:5174</span></code></pre>
           </div>
         </div>
@@ -1012,8 +1178,8 @@
             <details class="faq-item">
               <summary><h3>Does TheYgent send my data to the cloud?</h3></summary>
               <p>
-                TheYgent never proxies your prompts, payloads, or model weights through anyone&rsquo;s servers — you own
-                every hop. By default everything runs on your machine: local engines, your own Postgres, localhost
+                TheYgent never routes your prompts, payloads, or model weights through anyone else&rsquo;s servers — you
+                own every hop. By default everything runs on your machine: local engines, your own Postgres, localhost
                 interfaces. If you register a hosted API for a model, that traffic goes directly from your machine to
                 the provider you chose — it crosses the wire only because you sent it there.
               </p>
@@ -1055,7 +1221,7 @@
             <details class="faq-item">
               <summary><h3>How do I self-host TheYgent?</h3></summary>
               <p>
-                Clone the repo and run <span class="pill mono">make up</span> for bare metal, or deploy the same three
+                Clone the repo and run <span class="pill mono">make up</span> for bare metal, or deploy the same
                 services with Docker Compose or Kubernetes — it&rsquo;s one architecture in every topology.
                 There&rsquo;s no vendor account and no cloud dependency — the only account is the local admin you
                 create in the first-run wizard; the stack listens on localhost by default and stores everything in
@@ -1078,6 +1244,25 @@
                 on-device while a larger hosted model, reached through an API you registered, takes the escalations.
                 Because nodes reference logical model IDs, swapping any binding later doesn&rsquo;t touch a single
                 edge.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>What is the AI Gateway?</h3></summary>
+              <p>
+                The AI Gateway is a TheYgent service you run between Claude Code and the Anthropic API to cut what
+                Claude Code costs. In observer mode it records every exchange — its cost, its kind of request, and what
+                routing would have saved — without changing it. In router mode it moves work where that is a drop-in:
+                subagents and cold-cache turns to a cheaper Claude model, and a share you choose to models on your own
+                inference plane, each measured on your own traffic first.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does the AI Gateway see my code and prompts?</h3></summary>
+              <p>
+                Yes — it relays them, so it runs where you run it: your machine or your cluster, in the same trust
+                domain as Claude Code. It never writes a prompt or a response anywhere. What it sends to the control
+                plane is metadata only: timings, model names, token counts, costs, and the reasons behind each routing
+                decision — never prompt or response text.
               </p>
             </details>
           </div>
@@ -1149,6 +1334,7 @@
             <a href="#multi-engine">Engines</a>
             <a href="#capabilities">Capabilities</a>
             <a href="#production">Production</a>
+            <a href="#ai-gateway">AI Gateway</a>
             <a href="#quickstart">Quickstart</a>
             <a href="#faq">FAQ</a>
           </div>
