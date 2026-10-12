@@ -115,6 +115,28 @@ jobs:
           packageManager: npm
           command: pages deploy _site --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main --commit-dirty=true
 
+      # IndexNow tells Bing, Yandex, Seznam, Naver, and Yep about the pages this release changed,
+      # within minutes rather than a crawl cycle. The key file ships from root/ like the other
+      # domain-root files; it is public by design (engines fetch it to verify the host).
+      # Best-effort: the docs are live already, so a failed ping never fails the release.
+      - name: Submit changed docs pages to IndexNow
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          INDEXNOW_KEY: 2c3a1d08fc0c4282bde9e66bf199a0d2
+        run: |
+          base=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+          urls=$(python3 .github/scripts/docs_indexnow.py _site "${base:-none}" "$TAG")
+          if [ "$urls" = "[]" ]; then
+            echo "No docs page changed in $TAG — nothing to submit."
+            exit 0
+          fi
+          echo "Submitting: $urls"
+          curl -fsS -X POST "https://api.indexnow.org/indexnow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "{\"host\":\"docs.theygent.ai\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://docs.theygent.ai/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
+            || echo "IndexNow submission failed (non-fatal)"
+
       # Last, and best-effort: the docs are already live on Cloudflare by this point, so a
       # transient upload 5xx (GitHub's upload service occasionally returns 503) can never
       # block publishing. Retries ride out the hiccup; a persistent failure still fails
