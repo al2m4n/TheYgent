@@ -53,9 +53,10 @@ sent it there.
   webhook, or a cron schedule.
 - **Chat & bench** — a unified chat for any model or agent (thinking view, voice, vision),
   and a bench for testing and comparing models and agents side by side.
-- **AI gateway for Claude Code** — put your team's Claude Code behind a proxy that records
-  what every exchange cost and what routing work to cheaper models would have saved, with
-  per-session timelines that explain each decision. It forwards every request unchanged.
+- **AI gateway for Claude Code** — put your team's Claude Code behind a proxy that cuts what
+  it costs: it records what every exchange cost and what routing would save, then — when you
+  choose — routes work to cheaper Claude models and, in shares you set and measure first, to
+  open models you run yourself. Per-session timelines explain every decision.
 
 ## Architecture at a glance
 
@@ -72,10 +73,11 @@ flowchart LR
     ENG["llama.cpp · MLX · vLLM"]
   end
   HOSTED["any OpenAI-compatible API"]
-  AG["AI gateway :8082\nClaude Code → Anthropic, observed"]
+  AG["AI gateway :8082\nClaude Code → Anthropic or local models"]
 
   UI --> API
   AG -->|"records (metadata only)"| API
+  AG -->|"local models"| GW
   UI -->|"raw prompts & media, direct"| GW
   API -->|"logical model ids over HTTP"| GW
   W --> GW
@@ -93,8 +95,9 @@ flowchart LR
 - Agents are documents in a typed IR with a content hash over the canonical graph (layout
   is never hashed). The same IR runs on an in-process interactive runtime and on a
   journaled durable runtime.
-- The **AI gateway** sits between Claude Code and the Anthropic API in the same trust
-  domain: it forwards traffic byte-for-byte and sends the control plane metadata only.
+- The **AI gateway** sits between Claude Code and its models in the same trust domain: it
+  forwards traffic byte for byte, changes only the model when it routes, reaches local
+  models through the inference plane, and sends the control plane metadata only.
 - The full map, with the reasoning behind each boundary, is in
   [docs/dev-docs/architecture.md](docs/dev-docs/architecture.md).
 
@@ -109,7 +112,7 @@ The full contributor docs live in [docs/dev-docs](docs/dev-docs/README.md):
 | [Graph execution](docs/dev-docs/graph-execution.md) | How an IR graph runs: the walker, the node set, `$in` substitution, conditional dataflow |
 | [Durable execution](docs/dev-docs/durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [Inference plane](docs/dev-docs/inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
-| [AI gateway](docs/dev-docs/ai-gateway.md) | The Claude Code proxy: pass-through, identity, the routing policy, records, the admin surface |
+| [AI gateway](docs/dev-docs/ai-gateway.md) | The Claude Code proxy: pass-through, identity, the routing policy, local models and trials, records, the admin surface |
 | [Interface](docs/dev-docs/interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [IR and packages](docs/dev-docs/ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [Deployment](docs/dev-docs/deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |

@@ -8,7 +8,7 @@ One of the three node [kinds](#kind). Activity nodes do non-deterministic work w
 
 ### AI gateway
 
-The service between Claude Code and the Anthropic API (port 8082). It forwards every request untouched and records what each exchange cost and what a routing policy would have done with it. Runs in [personal or team mode](../ai-gateway/index.md#personal-or-team). See [AI Gateway](../ai-gateway/index.md).
+The service between Claude Code and its models (port 8082). It records what each exchange cost and what a routing policy would do with it, and in [router mode](#router-mode) applies that policy: cheaper Claude models, or [local models](../ai-gateway/local-models.md) in the shares an admin sets. Runs in [personal or team mode](../ai-gateway/index.md#personal-or-team). See [AI Gateway](../ai-gateway/index.md).
 
 ### Agent
 
