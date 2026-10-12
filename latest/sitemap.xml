@@ -1,231 +1,231 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/</loc>
+         <loc>https://docs.theygent.ai/latest/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/ai-gateway/</loc>
+         <loc>https://docs.theygent.ai/latest/ai-gateway/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/ai-gateway/local-models/</loc>
+         <loc>https://docs.theygent.ai/latest/ai-gateway/local-models/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/ai-gateway/reports/</loc>
+         <loc>https://docs.theygent.ai/latest/ai-gateway/reports/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/ai-gateway/running/</loc>
+         <loc>https://docs.theygent.ai/latest/ai-gateway/running/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/ai-gateway/setup/</loc>
+         <loc>https://docs.theygent.ai/latest/ai-gateway/setup/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/editor/</loc>
+         <loc>https://docs.theygent.ai/latest/building/editor/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/input-references/</loc>
+         <loc>https://docs.theygent.ai/latest/building/input-references/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/saving-agents/</loc>
+         <loc>https://docs.theygent.ai/latest/building/saving-agents/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/guardrail/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/guardrail/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/human/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/human/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/input-output/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/input-output/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/llm/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/llm/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/mcp/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/mcp/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/media/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/media/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/orchestration/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/orchestration/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/rag/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/rag/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/ratelimit-quota/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/ratelimit-quota/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/router/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/router/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/tools/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/tools/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/building/nodes/transform/</loc>
+         <loc>https://docs.theygent.ai/latest/building/nodes/transform/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/chat/</loc>
+         <loc>https://docs.theygent.ai/latest/chat/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/chat/vision-and-images/</loc>
+         <loc>https://docs.theygent.ai/latest/chat/vision-and-images/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/chat/voice/</loc>
+         <loc>https://docs.theygent.ai/latest/chat/voice/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/agents-and-graphs/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/agents-and-graphs/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/models-and-engines/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/models-and-engines/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/nodes-ports-edges/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/nodes-ports-edges/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/privacy/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/privacy/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/runs-and-sessions/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/runs-and-sessions/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/concepts/versioning/</loc>
+         <loc>https://docs.theygent.ai/latest/concepts/versioning/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/getting-started/</loc>
+         <loc>https://docs.theygent.ai/latest/getting-started/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/getting-started/first-agent/</loc>
+         <loc>https://docs.theygent.ai/latest/getting-started/first-agent/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/getting-started/first-chat/</loc>
+         <loc>https://docs.theygent.ai/latest/getting-started/first-chat/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/getting-started/installation/</loc>
+         <loc>https://docs.theygent.ai/latest/getting-started/installation/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/getting-started/running/</loc>
+         <loc>https://docs.theygent.ai/latest/getting-started/running/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/import-export/</loc>
+         <loc>https://docs.theygent.ai/latest/import-export/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/mcp/</loc>
+         <loc>https://docs.theygent.ai/latest/mcp/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/mcp/examples/</loc>
+         <loc>https://docs.theygent.ai/latest/mcp/examples/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/models/</loc>
+         <loc>https://docs.theygent.ai/latest/models/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/models/engines/</loc>
+         <loc>https://docs.theygent.ai/latest/models/engines/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/models/installing/</loc>
+         <loc>https://docs.theygent.ai/latest/models/installing/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/models/remote/</loc>
+         <loc>https://docs.theygent.ai/latest/models/remote/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/rag/</loc>
+         <loc>https://docs.theygent.ai/latest/rag/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/reference/api/</loc>
+         <loc>https://docs.theygent.ai/latest/reference/api/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/reference/environment/</loc>
+         <loc>https://docs.theygent.ai/latest/reference/environment/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/reference/glossary/</loc>
+         <loc>https://docs.theygent.ai/latest/reference/glossary/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/reference/troubleshooting/</loc>
+         <loc>https://docs.theygent.ai/latest/reference/troubleshooting/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/</loc>
+         <loc>https://docs.theygent.ai/latest/running/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/bench/</loc>
+         <loc>https://docs.theygent.ai/latest/running/bench/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/durable/</loc>
+         <loc>https://docs.theygent.ai/latest/running/durable/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/human-in-the-loop/</loc>
+         <loc>https://docs.theygent.ai/latest/running/human-in-the-loop/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/observability/</loc>
+         <loc>https://docs.theygent.ai/latest/running/observability/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/triggers/</loc>
+         <loc>https://docs.theygent.ai/latest/running/triggers/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/running/users/</loc>
+         <loc>https://docs.theygent.ai/latest/running/users/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
     <url>
-         <loc>https://docs.theygent.ai/latest/v1.0.1/samples/</loc>
+         <loc>https://docs.theygent.ai/latest/samples/</loc>
          <lastmod>2026-10-12</lastmod>
     </url>
 </urlset>

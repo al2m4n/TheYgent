@@ -2,11 +2,11 @@
 
 > User documentation for TheYgent — a self-hosted, no-code, local-first platform for building and running AI agents on a visual canvas, with built-in local inference engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API.
 
-Every page of the user documentation, in navigation order. Browsable at https://docs.theygent.ai/latest/v1.0.1
+Every page of the user documentation, in navigation order. Browsable at https://docs.theygent.ai/latest
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/
+Source: https://docs.theygent.ai/latest/
 
 # TheYgent
 
@@ -36,13 +36,15 @@ There is no vendor in the middle: TheYgent never proxies your prompts, payloads,
 
 ## Watch it run
 
-Three screen recordings of the real product, if you would rather see it than read it first:
+Screen recordings of the real product, if you would rather see it than read it first. Each one also has a page on the site with its chapters and a written summary: [theygent.ai/videos](https://theygent.ai/videos/).
 
 | Video | What it covers |
 |---|---|
 | [Self-Hosted AI Agent Orchestration](https://www.youtube.com/watch?v=3LE_VrIbe0I) (23:52) | The whole platform end to end — clone, start the services, install a model, build and run an agent. Also on [Getting started](getting-started/index.md). |
 | [Voice In, Voice Out](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54) | A voice agent: speech-to-text, a model, and text-to-speech on the canvas. Also on [Voice](chat/voice.md). |
 | [Run Local + Remote Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01) | One graph routing between a local model and a hosted API. Also on [Remote models](models/remote.md). |
+| [Give Your LLM a Memory: RAG with File Upload & Web Crawl](https://www.youtube.com/watch?v=jFc4on-kH_w) (9:34) | A retrieval source from an uploaded PDF and one from crawling a docs site, wired into an agent as tools. See [RAG sources](rag/index.md). |
+| [How to Deploy TheYgent to Kubernetes](https://www.youtube.com/watch?v=A0kMmTAr-L4) (6:41) | Build and load the images, apply the manifests, port-forward, and sign in. |
 
 ## How it fits together
 
@@ -82,7 +84,7 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/getting-started/
+Source: https://docs.theygent.ai/latest/getting-started/
 
 # Getting started
 
@@ -149,7 +151,7 @@ Everything runs where *you* point it: model weights download to `~/.theygent/inf
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/getting-started/installation/
+Source: https://docs.theygent.ai/latest/getting-started/installation/
 
 # Installation
 
@@ -262,7 +264,7 @@ Head to [Running TheYgent](running.md) to bring the services up and confirm they
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/getting-started/running/
+Source: https://docs.theygent.ai/latest/getting-started/running/
 
 # Running TheYgent
 
@@ -371,7 +373,7 @@ Everything is up — now [install a model and have your first chat](first-chat.m
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/getting-started/first-chat/
+Source: https://docs.theygent.ai/latest/getting-started/first-chat/
 
 # Your first chat
 
@@ -428,7 +430,7 @@ A few things worth knowing:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/getting-started/first-agent/
+Source: https://docs.theygent.ai/latest/getting-started/first-agent/
 
 # Your first agent
 
@@ -522,7 +524,7 @@ The answer streams back just like chat, followed by a **run waterfall** showing 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/samples/
+Source: https://docs.theygent.ai/latest/samples/
 
 # Sample agents
 
@@ -744,7 +746,7 @@ the rest of the batch still installs.
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/
+Source: https://docs.theygent.ai/latest/concepts/
 
 # Architecture
 
@@ -850,7 +852,7 @@ A missing engine binary shows up in the inference plane's `/readyz` report — n
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/agents-and-graphs/
+Source: https://docs.theygent.ai/latest/concepts/agents-and-graphs/
 
 # Agents and graphs
 
@@ -997,7 +999,7 @@ A brand-new graph in the editor already contains an `input` node wired to an `ou
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/nodes-ports-edges/
+Source: https://docs.theygent.ai/latest/concepts/nodes-ports-edges/
 
 # Nodes, ports, and edges
 
@@ -1076,7 +1078,7 @@ Notice each branch ends in **its own** `output` node. That is deliberate: at mos
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/models-and-engines/
+Source: https://docs.theygent.ai/latest/concepts/models-and-engines/
 
 # Models and engines
 
@@ -1181,7 +1183,7 @@ This works because, at run time, TheYgent forwards only the logical id to the in
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/runs-and-sessions/
+Source: https://docs.theygent.ai/latest/concepts/runs-and-sessions/
 
 # Runs and sessions
 
@@ -1276,7 +1278,7 @@ Sessions are what power the **Recents** list in chat: each ongoing conversation 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/versioning/
+Source: https://docs.theygent.ai/latest/concepts/versioning/
 
 # Versioning
 
@@ -1370,7 +1372,7 @@ When one agent composes another — through a [subgraph, loop, or map](../buildi
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/concepts/privacy/
+Source: https://docs.theygent.ai/latest/concepts/privacy/
 
 # Privacy and data flow
 
@@ -1425,7 +1427,7 @@ The startup price-list request fails fast and falls back to the bundled copy; no
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/editor/
+Source: https://docs.theygent.ai/latest/building/editor/
 
 # The editor
 
@@ -1689,7 +1691,7 @@ Undo restores node positions too, so a mistaken drag is one keystroke away. Text
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/input-references/
+Source: https://docs.theygent.ai/latest/building/input-references/
 
 # Referencing inputs
 
@@ -1809,7 +1811,7 @@ Because these fail at run time, the editor's validation cannot catch every dangl
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/
+Source: https://docs.theygent.ai/latest/building/nodes/
 
 # Node reference
 
@@ -1897,7 +1899,7 @@ A handful of type ids exist in the underlying schema but do not run yet and neve
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/input-output/
+Source: https://docs.theygent.ai/latest/building/nodes/input-output/
 
 # Input & output nodes
 
@@ -2049,7 +2051,7 @@ graph LR
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/llm/
+Source: https://docs.theygent.ai/latest/building/nodes/llm/
 
 # The LLM node
 
@@ -2261,7 +2263,7 @@ A single-shot summarizer:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/tools/
+Source: https://docs.theygent.ai/latest/building/nodes/tools/
 
 # Tool nodes
 
@@ -2484,7 +2486,7 @@ The `$in.query` placeholder in the URL and the `query` property in the schema mu
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/mcp/
+Source: https://docs.theygent.ai/latest/building/nodes/mcp/
 
 # MCP tools
 
@@ -2598,7 +2600,7 @@ Wiring its `use` handle into the llm's `tools` port exposes it as a `read_file` 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/rag/
+Source: https://docs.theygent.ai/latest/building/nodes/rag/
 
 # RAG
 
@@ -2684,7 +2686,7 @@ Both runtimes execute the node identically; on a [durable run](../../running/dur
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/router/
+Source: https://docs.theygent.ai/latest/building/nodes/router/
 
 # Router node
 
@@ -2781,7 +2783,7 @@ The router's config is `{ "select": "$in" }`, and its out-ports are `billing`, `
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/transform/
+Source: https://docs.theygent.ai/latest/building/nodes/transform/
 
 # Transform node
 
@@ -2859,7 +2861,7 @@ The llm node downstream then references `$in.in.temperature` and `$in.in.summary
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/guardrail/
+Source: https://docs.theygent.ai/latest/building/nodes/guardrail/
 
 # Guardrail node
 
@@ -2973,7 +2975,7 @@ A prompt mentioning a database matches the pattern, so in `deny` mode the check 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/ratelimit-quota/
+Source: https://docs.theygent.ai/latest/building/nodes/ratelimit-quota/
 
 # Rate limit and quota nodes
 
@@ -3091,7 +3093,7 @@ Each `deny` branch ends at its own `output`, so a throttled or over-budget calle
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/human/
+Source: https://docs.theygent.ai/latest/building/nodes/human/
 
 # Human node
 
@@ -3199,7 +3201,7 @@ When this run reaches the gate it pauses as `waiting`. You resume with, for exam
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/orchestration/
+Source: https://docs.theygent.ai/latest/building/nodes/orchestration/
 
 # Orchestration nodes: subgraph, loop, map
 
@@ -3345,7 +3347,7 @@ Because all three are durable-only, run them the durable way:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/nodes/media/
+Source: https://docs.theygent.ai/latest/building/nodes/media/
 
 # Media nodes: transcribe, speak, imagine
 
@@ -3485,7 +3487,7 @@ An image-generating agent follows the same idea with `imagine` feeding an `outpu
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/building/saving-agents/
+Source: https://docs.theygent.ai/latest/building/saving-agents/
 
 # Drafts & publishing
 
@@ -3634,7 +3636,7 @@ The **Select** button in the page header switches the page into selection mode: 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/chat/
+Source: https://docs.theygent.ai/latest/chat/
 
 # Chat
 
@@ -3739,7 +3741,7 @@ What the composer offers for an **agent** is read from its input node's `modalit
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/chat/voice/
+Source: https://docs.theygent.ai/latest/chat/voice/
 
 # Voice
 
@@ -3841,7 +3843,7 @@ Reopen a voice conversation from **Chats** and the composer keeps talking to the
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/chat/vision-and-images/
+Source: https://docs.theygent.ai/latest/chat/vision-and-images/
 
 # Vision and images
 
@@ -3936,7 +3938,7 @@ Direct image-**model** generation creates no artifact: the bytes come back inlin
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/models/
+Source: https://docs.theygent.ai/latest/models/
 
 # Registries
 
@@ -4077,7 +4079,7 @@ On import:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/models/installing/
+Source: https://docs.theygent.ai/latest/models/installing/
 
 # Installing local models
 
@@ -4176,7 +4178,7 @@ Deleting evicts the engine if it's resident, then removes the registration. It d
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/models/remote/
+Source: https://docs.theygent.ai/latest/models/remote/
 
 # Remote models
 
@@ -4274,7 +4276,7 @@ Nothing about the agent changes when you swap a local id for a remote one later 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/models/engines/
+Source: https://docs.theygent.ai/latest/models/engines/
 
 # The engines
 
@@ -4431,7 +4433,7 @@ The service stays "ready" as long as **any** engine is available, so a Mac witho
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/rag/
+Source: https://docs.theygent.ai/latest/rag/
 
 # RAG sources
 
@@ -4530,7 +4532,7 @@ Agents reference a source by its stable id, so re-crawling or uploading more doc
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/mcp/
+Source: https://docs.theygent.ai/latest/mcp/
 
 # MCP servers
 
@@ -4666,7 +4668,7 @@ Drop a **Tool** node in the [editor](../building/editor.md), choose **MCP** in t
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/mcp/examples/
+Source: https://docs.theygent.ai/latest/mcp/examples/
 
 # Example agents
 
@@ -4862,7 +4864,7 @@ supplies the arguments.
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/
+Source: https://docs.theygent.ai/latest/running/
 
 # Runs
 
@@ -4980,7 +4982,7 @@ If the control plane restarts while a run is mid-flight, that run is swept to `f
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/durable/
+Source: https://docs.theygent.ai/latest/running/durable/
 
 # Durable runs
 
@@ -5093,7 +5095,7 @@ A few behaviours worth knowing:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/human-in-the-loop/
+Source: https://docs.theygent.ai/latest/running/human-in-the-loop/
 
 # Human-in-the-loop
 
@@ -5202,7 +5204,7 @@ If the node has a `timeout` and no one answers in time, the outcome follows `onT
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/triggers/
+Source: https://docs.theygent.ai/latest/running/triggers/
 
 # Triggers & webhooks
 
@@ -5392,7 +5394,7 @@ curl -X PATCH http://localhost:8080/triggers/TRIGGER_ID \
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/users/
+Source: https://docs.theygent.ai/latest/running/users/
 
 # Users, roles & sign-in
 
@@ -5596,7 +5598,7 @@ Deleting a provider removes the sign-in button and its stored secret; accounts c
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/observability/
+Source: https://docs.theygent.ai/latest/running/observability/
 
 # Observability
 
@@ -5793,7 +5795,7 @@ If observability is off or a run recorded no spans, the waterfall shows a plain 
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/running/bench/
+Source: https://docs.theygent.ai/latest/running/bench/
 
 # The Bench
 
@@ -5909,7 +5911,7 @@ Saved results are readable through the API (`GET /bench/runs`, filterable by `lo
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/ai-gateway/
+Source: https://docs.theygent.ai/latest/ai-gateway/
 
 # AI Gateway
 
@@ -6047,7 +6049,7 @@ A personal gateway needs no keys and no setup beyond Claude Code's settings:
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/ai-gateway/setup/
+Source: https://docs.theygent.ai/latest/ai-gateway/setup/
 
 # Set up Claude Code
 
@@ -6184,7 +6186,7 @@ a bill; the Report shows plan usage separately.
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/ai-gateway/reports/
+Source: https://docs.theygent.ai/latest/ai-gateway/reports/
 
 # Reports & policy
 
@@ -6384,7 +6386,7 @@ The same tab holds the [organization's Anthropic key](running.md#the-organizatio
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/ai-gateway/local-models/
+Source: https://docs.theygent.ai/latest/ai-gateway/local-models/
 
 # Local models
 
@@ -6593,7 +6595,7 @@ Anthropic](#what-always-stays-with-anthropic) and what falls back under the
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/ai-gateway/running/
+Source: https://docs.theygent.ai/latest/ai-gateway/running/
 
 # Running the gateway
 
@@ -6752,7 +6754,7 @@ record each, exactly as the gateway sent it.
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/import-export/
+Source: https://docs.theygent.ai/latest/import-export/
 
 # Import & export
 
@@ -6867,7 +6869,7 @@ curl -X PUT http://localhost:8080/artifacts/art_01J9ZS3NDEKTSV4RRFFQ69G5FA \
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/reference/api/
+Source: https://docs.theygent.ai/latest/reference/api/
 
 # API reference
 
@@ -7259,7 +7261,7 @@ The `/admin/*` paths take your TheYgent bearer (a session or a personal API key)
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/reference/environment/
+Source: https://docs.theygent.ai/latest/reference/environment/
 
 # Environment variables
 
@@ -7391,7 +7393,7 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/reference/glossary/
+Source: https://docs.theygent.ai/latest/reference/glossary/
 
 # Glossary
 
@@ -7596,7 +7598,7 @@ The standalone process (`theygent-worker`) that runs the durable queue in a serv
 
 ---
 
-Source: https://docs.theygent.ai/latest/v1.0.1/reference/troubleshooting/
+Source: https://docs.theygent.ai/latest/reference/troubleshooting/
 
 # Troubleshooting
 
