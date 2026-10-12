@@ -8,8 +8,15 @@
 <p align="center"><strong>Build agents on a canvas. Run them where you point.</strong></p>
 
 <p align="center">
+  A self-hosted, no-code AI agent builder with built-in local inference —<br>
+  private by default, no telemetry, and it runs fully offline.
+</p>
+
+<p align="center">
   <a href="https://theygent.ai">Website</a> ·
   <a href="https://docs.theygent.ai">User docs</a> ·
+  <a href="https://theygent.ai/private-ai/">Private &amp; offline</a> ·
+  <a href="https://theygent.ai/compare/">How it compares</a> ·
   <a href="docs/dev-docs/README.md">Developer docs</a>
 </p>
 
@@ -20,8 +27,8 @@
   <p><em><strong>Voice in, voice out</strong> (5:54) — speech-to-text, a model, and text-to-speech wired on the canvas, then a spoken conversation with the agent.</em></p>
 </div>
 
-TheYgent is a no-code, local-first platform for building and running AI agents. You compose
-an agent visually — LLM steps, tools, MCP servers, retrieval, routers, guardrails, human
+TheYgent is a no-code, local-first AI orchestration platform for building and running AI
+agents. You compose an agent visually — LLM steps, tools, MCP servers, retrieval, routers, guardrails, human
 approval — and run it against models on *your* infrastructure: llama.cpp anywhere, MLX on
 Apple Silicon, vLLM on NVIDIA GPUs, or any OpenAI-compatible API you register. Local and
 hosted models mix freely in one graph, chosen per node and per call by a logical id.
@@ -35,17 +42,25 @@ sent it there.
 
 - **Visual builder** — drag-and-drop canvas; the graph *is* the agent. Publishing mints an
   immutable, content-addressed version you can roll back to.
-- **Multi-engine inference** — one logical model id per call; swap the engine underneath
+- **Built-in local inference** — TheYgent runs the models itself: install one from the
+  in-app Hugging Face catalog (each variant shows whether it fits your RAM), and llama.cpp,
+  MLX on Apple Silicon, or vLLM (experimental) on NVIDIA starts on the first call and
+  unloads when idle — no separate model server to run. Chat, vision, embeddings,
+  speech-to-text, text-to-speech, and image generation, served locally.
+- **Multi-engine, one id** — one logical model id per call; swap the engine underneath
   (Apple Silicon ↔ GPU ↔ hosted API) with a single registration change and every call
-  site untouched. Chat, vision, embeddings, speech-to-text, text-to-speech, and image
-  generation, served locally.
+  site untouched. Local and hosted models mix freely, per node.
+- **Private by default** — no telemetry, usage analytics, update checks, or vendor account,
+  and it runs offline or air-gapped once installed. Every connection it makes on its own is
+  [listed, with when and why](https://theygent.ai/private-ai/#network).
 - **Tools & MCP** — built-in tools, HTTP tools, and any MCP server over stdio or HTTP,
   including servers generated in-process from an OpenAPI or GraphQL spec; a registry to
   browse and install from, with full auth including interactive OAuth.
 - **RAG** — crawl a site or upload documents, embed locally into pgvector, wire a
   retrieval node into any graph.
-- **Durable runs** — checkpoint every step; kill the process mid-run and it resumes from
-  the last completed node. Human-approval gates, subgraphs, loops, and fan-out maps.
+- **Durable runs and human-in-the-loop** — checkpoint every step; kill the process mid-run
+  and it resumes from the last completed node. Human-approval gates that wait for days and
+  survive restarts, plus subgraphs, loops, and fan-out maps.
 - **Observability** — a zoomable span waterfall for every run (per-node inputs, outputs,
   timing, token usage) stored in your Postgres, with opt-in OTLP export to your own
   OpenTelemetry collector.
