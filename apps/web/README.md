@@ -40,17 +40,23 @@ secrets as the docs pipeline):
 
 | Path | Purpose |
 |---|---|
-| `index.html` | The single page. |
-| `styles.css` | All styling (brand tokens mirror the app interface). |
+| `index.html` | The home page. |
+| `private-ai/`, `apple-silicon/` | Guide pages: private and offline use (with every network touchpoint), and MLX on a Mac. |
+| `compare/` | The comparison hub and one page per compared product — dated and sourced. |
+| `404.html` | The not-found page (Cloudflare Pages serves it with a 404 status). |
+| `styles.css` | Tokens, nav, sections, cards, FAQ, footer (brand tokens mirror the app interface). |
+| `pages.css` | Inner-page furniture (page hero, prose, comparison tables), loaded after `styles.css`. |
 | `main.js` | Small progressive enhancements (nav, scroll reveal, theme). |
 | `assets/logo/` | The TheYgent logo marks (light, dark, white) + favicon, copied from the interface. |
 | `assets/og-image.png` | Social share card. |
 | `_headers` | Cloudflare Pages caching + security headers. |
-| `robots.txt`, `sitemap.xml` | Crawl hints. |
+| `robots.txt`, `sitemap.xml`, `llms.txt` | Crawl hints and the machine-readable site summary; `.github/scripts/check_web_pages.py` keeps the sitemap, canonicals, and FAQ structured data in step with the pages. |
 
 ## Conventions
 
 - **Brand name** is written **TheYgent** (capital T + Y) in all copy.
 - Keep it dependency-free and self-contained; if a web font is used it degrades to a system stack.
-- The published-code hygiene rules apply here too: no competitor product names, no internal
-  milestone tags. Describe capabilities on their own terms.
+- The published-code hygiene rules apply here too: no internal milestone tags, and no
+  competitor product names outside the comparison pages under `compare/` — those name the
+  products they compare, cite a source for every claim, and carry the date they were checked
+  (see [AGENTS.md](AGENTS.md)). Everywhere else, describe capabilities on their own terms.

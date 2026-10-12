@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TheYgent vs Dify, n8n, Langflow &amp; Flowise — Local AI Agent Builders Compared</title>
+    <meta
+      name="description"
+      content="A dated, sourced comparison of self-hosted visual AI agent builders for private, local models: who runs the models, what gets sent home by default, licenses, MCP, and human-in-the-loop."
+    />
+    <link rel="canonical" href="https://theygent.ai/compare/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/compare/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="TheYgent vs Dify, n8n, Langflow &amp; Flowise — Local AI Agent Builders Compared" />
+    <meta
+      property="og:description"
+      content="Five visual AI agent builders, compared on what matters for private, local models: who runs the models, telemetry defaults, licenses, MCP, and human-in-the-loop."
+    />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TheYgent vs Dify, n8n, Langflow &amp; Flowise" />
+    <meta name="twitter:description" content="Visual AI agent builders compared for private, local models — dated and sourced." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <!-- Structured data. FAQPage answers stay verbatim-identical to the visible FAQ below
+         (.github/scripts/check_web_pages.py enforces it). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/compare/#webpage",
+            "url": "https://theygent.ai/compare/",
+            "name": "TheYgent vs Dify, n8n, Langflow & Flowise — Local AI Agent Builders Compared",
+            "description": "A dated, sourced comparison of self-hosted visual AI agent builders for private, local models.",
+            "inLanguage": "en",
+            "dateModified": "2026-10-12",
+            "isPartOf": { "@id": "https://theygent.ai/#website" },
+            "about": { "@id": "https://theygent.ai/#software" },
+            "breadcrumb": { "@id": "https://theygent.ai/compare/#breadcrumb" },
+            "mentions": [
+              { "@type": "SoftwareApplication", "name": "Dify", "url": "https://dify.ai/" },
+              { "@type": "SoftwareApplication", "name": "n8n", "url": "https://n8n.io/" },
+              { "@type": "SoftwareApplication", "name": "Langflow", "url": "https://www.langflow.org/" },
+              { "@type": "SoftwareApplication", "name": "Flowise", "url": "https://flowiseai.com/" }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/compare/#breadcrumb",
+            "itemListElement": [
+              { "@type": "ListItem", "position": 1, "name": "TheYgent", "item": "https://theygent.ai/" },
+              { "@type": "ListItem", "position": 2, "name": "Compare", "item": "https://theygent.ai/compare/" }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/compare/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Which visual AI agent builder is best when I can only use local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "If the requirement is local models only, the deciding question is who runs the models. TheYgent ships its own managed engines — llama.cpp on any machine, MLX on Apple Silicon, and vLLM (experimental) on NVIDIA GPUs — and installs models from an in-app catalog. Dify, n8n, Langflow, and Flowise connect to a model server you install and operate separately. All five can be self-hosted and all five can work with local models; TheYgent is the one where the inference engine is part of the product."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need Ollama or LM Studio to run local models with TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. TheYgent runs local models with its own engines: llama.cpp on any machine, MLX on Apple Silicon, and vLLM (experimental) on NVIDIA GPUs. make engines installs the engine binaries once; after that you install models from the in-app Hugging Face catalog, and TheYgent starts each engine on the first call, keeps it warm, and unloads it when idle. There is no separate model server to run or keep alive."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which of these platforms send telemetry by default?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "As of October 12, 2026: TheYgent has no telemetry. n8n enables anonymous diagnostics by default (set N8N_DIAGNOSTICS_ENABLED=false to opt out). Langflow sends telemetry by default (set DO_NOT_TRACK=true to opt out). Flowise's server sends usage events only when a PostHog key is configured. Dify ships with no analytics keys set, but by default checks updates.dify.ai for new versions and connects to its plugin marketplace."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which of these platforms are open source?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Langflow is MIT-licensed. Flowise is Apache 2.0, except an enterprise directory under a commercial license. Dify uses a modified Apache 2.0 license that requires a commercial license for multi-tenant use and forbids removing its logo from the frontend. TheYgent and n8n both use the Sustainable Use License — fair-code and source-available, not OSI open source: free to use, modify, and self-host for internal business, personal, and non-commercial purposes, but not to sell or offer as a hosted service."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I move my flows from Dify, n8n, Langflow, or Flowise to TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "There is no automatic importer — flows are rebuilt on TheYgent's canvas. The building blocks map closely: LLM, tool, MCP, retrieval, router, transform, guardrail, and human-approval nodes, plus subgraphs, loops, and maps. MCP servers you already use connect as they are, and a REST API you call today can become a tool node or an MCP server generated from its OpenAPI spec."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/" class="is-active" aria-current="page">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/" aria-current="page">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><span aria-current="page">Compare</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Comparison · Local Models · Self-Hosted</p>
+          <h1 id="page-h">TheYgent vs Dify, n8n, Langflow &amp; <span class="ramp-text">Flowise</span></h1>
+          <p class="lede">
+            All five let you build AI workflows on a visual canvas, and all five can be self-hosted. They differ in who
+            runs the models, what the software sends home by default, and what the license lets you do. If your
+            requirement is <strong>local models only</strong> and data that stays on hardware you control, those
+            differences decide it.
+          </p>
+          <p class="checked mono">
+            Checked against each project&rsquo;s own source code and documentation on October 12, 2026 — Dify 1.17.1,
+            n8n 2.42.7, Langflow 1.12.5, Flowise 3.1.4. Spotted something out of date?
+            <a href="https://github.com/al2m4n/TheYgent/issues">Open an issue</a> and we&rsquo;ll fix it.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="short-h">
+        <div class="wrap">
+          <div class="prose">
+            <h2 id="short-h">The Short Answer</h2>
+            <p>
+              <strong>Choose TheYgent</strong> when the models have to run on your own hardware and you&rsquo;d rather
+              not operate a separate model server. TheYgent installs models from an in-app catalog and runs them on its
+              own engines — llama.cpp on any machine, MLX on Apple Silicon, vLLM (experimental) on NVIDIA GPUs — and it
+              sends no telemetry.
+            </p>
+            <p>
+              <strong>Choose one of the others</strong> when you need a large integration catalog, a mature ecosystem,
+              or a more permissive license, and you&rsquo;re happy to run local models in a separate server that the
+              builder calls over HTTP. Each of them is years ahead of TheYgent on community and integrations.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="matrix-h">
+        <div class="wrap">
+          <h2 id="matrix-h" class="prose">Side by Side</h2>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="matrix-h">
+              <table class="cmp-table wide">
+                <thead>
+                  <tr>
+                    <th scope="col"><span class="visually-hidden">Feature</span></th>
+                    <th scope="col" class="us">TheYgent</th>
+                    <th scope="col">Dify</th>
+                    <th scope="col">n8n</th>
+                    <th scope="col">Langflow</th>
+                    <th scope="col">Flowise</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Built for</th>
+                    <td class="us">AI agents on local models: a no-code builder with its own inference plane</td>
+                    <td>LLM apps: agentic workflows, RAG pipelines, a collaborative workspace</td>
+                    <td>Workflow automation with AI nodes and 400+ integrations</td>
+                    <td>AI agents and workflows, extensible in Python</td>
+                    <td>AI agents and chat flows, built in TypeScript</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Visual, no-code canvas</th>
+                    <td class="us">Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Self-hosted</th>
+                    <td class="us">Yes — bare metal, Docker Compose, or Kubernetes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Runs local models itself</th>
+                    <td class="us">
+                      Yes — manages llama.cpp, MLX, and vLLM (experimental): starts an engine on first call, unloads it
+                      when idle
+                    </td>
+                    <td>No — connects to a model server you run, e.g. through its Ollama plugin</td>
+                    <td>No — connects to a model server you run, e.g. through its Ollama nodes</td>
+                    <td>No — connects to a model server you run, e.g. through its Ollama component</td>
+                    <td>No — connects to a model server you run, e.g. through its ChatOllama node</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Download models in the app</th>
+                    <td class="us">Yes — Hugging Face catalog with a RAM fit check for every variant</td>
+                    <td>Done in the separate model server</td>
+                    <td>Done in the separate model server</td>
+                    <td>Done in the separate model server</td>
+                    <td>Done in the separate model server</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Local speech &amp; images</th>
+                    <td class="us">
+                      Built-in engines for speech-to-text, text-to-speech, and image generation (image generation needs
+                      extra setup)
+                    </td>
+                    <td>Through a model provider you connect</td>
+                    <td>Through a model provider you connect</td>
+                    <td>Through a model provider you connect</td>
+                    <td>Through a model provider you connect</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Telemetry by default</th>
+                    <td class="us">None — <a href="/private-ai/#network">one startup request</a>, carrying no data</td>
+                    <td>No analytics keys set; checks <code>updates.dify.ai</code> and its plugin marketplace</td>
+                    <td>Anonymous diagnostics on — opt out with <code>N8N_DIAGNOSTICS_ENABLED=false</code></td>
+                    <td>On — opt out with <code>DO_NOT_TRACK=true</code></td>
+                    <td>Off unless a PostHog key is configured</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">MCP tools</th>
+                    <td class="us">Yes — stdio and HTTP, a registry browser, and OpenAPI/GraphQL specs turned into MCP servers</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                    <td>Yes</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Human-in-the-loop</th>
+                    <td class="us">Yes — an approval node on the durable runtime, so a pending approval survives a restart</td>
+                    <td>Yes — Human Input node</td>
+                    <td>Yes — human review for tools</td>
+                    <td>Yes — Human Input component</td>
+                    <td>Yes — Human Input node</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">License</th>
+                    <td class="us">Sustainable Use License (fair-code)</td>
+                    <td>Modified Apache 2.0 — multi-tenant use needs a commercial license</td>
+                    <td>Sustainable Use License (fair-code), plus enterprise-licensed files</td>
+                    <td>MIT</td>
+                    <td>Apache 2.0, plus an enterprise-licensed directory</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Maturity</th>
+                    <td class="us">New — 1.0 released October 2026</td>
+                    <td>Established — about 158k GitHub stars</td>
+                    <td>Established — about 207k GitHub stars</td>
+                    <td>Established — about 156k GitHub stars</td>
+                    <td>Established — about 55k GitHub stars</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="note">
+            &ldquo;Connects to a model server you run&rdquo; means the model runs in separate software you install and
+            operate, and the builder calls it over HTTP. Star counts are from GitHub on October 12, 2026. Sources for
+            every row are listed <a href="#sources">at the end of this page</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="diff-h">
+        <div class="wrap prose">
+          <h2 id="diff-h">Where the Differences Are</h2>
+
+          <h3>Local inference: built in, or a separate server</h3>
+          <p>
+            Every builder here can call a local model. The difference is whose job it is to run it. With Dify, n8n,
+            Langflow, and Flowise you install a model server, download models into it, keep it running, and point the
+            builder at its URL. TheYgent&rsquo;s inference plane does that itself: install a model from the Hugging Face
+            catalog (each variant shows whether it fits your RAM), and the right engine starts on the first call, stays
+            warm while it&rsquo;s used, and unloads after 15 idle minutes. Models are addressed by a logical ID such as
+            <code>triage-fast</code>, so moving one from MLX on a Mac to llama.cpp on a Linux box never touches the
+            agent graph.
+          </p>
+
+          <h3>What leaves your machine by default</h3>
+          <p>
+            TheYgent collects no analytics and has no update check, crash reporter, or license server. Runs, traces,
+            and documents stay in your own Postgres, and trace export over OpenTelemetry is off until you point it at a
+            collector you run. The one automatic request — a public model price list fetched at startup by the
+            inference plane&rsquo;s model client library — carries none of your data, and it falls back to a bundled
+            copy when you&rsquo;re offline. <a href="/private-ai/">Every network touchpoint is listed here.</a>
+          </p>
+          <p>
+            n8n and Langflow send usage telemetry until you opt out; Dify checks for updates and loads its plugin
+            marketplace by default; Flowise&rsquo;s server stays quiet unless an analytics key is configured. All of it
+            can be switched off — the question is whether it starts on or off.
+          </p>
+
+          <h3>Licensing</h3>
+          <p>
+            If an OSI-approved open-source license matters, Langflow (MIT) and Flowise (Apache 2.0, outside its
+            enterprise directory) are the permissive options. TheYgent and n8n share the Sustainable Use License: free
+            to use, modify, and self-host for internal business, personal, and non-commercial purposes, but not to sell
+            or run as a hosted service. Dify&rsquo;s modified Apache 2.0 allows commercial use but requires a
+            commercial license for multi-tenant deployments.
+          </p>
+
+          <h3>Where the others are ahead</h3>
+          <p>
+            TheYgent reached 1.0 in October 2026; the others have years of production use and communities in the tens
+            or hundreds of thousands. n8n connects to 400+ services out of the box. Dify has a plugin marketplace and
+            multi-user workspaces built for teams shipping LLM apps. Langflow lets you write custom components in
+            Python. Flowise builds on the LangChain.js ecosystem. If those matter more than where the models run, pick
+            the tool that has them.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="each-h">
+        <div class="wrap">
+          <h2 id="each-h" class="prose">One Comparison at a Time</h2>
+          <div class="card-grid">
+            <a class="cap cut-card" href="/compare/dify/">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>vs dify</span>
+              <h3>TheYgent vs Dify</h3>
+              <p>An LLM-app platform with a plugin marketplace, versus a local-first builder that runs its own engines.</p>
+              <span class="cap-more mono">Read the comparison →</span>
+            </a>
+            <a class="cap cut-card" href="/compare/n8n/">
+              <span class="cap-kicker mono"><i class="dia dia-amber"></i>vs n8n</span>
+              <h3>TheYgent vs n8n</h3>
+              <p>Broad workflow automation with AI nodes, versus AI agents built around local inference.</p>
+              <span class="cap-more mono">Read the comparison →</span>
+            </a>
+            <a class="cap cut-card" href="/compare/langflow/">
+              <span class="cap-kicker mono"><i class="dia dia-violet"></i>vs langflow</span>
+              <h3>TheYgent vs Langflow</h3>
+              <p>An MIT-licensed, Python-extensible flow builder, versus a builder with its own inference plane.</p>
+              <span class="cap-more mono">Read the comparison →</span>
+            </a>
+            <a class="cap cut-card" href="/compare/flowise/">
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>vs flowise</span>
+              <h3>TheYgent vs Flowise</h3>
+              <p>A TypeScript agent builder on LangChain.js, versus local engines and durable runs built in.</p>
+              <span class="cap-more mono">Read the comparison →</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section class="band section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>Which visual AI agent builder is best when I can only use local models?</h3></summary>
+              <p>
+                If the requirement is local models only, the deciding question is who runs the models. TheYgent ships
+                its own managed engines — llama.cpp on any machine, MLX on Apple Silicon, and vLLM (experimental) on
+                NVIDIA GPUs — and installs models from an in-app catalog. Dify, n8n, Langflow, and Flowise connect to a
+                model server you install and operate separately. All five can be self-hosted and all five can work with
+                local models; TheYgent is the one where the inference engine is part of the product.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Do I need Ollama or LM Studio to run local models with TheYgent?</h3></summary>
+              <p>
+                No. TheYgent runs local models with its own engines: llama.cpp on any machine, MLX on Apple Silicon, and
+                vLLM (experimental) on NVIDIA GPUs. <span class="pill mono">make engines</span> installs the engine
+                binaries once; after that you install models from the in-app Hugging Face catalog, and TheYgent starts
+                each engine on the first call, keeps it warm, and unloads it when idle. There is no separate model
+                server to run or keep alive.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Which of these platforms send telemetry by default?</h3></summary>
+              <p>
+                As of October 12, 2026: TheYgent has no telemetry. n8n enables anonymous diagnostics by default (set
+                <code>N8N_DIAGNOSTICS_ENABLED=false</code> to opt out). Langflow sends telemetry by default (set
+                <code>DO_NOT_TRACK=true</code> to opt out). Flowise&rsquo;s server sends usage events only when a
+                PostHog key is configured. Dify ships with no analytics keys set, but by default checks
+                updates.dify.ai for new versions and connects to its plugin marketplace.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Which of these platforms are open source?</h3></summary>
+              <p>
+                Langflow is MIT-licensed. Flowise is Apache 2.0, except an enterprise directory under a commercial
+                license. Dify uses a modified Apache 2.0 license that requires a commercial license for multi-tenant use
+                and forbids removing its logo from the frontend. TheYgent and n8n both use the Sustainable Use License —
+                fair-code and source-available, not OSI open source: free to use, modify, and self-host for internal
+                business, personal, and non-commercial purposes, but not to sell or offer as a hosted service.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can I move my flows from Dify, n8n, Langflow, or Flowise to TheYgent?</h3></summary>
+              <p>
+                There is no automatic importer — flows are rebuilt on TheYgent&rsquo;s canvas. The building blocks map
+                closely: LLM, tool, MCP, retrieval, router, transform, guardrail, and human-approval nodes, plus
+                subgraphs, loops, and maps. MCP servers you already use connect as they are, and a REST API you call
+                today can become a tool node or an MCP server generated from its OpenAPI spec.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" id="sources" aria-labelledby="src-h">
+        <div class="wrap">
+          <h2 id="src-h" class="prose">Sources</h2>
+          <p class="note">
+            Checked on October 12, 2026. Telemetry and license rows cite each project&rsquo;s own source files; feature
+            rows cite its documentation.
+          </p>
+          <ul class="sources">
+            <li>Dify — <a href="https://github.com/langgenius/dify/blob/main/LICENSE">LICENSE</a> · <a href="https://github.com/langgenius/dify/blob/main/docker/.env.example">docker/.env.example</a> (<code>CHECK_UPDATE_URL</code>, <code>MARKETPLACE_ENABLED</code>) · <a href="https://marketplace.dify.ai/plugin/langgenius/ollama">Ollama plugin</a> · <a href="https://docs.dify.ai/en/use-dify/build/mcp">MCP</a> · <a href="https://docs.dify.ai/en/use-dify/nodes/human-input">Human Input node</a></li>
+            <li>n8n — <a href="https://github.com/n8n-io/n8n/blob/master/LICENSE.md">LICENSE.md</a> · <a href="https://github.com/n8n-io/n8n/blob/master/packages/@n8n/config/src/configs/diagnostics.config.ts">diagnostics.config.ts</a> · <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.lmchatollama/">Ollama Chat Model node</a> · <a href="https://docs.n8n.io/integrations/builtin/cluster-nodes/sub-nodes/n8n-nodes-langchain.toolmcp/">MCP Client Tool node</a> · <a href="https://docs.n8n.io/build/integrate-ai/ai-examples/human-in-the-loop-for-tools">Human-in-the-loop for tools</a></li>
+            <li>Langflow — <a href="https://github.com/langflow-ai/langflow/blob/main/LICENSE">LICENSE</a> · <a href="https://github.com/langflow-ai/langflow/blob/main/src/lfx/src/lfx/services/settings/groups/telemetry.py">telemetry settings</a> · <a href="https://docs.langflow.org/bundles-ollama">Ollama component</a> · <a href="https://docs.langflow.org/mcp-client">MCP client</a> · <a href="https://docs.langflow.org/human-in-the-loop">Human-in-the-loop</a></li>
+            <li>Flowise — <a href="https://github.com/FlowiseAI/Flowise/blob/main/LICENSE.md">LICENSE.md</a> · <a href="https://github.com/FlowiseAI/Flowise/blob/main/packages/server/src/utils/telemetry.ts">telemetry.ts</a> · <a href="https://docs.flowiseai.com/integrations/langchain/chat-models/chatollama">ChatOllama node</a> · <a href="https://docs.flowiseai.com/tutorials/tools-and-mcp">Tools &amp; MCP</a> · <a href="https://docs.flowiseai.com/tutorials/human-in-the-loop">Human in the loop</a></li>
+            <li>TheYgent — <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md">LICENSE.md</a> · <a href="https://docs.theygent.ai/latest/models/engines/">The engines</a> · <a href="https://docs.theygent.ai/latest/mcp/">MCP</a> · <a href="https://docs.theygent.ai/latest/running/human-in-the-loop/">Human-in-the-loop</a> · <a href="/private-ai/">What touches the network</a></li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="band section cta-final" aria-labelledby="cta-h">
+        <div class="wrap">
+          <h2 id="cta-h">Try It on Your Own <span class="ramp-text">Hardware.</span></h2>
+          <p class="section-lede cta-lede">
+            Clone the repo, run <span class="pill mono">make engines</span> and <span class="pill mono">make up</span>,
+            and install a model from the catalog. No vendor account, no cloud dependency.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/al2m4n/TheYgent" rel="noopener">Get TheYgent on GitHub</a>
+            <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/getting-started/installation/" rel="noopener">Installation Guide&nbsp;→</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

@@ -73,6 +73,16 @@ repos:
         pass_filenames: false
         require_serial: true
 
+      # ── Marketing site (apps/web): every local reference resolves, and the pages, sitemap,
+      # structured data, and llms.txt agree — the same two checks the web workflow runs. ──
+      - id: web-site
+        name: web site checks (apps/web)
+        entry: bash -c 'python3 .github/scripts/check_web_assets.py apps/web && python3 .github/scripts/check_web_pages.py apps/web'
+        language: system
+        files: ^(apps/web/|\.github/scripts/check_web_)
+        pass_filenames: false
+        require_serial: true
+
       # ── IR type-drift guard — mirrors the CI frontend job: a packages/ir change must ship the
       # regenerated @theygent/ir-types in the same commit (FE/BE IR lockstep). Also fires on
       # packages/ir-types changes (the generator + pipeline live there, and a hand-edit to a

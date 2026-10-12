@@ -15,6 +15,17 @@ the root [AGENTS.md](../../AGENTS.md) apply first.
   must work; theme is set before first paint.
 - **Copy rules:** claims must stay honest — the promise is "you own every hop", never
   "no data ever leaves your machine". Brand casing is "TheYgent" in prose. Don't name
-  competing products.
+  competing products — except on the comparison pages below.
+- **Comparison pages (`compare/`) are the one place other products are named**, because
+  "alternative to X" is how people search. Every claim about another product cites that
+  product's own source file or documentation in the page's Sources section and carries the
+  date and version it was checked; re-check and re-date when either product changes. State
+  where the other product is the better pick — a comparison that only flatters TheYgent is
+  neither credible nor honest. Parity is reported as parity.
+- **Every page is indexable by construction:** a page lives at `<slug>/index.html`, shares
+  the nav/footer chrome, loads `styles.css` then `pages.css`, has one `<h1>` and a canonical
+  URL, is listed in `sitemap.xml`, and keeps any FAQPage structured data word-for-word equal
+  to its visible FAQ. `.github/scripts/check_web_pages.py` enforces all of it (CI and
+  `make lint`). `web.yml` stamps each sitemap `lastmod` from its own page's git history.
 - Deploys to Cloudflare Pages via `.github/workflows/web.yml` on pushes touching
   `apps/web/`.

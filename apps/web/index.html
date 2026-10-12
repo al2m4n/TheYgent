@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TheYgent — Local-First, No-Code AI Agent Builder with MCP Tools</title>
+    <title>TheYgent — No-Code AI Agent Builder for Private, Local Models</title>
     <meta
       name="description"
-      content="Build AI agents on a visual canvas and run them locally — llama.cpp, MLX, vLLM, or any OpenAI-compatible API. MCP tools, RAG, triggers. Self-hosted, fair-code."
+      content="Self-hosted, no-code AI agent orchestration on a visual canvas, with built-in local engines (llama.cpp, MLX, vLLM), MCP, RAG, human approvals, and no telemetry."
     />
     <link rel="canonical" href="https://theygent.ai/" />
     <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
@@ -44,6 +44,7 @@
     <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
     <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
 
     <!-- Structured data: one entity graph. The FAQPage answers must stay verbatim-identical
          to the visible FAQ section below — markup invisible on the page violates Google's
@@ -85,6 +86,7 @@
             "description": "A no-code, local-first studio for building and running AI agents. Inference runs on your machine — llama.cpp, MLX, or vLLM — or any OpenAI-compatible API you register, chosen per agent and per call. You own every hop.",
             "applicationCategory": "DeveloperApplication",
             "applicationSubCategory": "AI agent builder",
+            "keywords": "no-code AI agent builder, AI orchestration platform, visual AI workflow builder, local LLM, private AI, self-hosted, offline, air-gapped, no telemetry, Apple Silicon, MLX, llama.cpp, vLLM, MCP, RAG, human-in-the-loop, durable execution",
             "operatingSystem": "macOS, Linux",
             "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
             "isAccessibleForFree": true,
@@ -175,6 +177,14 @@
               },
               {
                 "@type": "Question",
+                "name": "How does TheYgent compare to other visual AI workflow builders?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Most visual AI workflow builders call a model server you install and run separately. TheYgent runs local models on its own engines, sends no telemetry, and can make every run crash-resumable. The comparison pages set it side by side with four popular builders, with sources and dates — including where each of them is the better pick."
+                }
+              },
+              {
+                "@type": "Question",
                 "name": "Does TheYgent send my data to the cloud?",
                 "acceptedAnswer": {
                   "@type": "Answer",
@@ -187,6 +197,30 @@
                 "acceptedAnswer": {
                   "@type": "Answer",
                   "text": "Three local engines plus a universal escape hatch: llama.cpp (runs on any machine, CPU or GPU), MLX (Apple Silicon), and vLLM (NVIDIA GPUs) — plus any OpenAI-compatible API you register. Models get a logical ID, so you can swap the engine underneath without touching the agent graph, and one graph can mix local and hosted models side by side."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need a separate model server to run local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. TheYgent runs local models on its own engines — llama.cpp, MLX, and vLLM (experimental). Install a model from the in-app Hugging Face catalog, where every variant shows whether it fits your RAM, and the inference plane starts the engine on the first call, keeps it warm, and unloads it when idle. There is no separate model server to install or keep running."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can TheYgent run offline or air-gapped?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, once it is installed. With models installed from the catalog, or weights copied onto the host and registered by path, the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model all work with no network. The only automatic request — a public price list fetched at startup — falls back to a bundled copy when offline. Every network touchpoint is listed on the private and offline AI page."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does TheYgent collect telemetry?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. TheYgent has no usage analytics, crash reporting, update checks, or license activation, and it needs no vendor account. Traces stay in your own Postgres; OpenTelemetry export is off until you point it at a collector you run."
                 }
               },
               {
@@ -211,6 +245,14 @@
                 "acceptedAnswer": {
                   "@type": "Answer",
                   "text": "Yes. A published agent can sit behind a token-authenticated endpoint, an HMAC-signed webhook, or a cron schedule. Runs can be durable: every step is checkpointed, so if the process dies mid-run it resumes from the last completed node — loops, subgraphs, and human-approval waits included."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does TheYgent support human-in-the-loop approvals?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Drop a human approval node into the graph and the run pauses there until someone approves or rejects it, from the interface or over the API. Approvals run on the durable runtime, so a run can wait minutes or days and still pick up where it left off after a restart."
                 }
               },
               {
@@ -592,7 +634,7 @@
           <p class="honesty">
             You can register a hosted API whenever you want one; the promise is sovereignty and anti-lock-in — not
             &ldquo;nothing ever leaves your machine.&rdquo; When something crosses the wire, it does so because you sent
-            it there.
+            it there. <a class="inline-link" href="/private-ai/#network">See everything TheYgent ever connects to&nbsp;→</a>
           </p>
         </div>
       </section>
@@ -699,7 +741,9 @@
           <p class="section-lede">
             Give a model a logical ID once. Swap the engine beneath it — Apple Silicon, an NVIDIA GPU, any machine, or an
             API you register — and every edge on the canvas stays untouched: no vendor lock-in, no rewiring. Engine
-            choice is per node, not per app: one graph can run local and hosted models side by side.
+            choice is per node, not per app: one graph can run local and hosted models side by side. The local engines
+            are built in, not bolted on — TheYgent starts, warms, and unloads them itself, so there is no separate model
+            server to run. <a class="inline-link" href="/apple-silicon/">On a Mac, that means native MLX&nbsp;→</a>
           </p>
 
           <div class="datasheet cut-card">
@@ -747,7 +791,7 @@
               </table>
             </div>
 
-            <p class="ds-note" id="dsNote">MLX serves it on Apple Silicon — the Neural Engine and GPU.</p>
+            <p class="ds-note" id="dsNote">MLX serves it on Apple Silicon — GPU and CPU sharing unified memory.</p>
             <p class="ds-enum mono">binding ∈ { mlx | vllm | llamacpp | openai-compatible } · source ∈ { hf | local-path | url }</p>
           </div>
 
@@ -1176,6 +1220,15 @@
               </p>
             </details>
             <details class="faq-item">
+              <summary><h3>How does TheYgent compare to other visual AI workflow builders?</h3></summary>
+              <p>
+                Most visual AI workflow builders call a model server you install and run separately. TheYgent runs
+                local models on its own engines, sends no telemetry, and can make every run crash-resumable.
+                <a href="/compare/">The comparison pages</a> set it side by side with four popular builders, with
+                sources and dates — including where each of them is the better pick.
+              </p>
+            </details>
+            <details class="faq-item">
               <summary><h3>Does TheYgent send my data to the cloud?</h3></summary>
               <p>
                 TheYgent never routes your prompts, payloads, or model weights through anyone else&rsquo;s servers — you
@@ -1192,6 +1245,34 @@
                 (NVIDIA GPUs) — plus any OpenAI-compatible API you register. Models get a logical ID, so you can swap
                 the engine underneath without touching the agent graph, and one graph can mix local and hosted models
                 side by side.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Do I need a separate model server to run local models?</h3></summary>
+              <p>
+                No. TheYgent runs local models on its own engines — <span class="tok">llama.cpp</span>,
+                <span class="tok">MLX</span>, and <span class="tok">vLLM</span> (experimental). Install a model from the
+                in-app Hugging Face catalog, where every variant shows whether it fits your RAM, and the inference plane
+                starts the engine on the first call, keeps it warm, and unloads it when idle. There is no separate model
+                server to install or keep running.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can TheYgent run offline or air-gapped?</h3></summary>
+              <p>
+                Yes, once it is installed. With models installed from the catalog, or weights copied onto the host and
+                registered by path, the canvas, the engines, Postgres, durable runs, and retrieval with a local
+                embedding model all work with no network. The only automatic request — a public price list fetched at
+                startup — falls back to a bundled copy when offline. Every network touchpoint is listed on the
+                <a href="/private-ai/#network">private and offline AI page</a>.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does TheYgent collect telemetry?</h3></summary>
+              <p>
+                No. TheYgent has no usage analytics, crash reporting, update checks, or license activation, and it
+                needs no vendor account. Traces stay in your own Postgres; OpenTelemetry export is off until you point
+                it at a collector you run.
               </p>
             </details>
             <details class="faq-item">
@@ -1216,6 +1297,14 @@
                 Yes. A published agent can sit behind a token-authenticated endpoint, an HMAC-signed webhook, or a cron
                 schedule. Runs can be durable: every step is checkpointed, so if the process dies mid-run it resumes
                 from the last completed node — loops, subgraphs, and human-approval waits included.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does TheYgent support human-in-the-loop approvals?</h3></summary>
+              <p>
+                Yes. Drop a human approval node into the graph and the run pauses there until someone approves or
+                rejects it, from the interface or over the API. Approvals run on the durable runtime, so a run can wait
+                minutes or days and still pick up where it left off after a restart.
               </p>
             </details>
             <details class="faq-item">
@@ -1337,6 +1426,16 @@
             <a href="#ai-gateway">AI Gateway</a>
             <a href="#quickstart">Quickstart</a>
             <a href="#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
           </div>
           <div class="footer-col">
             <span class="footer-h mono">resources</span>

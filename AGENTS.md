@@ -76,7 +76,10 @@ if a task seems to require it, stop and flag it instead.
 - **Comments state present-tense constraints and reasons** ("the server exposes no
   `/props`, so max context comes from the model config") — never development history,
   internal plan or milestone references, or comparisons to other products. Committed code
-  (including identifiers and string literals) stays free of competitor product names.
+  (including identifiers and string literals) stays free of competitor product names. The
+  one deliberate exception is the marketing site's comparison pages (`apps/web/compare/`,
+  plus the `llms.txt` and sitemap entries that index them) — see
+  [apps/web/AGENTS.md](apps/web/AGENTS.md).
 - **Loud failures.** Unknown `$in` references, invalid IR, unknown settings, unfillable
   ports: fail fast with a named, stable error code. No silent fallback or pass-through.
 - **Naming across the wire:** the control-plane API speaks `snake_case`; the inference
