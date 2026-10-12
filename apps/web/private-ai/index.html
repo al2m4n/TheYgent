@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Private AI Agents on Local Models — Offline, No Telemetry | TheYgent</title>
+    <meta name="description" content="Build no-code AI agents that run on local models only: built-in llama.cpp, MLX, and vLLM engines, no telemetry, offline and air-gapped operation — with every network touchpoint listed." />
+    <link rel="canonical" href="https://theygent.ai/private-ai/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/private-ai/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Private AI Agents on Local Models Only" />
+    <meta property="og:description" content="A self-hosted, no-code AI agent builder with built-in local engines and no telemetry — and a list of everything it ever connects to." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Private AI Agents on Local Models Only" />
+    <meta name="twitter:description" content="A self-hosted, no-code AI agent builder with built-in local engines and no telemetry — and a list of everything it ever connects to." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <!-- Structured data. FAQPage answers stay verbatim-identical to the visible FAQ below
+         (.github/scripts/check_web_pages.py enforces it). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/private-ai/#webpage",
+            "url": "https://theygent.ai/private-ai/",
+            "name": "Private AI Agents on Local Models — Offline, No Telemetry | TheYgent",
+            "description": "Build no-code AI agents that run on local models only: built-in llama.cpp, MLX, and vLLM engines, no telemetry, offline and air-gapped operation — with every network touchpoint listed.",
+            "inLanguage": "en",
+            "dateModified": "2026-10-12",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "breadcrumb": {
+              "@id": "https://theygent.ai/private-ai/#breadcrumb"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/private-ai/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Private & Offline AI",
+                "item": "https://theygent.ai/private-ai/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/private-ai/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is there a no-code AI agent builder that only uses local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. TheYgent is a self-hosted, no-code AI agent builder with built-in local inference: llama.cpp on any machine, MLX on Apple Silicon, and vLLM (experimental) on NVIDIA GPUs. You build agents on a visual canvas and install models from an in-app catalog. Hosted APIs are optional and off until you register one."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can TheYgent run completely offline?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, once it is installed. Install TheYgent and your models while connected — or copy the weights onto the host and register them by path — and everything runs without network access: the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model. The only automatic request, a public price list fetched at startup, falls back to a bundled copy when offline."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does TheYgent collect telemetry?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. TheYgent has no usage analytics, crash reporting, update checks, or license activation, and it needs no vendor account. Traces stay in your own Postgres; exporting them over OpenTelemetry is off until you set OTEL_EXPORTER_OTLP_ENDPOINT to a collector you run."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where does TheYgent store my data?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "On machines you control. Agents, runs, sessions, traces, and retrieval documents live in your own Postgres; model weights and the model registry live on the inference plane’s disk; audio and image artifacts live in a local directory. Credentials are kept in two local stores and never written into an agent."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I still use a hosted model when I need one?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Register any OpenAI-compatible API under a logical ID and use it on the nodes you choose; one graph can mix local and hosted models. Calls to that model go straight from your machine to the provider you picked, never through a TheYgent server."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/" class="is-active" aria-current="page">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/" aria-current="page">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><span aria-current="page">Private &amp; Offline AI</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Local Models Only · No Telemetry · Air-Gap Ready</p>
+          <h1 id="page-h">Private AI Agents on <span class="ramp-text">Local Models Only.</span></h1>
+          <p class="lede">
+            TheYgent is a self-hosted, no-code AI orchestration platform built so your data can stay on hardware you
+            control. It ships its own inference engines, keeps every run in your own Postgres, needs no vendor account,
+            and sends no telemetry. This page lists exactly what touches the network, and when — so you can check the
+            claim instead of trusting it.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="local-h">
+        <div class="wrap prose">
+          <h2 id="local-h">Local Models, Built In</h2>
+          <p>
+            Most visual AI builders call a model; someone else has to run it. TheYgent runs it. Its inference plane
+            manages three engines — <strong>llama.cpp</strong> on any machine, <strong>MLX</strong> on Apple Silicon,
+            and <strong>vLLM</strong> (experimental) on NVIDIA GPUs — and covers chat, vision, embeddings,
+            speech-to-text, text-to-speech, and image generation. Browse the Hugging Face catalog in the app, see which
+            variants fit your RAM, and install one; the engine starts on the first call and unloads when idle. There is
+            no separate model server to install, expose, or keep running.
+          </p>
+          <p>
+            Nodes on the canvas reference models by a logical ID such as <code>triage-fast</code>. Nothing forces a
+            hosted model into the picture: an agent built only from local IDs never leaves your machine for inference.
+            If you later register a hosted API, it is one more logical ID, chosen per node — never a default.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="stays-h">
+        <div class="wrap">
+          <h2 id="stays-h" class="prose">Where Your Data Lives</h2>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="stays-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">What</th>
+                    <th scope="col">Where it stays</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Prompts and responses</th>
+                    <td>Browser → control plane → inference plane, over local HTTP. All three listen on <code>127.0.0.1</code> by default.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Model weights</th>
+                    <td>Your disk: <code>~/.theygent/inference/models/</code>, or wherever you point <code>THEYGENT_INFERENCE_PLANE_MODEL_DIR</code>.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Runs, sessions, traces</th>
+                    <td>Your own Postgres. Per-node inputs and outputs are captured per agent policy, with retention and redaction rules you set.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Documents for retrieval</th>
+                    <td>pgvector in your Postgres, embedded by the model you bind — keep the embedding model local and the documents never leave the machine.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Credentials</th>
+                    <td>Two local stores, never inside an agent: hosted-API keys on the inference plane, tool and MCP secrets encrypted in the control plane.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Audio and images</th>
+                    <td>A local artifact directory on the control-plane host — never written into run history or telemetry.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" id="network" aria-labelledby="net-h">
+        <div class="wrap">
+          <h2 id="net-h" class="prose">Everything That Touches the Network</h2>
+          <p class="prose section-lede">
+            The complete list for a running install. Apart from the first row, nothing happens until you open a
+            feature that needs the network, or configure one.
+          </p>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="net-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Request</th>
+                    <th scope="col">When</th>
+                    <th scope="col">What it carries</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Public model price list from GitHub</th>
+                    <td>Each time the inference plane starts — its model client library (LiteLLM) fetches it</td>
+                    <td>Nothing of yours. Offline, it falls back to the copy bundled with the library.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Hugging Face</th>
+                    <td>When you browse the model catalog or install a model</td>
+                    <td>Your searches and the files you download. Installed models load from disk afterwards.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">MCP registries</th>
+                    <td>When you open the MCP hub browser</td>
+                    <td>Your searches. Point it at a registry you host instead with <code>THEYGENT_MCP_REGISTRIES</code>.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Things you configure</th>
+                    <td>When an agent or setting uses them</td>
+                    <td>
+                      A hosted API you register, a remote MCP server, an HTTP tool, a site you crawl for retrieval, a
+                      sign-in provider, an OpenTelemetry collector, Claude Code traffic you route through the AI Gateway
+                      — each sends exactly what you wired it to send.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="note">
+            Not on the list, because TheYgent doesn&rsquo;t have them: usage analytics, crash reporting, update checks,
+            license activation, or a vendor account. Installation itself — cloning the repo, installing dependencies
+            and engines, pulling container images — needs the network once.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="gap-h">
+        <div class="wrap prose">
+          <h2 id="gap-h">Running Offline or Air-Gapped</h2>
+          <p>Once it is installed, TheYgent runs with no network at all. To set up a host that will never be online:</p>
+          <ol>
+            <li>
+              <strong>Install while connected</strong>, or on a connected machine you then move across: clone the repo,
+              run <code>make engines</code> and <code>make up</code>, or build the Docker images.
+            </li>
+            <li>
+              <strong>Bring the weights.</strong> Install models from the catalog while connected — they register as
+              local files — or copy GGUF files and MLX model folders onto the host and register them by path.
+            </li>
+            <li>
+              <strong>Mirror what you browse.</strong> If teams need the MCP hub browser, point
+              <code>THEYGENT_MCP_REGISTRIES</code> at a registry you host; it doubles as an allowlist.
+            </li>
+            <li>
+              <strong>Run durable work in-house.</strong> On a server, run the standalone durable worker next to the
+              control plane; runs, approvals, and schedules then survive restarts without any outside service.
+            </li>
+          </ol>
+          <p>
+            The startup price-list request simply fails and falls back to the bundled copy; nothing else expects to be
+            online.
+          </p>
+
+          <h2>Honest About the Promise</h2>
+          <p>
+            TheYgent doesn&rsquo;t stop you from sending data out — you can register a hosted API, call a web service,
+            or export traces whenever you choose. The promise is narrower and checkable: <strong>you own every
+            hop.</strong> TheYgent is never a middleman you didn&rsquo;t choose, and nothing crosses the wire unless you
+            pointed it there.
+          </p>
+          <p>
+            The control plane requires sign-in — a fresh install&rsquo;s API is closed until the first-run wizard
+            creates a local admin. The inference plane has no sign-in of its own and listens on <code>127.0.0.1</code>;
+            keep port 8081 off untrusted networks.
+          </p>
+        </div>
+      </section>
+
+      <section class="band section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>Is there a no-code AI agent builder that only uses local models?</h3></summary>
+              <p>
+                Yes. TheYgent is a self-hosted, no-code AI agent builder with built-in local inference: llama.cpp on any
+                machine, MLX on Apple Silicon, and vLLM (experimental) on NVIDIA GPUs. You build agents on a visual
+                canvas and install models from an in-app catalog. Hosted APIs are optional and off until you register
+                one.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can TheYgent run completely offline?</h3></summary>
+              <p>
+                Yes, once it is installed. Install TheYgent and your models while connected — or copy the weights onto
+                the host and register them by path — and everything runs without network access: the canvas, the
+                engines, Postgres, durable runs, and retrieval with a local embedding model. The only automatic
+                request, a public price list fetched at startup, falls back to a bundled copy when offline.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does TheYgent collect telemetry?</h3></summary>
+              <p>
+                No. TheYgent has no usage analytics, crash reporting, update checks, or license activation, and it
+                needs no vendor account. Traces stay in your own Postgres; exporting them over OpenTelemetry is off
+                until you set OTEL_EXPORTER_OTLP_ENDPOINT to a collector you run.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Where does TheYgent store my data?</h3></summary>
+              <p>
+                On machines you control. Agents, runs, sessions, traces, and retrieval documents live in your own
+                Postgres; model weights and the model registry live on the inference plane&rsquo;s disk; audio and image
+                artifacts live in a local directory. Credentials are kept in two local stores and never written into an
+                agent.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can I still use a hosted model when I need one?</h3></summary>
+              <p>
+                Yes. Register any OpenAI-compatible API under a logical ID and use it on the nodes you choose; one graph
+                can mix local and hosted models. Calls to that model go straight from your machine to the provider you
+                picked, never through a TheYgent server.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="next-h">
+        <div class="wrap">
+          <h2 id="next-h" class="prose">Keep Reading</h2>
+          <div class="card-grid">
+            <a class="cap cut-card" href="/apple-silicon/">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>mlx</span>
+              <h3>Local AI on Apple Silicon</h3>
+              <p>Chat, vision, and speech on MLX — what runs where on an M-series Mac.</p>
+              <span class="cap-more mono">Read more →</span>
+            </a>
+            <a class="cap cut-card" href="/compare/">
+              <span class="cap-kicker mono"><i class="dia dia-amber"></i>compare</span>
+              <h3>How It Compares</h3>
+              <p>TheYgent next to Dify, n8n, Langflow, and Flowise — dated and sourced.</p>
+              <span class="cap-more mono">See the comparison →</span>
+            </a>
+            <a class="cap cut-card" href="https://docs.theygent.ai/latest/getting-started/installation/" rel="noopener">
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>install</span>
+              <h3>Installation Guide</h3>
+              <p>Prerequisites, engines, and your first model on macOS or Linux.</p>
+              <span class="cap-more mono">Open the docs →</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

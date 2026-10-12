@@ -7,12 +7,15 @@ Key facts:
 - The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
 - Models are addressed by a logical ID (for example `triage-fast`); the engine underneath — `mlx`, `vllm`, `llamacpp`, or `openai-compatible` — can be swapped without touching the graph. One graph can mix local and hosted models side by side.
 - TheYgent is never an involuntary middleman between users and their models: prompts, payloads, and model weights are not proxied through the vendor's servers. Hosted APIs can be registered at any time; when data crosses the wire, it does so because the user sent it there.
+- Local inference is built in: the inference plane installs models from an in-app Hugging Face catalog (each variant shows whether it fits the machine's RAM) and starts, warms, and unloads its own engines — llama.cpp on any machine, MLX on Apple Silicon, vLLM (experimental) on NVIDIA GPUs. There is no separate model server to install or run. Modalities: chat, vision, embeddings, speech-to-text, text-to-speech, and image generation.
+- Privacy: no telemetry, usage analytics, crash reporting, update checks, or license activation, and no vendor account. Once installed, TheYgent runs fully offline or air-gapped. Its only automatic outbound request is a public model price list that the inference plane's model client library (LiteLLM) fetches at startup; it carries no user data and falls back to a bundled copy when offline. Hugging Face and MCP registries are contacted only when the user browses them.
+- Human-in-the-loop: a human approval node pauses a run until someone approves or rejects; approvals run on the durable runtime, so a pending approval survives restarts.
 - Tooling: built-in tools, HTTP tools, and any MCP (Model Context Protocol) server over stdio or HTTP, plus autonomous LLM tool-calling wired visually on the canvas.
 - Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
 - Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
 - Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
 - AI Gateway (new in 1.0): an optional service the user runs between Claude Code and the Anthropic API to cut what Claude Code costs. Observer mode records every exchange (its cost, its kind of request: main conversation, subagent, compaction or side request, and what routing would have saved) without changing it. Router mode moves subagents and cold-cache turns to a cheaper Claude model, and a share the user chooses to models on their own inference plane, each measured on the user's own traffic first. It runs on the user's machine or cluster, personal (loopback, no keys) or team (per-developer gateway keys); the control plane receives metadata only, never prompt or response text.
-- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && make up` brings up four local services (interface :5174, control plane :8080, inference plane :8081, AI Gateway :8082). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
+- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && cp .env.example .env && make up` brings up four local services (interface :5174, control plane :8080, inference plane :8081, AI Gateway :8082). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
 - License: the Sustainable Use License (fair-code). Free to use, modify, and self-host for internal business, personal, and non-commercial purposes; selling it — including offering it as a hosted service — is not permitted.
 
 ## Docs
@@ -38,6 +41,21 @@ Key facts:
 - [Self-Hosted AI Agent Orchestration](https://www.youtube.com/watch?v=3LE_VrIbe0I) (23:52): full walkthrough — clone the repository, bring the three local services up, install a model, then build, run, and trace an agent
 - [Voice In, Voice Out: A No-Code AI Agent Pipeline](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54): a voice agent built on the canvas — speech-to-text, a language model, and text-to-speech, served by local engines
 - [Run Local + Remote AI Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01): a local model triages and answers easy requests while a router sends hard ones to a hosted API, each branch calling its model directly
+
+## Guides
+
+- [Private & offline AI agents](https://theygent.ai/private-ai/): local models only — where data lives, every network touchpoint and when it happens, and running offline or air-gapped
+- [Local AI agents on Apple Silicon](https://theygent.ai/apple-silicon/): MLX for chat, vision, and text-to-speech; llama.cpp and whisper.cpp for embeddings and speech-to-text; setting up on a Mac
+
+## Comparisons
+
+Checked against each project's own source and documentation on October 12, 2026, with sources listed on every page.
+
+- [TheYgent vs Dify, n8n, Langflow & Flowise](https://theygent.ai/compare/): visual AI agent builders compared for private, local-model use — who runs the models, telemetry defaults, licenses, MCP, and human-in-the-loop
+- [TheYgent vs Dify](https://theygent.ai/compare/dify/): an LLM-app platform that connects to a model server you run, versus a builder with built-in local engines
+- [TheYgent vs n8n](https://theygent.ai/compare/n8n/): workflow automation with 400+ integrations, versus AI agents built around local inference; both use the Sustainable Use License
+- [TheYgent vs Langflow](https://theygent.ai/compare/langflow/): an MIT-licensed, Python-extensible flow builder with telemetry on by default, versus built-in engines and no telemetry
+- [TheYgent vs Flowise](https://theygent.ai/compare/flowise/): an Apache 2.0 agent builder on LangChain.js, versus built-in local engines and crash-resumable runs
 
 ## Source
 

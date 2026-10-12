@@ -71,7 +71,7 @@
     if (!group || !live || !bindingCell || !runsonCell || !note) return;
 
     var MAP = {
-      mlx: { runson: "Apple Silicon", note: "MLX serves it on Apple Silicon — the Neural Engine and GPU." },
+      mlx: { runson: "Apple Silicon", note: "MLX serves it on Apple Silicon — GPU and CPU sharing unified memory." },
       vllm: { runson: "An NVIDIA GPU", note: "vLLM serves it on an NVIDIA GPU with CUDA batching." },
       llamacpp: { runson: "Any machine", note: "llama.cpp runs it anywhere the binary builds — CPU or GPU." },
       "openai-compatible": {

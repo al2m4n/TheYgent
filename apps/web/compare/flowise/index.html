@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TheYgent vs Flowise — A Flowise Alternative for Local Models</title>
+    <meta name="description" content="TheYgent vs Flowise for private AI agents: built-in local engines or ChatOllama, crash-resumable runs, telemetry, licensing, and when Flowise is the better pick." />
+    <link rel="canonical" href="https://theygent.ai/compare/flowise/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/compare/flowise/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="TheYgent vs Flowise" />
+    <meta property="og:description" content="How TheYgent and Flowise compare for private AI agents on local models — dated and sourced." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TheYgent vs Flowise" />
+    <meta name="twitter:description" content="How TheYgent and Flowise compare for private AI agents on local models — dated and sourced." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <!-- Structured data. FAQPage answers stay verbatim-identical to the visible FAQ below
+         (.github/scripts/check_web_pages.py enforces it). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/compare/flowise/#webpage",
+            "url": "https://theygent.ai/compare/flowise/",
+            "name": "TheYgent vs Flowise — A Flowise Alternative for Local Models",
+            "description": "TheYgent vs Flowise for private AI agents: built-in local engines or ChatOllama, crash-resumable runs, telemetry, licensing, and when Flowise is the better pick.",
+            "inLanguage": "en",
+            "dateModified": "2026-10-12",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "breadcrumb": {
+              "@id": "https://theygent.ai/compare/flowise/#breadcrumb"
+            },
+            "mentions": [
+              {
+                "@type": "SoftwareApplication",
+                "name": "Flowise",
+                "url": "https://flowiseai.com/"
+              }
+            ]
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/compare/flowise/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Compare",
+                "item": "https://theygent.ai/compare/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Flowise",
+                "item": "https://theygent.ai/compare/flowise/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/compare/flowise/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is TheYgent a Flowise alternative for local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, when local models are the priority. Both are visual builders for AI agents with MCP tools and human approvals. TheYgent runs local models on its own engines — llama.cpp, MLX, and vLLM (experimental) — while Flowise calls a model server you run, such as Ollama. Flowise is Apache 2.0-licensed and built on LangChain.js; TheYgent uses the Sustainable Use License."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can Flowise run local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Flowise uses local models by connecting to a model server you run — for example Ollama through its ChatOllama node. Flowise itself does not download or execute model weights."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/" class="is-active" aria-current="true">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/" aria-current="true">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><a href="/compare/">Compare</a></li>
+              <li><span aria-current="page">Flowise</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Comparison · Flowise Alternative · Local Models</p>
+          <h1 id="page-h">TheYgent vs Flowise: <span class="ramp-text">Visual Agents, Local Engines</span></h1>
+          <p class="lede">
+            Flowise builds AI agents visually on the LangChain.js ecosystem, under an Apache 2.0 license. TheYgent is a
+            local-first agent builder that runs its own inference engines. If you are looking for a Flowise alternative
+            for private AI agents on local models, here is how they differ, and when Flowise is the better choice.
+          </p>
+          <p class="checked mono">
+            Checked against Flowise 3.1.4&rsquo;s source and documentation on October 12, 2026.
+            <a href="https://github.com/al2m4n/TheYgent/issues">Report an inaccuracy</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="glance-h">
+        <div class="wrap">
+          <h2 id="glance-h" class="prose">At a Glance</h2>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="glance-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col"><span class="visually-hidden">Feature</span></th>
+                    <th scope="col" class="us">TheYgent</th>
+                    <th scope="col">Flowise</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Built for</th>
+                    <td class="us">AI agents on local models, with its own inference plane</td>
+                    <td>AI agents and chat flows on LangChain.js components</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Local models</th>
+                    <td class="us">Runs them itself: llama.cpp, MLX, and vLLM (experimental), started and unloaded on demand</td>
+                    <td>Connects to a model server you run, e.g. through its ChatOllama node</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Telemetry by default</th>
+                    <td class="us">None — <a href="/private-ai/#network">one startup request</a>, carrying no data</td>
+                    <td>Off unless a PostHog key is configured</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">MCP</th>
+                    <td class="us">Stdio and HTTP servers, a registry browser, OpenAPI/GraphQL turned into MCP</td>
+                    <td>MCP tools through its MCP nodes</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Human-in-the-loop</th>
+                    <td class="us">Approval node; a pending approval survives a restart</td>
+                    <td>Human Input node in Agentflow</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Built with</th>
+                    <td class="us">Python and React, on Postgres with pgvector</td>
+                    <td>TypeScript and Node.js</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">License</th>
+                    <td class="us">Sustainable Use License (fair-code)</td>
+                    <td>Apache 2.0, plus an enterprise-licensed directory</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Maturity</th>
+                    <td class="us">New — 1.0 in October 2026</td>
+                    <td>Established — about 55k GitHub stars</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="diff-h">
+        <div class="wrap prose">
+          <h2 id="diff-h">The Main Differences</h2>
+
+          <h3>Who runs the model</h3>
+          <p>
+            Flowise reaches local models through chat-model nodes such as ChatOllama, which call a model server you
+            operate. TheYgent ships the engines: install a model from the in-app Hugging Face catalog — each variant
+            shows whether it fits your RAM — and llama.cpp, MLX, or vLLM (experimental) starts on the first call and
+            unloads when idle. Local embeddings, vision, speech-to-text, and text-to-speech run on the same built-in
+            engines.
+          </p>
+
+          <h3>Runs that survive a crash</h3>
+          <p>
+            TheYgent can run any published agent on its durable runtime, which checkpoints every node. Kill the process
+            mid-run and the run resumes from the last completed node — including loops, subgraphs, and a human approval
+            that has been waiting for days. Every run also leaves a span waterfall with per-node inputs, outputs,
+            timing, and token usage in your own Postgres, exportable over OpenTelemetry if you want it.
+          </p>
+
+          <h3>Licensing</h3>
+          <p>
+            Flowise&rsquo;s Apache 2.0 license is the more permissive outside its enterprise directory, and it allows
+            commercial and hosted use. TheYgent&rsquo;s Sustainable Use License allows internal business, personal, and
+            non-commercial use, but not selling TheYgent or offering it as a hosted service.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="choose-h">
+        <div class="wrap">
+          <h2 id="choose-h" class="prose">Which One Should You Pick?</h2>
+          <div class="choose-grid">
+            <div class="choose cut-card">
+              <h3>Choose Flowise if…</h3>
+              <ul>
+                <li>You want an Apache 2.0 license, including for products you sell or host.</li>
+                <li>Your team works in TypeScript and the LangChain.js ecosystem.</li>
+                <li>You want an established project with a sizable community.</li>
+                <li>Running a separate model server for local models is fine.</li>
+              </ul>
+            </div>
+            <div class="choose cut-card">
+              <h3>Choose TheYgent if…</h3>
+              <ul>
+                <li>The models must run on your hardware without a separate server to operate.</li>
+                <li>You run Apple Silicon and want native MLX for chat, vision, and speech.</li>
+                <li>Runs must resume after a crash, with a per-node trace of each run.</li>
+                <li>You want agents as immutable, content-addressed versions you can roll back.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>Is TheYgent a Flowise alternative for local models?</h3></summary>
+              <p>
+                Yes, when local models are the priority. Both are visual builders for AI agents with MCP tools and human
+                approvals. TheYgent runs local models on its own engines — llama.cpp, MLX, and vLLM (experimental) —
+                while Flowise calls a model server you run, such as Ollama. Flowise is Apache 2.0-licensed and built on
+                LangChain.js; TheYgent uses the Sustainable Use License.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can Flowise run local models?</h3></summary>
+              <p>
+                Flowise uses local models by connecting to a model server you run — for example Ollama through its
+                ChatOllama node. Flowise itself does not download or execute model weights.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" id="sources" aria-labelledby="src-h">
+        <div class="wrap">
+          <h2 id="src-h" class="prose">Sources</h2>
+          <ul class="sources">
+            <li><a href="https://github.com/FlowiseAI/Flowise">github.com/FlowiseAI/Flowise</a> — repository description, release 3.1.4, star count (October 12, 2026)</li>
+            <li><a href="https://github.com/FlowiseAI/Flowise/blob/main/LICENSE.md">Flowise LICENSE.md</a> — Apache 2.0 and the enterprise directory</li>
+            <li><a href="https://github.com/FlowiseAI/Flowise/blob/main/packages/server/src/utils/telemetry.ts">telemetry.ts</a> — events are sent only when <code>POSTHOG_PUBLIC_API_KEY</code> is set</li>
+            <li><a href="https://docs.flowiseai.com/integrations/langchain/chat-models/chatollama">ChatOllama node</a> · <a href="https://docs.flowiseai.com/tutorials/tools-and-mcp">Tools &amp; MCP</a> · <a href="https://docs.flowiseai.com/tutorials/human-in-the-loop">Human in the loop</a></li>
+            <li><a href="https://docs.theygent.ai/latest/models/engines/">TheYgent: the engines</a> · <a href="https://docs.theygent.ai/latest/running/durable/">Durable runs</a> · <a href="/compare/">All comparisons</a></li>
+          </ul>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

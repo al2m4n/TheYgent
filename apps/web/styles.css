@@ -1815,12 +1815,13 @@ html.js .reveal.in {
 }
 
 /* ═══════════════════════════ RESPONSIVE ════════════════════════════════════ */
-/* The links and the GitHub button need about 1070px; below that the burger takes over,
-   and its menu opens at every width the burger shows. */
+/* The links and the GitHub button need about 1170px; below that the burger takes over,
+   and its menu opens at every width the burger shows. Adding a top-nav link costs roughly
+   80px: re-measure and move both breakpoints together. */
 .nav-mobile[hidden] {
   display: none;
 }
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
   .nav-links {
     display: none;
   }
@@ -1835,7 +1836,7 @@ html.js .reveal.in {
     margin-left: auto;
   }
 }
-@media (min-width: 1101px) {
+@media (min-width: 1181px) {
   .nav-mobile {
     display: none !important;
   }

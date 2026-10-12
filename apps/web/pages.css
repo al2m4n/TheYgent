@@ -1,0 +1,326 @@
+/* Inner pages (guides, comparisons, 404) — layered on styles.css, which owns the tokens,
+   nav, buttons, cards, FAQ, and footer. Everything here reads those tokens, so both themes
+   follow automatically. The home page loads this file too, for the three-column footer. */
+
+/* ── Footer: product · learn · resources ──────────────────────────────────── */
+/* The learn column carries the longest labels ("TheYgent vs Langflow"), so it gets the most room. */
+.footer-cols {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.25fr) minmax(0, 0.8fr);
+}
+/* Above phone width only — styles.css stacks .footer-inner to one column at ≤620px, and an
+   unconditional rule here would override that. */
+@media (min-width: 621px) {
+  .footer-inner {
+    grid-template-columns: 1fr 1.5fr;
+  }
+}
+
+/* Read by screen readers, invisible on screen (an empty corner header still needs a name). */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Page hero ────────────────────────────────────────────────────────────── */
+.page-hero {
+  position: relative;
+  overflow: hidden;
+  padding: clamp(36px, 6vw, 76px) 0 clamp(36px, 5vw, 60px);
+}
+.page-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(var(--grid) 1px, transparent 1.4px);
+  background-size: 26px 26px;
+  -webkit-mask: radial-gradient(120% 90% at 50% 20%, #000 var(--grid-mask), transparent 100%);
+  mask: radial-gradient(120% 90% at 50% 20%, #000 var(--grid-mask), transparent 100%);
+  pointer-events: none;
+}
+.page-hero > * {
+  position: relative;
+}
+.page-hero h1 {
+  font-size: clamp(34px, 5vw, 54px);
+  font-weight: 660;
+  letter-spacing: -0.033em;
+  line-height: 1.05;
+  max-width: 24ch;
+  margin-top: 4px;
+}
+.page-hero .lede {
+  max-width: 64ch;
+}
+.checked {
+  margin-top: 18px;
+  font-size: 0.8rem;
+  color: var(--text-3);
+}
+
+/* ── Breadcrumbs ──────────────────────────────────────────────────────────── */
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  padding: 0;
+  list-style: none;
+  font-size: 0.78rem;
+  color: var(--text-3);
+  margin-bottom: 18px;
+}
+.crumbs li + li::before {
+  content: "/";
+  margin-right: 0.5em;
+}
+.crumbs a {
+  color: var(--text-2);
+}
+.crumbs a:hover {
+  color: var(--text);
+}
+
+/* ── Long-form prose ──────────────────────────────────────────────────────── */
+.page-section {
+  position: relative;
+  padding: clamp(40px, 6vw, 76px) 0;
+}
+.prose {
+  max-width: 74ch;
+}
+.prose h2 {
+  font-size: clamp(25px, 3.2vw, 34px);
+  margin-top: 8px;
+}
+.prose h3 {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-top: 34px;
+}
+.prose p,
+.prose li {
+  color: var(--text-2);
+  font-size: 1.02rem;
+  line-height: 1.7;
+}
+.prose p {
+  margin-top: 14px;
+}
+.prose ul,
+.prose ol {
+  margin-top: 14px;
+  padding-left: 1.25em;
+  display: grid;
+  gap: 8px;
+}
+/* styles.css resets every link to plain text; links inside running copy need to look like
+   links again (the FAQ answers and in-section pointers on the home page included). */
+.prose a,
+.cmp-table a,
+.sources a,
+.note a,
+.faq-item > p a,
+.checked a,
+.inline-link {
+  color: color-mix(in oklab, var(--accent) 82%, var(--text));
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+.prose a:hover,
+.cmp-table a:hover,
+.sources a:hover,
+.note a:hover,
+.faq-item > p a:hover,
+.checked a:hover,
+.inline-link:hover {
+  color: var(--text);
+}
+.prose strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.prose code,
+.cmp-table code,
+.note code {
+  font-family: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+  font-size: 0.86em;
+  padding: 0.08em 0.38em;
+  border-radius: 5px;
+  background: color-mix(in oklab, var(--periwinkle) 12%, transparent);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.prose pre {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--elev);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.prose pre code {
+  padding: 0;
+  background: none;
+  overflow-wrap: normal;
+}
+
+/* ── Comparison & fact tables ─────────────────────────────────────────────── */
+.cmp-wrap {
+  --cut: 18px;
+  margin-top: 28px;
+  padding: 8px 6px;
+}
+.cmp-scroll {
+  overflow-x: auto;
+}
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.cmp-table.wide {
+  min-width: 860px;
+}
+.cmp-table th,
+.cmp-table td {
+  text-align: left;
+  vertical-align: top;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.cmp-table thead th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  font-weight: 500;
+  border-bottom-color: var(--border-2);
+  white-space: nowrap;
+}
+.cmp-table tbody th {
+  color: var(--text);
+  font-weight: 560;
+  width: 22%;
+}
+.cmp-table td {
+  color: var(--text-2);
+}
+.cmp-table tbody tr:last-child th,
+.cmp-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* TheYgent's own column: a quiet tint, never a louder voice. */
+.cmp-table .us {
+  background: color-mix(in oklab, var(--periwinkle) 7%, transparent);
+}
+.cmp-table thead .us {
+  color: var(--text);
+}
+
+/* ── Choose-this-if cards ─────────────────────────────────────────────────── */
+.choose-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 28px;
+}
+.choose {
+  --cut: 16px;
+  padding: 24px 26px 26px;
+}
+.choose h3 {
+  font-size: 18px;
+}
+.choose ul {
+  margin-top: 12px;
+  padding-left: 1.15em;
+  display: grid;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 0.96rem;
+  line-height: 1.6;
+}
+
+/* ── Link cards (to sibling pages) ───────────────────────────────────────── */
+a.cap {
+  display: block;
+}
+a.cap .cap-more {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 0.86rem;
+  color: color-mix(in oklab, var(--accent) 82%, var(--text));
+}
+
+/* ── Callouts & sources ───────────────────────────────────────────────────── */
+.note {
+  margin-top: 24px;
+  padding: 14px 18px;
+  border-left: 2px solid var(--periwinkle);
+  background: color-mix(in oklab, var(--periwinkle) 7%, transparent);
+  color: var(--text-2);
+  font-size: 0.96rem;
+  line-height: 1.65;
+  max-width: 74ch;
+}
+.sources {
+  margin-top: 16px;
+  padding-left: 1.2em;
+  display: grid;
+  gap: 6px;
+  font-size: 0.86rem;
+  color: var(--text-3);
+  max-width: 90ch;
+}
+.sources a {
+  overflow-wrap: anywhere;
+}
+
+/* ── 404 ──────────────────────────────────────────────────────────────────── */
+.not-found {
+  text-align: center;
+  padding-block: clamp(80px, 12vw, 150px);
+}
+.not-found h1 {
+  margin-inline: auto;
+}
+.not-found .lede {
+  margin-inline: auto;
+}
+.not-found .cta-row {
+  justify-content: center;
+}
+
+@media (max-width: 760px) {
+  .choose-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 620px) {
+  .footer-cols {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cmp-table tbody th {
+    width: auto;
+  }
+}
+
+/* ── Home: go-deeper cards ───────────────────────────────────────────────── */
+/* Continues the Watch section's canvas, so it drops its own top padding. */
+.section.deeper {
+  padding-top: 0;
+}
+.deeper .card-grid {
+  margin-top: 30px;
+}

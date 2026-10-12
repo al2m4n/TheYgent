@@ -49,6 +49,12 @@ jobs:
       - name: Check local asset references resolve
         run: python3 .github/scripts/check_web_assets.py "$SITE_DIR"
 
+      # Search and answer engines read the sitemap, canonicals, and FAQ structured data; this
+      # fails a page missing from the sitemap, a wrong canonical, or FAQ markup that drifted
+      # from the visible answers.
+      - name: Check pages, sitemap, and structured data agree
+        run: python3 .github/scripts/check_web_pages.py "$SITE_DIR"
+
       - name: Deploy preview to Cloudflare Pages
         # Fork PRs receive no secrets from GitHub — the asset check above still runs for
         # them, but the preview deploy would fail with an empty token, so it runs for
@@ -74,12 +80,12 @@ jobs:
           # Full history so the lastmod stamp below can read the site's real last-change date.
           fetch-depth: 0
 
-      # Crawlers trust <lastmod> only when it is consistently accurate, so stamp it with the
-      # date of the last commit that touched the site — not the wall clock, which would lie
-      # on release-triggered redeploys that change nothing.
-      - name: Stamp sitemap lastmod with the site's last-change date
-        run: |
-          sed -i "s|<lastmod>[^<]*</lastmod>|<lastmod>$(git log -1 --format=%cs -- "$SITE_DIR")</lastmod>|" "$SITE_DIR/sitemap.xml"
+      # Crawlers trust <lastmod> only when it is consistently accurate, so each URL gets the date
+      # of the last commit that touched its own page — not the wall clock, which would lie on
+      # release-triggered redeploys, and not the site-wide date, which would mark every page
+      # changed whenever one did.
+      - name: Stamp each sitemap lastmod with its page's last-change date
+        run: python3 .github/scripts/web_sitemap.py stamp "$SITE_DIR"
 
       - name: Deploy to Cloudflare Pages (production)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
@@ -95,7 +101,20 @@ jobs:
       # ownership by fetching https://theygent.ai/<key>.txt, which ships with the site.
       # Push-only: IndexNow asks that only changed URLs be submitted, and release-triggered
       # redeploys change nothing.
-      - name: Ping IndexNow
+      # Only the pages whose own file changed in this push are submitted.
+      - name: Submit changed pages to IndexNow
         if: github.event_name == 'push'
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          INDEXNOW_KEY: 2c3a1d08fc0c4282bde9e66bf199a0d2
         run: |
-          curl -fsS "https://api.indexnow.org/indexnow?url=https://theygent.ai/&key=2c3a1d08fc0c4282bde9e66bf199a0d2" || echo "IndexNow ping failed (non-fatal)"
+          urls=$(python3 .github/scripts/web_sitemap.py changed "$SITE_DIR" "$BASE_SHA")
+          if [ "$urls" = "[]" ]; then
+            echo "No page changed in this push — nothing to submit."
+            exit 0
+          fi
+          echo "Submitting: $urls"
+          curl -fsS -X POST "https://api.indexnow.org/indexnow" \
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "{\"host\":\"theygent.ai\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://theygent.ai/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
+            || echo "IndexNow submission failed (non-fatal)"
