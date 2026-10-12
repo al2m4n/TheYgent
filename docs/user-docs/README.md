@@ -31,6 +31,10 @@ into the deploy tree on every publish. Two entries there are not plain copies:
 and is skipped by the copy loop), and the favicons must stay at the domain root because a
 crawler resolving `/favicon.ico` never looks inside mike's version directories — without
 them the docs get a generic globe in search results instead of the logo.
+Every build also writes `llms-full.txt` at the root of its version (`/latest/llms-full.txt`
+once a release ships): the `hooks/llms_full.py` MkDocs hook concatenates each page's
+Markdown in nav order, so an answer engine or coding agent can read the whole documentation
+in one request. The domain-root `llms.txt` links to it.
 `site_url` in `mkdocs.yml` deliberately ends in `/latest/`: pages are served under mike's
 version prefixes, and anchoring the URL at the stable alias makes every version's
 canonical link and sitemap point at `/latest/`, so search rankings and AI citations never

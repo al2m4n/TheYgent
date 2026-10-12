@@ -1,7 +1,8 @@
 site_name: TheYgent Docs
 site_description: >-
-  User documentation for TheYgent — a local-first platform for building and
-  running AI agents with a visual editor and your choice of inference engine.
+  User documentation for TheYgent — a self-hosted, no-code, local-first platform
+  for building and running AI agents on a visual canvas, with built-in local
+  inference engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API.
 # The /latest/ suffix is deliberate: pages are served under mike's version prefixes
 # (/latest/, /dev/, /0.x/), which mkdocs cannot see — a bare site_url makes every page
 # emit a canonical (and sitemap entry) at a version-less URL that 404s. Anchoring
@@ -51,6 +52,10 @@ theme:
 plugins:
   - search
 
+# Emits llms-full.txt (every page's Markdown, in nav order) next to each built version.
+hooks:
+  - hooks/llms_full.py
+
 extra:
   version:
     provider: mike
@@ -98,6 +103,7 @@ nav:
       - Models & Engines: concepts/models-and-engines.md
       - Runs & Sessions: concepts/runs-and-sessions.md
       - Agent Versioning: concepts/versioning.md
+      - Privacy & Data Flow: concepts/privacy.md
   - Building Agents:
       - The Editor: building/editor.md
       - Referencing Inputs: building/input-references.md

@@ -10,23 +10,32 @@ Key facts:
 - Tooling: built-in tools, HTTP tools, and any MCP (Model Context Protocol) server over stdio or HTTP, plus autonomous LLM tool-calling wired visually on the canvas.
 - Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
 - Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
+- Local inference is built in: models install from an in-app Hugging Face catalog (each variant shows whether it fits the machine's RAM), and TheYgent starts, warms, and unloads its own engines — there is no separate model server to install or run. Modalities: chat, vision, embeddings, speech-to-text, text-to-speech, and image generation.
+- Privacy: no telemetry, usage analytics, crash reporting, update checks, or license activation, and no vendor account. Once installed it runs fully offline or air-gapped; the only automatic outbound request is a public model price list fetched at inference-plane startup, which carries no user data and falls back to a bundled copy offline.
+- AI Gateway: an optional service between Claude Code and the Anthropic API that records what every exchange costs, routes work to cheaper Claude models when you choose, and sends a share you set to models on your own inference plane; it sends the control plane metadata only, never prompt or response text.
 - Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
-- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && make up` brings up three local services (interface :5174, control plane :8080, inference plane :8081). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
+- Quickstart: `git clone https://github.com/al2m4n/TheYgent.git && cd TheYgent && cp .env.example .env && make engines && make up` installs the local engines and brings up four local services (interface :5174, control plane :8080, inference plane :8081, AI gateway :8082). No vendor account or cloud sign-up — the only account is the local admin created in the first-run wizard; localhost by default.
 - License: the Sustainable Use License (fair-code). Free to use, modify, and self-host for internal business, personal, and non-commercial purposes; selling it — including offering it as a hosted service — is not permitted.
 
 ## Docs
 
+- [Full documentation as one file](https://docs.theygent.ai/latest/llms-full.txt): every page's Markdown in navigation order — the fastest way to read all of it
 - [Documentation home](https://docs.theygent.ai/latest/): start here — installation, concepts, and guides
 - [Installation](https://docs.theygent.ai/latest/getting-started/installation/): prerequisites and setup for macOS and Linux
 - [Your First Agent](https://docs.theygent.ai/latest/getting-started/first-agent/): build and run an agent on the canvas
 - [Concepts: Agents & Graphs](https://docs.theygent.ai/latest/concepts/agents-and-graphs/): how a graph becomes an agent
 - [Concepts: Models & Engines](https://docs.theygent.ai/latest/concepts/models-and-engines/): logical model IDs and the engine bindings (mlx, vllm, llamacpp, openai-compatible)
+- [Concepts: Privacy & Data Flow](https://docs.theygent.ai/latest/concepts/privacy/): where data lives, every connection TheYgent makes and when, and running offline or air-gapped
+- [The Engines](https://docs.theygent.ai/latest/models/engines/): llama.cpp, MLX, and vLLM — modalities, lifecycle, memory, and installation
+- [Installing Local Models](https://docs.theygent.ai/latest/models/installing/): the Hugging Face catalog, fit badges, and registering weights already on disk
 - [Node Reference](https://docs.theygent.ai/latest/building/nodes/): every node type — LLM, tools, MCP, RAG, router, transform, guardrail, rate limit and quota, human approval, subgraph/loop/map, audio and images
 - [MCP](https://docs.theygent.ai/latest/mcp/): using Model Context Protocol tools and servers
 - [RAG](https://docs.theygent.ai/latest/rag/): retrieval sources, crawling, and document upload
 - [Durable Runs](https://docs.theygent.ai/latest/running/durable/): crash-resumable execution
+- [Human-in-the-Loop](https://docs.theygent.ai/latest/running/human-in-the-loop/): approval nodes that pause a run until someone answers, surviving restarts
 - [Triggers & Webhooks](https://docs.theygent.ai/latest/running/triggers/): token endpoints, HMAC-signed webhooks, cron schedules
 - [Observability](https://docs.theygent.ai/latest/running/observability/): run waterfalls and OTLP export
+- [AI Gateway](https://docs.theygent.ai/latest/ai-gateway/): cut what Claude Code costs — spend reports, routing to cheaper models, and local models for a share of the work
 - [API Reference](https://docs.theygent.ai/latest/reference/api/): control-plane and inference-plane HTTP APIs
 - [Troubleshooting](https://docs.theygent.ai/latest/reference/troubleshooting/): common issues and fixes
 

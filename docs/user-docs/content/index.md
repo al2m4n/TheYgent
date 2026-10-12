@@ -10,7 +10,7 @@ TheYgent's promise is honest and specific: **everything runs where you point it,
 - **Hosted APIs only when you add them.** Any OpenAI-compatible server or hosted API can be registered as a model, with its API key stored on your machine as a local credential that is never sent anywhere else.
 - **The choice is per agent and per call.** Every model gets a logical id (for example `triage-fast`), and agents reference that id — never an engine. You can point one node at a small local model and the next at a hosted one, or swap a model's backing engine later without touching a single agent.
 
-There is no vendor in the middle: TheYgent never proxies your prompts, payloads, or weights through anyone's servers.
+There is no vendor in the middle: TheYgent never proxies your prompts, payloads, or weights through anyone's servers. It has no telemetry or update checks, and once installed it runs fully offline — [Privacy and data flow](concepts/privacy.md) lists every connection it makes, and when.
 
 ## What you can do
 
