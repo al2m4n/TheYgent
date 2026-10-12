@@ -369,7 +369,8 @@ a.cap .cap-more {
 .chapters li {
   border-bottom: 1px solid var(--border);
 }
-.chapters a {
+/* Scoped to the chapter list: template pages reuse .chapters for a sidebar of plain links. */
+.chapters ol a {
   display: grid;
   grid-template-columns: 4.2em 1fr;
   gap: 10px;
@@ -378,7 +379,7 @@ a.cap .cap-more {
   font-size: 0.95rem;
   line-height: 1.45;
 }
-.chapters a:hover {
+.chapters ol a:hover {
   color: var(--text);
 }
 .chapters .ts {
@@ -394,4 +395,44 @@ a.cap .cap-more {
 .vids-more {
   margin-top: 26px;
   font-size: 0.96rem;
+}
+
+/* ── Template pages: "What You Need" sidebar ─────────────────────────────── */
+.needs {
+  margin-top: 14px;
+  padding-left: 1.1em;
+  display: grid;
+  gap: 9px;
+  color: var(--text-2);
+  font-size: 0.94rem;
+  line-height: 1.55;
+}
+.needs strong {
+  color: var(--text);
+  font-weight: 560;
+}
+.needs a {
+  color: color-mix(in oklab, var(--accent) 82%, var(--text));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.needs code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.86em;
+  overflow-wrap: anywhere;
+}
+.needs-h {
+  margin-top: 26px;
+  font-size: 18px;
+}
+
+/* ── Blog posts: section rhythm for long-form prose ───────────────────────── */
+.post-body h2 {
+  margin-top: 48px;
+}
+.post-body h2:first-child {
+  margin-top: 0;
+}
+.post-body > p:first-child {
+  margin-top: 0;
 }

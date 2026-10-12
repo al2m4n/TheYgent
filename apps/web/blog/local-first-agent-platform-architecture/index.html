@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog</title>
+    <meta name="description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <link rel="canonical" href="https://theygent.ai/blog/local-first-agent-platform-architecture/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/blog/local-first-agent-platform-architecture/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog" />
+    <meta property="og:description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:published_time" content="2026-10-12" />
+    <meta property="article:author" content="Arman Bahlakeh" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog" />
+    <meta name="twitter:description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BlogPosting",
+            "@id": "https://theygent.ai/blog/local-first-agent-platform-architecture/#article",
+            "headline": "Building a Local-First Agent Platform Where the Vendor Is Never in the Middle",
+            "description": "How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.",
+            "datePublished": "2026-10-12",
+            "dateModified": "2026-10-12",
+            "inLanguage": "en",
+            "wordCount": 1727,
+            "author": {
+              "@type": "Person",
+              "name": "Arman Bahlakeh"
+            },
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "mainEntityOfPage": "https://theygent.ai/blog/local-first-agent-platform-architecture/",
+            "isPartOf": {
+              "@id": "https://theygent.ai/blog/#blog"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/blog/local-first-agent-platform-architecture/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Blog",
+                "item": "https://theygent.ai/blog/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Building a Local-First Agent Platform Where the Vendor Is Never in the Middle",
+                "item": "https://theygent.ai/blog/local-first-agent-platform-architecture/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <article aria-labelledby="page-h">
+        <header class="page-hero">
+          <div class="wrap">
+            <nav class="crumbs mono" aria-label="Breadcrumb">
+              <ol>
+                <li><a href="/">TheYgent</a></li>
+                <li><a href="/blog/">Blog</a></li>
+                <li><span aria-current="page">Architecture</span></li>
+              </ol>
+            </nav>
+            <p class="eyebrow mono"><i class="dia"></i>Engineering · <time datetime="2026-10-12">October 12, 2026</time> · 8 min read</p>
+            <h1 id="page-h">Building a Local-First Agent Platform Where the Vendor Is Never in the Middle</h1>
+            <p class="lede">How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.</p>
+            <p class="checked mono">By Arman Bahlakeh</p>
+          </div>
+        </header>
+
+        <div class="band page-section">
+          <div class="wrap prose post-body">
+<p>Every visual AI builder we tried had the same footnote: <em>local models supported — bring your own server.</em> That footnote is where most of the work lives. Someone has to pick an engine, download the right quantization, size the context to the machine, keep the server running, and wire its URL into the builder. And the builder itself often reports usage home by default.</p>
+<p>TheYgent started from the other end. The inference engine is part of the product, and the product is never a middleman you didn't choose between you and your models. This post walks through the architecture that follows from that: what the pieces are, where the boundaries sit, and why they are shaped the way they are.</p>
+<h2 id="two-planes-one-seam">Two planes, one seam</h2>
+<p>The most important boundary in TheYgent splits the system into two planes.</p>
+<p>The <strong>inference plane</strong> runs models. It holds everything heavy — engine processes, model weights, the model registry, API credentials — and it runs wherever you point it: the same laptop, a GPU box across the network, or both.</p>
+<p>The <strong>control plane</strong> orchestrates agents: the graph runtime, the agent registry and versions, sessions, triggers, MCP servers, retrieval sources, secrets, and run traces.</p>
+<p>One rule keeps the split honest: <strong>the control plane never imports an engine.</strong> There is no MLX, vLLM, or llama.cpp binding anywhere in it. It reaches inference only through the inference plane's OpenAI-compatible HTTP API, through one shared client. Two things follow.</p>
+<p>First, the payload boundary is structural, not a policy. When you chat with a model directly, the browser sends prompts, audio, and images straight to the inference plane. When an agent runs, the control plane — which you host too — sends each model call to the inference plane by logical ID. Nothing routes through a service you don't run, and when data crosses a wire to a hosted API, it does so because you registered that API.</p>
+<p>Second, deployment stays boring. Inference is the one component that earns its own service: it pins a GPU, holds multi-gigabyte weights, and is already an HTTP server. Everything else is one FastAPI application, internally modular. The same four process types — interface, control plane, inference plane, and an optional durable worker — run on bare metal with <code>make up</code>, in Docker Compose, and on Kubernetes. Only the wiring changes.</p>
+<h2 id="logical-model-ids-the-agent-never-names-an-engine">Logical model IDs: the agent never names an engine</h2>
+<p>Every model reference in an agent, a chat, or a benchmark is a <strong>logical ID</strong> such as <code>triage-fast</code>. Engine names never appear on the data plane; if a graph tries to call <code>mlx</code> or <code>llamacpp</code> as if it were a model, the run is rejected up front with <code>engine_name_not_allowed</code>.</p>
+<p>Binding an ID to something that serves it happens once, on the inference plane's management API:</p>
+<pre><code class="language-bash">curl -X PUT http://localhost:8081/admin/models/triage-fast \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;binding&quot;: &quot;llamacpp&quot;,
+    &quot;source&quot;: &quot;local-path&quot;,
+    &quot;model&quot;: &quot;/path/to/model-Q4_K_M.gguf&quot;,
+    &quot;modality&quot;: &quot;chat&quot;
+  }'
+</code></pre>
+<p>The <strong>binding</strong> is one of exactly four values: <code>mlx</code>, <code>vllm</code>, <code>llamacpp</code>, or <code>openai-compatible</code>. The first three are engines whose lifecycle TheYgent manages; everything else in the world — a hosted API, a model server you already run — is <code>openai-compatible</code> plus a URL. Two more axes sit beside it and never fold into it: <strong>source</strong> says where weights come from (<code>hf</code>, <code>local-path</code>, <code>url</code>), and <strong>modality</strong> says what the server does (chat, vision, embeddings, speech-to-text, text-to-speech, image generation).</p>
+<p>The payoff is that moving a model from MLX on a Mac to llama.cpp on a Linux box — or from a local model to a hosted API — is one registration change. No agent is edited and none is republished. And because engine choice is per node, one graph can run a local model and a hosted one side by side: a small local model triages every request and a router sends only the hard ones to an API.</p>
+<h2 id="an-engine-manager-not-a-model-server">An engine manager, not a model server</h2>
+<p>The inference plane doesn't ask you to start servers. It starts them.</p>
+<ul>
+<li><strong>Lazy start.</strong> An engine spawns on the first call to one of its logical IDs, on a free local port, and the request waits until it is healthy. That's why the first call to a model is the slow one.</li>
+<li><strong>A resident ceiling.</strong> Only a few engines stay loaded at once — two by default. When a new one is needed, the least recently used, lowest-priority engine is evicted. An engine with a request in flight is never evicted; if nothing can be freed, the call fails with <code>no_capacity</code> rather than thrashing.</li>
+<li><strong>Idle reaping.</strong> An engine idle for fifteen minutes is torn down; mark a model <em>keep warm</em> to exempt it.</li>
+<li><strong>Abandoned calls are cancelled.</strong> If a client hangs up before a non-streaming answer arrives, the request to the engine is closed at once — which matters most for image generation, where a render can take minutes.</li>
+<li><strong>One launcher per engine and modality.</strong> Chat, vision, embeddings, transcription, speech, and images each map to the right server program, and a combination with no server is refused with a clear error instead of being served wrong.</li>
+</ul>
+<p>Models arrive through an in-app Hugging Face catalog that shows, for every quantization, whether it fits the machine's memory before you download it. Installed weights register as local files, so loading them never touches the network.</p>
+<h2 id="the-graph-is-a-document">The graph is a document</h2>
+<p>On the canvas you drag nodes and draw edges. Underneath, an agent <em>is</em> a typed document — an intermediate representation defined once in Pydantic, with the TypeScript types the editor uses generated from it, and a CI check that fails if they drift.</p>
+<p>The document carries a content hash, computed server-side over canonical JSON: defaults filled in, keys sorted, and the layout block stripped. Moving a node on the canvas never changes an agent's identity; changing what it does always does. Publishing mints an immutable, content-addressed version you can invoke by API, put behind a trigger, or roll back to.</p>
+<p>Secrets never live in the document. Connections carry references to an encrypted store, so rotating an API key keeps the reference — and the agent's hash — unchanged.</p>
+<h2 id="durable-when-it-matters">Durable when it matters</h2>
+<p>Agents run on two runtimes. The interactive one is an in-process interpreter that streams tokens live; if the process dies mid-run, the run is honestly marked failed. That's fine when a person is watching. Unattended work — a webhook at 3 a.m., a weekly schedule, an approval that waits for days — needs more: a run that survives a crash and resumes from the last completed step without redoing work.</p>
+<p>The durable runtime provides that. It is built on DBOS, an embedded Python library that journals workflow state into the Postgres the control plane already uses — no new stateful service to deploy. A few rules make it correct:</p>
+<ul>
+<li><strong>One registered workflow.</strong> Recovery looks workflows up by name, so instead of generating one per agent there is exactly one, which loads the pinned, immutable agent document and walks it.</li>
+<li><strong>An honest guarantee.</strong> Completed steps are exactly-once: on resume they replay from the journal and are not re-executed, so a POST is not re-sent. The step in flight at the crash is at-least-once, so HTTP tools support an idempotency key.</li>
+<li><strong>Orchestration does no I/O.</strong> Routers, transforms, rule guardrails, and loop control run inside the workflow body and re-derive identically from journaled results — that determinism is what makes resume work. All I/O lives in journaled steps.</li>
+<li><strong>Tokens are a side effect.</strong> Streams go to subscribers as they arrive; only the assembled answer is journaled, so a replayed step never re-streams.</li>
+</ul>
+<p>Human approval, subgraphs, loops, and fan-out maps are durable-only node types. A human-approval node can wait for days and still pick up after a restart.</p>
+<h2 id="observability-without-extra-infrastructure">Observability without extra infrastructure</h2>
+<p>Every run produces spans and per-node inputs and outputs in your own Postgres, and the interface draws them as a zoomable waterfall: which node ran, for how long, on which model, with how many tokens. What gets captured — and for how long — is set per agent, with retention and redaction rules. Exporting to an OpenTelemetry collector is a second, opt-in sink, never a requirement.</p>
+<h2 id="being-checkable-about-privacy">Being checkable about privacy</h2>
+<p>"Your data stays private" is easy to write and hard to verify. So rather than promise, TheYgent publishes the <a href="/private-ai/#network">complete list of every connection it makes</a> and when it makes it: Hugging Face when you browse or install models, the MCP registries when you open the hub browser, and whatever you configure yourself — a hosted API, a remote MCP server, a site you crawl.</p>
+<p>The list includes the one request we could have left out: at startup, the inference plane's model client library fetches a public model price list from GitHub. It carries none of your data and falls back to a bundled copy offline — but it is a request, so it's on the list. There's no usage analytics, crash reporting, update check, or license server, and once installed, TheYgent runs fully offline.</p>
+<p>The promise is precise on purpose: <strong>you own every hop.</strong> You can register a hosted API whenever you want one. TheYgent just refuses to be a middleman you didn't choose.</p>
+<h2 id="loud-failures-deliberate-contracts">Loud failures, deliberate contracts</h2>
+<p>Two habits run through the codebase. Failures are loud: an unknown input reference, an invalid graph, an engine name where a logical ID belongs, a port nothing can fill — each fails fast with a named error code, never a silent fallback. And contracts are deliberate: the data-plane shape, the agent document envelope, and the four-value binding enum stay frozen until a change is consciously made, named, and tested — even when it's additive.</p>
+<h2 id="try-it">Try it</h2>
+<p>TheYgent is source-available under the Sustainable Use License, and it self-hosts on macOS and Linux — bare metal, Docker Compose, or Kubernetes.</p>
+<ul>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/TheYgent">github.com/al2m4n/TheYgent</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.theygent.ai/">docs.theygent.ai</a>, including the full <a href="https://github.com/al2m4n/TheYgent/blob/main/docs/dev-docs/architecture.md">architecture</a> for contributors</li>
+<li><strong>Watch it run:</strong> <a href="/videos/">video walkthroughs</a>, from install to a published agent</li>
+<li><strong>Start from a working agent:</strong> <a href="/templates/">twelve agent templates</a> that ship with it</li>
+</ul>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
