@@ -6,11 +6,11 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="User documentation for TheYgent — a local-first platform for building and running AI agents with a visual editor and your choice of inference engine.">
+        <meta name="description" content="User documentation for TheYgent — a self-hosted, no-code, local-first platform for building and running AI agents on a visual canvas, with built-in local inference engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API.">
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v1.0.0/concepts/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v1.0.1/concepts/">
       
       
         <link rel="prev" href="../samples/">
@@ -868,6 +868,8 @@
       
         
       
+        
+      
     
     
     
@@ -1052,6 +1054,34 @@
     
   
     Agent Versioning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="privacy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Privacy & Data Flow
   
 
     
@@ -3087,11 +3117,11 @@
 <li>A hosted API is contacted <strong>only when you register one</strong> — as an <code>openai-compatible</code> model with a base URL you supply — and then only for calls routed to that model. Nothing is ever proxied through a vendor server. See <a href="../models/remote/">Remote models</a>.</li>
 <li>Because agents reference logical model ids, the local-versus-hosted choice is per model and per agent, and reversible: re-register the id, and every call site follows.</li>
 <li>Credentials live in two separate stores, both on your machine and never written into agent documents. <strong>Hosted-API keys</strong> are inference-plane credentials, referenced as <code>secret://NAME</code> and never sent to the control plane (see <a href="../models/remote/">Remote models</a>). <strong>Tool and MCP connection secrets</strong> live in the control-plane store, encrypted with <code>THEYGENT_SECRET_KEY</code>.</li>
-<li>Nothing is exported for telemetry unless you opt in by setting <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>; otherwise all trace data stays in your Postgres.</li>
+<li>Nothing is exported for telemetry unless you opt in by setting <code>OTEL_EXPORTER_OTLP_ENDPOINT</code>; otherwise all trace data stays in your Postgres. Every connection TheYgent makes on its own, and how to run fully offline, is listed in <a href="privacy/">Privacy and data flow</a>.</li>
 </ul>
 <div class="admonition warning">
-<p class="admonition-title">Local, single-user by default</p>
-<p>The control plane's interactive API currently performs no authentication — it is designed for a single user on localhost. Only two surfaces carry real auth: token invocation (<code>POST /agents/{id}/invoke</code>, gated by <code>THEYGENT_INVOKE_TOKEN</code> and closed when the token is unset) and webhooks (per-webhook HMAC signatures). Do not expose ports 8080/8081 to untrusted networks.</p>
+<p class="admonition-title">Keep the inference plane on loopback</p>
+<p>The control plane requires sign-in: a fresh install's API is closed until the first-run wizard creates an admin, and every call after that carries a bearer token — see <a href="../running/users/">Users, roles and sign-in</a>. The inference plane has no sign-in of its own. It listens on <code>127.0.0.1</code> by default, and anything that can reach port 8081 can use your models, so don't expose it to untrusted networks.</p>
 </div>
 <h2 id="checking-that-everything-is-up">Checking that everything is up<a class="headerlink" href="#checking-that-everything-is-up" title="Permanent link">&para;</a></h2>
 <p>Both planes expose <code>GET /healthz</code> (liveness) and <code>GET /readyz</code> (readiness):</p>
