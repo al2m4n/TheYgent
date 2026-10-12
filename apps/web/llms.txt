@@ -62,6 +62,28 @@ Checked against each project's own source and documentation on October 12, 2026,
 - [TheYgent vs Langflow](https://theygent.ai/compare/langflow/): an MIT-licensed, Python-extensible flow builder with telemetry on by default, versus built-in engines and no telemetry
 - [TheYgent vs Flowise](https://theygent.ai/compare/flowise/): an Apache 2.0 agent builder on LangChain.js, versus built-in local engines and crash-resumable runs
 
+## Templates
+
+Twelve ready-to-run agents ship with TheYgent (install from Settings → Samples). Each page explains the pattern, the models it needs, and its full graph.
+
+- [All agent templates](https://theygent.ai/templates/): the gallery
+- [Hybrid reasoner](https://theygent.ai/templates/hybrid-reasoner/): Two models in one run: a local triage model classifies every request and a router sends easy ones to your local model and hard ones (coding, analysis, long-form) to an API model.
+- [Private SQL analyst](https://theygent.ai/templates/private-sql-analyst/): A data-privacy pattern: the API model sees ONLY the database schema and your question — never a single row — and writes a SELECT statement; a deterministic guardrail refuses any statement that does not start with SELECT; the query then runs on a local SQLite MCP server and a LOCAL model reads the rows and answers.
+- [Expense approver](https://theygent.ai/templates/expense-approver/): Human in the loop with a real approve/reject: a local model assesses the risk of an expense request, the run then WAITS durably for a human decision, and a router either executes the (placeholder) payment step or refuses.
+- [Tool belt](https://theygent.ai/templates/tool-belt/): The two ways to use a tool, in one agent: a GraphQL API turned into an MCP server runs as a flow STEP (it always executes), while a REST API turned into an MCP server is WIRED TO the local model as a capability the model decides to call.
+- [Second opinion](https://theygent.ai/templates/second-opinion/): Ask a local model AND an API model the same question independently, then a local judge reconciles the two answers into one — flagging any disagreement.
+- [PII firewall](https://theygent.ai/templates/pii-firewall/): A privacy router: a deterministic PII guardrail inspects every request BEFORE any model runs.
+- [Visual inspector](https://theygent.ai/templates/visual-inspector/): Vision inside a pipeline, not a chat window: a local vision model inspects an image against your acceptance criteria, emits a structured pass/fail verdict, and a router sends the run down the matching branch — the skeleton of a visual QC line.
+- [Voice desk](https://theygent.ai/templates/voice-desk/): Voice in, voice out: speech-to-text transcribes the audio, a model answers in spoken prose, text-to-speech reads it back.
+- [Art department](https://theygent.ai/templates/art-department/): Local image generation in a pipeline: a local model turns your rough brief into one vivid, concrete image prompt, and a local diffusion model paints it.
+- [Handbook Q&A](https://theygent.ai/templates/handbook-qa/): Retrieval as a model capability, fully local: the installer creates a retrieval source in your own Postgres (pgvector), seeds it with a fictional TheYgent company handbook, and wires it to a local model as a search tool the model decides to call — answers cite the handbook section they came from.
+- [Editorial loop](https://theygent.ai/templates/editorial-loop/): A self-correcting agent: a bounded LOOP re-runs a writer-critic child agent — draft, harsh self-critique, rewrite — until the child approves its own draft or three rounds are up.
+- [Batch briefing](https://theygent.ai/templates/batch-briefing/): Durable parallel fan-out with a cost ceiling: a MAP node fans one child agent out per topic (two at a time), collecting a brief for each — a crashed worker resumes only the unfinished branches.
+
+## Blog
+
+- [Building a Local-First Agent Platform Where the Vendor Is Never in the Middle](https://theygent.ai/blog/local-first-agent-platform-architecture/): the architecture — two planes and one seam, logical model IDs, the engine manager, content-addressed agents, durable runs, and checkable privacy
+
 ## Source
 
 - [GitHub repository](https://github.com/al2m4n/TheYgent): source code, issues, releases, samples

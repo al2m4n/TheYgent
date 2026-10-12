@@ -43,6 +43,9 @@ secrets as the docs pipeline):
 | `index.html` | The home page. |
 | `private-ai/`, `apple-silicon/` | Guide pages: private and offline use (with every network touchpoint), and MLX on a Mac. |
 | `compare/` | The comparison hub and one page per compared product — dated and sourced. |
+| `videos/` | A watch page per walkthrough video: the player, a summary, and chapters with key-moment markup. |
+| `templates/` | One page per sample agent that ships with TheYgent, generated from the samples' own JSON (graph tables included). |
+| `blog/` | Long-form engineering posts; each is the canonical copy when syndicated elsewhere. |
 | `404.html` | The not-found page (Cloudflare Pages serves it with a 404 status). |
 | `styles.css` | Tokens, nav, sections, cards, FAQ, footer (brand tokens mirror the app interface). |
 | `pages.css` | Inner-page furniture (page hero, prose, comparison tables), loaded after `styles.css`. |
