@@ -24,7 +24,7 @@ mike maintains the version tree (one subdirectory per version + a version picker
 header) on the `gh-pages` branch; the workflow then deploys that whole tree to Cloudflare
 Pages with wrangler.
 
-Domain-root files (`robots.txt`, `llms.txt`, `404.html`, `_redirects`, and the favicons) live in `root/`
+Domain-root files (`robots.txt`, `llms.txt`, `404.html`, `_redirects`, `BingSiteAuth.xml` for Bing Webmaster Tools, and the favicons) live in `root/`
 here — mike owns the `gh-pages` root, so the workflow copies everything in that directory
 into the deploy tree on every publish. Two entries there are not plain copies:
 `redirect-index.html` is mike's `set-default` template (it renders the root redirect page,
