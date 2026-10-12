@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Self-Hosted AI Agent Orchestration: A Full Tour | TheYgent Video</title>
+    <meta name="description" content="A full walkthrough of TheYgent on one machine: install it, create the admin account, install a model from the Hugging Face catalog, benchmark it, then build, test, trace, and publish an agent with an MCP tool on the no-code canvas." />
+    <link rel="canonical" href="https://theygent.ai/videos/self-hosted-ai-agent-orchestration/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="video.other" />
+    <meta property="og:url" content="https://theygent.ai/videos/self-hosted-ai-agent-orchestration/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Self-Hosted AI Agent Orchestration: A Full Tour" />
+    <meta property="og:description" content="A full walkthrough of TheYgent on one machine: install it, create the admin account, install a model from the Hugging Face catalog, benchmark it, then build, test, trace, and publish an agent with an MCP tool on the no-code canvas." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Self-Hosted AI Agent Orchestration: A Full Tour" />
+    <meta name="twitter:description" content="A full walkthrough of TheYgent on one machine: install it, create the admin account, install a model from the Hugging Face catalog, benchmark it, then build, test, trace, and publish an agent with an MCP tool on the no-code canvas." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/#webpage",
+            "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/",
+            "name": "Self-Hosted AI Agent Orchestration: A Full Tour",
+            "description": "A full walkthrough of TheYgent on one machine: install it, create the admin account, install a model from the Hugging Face catalog, benchmark it, then build, test, trace, and publish an agent with an MCP tool on the no-code canvas.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "primaryImageOfPage": "https://i.ytimg.com/vi/3LE_VrIbe0I/maxresdefault.jpg",
+            "breadcrumb": {
+              "@id": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/#breadcrumb"
+            },
+            "mainEntity": {
+              "@id": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/#video"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Videos",
+                "item": "https://theygent.ai/videos/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Self-Hosted AI Agent Orchestration: A Full Tour",
+                "item": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/"
+              }
+            ]
+          },
+          {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/#video",
+            "name": "Self-Hosted AI Agent Orchestration: A Full Tour",
+            "description": "A full walkthrough of TheYgent on one machine: install it, create the admin account, install a model from the Hugging Face catalog, benchmark it, then build, test, trace, and publish an agent with an MCP tool on the no-code canvas.",
+            "thumbnailUrl": [
+              "https://i.ytimg.com/vi/3LE_VrIbe0I/maxresdefault.jpg",
+              "https://i.ytimg.com/vi/3LE_VrIbe0I/hqdefault.jpg"
+            ],
+            "uploadDate": "2026-07-31T08:15:52-07:00",
+            "duration": "PT23M52S",
+            "embedUrl": "https://www.youtube.com/embed/3LE_VrIbe0I",
+            "contentUrl": "https://www.youtube.com/watch?v=3LE_VrIbe0I",
+            "inLanguage": "en",
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "author": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "mainEntityOfPage": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/",
+            "hasPart": [
+              {
+                "@type": "Clip",
+                "name": "What TheYgent is",
+                "startOffset": 0,
+                "endOffset": 118,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=0"
+              },
+              {
+                "@type": "Clip",
+                "name": "Source code, license, and user docs",
+                "startOffset": 118,
+                "endOffset": 187,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=118"
+              },
+              {
+                "@type": "Clip",
+                "name": "Architecture: interface, control plane, inference plane, worker, Postgres",
+                "startOffset": 187,
+                "endOffset": 240,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=187"
+              },
+              {
+                "@type": "Clip",
+                "name": "Install: clone, .env, make engines, make up",
+                "startOffset": 240,
+                "endOffset": 393,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=240"
+              },
+              {
+                "@type": "Clip",
+                "name": "First run: the admin wizard",
+                "startOffset": 393,
+                "endOffset": 433,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=393"
+              },
+              {
+                "@type": "Clip",
+                "name": "Model registry: install from Hugging Face with a fit check",
+                "startOffset": 433,
+                "endOffset": 547,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=433"
+              },
+              {
+                "@type": "Clip",
+                "name": "The Bench: test a model, save presets",
+                "startOffset": 547,
+                "endOffset": 616,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=547"
+              },
+              {
+                "@type": "Clip",
+                "name": "The agents page and the canvas",
+                "startOffset": 616,
+                "endOffset": 737,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=616"
+              },
+              {
+                "@type": "Clip",
+                "name": "A first agent, the test panel, and the run trace",
+                "startOffset": 737,
+                "endOffset": 882,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=737"
+              },
+              {
+                "@type": "Clip",
+                "name": "Adding an MCP tool; the model calls it",
+                "startOffset": 882,
+                "endOffset": 1060,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=882"
+              },
+              {
+                "@type": "Clip",
+                "name": "Publishing a version; runs and chat",
+                "startOffset": 1060,
+                "endOffset": 1127,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1060"
+              },
+              {
+                "@type": "Clip",
+                "name": "MCP servers: hubs, stdio, remote, OpenAPI, GraphQL",
+                "startOffset": 1127,
+                "endOffset": 1191,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1127"
+              },
+              {
+                "@type": "Clip",
+                "name": "Retrieval sources: upload and crawl",
+                "startOffset": 1191,
+                "endOffset": 1240,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1191"
+              },
+              {
+                "@type": "Clip",
+                "name": "Settings: samples, users, sign-in",
+                "startOffset": 1240,
+                "endOffset": 1321,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1240"
+              },
+              {
+                "@type": "Clip",
+                "name": "Inference, telemetry, and credentials",
+                "startOffset": 1321,
+                "endOffset": 1390,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1321"
+              },
+              {
+                "@type": "Clip",
+                "name": "Import and export",
+                "startOffset": 1390,
+                "endOffset": 1432,
+                "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/?t=1390"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- The faceted mark, defined once and re-used. Gradient stops are CSS-driven so a theme flip re-ramps every instance. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <defs>
+        <linearGradient id="tyRamp" x1="191" y1="46" x2="191" y2="380" gradientUnits="userSpaceOnUse">
+          <stop class="ms1" offset="0" />
+          <stop class="ms2" offset="0.4" />
+          <stop class="ms3" offset="0.72" />
+          <stop class="ms4" offset="1" />
+        </linearGradient>
+        <symbol id="ty-mark" viewBox="28 36 326 356">
+          <g fill="url(#tyRamp)">
+            <polygon points="38,46 63,46 63,71 38,71" />
+            <polygon points="87,67 106,68 105,87 87,87" />
+            <polygon points="56,94 81,94 82,120 56,120" />
+            <polygon points="115,85 310,85 341,120 115,120" />
+            <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184" />
+            <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><a href="/videos/">Videos</a></li>
+              <li><span aria-current="page">Self-Hosted AI Agent Orchestration: A Full Tour</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Walkthrough · 23:52</p>
+          <h1 id="page-h">Self-Hosted AI Agent Orchestration: A Full Tour</h1>
+          <div class="player cut-card">
+            <iframe
+              data-video-id="3LE_VrIbe0I"
+              src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I"
+              title="Self-Hosted AI Agent Orchestration | Own Every Hop | TheYgent"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <p class="vid-meta mono">
+            23:52 · Published July 31, 2026 ·
+            <a href="https://www.youtube.com/watch?v=3LE_VrIbe0I" rel="noopener">Watch on YouTube</a> ·
+            <a href="https://www.youtube.com/@TheYgent" rel="noopener">All videos on YouTube</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="covers-h">
+        <div class="wrap watch-grid">
+          <div class="prose">
+            <h2 id="covers-h">What This Video Covers</h2>
+            <p>
+              A 24-minute walkthrough of TheYgent on one Mac, from <code>git clone</code> to a published agent. It opens with what the platform is — a no-code, local-first studio with built-in llama.cpp, MLX, and vLLM inference, MCP tools, retrieval sources, run traces, durable runs, and Docker Compose or Kubernetes deployment — and a quick look at the repository, the user docs, and the architecture: an interface, a control plane, an inference plane, a durable worker, and Postgres.
+            </p>
+            <p>
+              Then it installs the stack (<code>cp .env.example .env</code>, <code>make engines</code>, <code>make up</code>), creates the admin account in the first-run wizard, installs a model from the in-app Hugging Face catalog — each variant shows whether it fits the machine — and tries it on the Bench, where parameters can be tuned and saved as presets.
+            </p>
+            <p>
+              On the canvas it builds a first agent: an input, a local LLM, and an output, tested in the side panel with a trace of every run. Then it adds an MCP tool (a local Docker server) that the model decides to call on its own, and publishes the agent as a versioned API. The tour ends with runs and chat, MCP servers (hubs, stdio, remote, and OpenAPI or GraphQL specs turned into MCP), retrieval sources, the settings — samples, users, sign-in, inference, telemetry, credentials — and import and export.
+            </p>
+            <h3>Try It Yourself</h3>
+            <ul>
+              <li><a href="https://docs.theygent.ai/latest/getting-started/installation/" rel="noopener">Installation</a></li>
+              <li><a href="https://docs.theygent.ai/latest/getting-started/first-agent/" rel="noopener">Your first agent</a></li>
+              <li><a href="https://docs.theygent.ai/latest/models/installing/" rel="noopener">Installing local models</a></li>
+              <li><a href="https://docs.theygent.ai/latest/mcp/" rel="noopener">MCP servers</a></li>
+            </ul>
+          </div>
+          <nav class="chapters" aria-labelledby="chapters-h">
+            <h2 id="chapters-h">Chapters</h2>
+            <ol>
+                <li><a href="?t=0" data-seek="0"><span class="ts mono">0:00</span><span>What TheYgent is</span></a></li>
+                <li><a href="?t=118" data-seek="118"><span class="ts mono">1:58</span><span>Source code, license, and user docs</span></a></li>
+                <li><a href="?t=187" data-seek="187"><span class="ts mono">3:07</span><span>Architecture: interface, control plane, inference plane, worker, Postgres</span></a></li>
+                <li><a href="?t=240" data-seek="240"><span class="ts mono">4:00</span><span>Install: clone, .env, make engines, make up</span></a></li>
+                <li><a href="?t=393" data-seek="393"><span class="ts mono">6:33</span><span>First run: the admin wizard</span></a></li>
+                <li><a href="?t=433" data-seek="433"><span class="ts mono">7:13</span><span>Model registry: install from Hugging Face with a fit check</span></a></li>
+                <li><a href="?t=547" data-seek="547"><span class="ts mono">9:07</span><span>The Bench: test a model, save presets</span></a></li>
+                <li><a href="?t=616" data-seek="616"><span class="ts mono">10:16</span><span>The agents page and the canvas</span></a></li>
+                <li><a href="?t=737" data-seek="737"><span class="ts mono">12:17</span><span>A first agent, the test panel, and the run trace</span></a></li>
+                <li><a href="?t=882" data-seek="882"><span class="ts mono">14:42</span><span>Adding an MCP tool; the model calls it</span></a></li>
+                <li><a href="?t=1060" data-seek="1060"><span class="ts mono">17:40</span><span>Publishing a version; runs and chat</span></a></li>
+                <li><a href="?t=1127" data-seek="1127"><span class="ts mono">18:47</span><span>MCP servers: hubs, stdio, remote, OpenAPI, GraphQL</span></a></li>
+                <li><a href="?t=1191" data-seek="1191"><span class="ts mono">19:51</span><span>Retrieval sources: upload and crawl</span></a></li>
+                <li><a href="?t=1240" data-seek="1240"><span class="ts mono">20:40</span><span>Settings: samples, users, sign-in</span></a></li>
+                <li><a href="?t=1321" data-seek="1321"><span class="ts mono">22:01</span><span>Inference, telemetry, and credentials</span></a></li>
+                <li><a href="?t=1390" data-seek="1390"><span class="ts mono">23:10</span><span>Import and export</span></a></li>
+            </ol>
+          </nav>
+        </div>
+      </section>
+
+      <section class="section vids" aria-labelledby="more-h">
+        <div class="wrap">
+          <h2 id="more-h" class="prose">More Walkthroughs</h2>
+          <div class="card-grid vid-grid">
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/rag-file-upload-web-crawl/" aria-label="Watch: Give Your LLM a Memory: RAG with File Upload and Web Crawl — 9:34">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">9:34</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-green"></i>retrieval</span>
+                <h3><a href="/videos/rag-file-upload-web-crawl/">Give Your LLM a Memory: RAG with File Upload and Web Crawl</a></h3>
+                <p>Upload a PDF, crawl a docs site, and wire both into an agent as retrieval tools — no code.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/voice-agent-pipeline/" aria-label="Watch: Voice In, Voice Out: A No-Code AI Agent Pipeline — 5:54">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">5:54</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-violet"></i>voice</span>
+                <h3><a href="/videos/voice-agent-pipeline/">Voice In, Voice Out: A No-Code AI Agent Pipeline</a></h3>
+                <p>Speech-to-text, a model, and text-to-speech wired on the canvas — a spoken conversation with an agent you built.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/local-and-remote-models/" aria-label="Watch: Run Local and Remote AI Models in One Agent — 7:01">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">7:01</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-amber"></i>hybrid</span>
+                <h3><a href="/videos/local-and-remote-models/">Run Local and Remote AI Models in One Agent</a></h3>
+                <p>A local model triages and handles the easy work; the hard question goes to a hosted API — one graph, each branch calling its own model.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/kubernetes-deployment/" aria-label="Watch: How to Deploy TheYgent to Kubernetes — 6:41">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">6:41</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-slate"></i>deploy</span>
+                <h3><a href="/videos/kubernetes-deployment/">How to Deploy TheYgent to Kubernetes</a></h3>
+                <p>Build the images, load them into a cluster, apply the manifests, and sign in — the same stack, on Kubernetes.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

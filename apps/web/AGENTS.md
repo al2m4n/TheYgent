@@ -27,5 +27,10 @@ the root [AGENTS.md](../../AGENTS.md) apply first.
   URL, is listed in `sitemap.xml`, and keeps any FAQPage structured data word-for-word equal
   to its visible FAQ. `.github/scripts/check_web_pages.py` enforces all of it (CI and
   `make lint`). `web.yml` stamps each sitemap `lastmod` from its own page's git history.
+- **Third-party requests:** pages make none until a visitor asks — the home page's video cards
+  are facades that load YouTube only on click. The one exception is the watch pages under
+  `videos/`, where the video is the page's main content (search engines index a video only
+  there): they embed the youtube-nocookie player on load. Chapter links are `?t=<seconds>`,
+  the same URLs the VideoObject `Clip` markup names, and `main.js` seeks the player in place.
 - Deploys to Cloudflare Pages via `.github/workflows/web.yml` on pushes touching
   `apps/web/`.

@@ -176,6 +176,33 @@
     });
   })();
 
+  /* ── Watch-page chapters ───────────────────────────────────────────────────
+     A chapter link is "?t=<seconds>", the same URL the key-moments markup names, so
+     a search result can open the page at a chapter. With JS the link seeks the
+     embedded player in place instead of reloading; without it, the page reloads. */
+  (function chapters() {
+    var frame = document.querySelector("iframe[data-video-id]");
+    if (!frame) return;
+    var base = "https://www.youtube-nocookie.com/embed/" + frame.getAttribute("data-video-id") + "?rel=0";
+    function seek(seconds, autoplay) {
+      frame.src = base + "&start=" + seconds + (autoplay ? "&autoplay=1" : "");
+    }
+    var start = parseInt(new URLSearchParams(location.search).get("t"), 10);
+    if (start > 0) seek(start, false);
+    document.querySelectorAll("a[data-seek]").forEach(function (link) {
+      link.addEventListener("click", function (e) {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        var seconds = parseInt(link.getAttribute("data-seek"), 10) || 0;
+        seek(seconds, true);
+        try {
+          history.replaceState(null, "", "?t=" + seconds);
+        } catch (err) {}
+        frame.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+      });
+    });
+  })();
+
   /* ── Scroll reveal (opacity crossfade only) ────────────────────────────── */
   (function reveal() {
     var items = document.querySelectorAll(".reveal");

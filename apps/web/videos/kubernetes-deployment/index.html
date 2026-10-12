@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>How to Deploy TheYgent to Kubernetes | TheYgent Video</title>
+    <meta name="description" content="Deploying TheYgent to a Kubernetes cluster: build the images, load them into the cluster, apply the manifests, wait for the rollout, port-forward, and sign in — then tear it all down with one command." />
+    <link rel="canonical" href="https://theygent.ai/videos/kubernetes-deployment/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="video.other" />
+    <meta property="og:url" content="https://theygent.ai/videos/kubernetes-deployment/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="How to Deploy TheYgent to Kubernetes" />
+    <meta property="og:description" content="Deploying TheYgent to a Kubernetes cluster: build the images, load them into the cluster, apply the manifests, wait for the rollout, port-forward, and sign in — then tear it all down with one command." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="How to Deploy TheYgent to Kubernetes" />
+    <meta name="twitter:description" content="Deploying TheYgent to a Kubernetes cluster: build the images, load them into the cluster, apply the manifests, wait for the rollout, port-forward, and sign in — then tear it all down with one command." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/videos/kubernetes-deployment/#webpage",
+            "url": "https://theygent.ai/videos/kubernetes-deployment/",
+            "name": "How to Deploy TheYgent to Kubernetes",
+            "description": "Deploying TheYgent to a Kubernetes cluster: build the images, load them into the cluster, apply the manifests, wait for the rollout, port-forward, and sign in — then tear it all down with one command.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "primaryImageOfPage": "https://i.ytimg.com/vi/A0kMmTAr-L4/maxresdefault.jpg",
+            "breadcrumb": {
+              "@id": "https://theygent.ai/videos/kubernetes-deployment/#breadcrumb"
+            },
+            "mainEntity": {
+              "@id": "https://theygent.ai/videos/kubernetes-deployment/#video"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/videos/kubernetes-deployment/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Videos",
+                "item": "https://theygent.ai/videos/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "How to Deploy TheYgent to Kubernetes",
+                "item": "https://theygent.ai/videos/kubernetes-deployment/"
+              }
+            ]
+          },
+          {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/videos/kubernetes-deployment/#video",
+            "name": "How to Deploy TheYgent to Kubernetes",
+            "description": "Deploying TheYgent to a Kubernetes cluster: build the images, load them into the cluster, apply the manifests, wait for the rollout, port-forward, and sign in — then tear it all down with one command.",
+            "thumbnailUrl": [
+              "https://i.ytimg.com/vi/A0kMmTAr-L4/maxresdefault.jpg",
+              "https://i.ytimg.com/vi/A0kMmTAr-L4/hqdefault.jpg"
+            ],
+            "uploadDate": "2026-08-16T10:02:31-07:00",
+            "duration": "PT6M41S",
+            "embedUrl": "https://www.youtube.com/embed/A0kMmTAr-L4",
+            "contentUrl": "https://www.youtube.com/watch?v=A0kMmTAr-L4",
+            "inLanguage": "en",
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "author": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "mainEntityOfPage": "https://theygent.ai/videos/kubernetes-deployment/",
+            "hasPart": [
+              {
+                "@type": "Clip",
+                "name": "Minikube and the kubectl context",
+                "startOffset": 0,
+                "endOffset": 80,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=0"
+              },
+              {
+                "@type": "Clip",
+                "name": "Cloning the repo; the Kubernetes manifests",
+                "startOffset": 80,
+                "endOffset": 141,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=80"
+              },
+              {
+                "@type": "Clip",
+                "name": "Building the images with make",
+                "startOffset": 141,
+                "endOffset": 207,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=141"
+              },
+              {
+                "@type": "Clip",
+                "name": "Loading the images into the cluster",
+                "startOffset": 207,
+                "endOffset": 245,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=207"
+              },
+              {
+                "@type": "Clip",
+                "name": "Applying the manifests and the rollout",
+                "startOffset": 245,
+                "endOffset": 267,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=245"
+              },
+              {
+                "@type": "Clip",
+                "name": "Deployments, the Postgres StatefulSet, services",
+                "startOffset": 267,
+                "endOffset": 300,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=267"
+              },
+              {
+                "@type": "Clip",
+                "name": "Port-forwarding and the first sign-in",
+                "startOffset": 300,
+                "endOffset": 376,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=300"
+              },
+              {
+                "@type": "Clip",
+                "name": "Tearing it down",
+                "startOffset": 376,
+                "endOffset": 401,
+                "url": "https://theygent.ai/videos/kubernetes-deployment/?t=376"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- The faceted mark, defined once and re-used. Gradient stops are CSS-driven so a theme flip re-ramps every instance. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <defs>
+        <linearGradient id="tyRamp" x1="191" y1="46" x2="191" y2="380" gradientUnits="userSpaceOnUse">
+          <stop class="ms1" offset="0" />
+          <stop class="ms2" offset="0.4" />
+          <stop class="ms3" offset="0.72" />
+          <stop class="ms4" offset="1" />
+        </linearGradient>
+        <symbol id="ty-mark" viewBox="28 36 326 356">
+          <g fill="url(#tyRamp)">
+            <polygon points="38,46 63,46 63,71 38,71" />
+            <polygon points="87,67 106,68 105,87 87,87" />
+            <polygon points="56,94 81,94 82,120 56,120" />
+            <polygon points="115,85 310,85 341,120 115,120" />
+            <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184" />
+            <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><a href="/videos/">Videos</a></li>
+              <li><span aria-current="page">How to Deploy TheYgent to Kubernetes</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Walkthrough · 6:41</p>
+          <h1 id="page-h">How to Deploy TheYgent to Kubernetes</h1>
+          <div class="player cut-card">
+            <iframe
+              data-video-id="A0kMmTAr-L4"
+              src="https://www.youtube-nocookie.com/embed/A0kMmTAr-L4"
+              title="How to deploy TheYgent to Kubernetes | TheYgent"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <p class="vid-meta mono">
+            6:41 · Published August 16, 2026 ·
+            <a href="https://www.youtube.com/watch?v=A0kMmTAr-L4" rel="noopener">Watch on YouTube</a> ·
+            <a href="https://www.youtube.com/@TheYgent" rel="noopener">All videos on YouTube</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="covers-h">
+        <div class="wrap watch-grid">
+          <div class="prose">
+            <h2 id="covers-h">What This Video Covers</h2>
+            <p>
+              Deploying TheYgent to Kubernetes — Minikube on a laptop in the video, any cluster in practice. Clone the repository and review the manifests under <code>deploy/k8s</code>; resources, volume sizes, and replicas are yours to change.
+            </p>
+            <p>
+              One make target builds the images, loads them into the cluster, applies the manifests, and waits for the rollout: the interface, control plane, inference plane, and durable worker deployments, plus Postgres as a StatefulSet. After port-forwarding, the first visit creates the admin account, and the planes report healthy. <code>make k8s-down</code> removes everything again.
+            </p>
+            <h3>Try It Yourself</h3>
+            <ul>
+              <li><a href="https://github.com/al2m4n/TheYgent/tree/main/deploy/k8s" rel="noopener">The manifests (deploy/k8s)</a></li>
+              <li><a href="https://github.com/al2m4n/TheYgent/blob/main/docs/dev-docs/deployment.md" rel="noopener">Deployment guide</a></li>
+              <li><a href="https://docs.theygent.ai/latest/running/users/" rel="noopener">Users, roles, and sign-in</a></li>
+            </ul>
+          </div>
+          <nav class="chapters" aria-labelledby="chapters-h">
+            <h2 id="chapters-h">Chapters</h2>
+            <ol>
+                <li><a href="?t=0" data-seek="0"><span class="ts mono">0:00</span><span>Minikube and the kubectl context</span></a></li>
+                <li><a href="?t=80" data-seek="80"><span class="ts mono">1:20</span><span>Cloning the repo; the Kubernetes manifests</span></a></li>
+                <li><a href="?t=141" data-seek="141"><span class="ts mono">2:21</span><span>Building the images with make</span></a></li>
+                <li><a href="?t=207" data-seek="207"><span class="ts mono">3:27</span><span>Loading the images into the cluster</span></a></li>
+                <li><a href="?t=245" data-seek="245"><span class="ts mono">4:05</span><span>Applying the manifests and the rollout</span></a></li>
+                <li><a href="?t=267" data-seek="267"><span class="ts mono">4:27</span><span>Deployments, the Postgres StatefulSet, services</span></a></li>
+                <li><a href="?t=300" data-seek="300"><span class="ts mono">5:00</span><span>Port-forwarding and the first sign-in</span></a></li>
+                <li><a href="?t=376" data-seek="376"><span class="ts mono">6:16</span><span>Tearing it down</span></a></li>
+            </ol>
+          </nav>
+        </div>
+      </section>
+
+      <section class="section vids" aria-labelledby="more-h">
+        <div class="wrap">
+          <h2 id="more-h" class="prose">More Walkthroughs</h2>
+          <div class="card-grid vid-grid">
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/self-hosted-ai-agent-orchestration/" aria-label="Watch: Self-Hosted AI Agent Orchestration: A Full Tour — 23:52">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">23:52</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-accent"></i>the platform</span>
+                <h3><a href="/videos/self-hosted-ai-agent-orchestration/">Self-Hosted AI Agent Orchestration: A Full Tour</a></h3>
+                <p>Clone the repo, bring the stack up, install a model, then build, run, and trace an agent — the full tour.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/rag-file-upload-web-crawl/" aria-label="Watch: Give Your LLM a Memory: RAG with File Upload and Web Crawl — 9:34">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">9:34</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-green"></i>retrieval</span>
+                <h3><a href="/videos/rag-file-upload-web-crawl/">Give Your LLM a Memory: RAG with File Upload and Web Crawl</a></h3>
+                <p>Upload a PDF, crawl a docs site, and wire both into an agent as retrieval tools — no code.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/voice-agent-pipeline/" aria-label="Watch: Voice In, Voice Out: A No-Code AI Agent Pipeline — 5:54">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">5:54</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-violet"></i>voice</span>
+                <h3><a href="/videos/voice-agent-pipeline/">Voice In, Voice Out: A No-Code AI Agent Pipeline</a></h3>
+                <p>Speech-to-text, a model, and text-to-speech wired on the canvas — a spoken conversation with an agent you built.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/local-and-remote-models/" aria-label="Watch: Run Local and Remote AI Models in One Agent — 7:01">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">7:01</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-amber"></i>hybrid</span>
+                <h3><a href="/videos/local-and-remote-models/">Run Local and Remote AI Models in One Agent</a></h3>
+                <p>A local model triages and handles the easy work; the hard question goes to a hosted API — one graph, each branch calling its own model.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
