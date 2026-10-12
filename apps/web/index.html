@@ -260,7 +260,7 @@
                 "name": "How do I self-host TheYgent?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Clone the repo and run make up for bare metal, or deploy the same services with Docker Compose or Kubernetes — it's one architecture in every topology. There's no vendor account and no cloud dependency — the only account is the local admin you create in the first-run wizard; the stack listens on localhost by default and stores everything in your own Postgres."
+                  "text": "Clone the repo, copy .env.example to .env, and run make up for bare metal, or deploy the same services with Docker Compose or Kubernetes — it's one architecture in every topology. There's no vendor account and no cloud dependency — the only account is the local admin you create in the first-run wizard; the stack listens on localhost by default and stores everything in your own Postgres."
                 }
               },
               {
@@ -1162,10 +1162,11 @@
         <div class="wrap qs-grid">
           <div class="qs-copy">
             <p class="eyebrow mono"><i class="dia"></i>Run It Locally</p>
-            <h2 id="qs-h">Up in <span class="ramp-text">Two Commands.</span></h2>
+            <h2 id="qs-h">Up in <span class="ramp-text">Three Commands.</span></h2>
             <p class="section-lede">
-              Clone the repo and run <span class="pill mono">make up</span>. The interface, control plane, inference
-              plane, AI Gateway, and Postgres come online locally; engines start lazily when a model is first called.
+              Clone the repo, copy the example <span class="pill mono">.env</span> (its defaults work locally), and run
+              <span class="pill mono">make up</span>. The interface, control plane, inference plane, AI Gateway, and
+              Postgres come online locally; engines start lazily when a model is first called.
             </p>
             <ul class="qs-facts mono">
               <li><i class="dia"></i>Four local services + your Postgres</li>
@@ -1178,10 +1179,11 @@
             <div class="panel-bar">
               <span class="dots"><i></i><i></i><i></i></span>
               <span class="panel-file mono">Quickstart</span>
-              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/TheYgent.git&#10;cd TheYgent&#10;make up">Copy</button>
+              <button class="copy-btn mono" type="button" data-copy="git clone https://github.com/al2m4n/TheYgent.git&#10;cd TheYgent&#10;cp .env.example .env&#10;make up">Copy</button>
             </div>
             <pre class="term-body mono"><code><span class="c-prompt">$</span> git clone https://github.com/al2m4n/TheYgent.git
 <span class="c-prompt">$</span> cd TheYgent
+<span class="c-prompt">$</span> cp .env.example .env
 <span class="c-prompt">$</span> make up
 <span class="c-ok">✓</span> inference-plane   <span class="c-dim">:8081</span>
 <span class="c-ok">✓</span> control-plane     <span class="c-dim">:8080</span>   <span class="c-dim">postgres :5432</span>
@@ -1310,7 +1312,8 @@
             <details class="faq-item">
               <summary><h3>How do I self-host TheYgent?</h3></summary>
               <p>
-                Clone the repo and run <span class="pill mono">make up</span> for bare metal, or deploy the same
+                Clone the repo, copy <span class="pill mono">.env.example</span> to <span class="pill mono">.env</span>,
+                and run <span class="pill mono">make up</span> for bare metal, or deploy the same
                 services with Docker Compose or Kubernetes — it&rsquo;s one architecture in every topology.
                 There&rsquo;s no vendor account and no cloud dependency — the only account is the local admin you
                 create in the first-run wizard; the stack listens on localhost by default and stores everything in
