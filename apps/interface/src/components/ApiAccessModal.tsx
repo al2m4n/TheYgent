@@ -12,14 +12,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { IRDocument } from "@theygent/ir-types";
-import { Check, Copy } from "lucide-react";
-import { useEffect, useState } from "react";
 import { type AgentSummary, type TriggerRecord, api, controlPlaneUrl } from "../lib/api";
 import { isDurableOnly } from "../lib/durable";
 import { boundaryOf } from "../lib/modality";
+import { CopySnippet as Snippet } from "./CopySnippet";
 import { Modal, Spinner } from "./ui";
 import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
 
 /** Best-effort example input for a published agent, from its IR. Object-shaped when any node fed
  * directly by the input boundary drills `$in.<fed port>.<field>` (those fields ARE the run-input
@@ -92,34 +90,6 @@ function webhookCurl(base: string, triggerId: string): string {
     `  -H "X-TheYgent-Signature: sha256=$SIG" \\`,
     `  -d "$BODY"`,
   ].join("\n");
-}
-
-// A copy-able code block: the snippet in a scrollable <pre>, a Copy button that flips to a check
-// for a moment. The clipboard call is optional-chained — jsdom and non-secure contexts lack it.
-function Snippet({ label, code }: { label: string; code: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1400);
-    return () => clearTimeout(t);
-  }, [copied]);
-  return (
-    <div className="relative rounded-md border bg-muted/50">
-      <pre className="mono overflow-x-auto p-2.5 pr-10 text-[11px] leading-relaxed">{code}</pre>
-      <Button
-        size="icon-sm"
-        variant="ghost"
-        className="absolute top-1 right-1"
-        aria-label={`Copy ${label}`}
-        title={`Copy ${label}`}
-        onClick={() => {
-          void navigator.clipboard?.writeText(code).then(() => setCopied(true));
-        }}
-      >
-        {copied ? <Check /> : <Copy />}
-      </Button>
-    </div>
-  );
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

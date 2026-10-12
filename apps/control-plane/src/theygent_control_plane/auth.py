@@ -32,6 +32,7 @@ import hmac
 import logging
 import re
 import secrets as pysecrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from urllib.parse import urlencode
@@ -151,14 +152,26 @@ def _dummy_verify(password: str) -> None:
 SESSION_TOKEN_PREFIX = "tys_"
 #: API-key bearer prefix ("theygent key").
 API_KEY_TOKEN_PREFIX = "tyk_"
+#: A developer's AI-gateway key ("theygent gateway"): presented to a gateway, never to this API.
+GATEWAY_KEY_TOKEN_PREFIX = "tyg_"
+#: An AI gateway's own key ("theygent gateway service"), for the ``/gateway/*`` service surface.
+GATEWAY_SERVICE_TOKEN_PREFIX = "tygs_"
+
+#: What an ``api_key`` row opens. Only ``personal`` keys authenticate the management API.
+ApiKeyKind = Literal["personal", "gateway", "gateway_service"]
+_KIND_PREFIX: dict[str, str] = {
+    "personal": API_KEY_TOKEN_PREFIX,
+    "gateway": GATEWAY_KEY_TOKEN_PREFIX,
+    "gateway_service": GATEWAY_SERVICE_TOKEN_PREFIX,
+}
 
 
 def new_session_token() -> str:
     return SESSION_TOKEN_PREFIX + pysecrets.token_urlsafe(32)
 
 
-def new_api_key_token() -> str:
-    return API_KEY_TOKEN_PREFIX + pysecrets.token_urlsafe(32)
+def new_api_key_token(kind: ApiKeyKind = "personal") -> str:
+    return _KIND_PREFIX[kind] + pysecrets.token_urlsafe(32)
 
 
 def token_digest(token: str) -> str:
@@ -202,6 +215,14 @@ class ApiKey(BaseModel):
     created_at: datetime
     last_used_at: datetime | None = None
     revoked_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class GatewayServiceCaller:
+    """An AI gateway authenticated by its service key."""
+
+    key_id: str
+    owner_id: str
 
 
 class AuthProvider(BaseModel):
@@ -624,11 +645,18 @@ class AuthStore:
     # -- API keys --
 
     async def create_api_key(
-        self, session: AsyncSession, *, user_id: str, name: str, role: Role
+        self,
+        session: AsyncSession,
+        *,
+        user_id: str,
+        name: str,
+        role: Role,
+        kind: ApiKeyKind = "personal",
     ) -> tuple[str, ApiKey]:
         """Mint a programmatic bearer for ``user_id`` at ``role`` (caller enforces the ≤-owner
-        cap). Returns ``(raw token, public shape)`` — the raw token is shown once."""
-        token = new_api_key_token()
+        cap). Returns ``(raw token, public shape)`` — the raw token is shown once. ``kind`` picks
+        what it opens, and its token prefix says so."""
+        token = new_api_key_token(kind)
         row = ApiKeyRow(
             id=_new_id("key"),
             user_id=user_id,
@@ -639,22 +667,31 @@ class AuthStore:
             created_at=now(),
             last_used_at=None,
             revoked_at=None,
+            kind=kind,
         )
         session.add(row)
         await session.flush()
         return token, _to_api_key(row)
 
-    async def list_api_keys(self, session: AsyncSession, user_id: str) -> list[ApiKey]:
+    async def list_api_keys(
+        self, session: AsyncSession, user_id: str | None, *, kind: ApiKeyKind = "personal"
+    ) -> list[ApiKey]:
+        """``user_id``'s keys of ``kind``, newest first; every account's when ``user_id`` is
+        ``None``."""
+        stmt = select(ApiKeyRow).where(ApiKeyRow.kind == kind)
+        if user_id is not None:
+            stmt = stmt.where(ApiKeyRow.user_id == user_id)
         result = await session.execute(
-            select(ApiKeyRow)
-            .where(ApiKeyRow.user_id == user_id)
-            .order_by(ApiKeyRow.created_at.desc(), ApiKeyRow.id.desc())
+            stmt.order_by(ApiKeyRow.created_at.desc(), ApiKeyRow.id.desc())
         )
         return [_to_api_key(row) for row in result.scalars()]
 
-    async def get_api_key(self, session: AsyncSession, key_id: str) -> ApiKey | None:
+    async def get_api_key(
+        self, session: AsyncSession, key_id: str, *, kind: ApiKeyKind = "personal"
+    ) -> ApiKey | None:
+        """A key of ``kind``; a key of another kind reads as nonexistent."""
         row = await session.get(ApiKeyRow, key_id)
-        return _to_api_key(row) if row is not None else None
+        return _to_api_key(row) if row is not None and row.kind == kind else None
 
     async def revoke_api_key(self, session: AsyncSession, key_id: str) -> bool:
         """Soft-revoke (the row stays as an audit breadcrumb). Idempotent."""
@@ -669,11 +706,12 @@ class AuthStore:
     async def resolve_api_key(self, session: AsyncSession, token: str) -> tuple[User, Role] | None:
         """Resolve a ``tyk_…`` bearer to ``(owner, effective role)`` — the meet of the key's
         role and the owner's CURRENT role, so a demotion needs no key rotation to bite.
-        ``None`` for unknown/revoked keys and disabled owners."""
+        ``None`` for unknown/revoked keys, disabled owners, and keys of any kind but
+        ``personal``: an AI gateway's keys never open the management API."""
         result = await session.execute(
             select(ApiKeyRow, UserAccountRow)
             .join(UserAccountRow, UserAccountRow.id == ApiKeyRow.user_id)
-            .where(ApiKeyRow.token_hash == token_digest(token))
+            .where(ApiKeyRow.token_hash == token_digest(token), ApiKeyRow.kind == "personal")
         )
         pair = result.first()
         if pair is None:
@@ -686,6 +724,34 @@ class AuthStore:
             key_row.last_used_at = ts
             await session.flush()
         return _to_user(user_row), narrower_role(key_row.role, user_row.role)
+
+    async def resolve_gateway_service_key(
+        self, session: AsyncSession, token: str
+    ) -> GatewayServiceCaller | None:
+        """Resolve an AI gateway's ``tygs_…`` service key. ``None`` unless the key is of kind
+        ``gateway_service``, live, and held by an enabled account whose effective role (the meet
+        with the key's) is still admin — a demoted owner's gateways stop with them."""
+        result = await session.execute(
+            select(ApiKeyRow, UserAccountRow)
+            .join(UserAccountRow, UserAccountRow.id == ApiKeyRow.user_id)
+            .where(
+                ApiKeyRow.token_hash == token_digest(token),
+                ApiKeyRow.kind == "gateway_service",
+            )
+        )
+        pair = result.first()
+        if pair is None:
+            return None
+        key_row, user_row = pair
+        if key_row.revoked_at is not None or user_row.disabled:
+            return None
+        if narrower_role(key_row.role, user_row.role) != "admin":
+            return None
+        ts = now()
+        if key_row.last_used_at is None or ts - key_row.last_used_at > _TOUCH_INTERVAL:
+            key_row.last_used_at = ts
+            await session.flush()
+        return GatewayServiceCaller(key_id=key_row.id, owner_id=user_row.id)
 
     # -- sign-in providers --
 

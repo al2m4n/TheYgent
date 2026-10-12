@@ -5,9 +5,10 @@
 #   kubectl -n theygent port-forward svc/interface 5174:80 &
 #   kubectl -n theygent port-forward svc/control-plane 8080:8080 &
 #   kubectl -n theygent port-forward svc/inference-plane 8081:8081 &
+#   kubectl -n theygent port-forward svc/ai-gateway 8082:8082 &
 # A real deployment instead rebuilds the image with VITE_CONTROL_PLANE_URL /
-# VITE_INFERENCE_URL build args pointing at public URLs, and fronts these Services with an
-# Ingress.
+# VITE_INFERENCE_URL / VITE_AI_GATEWAY_URL build args pointing at public URLs, and fronts these
+# Services with an Ingress.
 apiVersion: v1
 kind: Service
 metadata:

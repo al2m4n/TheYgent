@@ -1,0 +1,66 @@
+name: AI gateway prices
+
+# Keeps the AI gateway's packaged price list (apps/ai-gateway/src/theygent_ai_gateway/pricing.json)
+# in step with Anthropic's published prices. Every week, and on demand, it reads the pricing page;
+# when a price changed it opens (or refreshes) one pull request with the new list, so a change is
+# reviewed before it reaches anyone's figures. A page it cannot read fails the run loudly, naming
+# what it missed: the price list changed shape and the parser needs a look.
+#
+# Opening the pull request needs "Allow GitHub Actions to create and approve pull requests"
+# (Settings → Actions → General → Workflow permissions); without it the last step fails and says
+# so, and the new list is still in the run's log.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  PRICE_FILE: apps/ai-gateway/src/theygent_ai_gateway/pricing.json
+  BRANCH: automation/ai-gateway-prices
+
+jobs:
+  update:
+    name: read the published prices
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+      - name: Update the price list
+        run: uv run --locked --package theygent-ai-gateway python apps/ai-gateway/scripts/update_pricing.py
+      - name: Open a pull request when a price changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- "$PRICE_FILE"; then
+            echo "Prices unchanged."
+            exit 0
+          fi
+          git diff -- "$PRICE_FILE"
+          stamp=$(jq -r .updated_at "$PRICE_FILE")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git add "$PRICE_FILE"
+          git commit -m "chore(ai-gateway): Anthropic list prices as of $stamp"
+          git push --force origin "$BRANCH"
+          if [ "$(gh pr view "$BRANCH" --json state -q .state 2>/dev/null)" = "OPEN" ]; then
+            echo "Refreshed the open pull request."
+            exit 0
+          fi
+          gh pr create --base main --head "$BRANCH" \
+            --title "AI gateway: Anthropic list prices as of $stamp" \
+            --body "The weekly price check found published prices that differ from the gateway's packaged list. Review the diff against https://platform.claude.com/docs/en/about-claude/pricing before merging: these prices become every gateway's cost and savings figures. Contracted rates stay in each gateway config's pricing_overrides." \
+            || { echo "::error::Could not open the pull request: allow GitHub Actions to create pull requests (Settings → Actions → General)."; exit 1; }

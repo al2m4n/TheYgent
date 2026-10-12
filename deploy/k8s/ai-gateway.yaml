@@ -1,0 +1,175 @@
+# The AI gateway between Claude Code and its models, in team mode (personal mode is loopback-only
+# and never runs in a cluster). It starts once its Secret exists — until then the pod waits in
+# CreateContainerConfigError. Mint a gateway service key as an admin (AI Gateway → Settings →
+# Service keys), then:
+#   kubectl -n theygent create secret generic theygent-ai-gateway \
+#     --from-literal=THEYGENT_AI_GATEWAY_SERVICE_KEY=tygs_… \
+#     [--from-literal=THEYGENT_AI_GATEWAY_ORG_API_KEY=sk-ant-…]
+# The org key is optional (only developers billed to the organization need it). Changing either
+# value takes `kubectl -n theygent rollout restart statefulset/ai-gateway`.
+#
+# A StatefulSet, not a Deployment: each replica keeps its own volume (the request-log spool of
+# records not yet exported, the last known config and key set) across restarts and rollouts,
+# and a stable name, so it stays one instance on the AI Gateway page (its id is gw-<pod name>).
+#
+# Developers reach it through the ai-gateway Service: port-forward in dev
+# (`kubectl -n theygent port-forward svc/ai-gateway 8082:8082`); a real deployment fronts it with
+# an Ingress or a LoadBalancer, and sets THEYGENT_AI_GATEWAY_ADMIN_ORIGINS to the interface's
+# public origin.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-gateway
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: ai-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: ai-gateway
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+---
+# The headless Service that governs the StatefulSet's pod identities.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-gateway-pods
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: ai-gateway
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ai-gateway
+  ports:
+    - name: http
+      port: 8082
+      targetPort: 8082
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ai-gateway
+  namespace: theygent
+  labels:
+    app.kubernetes.io/name: ai-gateway
+spec:
+  serviceName: ai-gateway-pods
+  replicas: 1
+  # Replicas are independent proxies: start and stop them together, not one by one.
+  podManagementPolicy: Parallel
+  # A scaled-down replica's volume stays: records it had not exported yet go out when the
+  # replica comes back.
+  persistentVolumeClaimRetentionPolicy:
+    whenScaled: Retain
+    whenDeleted: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ai-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ai-gateway
+    spec:
+      # Matches the image's numeric uid/gid; fsGroup makes fresh PVCs writable (see
+      # control-plane.yaml for the full rationale).
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      # A Claude Code turn can stream for minutes; a stopping replica takes no new requests and
+      # finishes the open streams first.
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: ai-gateway
+          image: theygent/ai-gateway:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8082
+          env:
+            - name: THEYGENT_CONTROL_PLANE_URL
+              value: http://control-plane:8080
+            # Router mode's local route; the same address every service reads, so repointing
+            # the inference plane in the ConfigMap moves the gateway with it.
+            - name: THEYGENT_INFERENCE_PLANE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: theygent-config
+                  key: THEYGENT_INFERENCE_PLANE_URL
+            # Replicas would each keep their own copy of a key set from the AI Gateway page;
+            # the org key comes from the Secret only.
+            - name: THEYGENT_AI_GATEWAY_STORE_ORG_KEY
+              value: "0"
+            - name: THEYGENT_AI_GATEWAY_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-ai-gateway
+                  key: THEYGENT_AI_GATEWAY_SERVICE_KEY
+            - name: THEYGENT_AI_GATEWAY_ORG_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: theygent-ai-gateway
+                  key: THEYGENT_AI_GATEWAY_ORG_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          lifecycle:
+            # Let the Service drop this pod before it stops accepting connections, so no new
+            # request lands on a closing replica.
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          # /readyz answers 503 until the replica has its developers' keys: a replica that
+          # cannot tell developers apart takes no traffic.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 10
+            failureThreshold: 12
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai-gateway
+  namespace: theygent
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: ai-gateway
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

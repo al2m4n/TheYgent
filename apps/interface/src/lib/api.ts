@@ -32,16 +32,24 @@ export const INFERENCE_URL =
   (import.meta.env.VITE_INFERENCE_URL as string | undefined)?.replace(/\/$/, "") ??
   "http://localhost:8081";
 
+// The AI gateway Claude Code is pointed at. The interface reaches its admin surface directly (a
+// separate trust domain: the org key is written straight to it, never through the control plane),
+// and setup snippets name it as ANTHROPIC_BASE_URL.
+export const AI_GATEWAY_URL =
+  (import.meta.env.VITE_AI_GATEWAY_URL as string | undefined)?.replace(/\/$/, "") ??
+  "http://localhost:8082";
+
 // ── browser-local endpoint overrides ─────────────────────────────────────────
 // One SPA build can point at another install: the Settings page stores per-plane base-URL
 // overrides in localStorage ("this browser only" — never a server-side setting). Resolution per
 // call: override > VITE_* env value > localhost default. Guarded for non-DOM (test) environments.
 
-export type Plane = "control" | "inference";
+export type Plane = "control" | "inference" | "gateway";
 
 const OVERRIDE_KEYS: Record<Plane, string> = {
   control: "theygent.url.control",
   inference: "theygent.url.inference",
+  gateway: "theygent.url.gateway",
 };
 
 function readOverride(plane: Plane): string | null {
@@ -57,7 +65,11 @@ function readOverride(plane: Plane): string | null {
 
 /** The stored overrides (null = none). For the Settings editor's inputs. */
 export function getEndpointOverrides(): Record<Plane, string | null> {
-  return { control: readOverride("control"), inference: readOverride("inference") };
+  return {
+    control: readOverride("control"),
+    inference: readOverride("inference"),
+    gateway: readOverride("gateway"),
+  };
 }
 
 /** Set (or clear, with null/empty) one plane's browser-local base-URL override. */
@@ -79,6 +91,11 @@ export function controlPlaneUrl(): string {
 /** The EFFECTIVE inference-plane base URL for a call being made right now. */
 export function inferenceUrl(): string {
   return readOverride("inference") ?? INFERENCE_URL;
+}
+
+/** The EFFECTIVE AI gateway base URL for a call (or a setup snippet) being made right now. */
+export function gatewayUrl(): string {
+  return readOverride("gateway") ?? AI_GATEWAY_URL;
 }
 
 // ── the session bearer ───────────────────────────────────────────────────────
@@ -783,7 +800,7 @@ export type SettingType =
   | "list[registry]"
   | "secret";
 export type SettingSource = "env" | "stored" | "default";
-export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth";
+export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth" | "ai_gateway";
 
 /** The read shape of a `secret` value: presence + non-secret names only. */
 export interface SensitiveValue {
@@ -1071,6 +1088,418 @@ export interface InferenceDiagnostics {
   hfHome: string;
   persistent: boolean;
   binaries: DiagnosticsBinary[];
+}
+
+// ── AI gateway (control-plane /gateway/*, snake_case) ────────────────────────
+// The gateway proxies coding agents' model traffic; the control plane holds its config versions,
+// the heartbeats of its instances, and the metadata it records (never prompt content).
+
+export type GatewayMode = "passthrough" | "observer" | "router";
+export type FingerprintStatus =
+  | "unreviewed"
+  | "observe_only"
+  | "allow_cheaper"
+  | "allow_local"
+  | "never_route";
+
+export interface GatewayModelRates {
+  input: number;
+  output: number;
+  cache_write_5m: number;
+  cache_write_1h: number;
+  cache_read: number;
+}
+
+/** One immutable config version, as gateways receive it. */
+export interface GatewayConfig {
+  version: number;
+  mode: GatewayMode;
+  policy: {
+    subagent_target: string | null;
+    main_target: string | null;
+    local_target: string | null;
+    warm_switch_margin: number;
+    /** Shadow runs on the local model: free, on by default. */
+    shadow_local: boolean;
+    /** Shadow runs on a cloud target: real spend, off by default, capped per day per gateway. */
+    shadow_cloud: boolean;
+    shadow_cloud_daily_usd: number;
+    /** Local models the gateway may route to, small to large. */
+    local_models: GatewayLocalModel[];
+    /** The local dials, per kind of request. */
+    local_routing: {
+      side_requests: GatewayLocalShare;
+      subagents: GatewayLocalShare;
+      main: GatewayLocalShare;
+    };
+  };
+  fingerprints: { fingerprint: string; status: FingerprintStatus; label: string | null }[];
+  pricing_overrides: Record<string, GatewayModelRates>;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+/** A model on the inference plane the gateway may route to, and what it can take. */
+export interface GatewayLocalModel {
+  model: string;
+  context_tokens: number;
+  /** The most it writes in an agent turn, in tokens. */
+  max_output_tokens: number;
+  /** Follows tool calls well enough for Claude Code's agent turns. */
+  tools: boolean;
+  images: boolean;
+  /** What running it costs, USD per million tokens; null: not priced (its answers cost nothing). */
+  rates: { input: number; output: number } | null;
+}
+
+/** How much of one kind of request goes local: a share of conversations, and the model. */
+export interface GatewayLocalShare {
+  share: number;
+  /** A further share, just above `share`, that Anthropic still answers and the local model is
+   *  tried on afterwards: the evidence for raising `share`. */
+  trial: number;
+  /** A listed local model, or null for the smallest that fits. */
+  model: string | null;
+  /** Subagents only: the eligible agent types (empty: every type). */
+  agent_types: string[];
+}
+
+/** A developer's gateway key. The token itself is returned once, at creation. Gateway keys carry
+ *  no role: they open a gateway, never this API. */
+export interface GatewayKey {
+  id: string;
+  user_id: string;
+  name: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** How a developer's gateway traffic is billed: their own claude.ai login or API key
+ *  (``passthrough``), or the organization's key, which the gateway swaps in (``org_key``). */
+export type CredentialProfile = "passthrough" | "org_key";
+
+export interface GatewayDeveloper {
+  user_id: string;
+  username: string;
+  display_name: string;
+  disabled: boolean;
+  credential_profile: CredentialProfile;
+  live_gateway_keys: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
+/** What records add up to (the control plane's sums of the shared definition). On a subscription
+ *  the dollar figures are API-equivalent value, not a bill. */
+export interface GatewayTotals {
+  calls: number;
+  errors: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_5m_tokens: number;
+  cache_write_1h_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+  /** Calls on a model with no known price: tokens counted, dollars not. */
+  unpriced_calls: number;
+  /** What it would have cost without routing: the actual cost, unless an applied route moved it. */
+  baseline_usd: number;
+  /** What it costs with every decision applied (in router mode, applied ones cost what ran). */
+  with_routing_usd: number;
+  /** Baseline minus with-routing: what routing would save (observer) or saved (router). */
+  saving_usd: number;
+  routed_calls: number;
+  /** Routes the gateway applied: calls a cheaper model actually served. */
+  applied_calls: number;
+  routed_tokens: number;
+  /** API calls a local model would have answered. */
+  routed_local_calls: number;
+  routed_local_tokens: number;
+  /** Shadow runs, and those whose answer the route could have used. */
+  shadow_calls: number;
+  shadow_answered_calls: number;
+  /** What shadow runs cost: calibration spend, outside ``cost_usd``. */
+  shadow_cost_usd: number;
+  /** Output the targets wrote in usable shadows, and the requested models' for the same
+   *  requests: their ratio calibrates the counterfactuals' assumption of equal output. */
+  shadow_output_tokens: number;
+  shadowed_output_tokens: number;
+  /** Agent-turn shadows compared with the real answer, and those with the same next action. */
+  shadow_compared_calls: number;
+  shadow_agreed_calls: number;
+}
+
+/** How a shadow run ended (theygent_ir.gateway.ShadowOutcome). */
+export type GatewayShadowOutcome = "answered" | "unusable" | "failed" | "untranslatable";
+
+/** A copy of a request sent to its decision's target after the exchange, to measure it. */
+export interface GatewayShadowRun {
+  target: { kind: "anthropic" | "local"; model: string };
+  outcome: GatewayShadowOutcome;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_5m_tokens: number;
+    cache_write_1h_tokens: number;
+  };
+  cost_usd: number | null;
+  total_ms: number | null;
+  /** An agent turn's verdict: the same next action as the real answer. */
+  agreed: boolean | null;
+  first_output_ms: number | null;
+  /** A local trial: the decision named another target, or none. Absent on shadows recorded
+   *  before trials existed. */
+  trial?: boolean;
+}
+
+export type GatewayDimension =
+  | "class"
+  | "client"
+  | "session"
+  | "model"
+  | "served-model"
+  | "developer"
+  | "decision"
+  | "reason"
+  | "shadow-model"
+  | "day";
+
+export type GatewaySetupWarningCode =
+  | "tool_search_off"
+  | "hint_headers_off"
+  | "unrecognized_request_class"
+  | "unpriced_models";
+
+export interface GatewaySeatUse {
+  developer_id: string | null;
+  latest_at: string;
+  five_hour_utilization: number | null;
+  seven_day_utilization: number | null;
+  five_hour_resets_at: string | null;
+  seven_day_resets_at: string | null;
+  /** How much of each plan window was used within the report (never across a reset). */
+  five_hour_used: number;
+  seven_day_used: number;
+}
+
+export interface GatewayReport {
+  since: string;
+  until: string;
+  developer_id: string | null;
+  first: string | null;
+  last: string | null;
+  total: GatewayTotals;
+  /** Per dimension, rows ordered by spend, most first. */
+  groups: Partial<Record<GatewayDimension, ({ key: string } & GatewayTotals)[]>>;
+  pricing_versions: string[];
+  /** Some calls were served by a model other than the one Claude Code requested. */
+  served_differs: boolean;
+  warnings: { code: GatewaySetupWarningCode; calls: number; values: string[] }[];
+  /** Per developer; empty where individuals may not be seen. */
+  seats: GatewaySeatUse[];
+  /** Days before this one were archived: summed from daily totals, without warnings, seats or
+   *  prices. ``null``: every day in detail. */
+  summarized_before: string | null;
+}
+
+/** One archived day of AI gateway request records. */
+export interface GatewayArchiveDay {
+  day: string;
+  records: number;
+  chunks: number;
+  bytes: number;
+}
+
+export interface GatewayArchive {
+  /** Request rows before this UTC day are archived. */
+  archived_before: string | null;
+  days: GatewayArchiveDay[];
+}
+
+/** Why the routing policy decided what it did — a closed vocabulary (theygent_ir.gateway). */
+export type GatewayReasonCode =
+  | "mode_passthrough"
+  | "request_refused"
+  | "policy_error"
+  | "not_a_message_request"
+  | "safety_check"
+  | "unlabeled_request"
+  | "unrecognized_request_class"
+  | "compaction"
+  | "quota_check"
+  | "shares_main_prefix"
+  | "fingerprint_unreviewed"
+  | "fingerprint_observe_only"
+  | "fingerprint_never_route"
+  | "fingerprint_allow_cheaper"
+  | "local_candidate"
+  | "subagent_at_spawn"
+  | "mid_conversation"
+  | "cold_cache_boundary"
+  | "warm_cache_switch_cost"
+  | "target_rejects_request_shape"
+  | "context_exceeds_target"
+  | "already_on_target"
+  | "no_target_configured"
+  | "follows_warm_cache"
+  | "warm_switch_pays"
+  | "target_refused"
+  | "pinned_after_refusal"
+  | "target_not_cheaper"
+  | "local_share"
+  | "no_local_model_fits"
+  | "outgrew_local_model";
+
+export interface GatewaySessionSummary {
+  session_id: string;
+  developer_id: string | null;
+  client: string | null;
+  first_at: string;
+  last_at: string;
+  totals: GatewayTotals;
+}
+
+/** One exchange in a session, with what the policy would have done (never applied in observer
+ *  mode). */
+export interface GatewayTimelineEntry {
+  id: string;
+  started_at: string;
+  request_class: string;
+  agent_id: string | null;
+  agent_type: string | null;
+  prompt_id: string | null;
+  endpoint: string;
+  status: number | null;
+  outcome: string;
+  error_type: string | null;
+  requested_model: string | null;
+  served_model: string | null;
+  stop_reason: string | null;
+  compaction: string | null;
+  shares_main_prefix: boolean | null;
+  usage: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_5m_tokens: number;
+    cache_write_1h_tokens: number;
+  };
+  cost_usd: number | null;
+  /** What it would have cost on the requested model, where an applied route served it elsewhere. */
+  baseline_usd: number | null;
+  timing: { headers_ms?: number | null; first_byte_ms?: number | null; total_ms?: number | null };
+  decision: {
+    action: "stay" | "route";
+    target: { kind: "anthropic" | "local"; model: string } | null;
+    reasons: GatewayReasonCode[];
+    counterfactual_usd: number | null;
+    applied: boolean;
+  };
+  /** A copy sent to the decision's target after the exchange, where one ran. */
+  shadow: GatewayShadowRun | null;
+}
+
+export interface GatewaySessionDetail {
+  session_id: string;
+  developer_id: string | null;
+  totals: GatewayTotals;
+  requests: GatewayTimelineEntry[];
+  /** More requests follow: ask again with ``after`` set to the last one's id. */
+  truncated: boolean;
+  /** Requests on archived days: in the totals, not in the timeline. */
+  archived_requests: number;
+}
+
+export type GatewayKnownKind = "quota_check" | "main_prefix_side_request" | "session_title";
+
+/** One kind of auxiliary request: its review status and label (rules in the config) and what
+ *  was observed of it. The suggestion comes from its shape; the status is an admin's choice. */
+export interface GatewayFingerprintEntry {
+  fingerprint: string;
+  status: FingerprintStatus;
+  label: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  request_count: number;
+  client_versions: string[];
+  shape: Record<string, unknown> | null;
+  shares_main_prefix: boolean | null;
+  known_kind: GatewayKnownKind | null;
+  suggested_status: FingerprintStatus | null;
+}
+
+/** What an admin writes; the server assigns the version, time and author. */
+export interface GatewayConfigDraft {
+  mode: GatewayMode;
+  policy: GatewayConfig["policy"];
+  fingerprints: GatewayConfig["fingerprints"];
+  pricing_overrides: Record<string, GatewayModelRates>;
+}
+
+export interface GatewayConfigVersion {
+  version: number;
+  mode: GatewayMode;
+  created_at: string;
+  created_by: string | null;
+}
+
+/** The gateway's own view of its credentials (its admin surface, camelCase): whether each is set
+ *  and where it came from — never a value. */
+export interface GatewayCredentials {
+  orgApiKey: {
+    set: boolean;
+    source: "env" | "stored" | null;
+    updatedAt: string | null;
+    writable: boolean;
+    /** Why this page may not write it: the deployment set it, personal mode uses none, or a
+     *  replicated gateway takes it from its deployment only. Null when writable. */
+    readOnly: "env" | "personal_mode" | "deployment_only" | null;
+  };
+  serviceKey: { set: boolean };
+}
+
+export interface GatewayAdminStatus {
+  gatewayId: string;
+  softwareVersion: string;
+  authMode: "personal" | "team";
+  mode: GatewayMode;
+  configVersion: number | null;
+  startedAt: string | null;
+  upstreamUrl: string;
+  controlPlaneUrl: string | null;
+  upstreamReachable: boolean | null;
+  keySet: { loaded: boolean; version: number | null } | null;
+  requestLog: {
+    recorded: number;
+    dropped: number;
+    exported: number;
+    backlog: number;
+    lastExportError: string | null;
+  };
+  credentials: GatewayCredentials;
+}
+
+/** A gateway instance as its latest heartbeat described it. */
+export interface GatewayInstance {
+  gateway_id: string;
+  software_version: string;
+  mode: GatewayMode;
+  config_version: number | null;
+  /** Whether it runs the latest saved config. */
+  config_current: boolean;
+  key_set_version: number | null;
+  started_at: string;
+  /** Records waiting in its local log to be exported. */
+  spool_backlog: number;
+  upstream_reachable: boolean | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  online: boolean;
+  service_key_id: string | null;
 }
 
 export const api = {
@@ -1959,6 +2388,156 @@ export const api = {
     request<void>(controlPlaneUrl(), `/auth/providers/${encodeURIComponent(providerId)}`, {
       method: "DELETE",
     }),
+  // ── control plane: AI gateway (the AI Gateway page) ─────────────────────────
+  /** The latest gateway config, or null before any has been saved (gateways then forward
+   *  without recording). */
+  getGatewayConfig: async (): Promise<GatewayConfig | null> => {
+    try {
+      return await request<GatewayConfig>(controlPlaneUrl(), "/gateway/config");
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404 && e.code === "gateway_config_not_found") {
+        return null;
+      }
+      throw e;
+    }
+  },
+  listGatewayInstances: () =>
+    request<{ instances: GatewayInstance[] }>(controlPlaneUrl(), "/gateway/instances").then(
+      (r) => r.instances,
+    ),
+  /** Totals and groupings for a time range. ``scope`` "mine" is the caller's own records; "org"
+   *  is everyone's (totals and non-identifying groupings below admin). */
+  getGatewayArchive: () => request<GatewayArchive>(controlPlaneUrl(), "/gateway/archive"),
+  downloadGatewayArchive: async (day: string): Promise<Blob> => {
+    const res = await fetch(`${controlPlaneUrl()}/gateway/archive/${encodeURIComponent(day)}`, {
+      headers: authHeaders(),
+    });
+    if (!res.ok) throw await toError(res);
+    return res.blob();
+  },
+  getGatewayReport: (params: {
+    since: string;
+    until?: string;
+    by: GatewayDimension[];
+    scope?: "mine" | "org";
+    developerId?: string;
+  }) => {
+    const q = new URLSearchParams({ since: params.since, by: params.by.join(",") });
+    if (params.until) q.set("until", params.until);
+    if (params.scope) q.set("scope", params.scope);
+    if (params.developerId) q.set("developer_id", params.developerId);
+    return request<GatewayReport>(controlPlaneUrl(), `/gateway/report?${q.toString()}`);
+  },
+  /** Sessions active in a range, the most recently active first; ``before`` pages back. */
+  listGatewaySessions: (params: {
+    since: string;
+    until?: string;
+    before?: string;
+    limit?: number;
+    scope?: "mine" | "org";
+  }) => {
+    const q = new URLSearchParams({ since: params.since });
+    if (params.until) q.set("until", params.until);
+    if (params.before) q.set("before", params.before);
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.scope) q.set("scope", params.scope);
+    return request<{ sessions: GatewaySessionSummary[] }>(
+      controlPlaneUrl(),
+      `/gateway/sessions?${q.toString()}`,
+    ).then((r) => r.sessions);
+  },
+  /** A session's requests in the order they started; ``after`` continues past a request id. */
+  getGatewaySession: (sessionId: string, params: { after?: string; limit?: number } = {}) => {
+    const q = new URLSearchParams();
+    if (params.after) q.set("after", params.after);
+    if (params.limit) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return request<GatewaySessionDetail>(
+      controlPlaneUrl(),
+      `/gateway/sessions/${encodeURIComponent(sessionId)}${qs ? `?${qs}` : ""}`,
+    );
+  },
+  // The config: immutable versions; ``ifMatch`` (the version the edit started from) refuses a
+  // write on top of a version someone else replaced (412 config_version_conflict).
+  putGatewayConfig: (draft: GatewayConfigDraft, ifMatch?: number) =>
+    request<GatewayConfig>(controlPlaneUrl(), "/gateway/config", {
+      method: "PUT",
+      body: JSON.stringify(draft),
+      headers: ifMatch !== undefined ? { "If-Match": `"${ifMatch}"` } : {},
+    }),
+  listGatewayConfigVersions: () =>
+    request<{ versions: GatewayConfigVersion[] }>(
+      controlPlaneUrl(),
+      "/gateway/config/versions",
+    ).then((r) => r.versions),
+  getGatewayConfigVersion: (version: number) =>
+    request<GatewayConfig>(controlPlaneUrl(), `/gateway/config/versions/${version}`),
+  listGatewayFingerprints: () =>
+    request<{ config_version: number | null; fingerprints: GatewayFingerprintEntry[] }>(
+      controlPlaneUrl(),
+      "/gateway/fingerprints",
+    ),
+  /** Review one kind: saves a new config version changing only its rule. */
+  setGatewayFingerprintRule: (
+    fingerprint: string,
+    rule: { status: FingerprintStatus; label: string | null },
+    ifMatch?: number | null,
+  ) =>
+    request<{ config_version: number; fingerprint: GatewayFingerprintEntry }>(
+      controlPlaneUrl(),
+      `/gateway/fingerprints/${encodeURIComponent(fingerprint)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(rule.label ? rule : { status: rule.status }),
+        headers: ifMatch != null ? { "If-Match": `"${ifMatch}"` } : {},
+      },
+    ),
+  /** The caller's billing profile and live key count. */
+  getGatewayMe: () => request<GatewayDeveloper>(controlPlaneUrl(), "/gateway/me"),
+  /** Every account with its billing profile (admins only). */
+  listGatewayDevelopers: () =>
+    request<{ developers: GatewayDeveloper[] }>(controlPlaneUrl(), "/gateway/developers").then(
+      (r) => r.developers,
+    ),
+  /** Who pays for a developer's traffic (admins only); gateways apply it within one key sync. */
+  setGatewayCredentialProfile: (userId: string, profile: CredentialProfile) =>
+    request<{ user_id: string; credential_profile: CredentialProfile }>(
+      controlPlaneUrl(),
+      `/gateway/developers/${encodeURIComponent(userId)}`,
+      { method: "PUT", body: JSON.stringify({ credential_profile: profile }) },
+    ),
+  /** The caller's gateway keys; every developer's with ``all`` (admins only). */
+  listGatewayKeys: (all = false) =>
+    request<{ gateway_keys: GatewayKey[] }>(
+      controlPlaneUrl(),
+      all ? "/gateway/keys?all=true" : "/gateway/keys",
+    ).then((r) => r.gateway_keys),
+  /** Mint a key for the caller. The raw token is in THIS response only. */
+  createGatewayKey: (name: string) =>
+    request<{ token: string; gateway_key: GatewayKey }>(controlPlaneUrl(), "/gateway/keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeGatewayKey: (keyId: string) =>
+    request<void>(controlPlaneUrl(), `/gateway/keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
+  // A gateway's own credential towards this API (admins): key sync, config, records. Same shape
+  // as a developer's key; the raw token is in the create response only.
+  listGatewayServiceKeys: () =>
+    request<{ service_keys: GatewayKey[] }>(controlPlaneUrl(), "/gateway/service-keys").then(
+      (r) => r.service_keys,
+    ),
+  createGatewayServiceKey: (name: string) =>
+    request<{ token: string; service_key: GatewayKey }>(
+      controlPlaneUrl(),
+      "/gateway/service-keys",
+      { method: "POST", body: JSON.stringify({ name }) },
+    ),
+  revokeGatewayServiceKey: (keyId: string) =>
+    request<void>(controlPlaneUrl(), `/gateway/service-keys/${encodeURIComponent(keyId)}`, {
+      method: "DELETE",
+    }),
 };
 
 /** Where the control plane should send the browser to begin an OIDC sign-in — a NAVIGATION
@@ -2039,3 +2618,21 @@ export function flushDraftOnUnload(draftId: string, ir: IRDocument): void {
     /* unload is already in progress — nothing to surface */
   });
 }
+
+// ── the AI gateway's own admin surface (camelCase) ──────────────────────────
+// Reached DIRECTLY at the gateway's address, never through the control plane: the organization's
+// Anthropic key is written to the gateway here and nowhere else. The gateway checks the caller's
+// TheYgent bearer with the control plane and admits admins only.
+export const gatewayAdmin = {
+  status: () => request<GatewayAdminStatus>(gatewayUrl(), "/admin/status"),
+  credentials: () => request<GatewayCredentials>(gatewayUrl(), "/admin/credentials"),
+  setOrgKey: (apiKey: string) =>
+    request<GatewayCredentials>(gatewayUrl(), "/admin/credentials/org-api-key", {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  clearOrgKey: () =>
+    request<GatewayCredentials>(gatewayUrl(), "/admin/credentials/org-api-key", {
+      method: "DELETE",
+    }),
+};

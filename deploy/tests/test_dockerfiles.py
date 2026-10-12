@@ -87,7 +87,7 @@ def test_base_images_are_pinned(name: str) -> None:
         )
 
 
-PYTHON_SERVICES = ["control-plane", "inference-plane", "worker"]
+PYTHON_SERVICES = ["control-plane", "inference-plane", "worker", "ai-gateway"]
 
 
 @pytest.mark.parametrize("name", PYTHON_SERVICES)
@@ -132,9 +132,11 @@ def test_cmd_is_a_declared_console_script(name: str) -> None:
     """The image CMD must be a console script the package actually declares."""
     cmd_line = next(ln for ln in _lines(name) if ln.startswith("CMD"))
     script = re.findall(r'"([^"]+)"', cmd_line)[0]
-    pkg_dir = {"control-plane": "apps/control-plane", "worker": "apps/worker"}.get(
-        name, "apps/inference-plane"
-    )
+    pkg_dir = {
+        "control-plane": "apps/control-plane",
+        "worker": "apps/worker",
+        "ai-gateway": "apps/ai-gateway",
+    }.get(name, "apps/inference-plane")
     pyproject = tomllib.loads((REPO / pkg_dir / "pyproject.toml").read_text())
     assert script in pyproject["project"]["scripts"], (
         f"{name}: CMD {script!r} is not in [project.scripts] of {pkg_dir}/pyproject.toml"
@@ -143,7 +145,12 @@ def test_cmd_is_a_declared_console_script(name: str) -> None:
 
 def test_exposed_ports_match_app_defaults() -> None:
     """EXPOSE must track the ports the apps default to (and compose/k8s reuse)."""
-    expected = {"control-plane": "8080", "inference-plane": "8081", "interface": "80"}
+    expected = {
+        "control-plane": "8080",
+        "inference-plane": "8081",
+        "interface": "80",
+        "ai-gateway": "8082",
+    }
     for name, port in expected.items():
         exposes = [ln for ln in _lines(name) if ln.startswith("EXPOSE")]
         assert exposes and port in exposes[0].split(), (
@@ -190,6 +197,28 @@ def test_mcp_stdio_launchers_ship_in_the_images(name: str) -> None:
     # Stdio servers spawn with a SCRUBBED environment (only HOME/PATH/… pass through), so
     # launcher caches derive from HOME — it must sit on the writable /data volume.
     assert "HOME=/data/home" in text, f"{name}: HOME must live on the /data volume"
+
+
+def test_the_ai_gateway_image_serves_team_mode_beyond_loopback() -> None:
+    """A published container port is never loopback, and personal mode (no gateway keys) must
+    stay on loopback — so the image runs team mode only, and keeps its state on /data, the
+    volume compose and k8s mount (the spool of records not yet exported lives there)."""
+    text = "\n".join(_lines("ai-gateway"))
+    assert "THEYGENT_AI_GATEWAY_AUTH_MODE=team" in text
+    assert "THEYGENT_AI_GATEWAY_HOST=0.0.0.0" in text
+    assert "THEYGENT_AI_GATEWAY_STATE_DIR=/data" in text
+    assert "useradd -r -u 10001" in text and "USER theygent" in text
+
+
+def test_interface_bakes_every_browser_facing_url() -> None:
+    """The SPA reaches three services from the browser; each URL is a build arg, and a blank
+    one is unset before the build so the SPA's localhost default survives."""
+    text = "\n".join(_lines("interface"))
+    for name in ("VITE_CONTROL_PLANE_URL", "VITE_INFERENCE_URL", "VITE_AI_GATEWAY_URL"):
+        assert f"ARG {name}=" in text, f"interface: {name} must be a build arg"
+        assert f'[ -n "${name}" ] || unset {name}' in text, (
+            f"interface: a blank {name} must be unset, or Vite inlines an empty URL"
+        )
 
 
 def test_alembic_tree_ships_in_the_control_plane_image() -> None:

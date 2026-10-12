@@ -1,0 +1,1453 @@
+{
+ "name": "main-expired-login-401",
+ "description": "A stored claude.ai login that has expired.",
+ "note": null,
+ "source": "headless",
+ "client_version": "2.1.285",
+ "conversation": "expired-login",
+ "sequence": 1,
+ "request_class": "main",
+ "request": {
+  "method": "POST",
+  "path": "/v1/messages",
+  "query": "beta=true",
+  "headers": [
+   [
+    "accept",
+    "application/json"
+   ],
+   [
+    "authorization",
+    "Bearer sk-ant-oat01-fixture"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "claude-cli/2.1.285 (external, sdk-cli)"
+   ],
+   [
+    "x-claude-code-session-id",
+    "00000000-0000-4000-8000-00000000000b"
+   ],
+   [
+    "x-stainless-arch",
+    "arm64"
+   ],
+   [
+    "x-stainless-lang",
+    "js"
+   ],
+   [
+    "x-stainless-os",
+    "MacOS"
+   ],
+   [
+    "x-stainless-package-version",
+    "0.127.0"
+   ],
+   [
+    "x-stainless-retry-count",
+    "0"
+   ],
+   [
+    "x-stainless-runtime",
+    "node"
+   ],
+   [
+    "x-stainless-runtime-version",
+    "v26.3.0"
+   ],
+   [
+    "x-stainless-timeout",
+    "600"
+   ],
+   [
+    "x-theygent-gateway-key",
+    "tyg_fixture"
+   ],
+   [
+    "anthropic-beta",
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,effort-2025-11-24,extended-cache-ttl-2025-04-11"
+   ],
+   [
+    "anthropic-dangerous-direct-browser-access",
+    "true"
+   ],
+   [
+    "anthropic-version",
+    "2023-06-01"
+   ],
+   [
+    "x-app",
+    "cli"
+   ],
+   [
+    "x-claude-code-prompt-id",
+    "00000000-0000-4000-8000-00000000000c"
+   ],
+   [
+    "x-claude-code-request-class",
+    "main"
+   ],
+   [
+    "accept-encoding",
+    "gzip, deflate, br, zstd"
+   ]
+  ],
+  "body": {
+   "model": "claude-opus-5-5",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text a461242f 859ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 99437535 580ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 9782cf0b 122ch]"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text afb8d2e6 8354ch]",
+       "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+       }
+      }
+     ],
+     "output_config": {
+      "effort": "medium"
+     }
+    }
+   ],
+   "system": [
+    {
+     "type": "text",
+     "text": "x-anthropic-billing-header: cc_version=2.1.285.979; cc_entrypoint=sdk-cli;"
+    },
+    {
+     "type": "text",
+     "text": "[text b0a700d9 62ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    },
+    {
+     "type": "text",
+     "text": "[text 083abba8 6141ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ],
+   "tools": [
+    {
+     "name": "Agent",
+     "description": "[text 15f7371a 1628ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text f47f24d3 42ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 9cbc3bd8 33ch]",
+        "type": "string"
+       },
+       "subagent_type": {
+        "description": "[text 97930208 50ch]",
+        "type": "string"
+       },
+       "model": {
+        "description": "[text 888e6bb4 358ch]",
+        "type": "string",
+        "enum": [
+         "sonnet",
+         "opus",
+         "haiku",
+         "fable"
+        ]
+       },
+       "run_in_background": {
+        "description": "[text 3f783742 286ch]",
+        "type": "boolean"
+       },
+       "isolation": {
+        "description": "[text eef8f1c9 221ch]",
+        "type": "string",
+        "enum": [
+         "worktree",
+         "remote"
+        ]
+       }
+      },
+      "required": [
+       "description",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Bash",
+     "description": "[text c20915bc 1493ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "command": {
+        "description": "[text 8c1609cf 22ch]",
+        "type": "string"
+       },
+       "timeout": {
+        "description": "[text e2215b32 70ch]",
+        "type": "number"
+       },
+       "description": {
+        "description": "[text 93d385dd 926ch]",
+        "type": "string"
+       },
+       "run_in_background": {
+        "description": "[text 10c49126 182ch]",
+        "type": "boolean"
+       },
+       "dangerouslyDisableSandbox": {
+        "description": "[text d2824ebf 90ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronCreate",
+     "description": "[text e2c136cc 2595ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "cron": {
+        "description": "[text 57a3e768 151ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 203e11b2 40ch]",
+        "type": "string"
+       },
+       "recurring": {
+        "description": "[text d13dd03c 224ch]",
+        "type": "boolean"
+       },
+       "durable": {
+        "description": "[text 547405ef 128ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "cron",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronDelete",
+     "description": "[text fcbb5eca 100ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "id": {
+        "description": "[text 7b4046e7 30ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "id"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronList",
+     "description": "[text e36a22c7 60ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "DesignSync",
+     "description": "[text ae63a76c 3742ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "method": {
+        "type": "string",
+        "enum": [
+         "list_projects",
+         "get_project",
+         "list_files",
+         "get_file",
+         "finalize_plan",
+         "write_files",
+         "delete_files",
+         "register_assets",
+         "unregister_assets",
+         "create_project",
+         "report_validate"
+        ]
+       },
+       "projectId": {
+        "description": "[text ad2eb3b5 64ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "path": {
+        "description": "[text 7947f63a 27ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "writes": {
+        "description": "[text 1060eafa 286ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "deletes": {
+        "description": "[text 2d8d21b1 100ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "planId": {
+        "description": "[text 28d31ea3 97ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "files": {
+        "description": "[text c52ebf27 134ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "path": {
+           "description": "[text 075ef6d9 58ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 256
+          },
+          "localPath": {
+           "description": "[text 4b12a0cb 256ch]",
+           "type": "string",
+           "minLength": 1
+          },
+          "data": {
+           "description": "[text 1f19ec1f 160ch]",
+           "type": "string"
+          },
+          "encoding": {
+           "description": "[text 74396f71 38ch]",
+           "type": "string",
+           "enum": [
+            "base64"
+           ]
+          },
+          "mimeType": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "path"
+         ],
+         "additionalProperties": false
+        }
+       },
+       "paths": {
+        "description": "[text a1f1c7ca 189ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "name": {
+        "description": "[text a63b17c2 54ch]",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "assets": {
+        "description": "[text b5b4ec8e 152ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "description": "[text fe42a370 58ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 255
+          },
+          "path": {
+           "description": "[text 924a510a 64ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 256
+          },
+          "subtitle": {
+           "description": "[text f4575dca 55ch]",
+           "type": "string",
+           "maxLength": 255
+          },
+          "viewport": {
+           "description": "[text 5c813df2 41ch]",
+           "type": "object",
+           "properties": {
+            "width": {
+             "type": "integer",
+             "exclusiveMinimum": 0,
+             "maximum": 9007199254740991
+            },
+            "height": {
+             "type": "integer",
+             "exclusiveMinimum": 0,
+             "maximum": 9007199254740991
+            }
+           },
+           "required": [
+            "width"
+           ],
+           "additionalProperties": false
+          },
+          "group": {
+           "description": "[text f1653b99 348ch]",
+           "type": "string",
+           "maxLength": 64
+          }
+         },
+         "required": [
+          "name",
+          "path"
+         ],
+         "additionalProperties": false
+        }
+       },
+       "localDir": {
+        "description": "[text 352cfa71 229ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "counts": {
+        "description": "[text ac5fcbfe 104ch]",
+        "type": "object",
+        "properties": {
+         "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "bad": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "thin": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "variantsIdentical": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "iterations": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "total",
+         "bad",
+         "thin",
+         "variantsIdentical",
+         "iterations"
+        ],
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "method"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Edit",
+     "description": "[text 1ced2991 360ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2f4ea387 39ch]",
+        "type": "string"
+       },
+       "old_string": {
+        "description": "[text 08891bb7 19ch]",
+        "type": "string"
+       },
+       "new_string": {
+        "description": "[text 16e8ccb9 63ch]",
+        "type": "string"
+       },
+       "replace_all": {
+        "description": "[text 3b5cd450 53ch]",
+        "default": false,
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "file_path",
+       "old_string",
+       "new_string"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "EnterWorktree",
+     "description": "[text ce3fb700 3220ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "name": {
+        "description": "[text ab2fbcc6 221ch]",
+        "type": "string"
+       },
+       "path": {
+        "description": "[text 7cdec52b 262ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ExitWorktree",
+     "description": "[text 04282f44 1923ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "action": {
+        "description": "[text e17275d7 69ch]",
+        "type": "string",
+        "enum": [
+         "keep",
+         "remove"
+        ]
+       },
+       "discard_changes": {
+        "description": "[text 7b0509a2 143ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListAgents",
+     "description": "[text 9eeb551c 777ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "channel": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       },
+       "q": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListMcpResourcesTool",
+     "description": "[text 727ed1ce 351ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 59714675 43ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Monitor",
+     "description": "[text c584fcca 6581ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text 56571396 85ch]",
+        "type": "string"
+       },
+       "timeout_ms": {
+        "description": "[text e3ef279c 147ch]",
+        "default": 300000,
+        "type": "number",
+        "minimum": 1000,
+        "maximum": 3600000
+       },
+       "command": {
+        "description": "[text bf561e2e 75ch]",
+        "type": "string"
+       },
+       "ws": {
+        "description": "[text 4d958d9e 159ch]",
+        "type": "object",
+        "properties": {
+         "url": {
+          "type": "string"
+         },
+         "protocols": {
+          "type": "array",
+          "items": {
+           "type": "string",
+           "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          }
+         }
+        },
+        "required": [
+         "url"
+        ],
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "description",
+       "timeout_ms"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "NotebookEdit",
+     "description": "[text c01ebbc7 619ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "notebook_path": {
+        "description": "[text 4e2add4a 87ch]",
+        "type": "string"
+       },
+       "cell_id": {
+        "description": "[text ce3dc46c 151ch]",
+        "type": "string"
+       },
+       "new_source": {
+        "description": "[text d9f219e4 27ch]",
+        "type": "string"
+       },
+       "cell_type": {
+        "description": "[text 004fab61 141ch]",
+        "type": "string",
+        "enum": [
+         "code",
+         "markdown"
+        ]
+       },
+       "edit_mode": {
+        "description": "[text b64a3040 72ch]",
+        "type": "string",
+        "enum": [
+         "replace",
+         "insert",
+         "delete"
+        ]
+       }
+      },
+      "required": [
+       "notebook_path",
+       "new_source"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "PushNotification",
+     "description": "[text f5f2aae3 1362ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "message": {
+        "description": "[text 974c1c3f 74ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "status": {
+        "type": "string",
+        "const": "proactive"
+       }
+      },
+      "required": [
+       "message",
+       "status"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Read",
+     "description": "[text 7212f90c 790ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2cce1e6f 37ch]",
+        "type": "string"
+       },
+       "offset": {
+        "description": "[text c55cb4ef 92ch]",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+       },
+       "limit": {
+        "description": "[text 94244167 83ch]",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+       },
+       "pages": {
+        "description": "[text 604a67dc 113ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReadMcpResourceDirTool",
+     "description": "[text 1ddb0ec4 513ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 1866da86 19ch]",
+        "type": "string"
+       },
+       "uri": {
+        "description": "[text 42163d05 34ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "server",
+       "uri"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReadMcpResourceTool",
+     "description": "[text 42906153 234ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 1866da86 19ch]",
+        "type": "string"
+       },
+       "uri": {
+        "description": "[text 78ff1497 24ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "server",
+       "uri"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "RemoteTrigger",
+     "description": "[text f8c9a6af 2834ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "action": {
+        "type": "string",
+        "enum": [
+         "list",
+         "get",
+         "create",
+         "update",
+         "run",
+         "create_webhook_trigger",
+         "list_runs",
+         "get_run_log"
+        ]
+       },
+       "trigger_id": {
+        "description": "[text 345479c0 44ch]",
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+       },
+       "session_id": {
+        "description": "[text 2b9d36df 79ch]",
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+       },
+       "cursor": {
+        "description": "[text 381c84e9 57ch]",
+        "type": "string",
+        "maxLength": 1024
+       },
+       "body": {
+        "description": "[text a6dd6b67 48ch]",
+        "type": "object",
+        "propertyNames": {
+         "type": "string"
+        },
+        "additionalProperties": {}
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReportFindings",
+     "description": "[text 8c156cd1 574ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "level": {
+        "description": "[text 10bdac91 30ch]",
+        "type": "string",
+        "enum": [
+         "low",
+         "medium",
+         "high",
+         "xhigh",
+         "max"
+        ]
+       },
+       "findings": {
+        "description": "[text b3214641 60ch]",
+        "maxItems": 32,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "file": {
+           "description": "[text 04336ab8 48ch]",
+           "type": "string"
+          },
+          "line": {
+           "description": "[text ceee7899 37ch]",
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "summary": {
+           "description": "[text 0f47ee36 36ch]",
+           "type": "string"
+          },
+          "short_summary": {
+           "description": "[text 9c679b2d 96ch]",
+           "type": "string",
+           "maxLength": 60
+          },
+          "failure_scenario": {
+           "description": "[text d95e4bf5 42ch]",
+           "type": "string"
+          },
+          "category": {
+           "description": "[text e655e635 110ch]",
+           "type": "string",
+           "maxLength": 40
+          },
+          "verdict": {
+           "description": "[text eec3762a 57ch]",
+           "type": "string",
+           "enum": [
+            "CONFIRMED",
+            "PLAUSIBLE"
+           ]
+          },
+          "outcome": {
+           "description": "[text 2f8eadf3 78ch]",
+           "type": "string",
+           "enum": [
+            "fixed",
+            "skipped",
+            "no_change_needed"
+           ]
+          }
+         },
+         "required": [
+          "file",
+          "summary",
+          "failure_scenario"
+         ],
+         "additionalProperties": false
+        }
+       }
+      },
+      "required": [
+       "findings"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ScheduleWakeup",
+     "description": "[text 2d4de8f0 3148ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "delaySeconds": {
+        "description": "[text 457e421a 98ch]",
+        "type": "number"
+       },
+       "reason": {
+        "description": "[text 87cc33f7 136ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text c50480b3 355ch]",
+        "type": "string"
+       },
+       "stop": {
+        "description": "[text 95359fc2 154ch]",
+        "type": "boolean"
+       },
+       "noop": {
+        "description": "[text 5c2ea389 307ch]",
+        "type": "boolean"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "SendMessage",
+     "description": "[text 3010889b 4259ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "to": {
+        "description": "[text e5035522 155ch]",
+        "type": "string",
+        "allOf": [
+         {
+          "pattern": "^[^\\n\\r]*$"
+         },
+         {
+          "pattern": "^[\\s\\S]{0,300}$"
+         }
+        ]
+       },
+       "summary": {
+        "description": "[text a0716b0b 167ch]",
+        "type": "string",
+        "maxLength": 200
+       },
+       "message": {
+        "default": "",
+        "description": "[text 31741892 247ch]",
+        "type": "string"
+       },
+       "notify_when_idle": {
+        "description": "[text e85dd235 289ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "to",
+       "message"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Skill",
+     "description": "[text 1aee8b30 1417ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "skill": {
+        "description": "[text 7a121837 71ch]",
+        "type": "string"
+       },
+       "args": {
+        "description": "[text 0972ebc0 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "skill"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "TaskStop",
+     "description": "[text cd414e87 378ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "task_id": {
+        "description": "[text d928ed9c 126ch]",
+        "type": "string"
+       },
+       "shell_id": {
+        "description": "[text 3d7ec738 31ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "WebFetch",
+     "description": "[text 7c2f991b 469ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "url": {
+        "description": "[text 4bd7b4ce 29ch]",
+        "type": "string",
+        "format": "uri"
+       },
+       "prompt": {
+        "description": "[text 14b8768c 40ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "url",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "WebSearch",
+     "description": "[text 9bb8001a 334ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "query": {
+        "description": "[text 71e46962 23ch]",
+        "type": "string",
+        "minLength": 2
+       },
+       "allowed_domains": {
+        "description": "[text 96a1ee3c 46ch]",
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "blocked_domains": {
+        "description": "[text f50d52d1 47ch]",
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "required": [
+       "query"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Write",
+     "description": "[text fe532834 240ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 4846848f 71ch]",
+        "type": "string"
+       },
+       "content": {
+        "description": "[text 59a5e2a9 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_4",
+     "description": "[text e5c2924d 27ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_5",
+     "description": "[text eb4e361c 14ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_6",
+     "description": "[text cdf8ff56 28ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_7",
+     "description": "[text 04f2b8e5 42ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_8",
+     "description": "[text 91dc2d7c 135ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_9",
+     "description": "[text 2608a023 49ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_10",
+     "description": "[text c591c3f8 28ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_11",
+     "description": "[text 816d65fe 25ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_12",
+     "description": "[text 1f4fb755 15ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_13",
+     "description": "[text ed4ca124 26ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_14",
+     "description": "[text 6a8baa0d 17ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_15",
+     "description": "[text 30e7b362 43ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_16",
+     "description": "[text acd84f62 149ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_17",
+     "description": "[text 50dd5d65 132ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_18",
+     "description": "[text c9fd3324 27ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_19",
+     "description": "[text 1bdadd95 25ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_20",
+     "description": "[text 10f0d06c 124ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_21",
+     "description": "[text 83564771 30ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_22",
+     "description": "[text 5beca3cf 82ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_23",
+     "description": "[text cd59c760 45ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_24",
+     "description": "[text d684a98e 123ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_25",
+     "description": "[text 00cc4f2e 31ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_26",
+     "description": "[text 67db4d78 64ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_27",
+     "description": "[text 03b77a98 313ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_28",
+     "description": "[text 0ad12698 191ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_29",
+     "description": "[text 9d8fc133 75ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_30",
+     "description": "[text 7d7ac609 181ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_31",
+     "description": "[text 798a7b30 233ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_32",
+     "description": "[text 2d0a1796 122ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_33",
+     "description": "[text 488b4371 402ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_34",
+     "description": "[text 4b702fb1 98ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    }
+   ],
+   "metadata": {
+    "user_id": "fixture"
+   },
+   "max_tokens": 128000,
+   "thinking": {
+    "type": "adaptive",
+    "display": "omitted"
+   },
+   "context_management": {
+    "edits": [
+     {
+      "type": "clear_thinking_20251015",
+      "keep": "all"
+     }
+    ]
+   },
+   "output_config": {
+    "effort": "medium"
+   },
+   "stream": true
+  }
+ },
+ "response": {
+  "status": 401,
+  "headers": [
+   [
+    "content-type",
+    "application/json"
+   ]
+  ],
+  "json": {
+   "type": "error",
+   "error": {
+    "type": "authentication_error",
+    "message": "OAuth access token has expired. Re-authenticate to continue."
+   },
+   "request_id": null
+  }
+ },
+ "abort_after_events": null
+}

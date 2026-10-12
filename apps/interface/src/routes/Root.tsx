@@ -16,6 +16,7 @@ import {
   Settings,
   Settings2,
   SquarePen,
+  Waypoints,
 } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { ProfileModal } from "../auth/ProfileModal";
@@ -63,12 +64,13 @@ interface NavEntry {
 }
 
 // The rail, top to bottom: Dashboard (the home overview), then the build/observe surfaces
-// (Agents + a collapsible Runs that previews recent runs), the conversational surfaces (New Chat +
+// (Agents + a collapsible Runs that previews recent runs, and the AI Gateway), the conversational surfaces (New Chat +
 // a collapsible Chats that previews recent sessions), and a collapsible Configuration group
 // (Registries, MCP, RAG, app Settings). Each group is separated in the rail.
 const NAV_DASHBOARD: NavEntry = { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true };
 const NAV_AGENTS: NavEntry = { to: "/agents", label: "Agents", icon: Bot };
 const NAV_RUNS: NavEntry = { to: "/runs", label: "Runs", icon: Activity };
+const NAV_GATEWAY: NavEntry = { to: "/gateway", label: "AI Gateway", icon: Waypoints };
 const NAV_NEW_CHAT: NavEntry = { to: "/chat", label: "New Chat", icon: SquarePen };
 const NAV_CHATS: NavEntry = { to: "/sessions", label: "Chats", icon: MessagesSquare };
 
@@ -211,6 +213,7 @@ function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <SidebarMenu>
               <NavItem item={NAV_AGENTS} />
               {hasRole("editor") && <RunsNav />}
+              <NavItem item={NAV_GATEWAY} />
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

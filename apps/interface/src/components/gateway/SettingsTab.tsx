@@ -1,0 +1,1513 @@
+// The AI Gateway page's Settings (admins): the gateway config — mode, routing targets, contracted
+// prices — saved as immutable versions on the control plane, with their history; and the
+// organization's Anthropic key, which belongs to the gateway alone.
+//
+// The org key is written to the gateway's own admin surface, straight from the browser: it never
+// transits the control plane, and this page never displays it — the gateway reports only whether
+// it is set and where it came from.
+//
+// A config save names the version the edit started from; when someone saved another meanwhile,
+// the control plane refuses (412) and the page says so instead of silently replacing their work.
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, Download, KeyRound, Plus, ServerCog, Trash2, Users } from "lucide-react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  ApiError,
+  type CredentialProfile,
+  type GatewayConfig,
+  type GatewayCredentials,
+  type GatewayDeveloper,
+  type GatewayKey,
+  api,
+  gatewayAdmin,
+  gatewayUrl,
+} from "../../lib/api";
+import { useAuth } from "../../lib/auth";
+import {
+  type DialKind,
+  type DialRow,
+  type FormErrors,
+  type LocalModelRow,
+  MODE_SUMMARY,
+  RATE_FIELDS,
+  type SettingsForm,
+  blankLocalModel,
+  blankRow,
+  draftFromForm,
+  draftOf,
+  formOf,
+} from "../../lib/gatewayConfig";
+import { compactWindowFor } from "../../lib/gatewaySetup";
+import { notify } from "../../lib/notify";
+import { saveBlob } from "../../lib/transfer";
+import { CopySnippet } from "../CopySnippet";
+import { TimeAgo } from "../TimeAgo";
+import { SaveBar } from "../settings/SaveBar";
+import { SettingRow } from "../settings/SettingField";
+import { usePlatformSettingsForm } from "../settings/useSettingsForm";
+import {
+  Badge,
+  ConfirmDialog,
+  ErrorBanner,
+  Field,
+  Input,
+  Modal,
+  NoteBanner,
+  Table,
+  Td,
+  Th,
+} from "../ui";
+import { Button } from "../ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Checkbox } from "../ui/checkbox";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemTitle } from "../ui/item";
+import { NativeSelect, NativeSelectOption } from "../ui/native-select";
+import { Skeleton } from "../ui/skeleton";
+import {
+  Table as DataTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table";
+
+const MODES: { value: SettingsForm["mode"]; label: string; detail: string }[] = [
+  {
+    value: "observer",
+    label: "Observer",
+    detail:
+      "Records every exchange — its cost and what routing would have done — without changing it.",
+  },
+  {
+    value: "router",
+    label: "Router",
+    detail:
+      "Applies those decisions: routed requests run on the target model. A target that refuses one sends it back to the model Claude Code asked for, unseen.",
+  },
+  {
+    value: "passthrough",
+    label: "Passthrough",
+    detail: "Forwards traffic without recording anything.",
+  },
+];
+
+const TARGETS: {
+  field: "subagentTarget" | "mainTarget" | "localTarget";
+  label: string;
+  placeholder: string;
+  hint: string;
+}[] = [
+  {
+    field: "subagentTarget",
+    label: "Subagent target",
+    placeholder: "claude-sonnet-5-5",
+    hint: "An Anthropic model a subagent could start on instead. A subagent's cache starts empty either way, so the switch costs nothing extra.",
+  },
+  {
+    field: "mainTarget",
+    label: "Main conversation target",
+    placeholder: "none",
+    hint: "Considered only where the main conversation's cache is cold: at its start, after compaction, or once the cache has expired.",
+  },
+  {
+    field: "localTarget",
+    label: "Local target",
+    placeholder: "none",
+    hint: "A logical model id on the inference plane, for side requests the Catalog allows to run locally.",
+  },
+];
+
+const HISTORY_SHOWN = 10;
+
+export function SettingsTab() {
+  return (
+    <div className="space-y-4">
+      {/* The history grows with every Catalog review, so it comes last. */}
+      <ConfigEditor
+        beforeHistory={
+          <>
+            <OrgKeyCard />
+            <DevelopersCard />
+            <ServiceKeysCard />
+            <RecordsCard />
+          </>
+        }
+      />
+    </div>
+  );
+}
+
+// ── the config ───────────────────────────────────────────────────────────────
+
+function ConfigEditor({ beforeHistory }: { beforeHistory: ReactNode }) {
+  const qc = useQueryClient();
+  const config = useQuery({ queryKey: ["gatewayConfig"], queryFn: () => api.getGatewayConfig() });
+  const latest = config.data;
+  // The version the edit started from (null: none saved yet), and the form over it.
+  const [base, setBase] = useState<GatewayConfig | null | undefined>(undefined);
+  const [form, setForm] = useState<SettingsForm | null>(null);
+  const [loaded, setLoaded] = useState<number | null>(null);
+  const [showErrors, setShowErrors] = useState(false);
+  const editor = useRef<HTMLDivElement | null>(null);
+  const pristine = form !== null && base !== undefined && sameForm(form, formOf(draftOf(base)));
+
+  // Follow the latest version while nothing is edited; an edit in progress stays put.
+  useEffect(() => {
+    if (latest === undefined) return;
+    const moved = base === undefined || (latest?.version ?? null) !== (base?.version ?? null);
+    if (form === null || (moved && pristine)) {
+      setBase(latest);
+      setForm(formOf(draftOf(latest)));
+      setLoaded(null);
+    }
+  }, [latest, base, form, pristine]);
+
+  const stale =
+    latest !== undefined &&
+    base !== undefined &&
+    (latest?.version ?? null) !== (base?.version ?? null);
+  const save = useMutation({
+    mutationFn: ({ form, expect }: { form: SettingsForm; expect: GatewayConfig | null }) => {
+      // Fingerprint rules belong to the Catalog: carry the ones of the version being replaced.
+      const built = draftFromForm(form, expect?.fingerprints ?? []);
+      if (built.draft === null) throw new Error("the form has errors");
+      return api.putGatewayConfig(built.draft, expect?.version);
+    },
+    onSuccess: (saved) => {
+      qc.setQueryData(["gatewayConfig"], saved);
+      setBase(saved);
+      setForm(formOf(draftOf(saved)));
+      setLoaded(null);
+      setShowErrors(false);
+      notify.success(`Saved gateway config v${saved.version}`);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.code === "config_version_conflict") {
+        notify.error("Someone saved a newer version while you were editing.");
+      }
+    },
+    onSettled: () => {
+      for (const key of ["gatewayConfig", "gatewayConfigVersions", "gatewayFingerprints"]) {
+        qc.invalidateQueries({ queryKey: [key] });
+      }
+    },
+  });
+
+  if (config.error || form === null || base === undefined) {
+    // The org key is the gateway's, so it stays reachable whatever the control plane says.
+    return (
+      <>
+        {config.error ? (
+          <ErrorBanner error={config.error} />
+        ) : (
+          <Skeleton className="h-64 rounded-lg" />
+        )}
+        {beforeHistory}
+      </>
+    );
+  }
+  const built = draftFromForm(form, []);
+  const errors: FormErrors = showErrors && built.errors ? built.errors : {};
+  const update = (patch: Partial<SettingsForm>) => setForm({ ...form, ...patch });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (built.errors) {
+      setShowErrors(true);
+      return;
+    }
+    // Saving over a version saved meanwhile is a decision the banner below asked for.
+    save.mutate({ form, expect: stale ? (latest ?? null) : base });
+  };
+  const conflict = save.error instanceof ApiError && save.error.code === "config_version_conflict";
+
+  return (
+    <>
+      <Card ref={editor}>
+        <CardHeader className="border-b">
+          <CardTitle>Gateway config</CardTitle>
+          <CardDescription>
+            {base === null
+              ? "No config saved yet: gateways attached to this control plane forward traffic without recording it."
+              : `Version ${base.version}, saved `}
+            {base !== null && <TimeAgo iso={base.updated_at} />}
+            {base !== null &&
+              ". Saving creates a new version; gateways pick it up at their next heartbeat (every 30 seconds by default)."}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-5" onSubmit={submit} aria-label="Gateway config">
+            {stale && !pristine && (
+              <NoteBanner>
+                Version {latest?.version} was saved since you started editing. Saving replaces its
+                settings with yours, keeping its Catalog reviews; or{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    setBase(latest ?? null);
+                    setForm(formOf(draftOf(latest ?? null)));
+                    setLoaded(null);
+                    save.reset();
+                  }}
+                >
+                  discard your changes
+                </button>{" "}
+                to see it.
+              </NoteBanner>
+            )}
+            {loaded !== null && !stale && (
+              <NoteBanner>
+                Showing version {loaded}'s settings. Save to make them current, as a new version; or{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => {
+                    setForm(formOf(draftOf(base)));
+                    setLoaded(null);
+                    setShowErrors(false);
+                  }}
+                >
+                  go back to version {base?.version ?? "none"}
+                </button>
+                .
+              </NoteBanner>
+            )}
+
+            <fieldset className="min-w-0 space-y-2">
+              <legend className="mb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Mode
+              </legend>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {MODES.map((m) => (
+                  <label
+                    key={m.value}
+                    className="flex cursor-pointer gap-3 rounded-lg border p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+                  >
+                    <input
+                      type="radio"
+                      name="gateway-mode"
+                      value={m.value}
+                      checked={form.mode === m.value}
+                      onChange={() => update({ mode: m.value })}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="block text-sm font-medium text-foreground">{m.label}</span>
+                      <span className="block text-xs text-muted-foreground">{m.detail}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+
+            {form.mode === "router" && !form.subagentTarget.trim() && !form.mainTarget.trim() && (
+              <NoteBanner>
+                Router mode with no subagent or main conversation target routes nothing: set a
+                target below (for Opus 5.5 traffic, <code>claude-sonnet-5-5</code>).
+              </NoteBanner>
+            )}
+
+            <fieldset className="min-w-0 space-y-3">
+              <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Routing targets
+              </legend>
+              <p className="text-xs text-muted-foreground">
+                Where routing may send a request: in observer mode they decide what the Report and
+                Sessions show routing would save, in router mode where requests actually go. Leave a
+                target empty to never consider it.
+              </p>
+              <div className="grid gap-3 md:grid-cols-2">
+                {TARGETS.map((t) => (
+                  <div key={t.field} className="space-y-1">
+                    <Field label={t.label}>
+                      <Input
+                        value={form[t.field]}
+                        placeholder={t.placeholder}
+                        spellCheck={false}
+                        aria-invalid={errors[t.field] ? true : undefined}
+                        onChange={(e) => update({ [t.field]: e.target.value })}
+                      />
+                    </Field>
+                    <FieldNote error={errors[t.field]} hint={t.hint} />
+                  </div>
+                ))}
+                <div className="space-y-1">
+                  <Field label="Warm switch margin">
+                    <Input
+                      value={form.margin}
+                      inputMode="decimal"
+                      aria-invalid={errors.margin ? true : undefined}
+                      onChange={(e) => update({ margin: e.target.value })}
+                    />
+                  </Field>
+                  <FieldNote
+                    error={errors.margin}
+                    hint="A conversation with a warm cache moves only where staying would cost at least this many times rebuilding its cache on the other model. At least 1."
+                  />
+                </div>
+              </div>
+            </fieldset>
+
+            <LocalModels form={form} errors={errors} onChange={(patch) => update(patch)} />
+
+            <fieldset className="min-w-0 space-y-3">
+              <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Shadow runs
+              </legend>
+              <p className="text-xs text-muted-foreground">
+                After a request that routing would send elsewhere, a copy goes to that target, to
+                measure what the saving only estimates: whether its answer would have been used, and
+                how much it writes. Claude Code never sees a shadow; the Report shows what they
+                found.
+              </p>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox
+                  aria-label="Shadow the local model"
+                  checked={form.shadowLocal}
+                  onCheckedChange={(v) => update({ shadowLocal: v === true })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium text-foreground">Local model</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Requests a decision would send to a local model. Costs no API spend. A dial's
+                    trial is tried either way.
+                  </span>
+                </span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-sm">
+                <Checkbox
+                  aria-label="Shadow cloud targets"
+                  checked={form.shadowCloud}
+                  onCheckedChange={(v) => update({ shadowCloud: v === true })}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="block font-medium text-foreground">Cloud targets</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Real spend, on the organization's key only (a personal gateway: your own API
+                    key) — never a subscription seat or a developer's own key. Pauses when a rate
+                    limit runs low.
+                  </span>
+                </span>
+              </label>
+              <div className="max-w-xs space-y-1">
+                <Field label="Cloud shadow budget (USD per day)">
+                  <Input
+                    value={form.shadowCap}
+                    inputMode="decimal"
+                    disabled={!form.shadowCloud}
+                    aria-invalid={errors.shadowCap ? true : undefined}
+                    onChange={(e) => update({ shadowCap: e.target.value })}
+                  />
+                </Field>
+                <FieldNote
+                  error={errors.shadowCap}
+                  hint="Per gateway instance; cloud shadows stop for the day once they have cost this much."
+                />
+              </div>
+            </fieldset>
+
+            <PricingOverrides
+              rows={form.rates}
+              errors={errors}
+              onChange={(rates) => update({ rates })}
+            />
+
+            {/* Beside the button that caused it: the form is long, and its top may be out of view. */}
+            {save.error && !conflict && <ErrorBanner error={save.error} />}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {showErrors && built.errors && (
+                <span className="text-xs text-destructive">Fix the fields marked above.</span>
+              )}
+              {/* Before any version exists, the defaults are worth saving as they are. */}
+              <Button type="submit" disabled={save.isPending || (pristine && base !== null)}>
+                {stale && !pristine ? `Save over version ${latest?.version}` : "Save"}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+      {beforeHistory}
+      <VersionHistory
+        current={base?.version ?? null}
+        onLoad={(version) => {
+          setForm(formOf(draftOf(version)));
+          setLoaded(version.version);
+          setShowErrors(false);
+          // Load sits below the editor; bring what changed into view. (jsdom has no scrolling.)
+          editor.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        }}
+      />
+    </>
+  );
+}
+
+function sameForm(a: SettingsForm, b: SettingsForm): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function FieldNote({ error, hint }: { error?: string; hint: string }) {
+  return error ? (
+    <p className="text-xs text-destructive">{error}</p>
+  ) : (
+    <p className="text-xs text-muted-foreground">{hint}</p>
+  );
+}
+
+function PricingOverrides({
+  rows,
+  errors,
+  onChange,
+}: {
+  rows: SettingsForm["rates"];
+  errors: FormErrors;
+  onChange: (rows: SettingsForm["rates"]) => void;
+}) {
+  const set = (i: number, patch: Partial<SettingsForm["rates"][number]>) =>
+    onChange(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  // A fieldset is as wide as its content unless told otherwise (min-w-0): without it the table
+  // would widen the card instead of scrolling inside its own frame.
+  return (
+    <fieldset className="min-w-0 space-y-2">
+      <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Contracted prices
+      </legend>
+      <p className="text-xs text-muted-foreground">
+        USD per million tokens, for models whose contracted rates differ from list price. Costs and
+        savings use these where set.
+      </p>
+      {rows.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <Th>Model</Th>
+              {RATE_FIELDS.map((f) => (
+                <Th key={f.key}>{f.label}</Th>
+              ))}
+              <Th>
+                <span className="sr-only">Remove</span>
+              </Th>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until a model is typed
+              <TableRow key={i}>
+                <Td>
+                  <Input
+                    aria-label={`Model (row ${i + 1})`}
+                    value={row.model}
+                    placeholder="claude-opus-5-5"
+                    spellCheck={false}
+                    className="min-w-40 font-mono"
+                    aria-invalid={errors[`rates.${i}.model`] ? true : undefined}
+                    title={errors[`rates.${i}.model`]}
+                    onChange={(e) => set(i, { model: e.target.value })}
+                  />
+                </Td>
+                {RATE_FIELDS.map((f) => (
+                  <Td key={f.key}>
+                    <Input
+                      aria-label={`${f.label} (row ${i + 1})`}
+                      value={row.rates[f.key]}
+                      inputMode="decimal"
+                      className="w-24 tabular-nums"
+                      aria-invalid={errors[`rates.${i}.${f.key}`] ? true : undefined}
+                      title={errors[`rates.${i}.${f.key}`]}
+                      onChange={(e) => set(i, { rates: { ...row.rates, [f.key]: e.target.value } })}
+                    />
+                  </Td>
+                ))}
+                <Td>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Remove row ${i + 1}`}
+                    onClick={() => onChange(rows.filter((_, j) => j !== i))}
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </Td>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      {rows.some((_, i) => Object.keys(errors).some((k) => k.startsWith(`rates.${i}.`))) && (
+        <p className="text-xs text-destructive">
+          Each row needs a model id (no spaces, one row per model) and all five prices, 0 or more.
+        </p>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onChange([...rows, blankRow()])}
+      >
+        <Plus size={14} /> Add a model
+      </Button>
+    </fieldset>
+  );
+}
+
+function VersionHistory({
+  current,
+  onLoad,
+}: {
+  current: number | null;
+  onLoad: (config: GatewayConfig) => void;
+}) {
+  const { user } = useAuth();
+  const versions = useQuery({
+    queryKey: ["gatewayConfigVersions"],
+    queryFn: () => api.listGatewayConfigVersions(),
+  });
+  const developers = useQuery({
+    queryKey: ["gatewayDevelopers"],
+    queryFn: () => api.listGatewayDevelopers(),
+  });
+  const names = new Map((developers.data ?? []).map((d) => [d.user_id, d.username]));
+  const [loading, setLoading] = useState<number | null>(null);
+  const load = async (version: number) => {
+    setLoading(version);
+    try {
+      onLoad(await api.getGatewayConfigVersion(version));
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(null);
+    }
+  };
+  // Every Catalog review is a version too, so the history grows; the latest few lead.
+  const [all, setAll] = useState(false);
+  const every = versions.data ?? [];
+  const list = all ? every : every.slice(0, HISTORY_SHOWN);
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle>History</CardTitle>
+        <CardDescription>
+          Every saved version, newest first. Load one to start an edit from it — saving it makes a
+          new version.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <ErrorBanner error={versions.error} />
+        {versions.isPending ? (
+          <Skeleton className="h-16 rounded-lg" />
+        ) : list.length === 0 ? (
+          <p className="text-xs text-muted-foreground">No versions saved yet.</p>
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Config versions">
+            {list.map((v) => (
+              <Item key={v.version} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex items-center gap-2">
+                      <span>Version {v.version}</span>
+                      <Badge tone={MODE_SUMMARY[v.mode].tone}>{v.mode}</Badge>
+                      {v.version === current && <Badge tone="green">current</Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      saved <TimeAgo iso={v.created_at} />
+                      {v.created_by &&
+                        ` by ${v.created_by === user?.id ? "you" : (names.get(v.created_by) ?? v.created_by)}`}
+                    </ItemDescription>
+                  </ItemContent>
+                  {v.version !== current && (
+                    <ItemActions>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={loading !== null}
+                        onClick={() => load(v.version)}
+                        aria-label={`Load version ${v.version}`}
+                      >
+                        Load
+                      </Button>
+                    </ItemActions>
+                  )}
+                </li>
+              </Item>
+            ))}
+          </ul>
+        )}
+        {!all && every.length > HISTORY_SHOWN && (
+          <Button variant="outline" size="sm" className="mt-2" onClick={() => setAll(true)}>
+            Show all {every.length} versions
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── the org key: the gateway's own credential ───────────────────────────────
+
+function OrgKeyCard() {
+  const qc = useQueryClient();
+  const address = gatewayUrl();
+  const credentials = useQuery({
+    queryKey: ["gatewayCredentials", address],
+    queryFn: () => gatewayAdmin.credentials(),
+    retry: false,
+  });
+  // The key lives only in this input and the request that carries it: a plain call rather than a
+  // mutation, whose cache would keep it as the mutation's variables.
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const apply = async (call: () => Promise<GatewayCredentials>, done: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      qc.setQueryData(["gatewayCredentials", address], await call());
+      notify.success(done);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setKey("");
+      setBusy(false);
+    }
+  };
+  const org = credentials.data?.orgApiKey;
+
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <KeyRound size={16} /> Organization's Anthropic key
+        </CardTitle>
+        <CardDescription>
+          The key developers billed to the organization reach Anthropic with. It is written to the
+          gateway at <span className="font-mono">{address}</span> directly — never through the
+          control plane — and never shown again.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {credentials.isPending ? (
+          <Skeleton className="h-16 rounded-lg" />
+        ) : credentials.error ? (
+          credentials.error instanceof ApiError ? (
+            <ErrorBanner error={credentials.error} />
+          ) : (
+            <NoteBanner>
+              Can't reach the gateway at <span className="font-mono">{address}</span>. The key is
+              managed on the gateway itself, so this page needs its address: set it on the Setup
+              &amp; keys tab.
+            </NoteBanner>
+          )
+        ) : org ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              {org.set ? <Badge tone="green">set</Badge> : <Badge tone="amber">not set</Badge>}
+              {org.readOnly === "env" && (
+                <span className="text-xs text-muted-foreground">
+                  by the deployment (THEYGENT_AI_GATEWAY_ORG_API_KEY); change it there.
+                </span>
+              )}
+              {org.source === "stored" && org.updatedAt && (
+                <span className="text-xs text-muted-foreground">
+                  saved on the gateway <TimeAgo iso={org.updatedAt} />
+                </span>
+              )}
+              {!org.set && org.writable && (
+                <span className="text-xs text-muted-foreground">
+                  Developers billed to the organization are refused until it is.
+                </span>
+              )}
+            </div>
+            {org.readOnly === "personal_mode" && (
+              <p className="text-xs text-muted-foreground">
+                This gateway runs in personal mode: each developer's own Claude login or API key
+                reaches Anthropic, so there is no organization key.
+              </p>
+            )}
+            {org.readOnly === "deployment_only" && (
+              <p className="text-xs text-muted-foreground">
+                This gateway takes the key from its deployment only: it can run as several replicas,
+                and each would keep its own copy of a key saved here. Set{" "}
+                <code>THEYGENT_AI_GATEWAY_ORG_API_KEY</code> there — in Kubernetes, in the{" "}
+                <code>theygent-ai-gateway</code> Secret.
+              </p>
+            )}
+            {org.writable && (
+              <form
+                className="flex flex-wrap items-end gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (key.trim()) {
+                    apply(() => gatewayAdmin.setOrgKey(key.trim()), "Saved the key on the gateway");
+                  }
+                }}
+              >
+                <div className="min-w-64 flex-1">
+                  <Field label={org.set ? "Replace with" : "Anthropic API key"}>
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={key}
+                      onChange={(e) => setKey(e.target.value)}
+                    />
+                  </Field>
+                </div>
+                <Button type="submit" disabled={busy || !key.trim()}>
+                  {org.set ? "Replace key" : "Save key"}
+                </Button>
+                {org.source === "stored" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => setConfirmClear(true)}
+                  >
+                    Remove key
+                  </Button>
+                )}
+              </form>
+            )}
+            <ErrorBanner error={error} />
+          </>
+        ) : null}
+      </CardContent>
+      {confirmClear && (
+        <ConfirmDialog
+          title="Remove the organization's key?"
+          message="Developers billed to the organization are refused until a new key is set."
+          confirmLabel="Remove"
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => {
+            setConfirmClear(false);
+            apply(() => gatewayAdmin.clearOrgKey(), "Removed the key from the gateway");
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+// ── service keys: a gateway's credential towards this control plane ─────────
+
+function ServiceKeysCard() {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [revoking, setRevoking] = useState<GatewayKey | null>(null);
+  const keys = useQuery({
+    queryKey: ["gatewayServiceKeys"],
+    queryFn: () => api.listGatewayServiceKeys(),
+  });
+  const revoke = useMutation({
+    mutationFn: (key: GatewayKey) => api.revokeGatewayServiceKey(key.id),
+    onSuccess: () => notify.success("Service key revoked — gateways using it are refused at once"),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["gatewayServiceKeys"] }),
+  });
+  const list = keys.data ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <ServerCog size={16} /> Service keys
+            </CardTitle>
+            <CardDescription>
+              What a gateway presents to this control plane to fetch developers' keys and its
+              config, and to send its records. One per deployment; it opens nothing else.
+            </CardDescription>
+          </div>
+          <Button className="shrink-0" onClick={() => setCreating(true)}>
+            <Plus size={14} /> New service key
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ErrorBanner error={keys.error} />
+        {keys.isPending ? (
+          <Skeleton className="h-12 rounded-lg" />
+        ) : list.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            None yet. A gateway attached to this control plane needs one.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Service keys">
+            {list.map((key) => (
+              <Item key={key.id} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex flex-wrap items-center gap-2">
+                      {key.name}
+                      <span className="font-mono text-[11px] text-muted-foreground">
+                        {key.token_prefix}…
+                      </span>
+                      {key.revoked_at && <Badge tone="slate">revoked</Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      created <TimeAgo iso={key.created_at} />
+                      {key.last_used_at && (
+                        <>
+                          {" "}
+                          · last used <TimeAgo iso={key.last_used_at} />
+                        </>
+                      )}
+                      {key.revoked_at && (
+                        <>
+                          {" "}
+                          · revoked <TimeAgo iso={key.revoked_at} />
+                        </>
+                      )}
+                    </ItemDescription>
+                  </ItemContent>
+                  {!key.revoked_at && (
+                    <ItemActions>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setRevoking(key)}
+                        aria-label={`Revoke ${key.name}`}
+                      >
+                        Revoke
+                      </Button>
+                    </ItemActions>
+                  )}
+                </li>
+              </Item>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+      {creating && (
+        <CreateServiceKeyDialog
+          onClose={() => {
+            setCreating(false);
+            qc.invalidateQueries({ queryKey: ["gatewayServiceKeys"] });
+          }}
+        />
+      )}
+      {revoking && (
+        <ConfirmDialog
+          title="Revoke this service key?"
+          message={
+            <>
+              Gateways using <b>{revoking.name}</b> lose their keys, config and record export until
+              they get a new one. This cannot be undone.
+            </>
+          }
+          confirmLabel="Revoke"
+          onConfirm={() => {
+            revoke.mutate(revoking);
+            setRevoking(null);
+          }}
+          onCancel={() => setRevoking(null)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function CreateServiceKeyDialog({ onClose }: { onClose: () => void }) {
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: (keyName: string) => api.createGatewayServiceKey(keyName),
+  });
+  const token = create.data?.token ?? null;
+  return (
+    <Modal title={token ? "Your new service key" : "New service key"} onClose={onClose}>
+      {token ? (
+        <div className="space-y-4">
+          <NoteBanner>Copy it now — it is shown only once.</NoteBanner>
+          <CopySnippet label="service key" code={token} />
+          <p className="text-xs text-muted-foreground">
+            On a machine (<code>make up</code>) or with Docker Compose, in <code>.env</code>:
+          </p>
+          <CopySnippet label=".env" code={`THEYGENT_AI_GATEWAY_SERVICE_KEY=${token}`} />
+          <p className="text-xs text-muted-foreground">In Kubernetes, as the gateway's Secret:</p>
+          <CopySnippet
+            label="kubectl"
+            code={`kubectl -n theygent create secret generic theygent-ai-gateway \\\n  --from-literal=THEYGENT_AI_GATEWAY_SERVICE_KEY=${token}`}
+          />
+          <div className="flex justify-end">
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) create.mutate(name.trim());
+          }}
+        >
+          <Field label="Name — which deployment it is for">
+            <Input
+              aria-label="Service key name"
+              value={name}
+              placeholder="team gateway"
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+            />
+          </Field>
+          <ErrorBanner error={create.error} />
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || create.isPending}>
+              Create key
+            </Button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+// ── developers: who pays for each one's traffic ──────────────────────────────
+
+const BILLING: Record<CredentialProfile, string> = {
+  passthrough: "Their own Claude login or API key",
+  org_key: "The organization's key",
+};
+
+function DevelopersCard() {
+  const qc = useQueryClient();
+  const { user } = useAuth();
+  const developers = useQuery({
+    queryKey: ["gatewayDevelopers"],
+    queryFn: () => api.listGatewayDevelopers(),
+  });
+  const [changing, setChanging] = useState<{
+    developer: GatewayDeveloper;
+    profile: CredentialProfile;
+  } | null>(null);
+  const change = useMutation({
+    mutationFn: (c: { developer: GatewayDeveloper; profile: CredentialProfile }) =>
+      api.setGatewayCredentialProfile(c.developer.user_id, c.profile),
+    onSuccess: (_saved, c) =>
+      notify.success(
+        `${c.developer.username} is billed to ${c.profile === "org_key" ? "the organization's key" : "their own credential"} — gateways apply it within one key sync`,
+      ),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["gatewayDevelopers"] });
+      qc.invalidateQueries({ queryKey: ["gatewayMe"] });
+    },
+  });
+  const list = developers.data ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Users size={16} /> Developers
+        </CardTitle>
+        <CardDescription>
+          Who pays for each developer's Claude Code traffic: their own claude.ai login or API key,
+          or the organization's key, which the gateway adds in place of theirs.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="pt-4">
+        <ErrorBanner error={developers.error} />
+        {developers.isPending ? (
+          <Skeleton className="h-12 rounded-lg" />
+        ) : (
+          <ul className="flex flex-col gap-2" aria-label="Developers">
+            {list.map((d) => (
+              <Item key={d.user_id} variant="outline" size="sm" asChild>
+                <li>
+                  <ItemContent>
+                    <ItemTitle className="flex flex-wrap items-center gap-2">
+                      {d.display_name || d.username}
+                      {d.display_name && d.display_name !== d.username && (
+                        <span className="font-mono text-[11px] text-muted-foreground">
+                          {d.username}
+                        </span>
+                      )}
+                      {d.user_id === user?.id && <Badge tone="slate">you</Badge>}
+                      {d.disabled && <Badge tone="slate">disabled</Badge>}
+                    </ItemTitle>
+                    <ItemDescription>
+                      {d.live_gateway_keys === 1
+                        ? "1 gateway key"
+                        : `${d.live_gateway_keys} gateway keys`}
+                      {d.updated_at && (
+                        <>
+                          {" "}
+                          · billing changed <TimeAgo iso={d.updated_at} />
+                        </>
+                      )}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <NativeSelect
+                      aria-label={`Billing for ${d.username}`}
+                      value={d.credential_profile}
+                      disabled={change.isPending}
+                      onChange={(e) =>
+                        setChanging({
+                          developer: d,
+                          profile: e.target.value as CredentialProfile,
+                        })
+                      }
+                    >
+                      {(Object.keys(BILLING) as CredentialProfile[]).map((p) => (
+                        <NativeSelectOption key={p} value={p}>
+                          {BILLING[p]}
+                        </NativeSelectOption>
+                      ))}
+                    </NativeSelect>
+                  </ItemActions>
+                </li>
+              </Item>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+      {changing && (
+        <ConfirmDialog
+          title={`Bill ${changing.developer.username} to ${changing.profile === "org_key" ? "the organization" : "their own credential"}?`}
+          message={
+            changing.profile === "org_key" ? (
+              <>
+                Their Claude Code traffic will reach Anthropic with the organization's key, which
+                the gateway adds in place of their own credential — so the gateway must have that
+                key (above), or their requests are refused. Their current setup keeps working.
+              </>
+            ) : (
+              <>
+                Their traffic will need their own claude.ai login or API key. A setup that carries
+                only the gateway key stops working until they copy the new one from Setup &amp;
+                keys.
+              </>
+            )
+          }
+          confirmLabel="Change billing"
+          onConfirm={() => {
+            change.mutate(changing);
+            setChanging(null);
+          }}
+          onCancel={() => setChanging(null)}
+        />
+      )}
+    </Card>
+  );
+}
+
+// ── request records: retention and the archive ──────────────────────────────
+
+const RETENTION_KEY = "ai_gateway.request_retention_days";
+
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function RecordsCard() {
+  const form = usePlatformSettingsForm();
+  const archive = useQuery({
+    queryKey: ["gatewayArchive"],
+    queryFn: () => api.getGatewayArchive(),
+  });
+  const download = useMutation({
+    mutationFn: async (day: string) =>
+      saveBlob(await api.downloadGatewayArchive(day), `ai-gateway-requests-${day}.jsonl.gz`),
+    onError: (e) => notify.error(e instanceof Error ? e.message : String(e)),
+  });
+  const entry = form.entry(RETENTION_KEY);
+  const days = archive.data?.days ?? [];
+  return (
+    <Card>
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2">
+          <Archive size={16} /> Request records
+        </CardTitle>
+        <CardDescription>
+          Each request is kept in detail for the days below, then moves to a compressed archive.
+          Reports read archived days from daily totals, so no figure changes; only those days'
+          per-request timelines leave the Sessions tab. An archived day downloads as JSON lines, one
+          record each, exactly as the gateway sent it.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 pt-4">
+        {form.loadError && !form.data ? (
+          <ErrorBanner error={form.loadError} />
+        ) : entry ? (
+          <SettingRow entry={entry} form={form} />
+        ) : (
+          <Skeleton className="h-12 rounded-lg" />
+        )}
+        <SaveBar form={form} group="ai_gateway" />
+        <ErrorBanner error={archive.error} />
+        {archive.isPending ? null : days.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Nothing archived yet.</p>
+        ) : (
+          <DataTable aria-label="Archived days">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Day (UTC)</TableHead>
+                <TableHead className="text-right">Requests</TableHead>
+                <TableHead className="text-right">Size</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {days.map((d) => (
+                <TableRow key={d.day}>
+                  <TableCell className="font-mono text-xs">{d.day}</TableCell>
+                  <TableCell className="text-right">{d.records.toLocaleString()}</TableCell>
+                  <TableCell className="text-right">{size(d.bytes)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Download ${d.day}`}
+                      disabled={download.isPending}
+                      onClick={() => download.mutate(d.day)}
+                    >
+                      <Download size={14} /> Download
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── local models and the local dials ────────────────────────────────────────
+
+const DIALS: { kind: DialKind; label: string; detail: string }[] = [
+  {
+    kind: "side_requests",
+    label: "Side requests",
+    detail: "Titles, suggestions and checks reviewed as local model in the Catalog.",
+  },
+  {
+    kind: "subagents",
+    label: "Subagents",
+    detail: "A share of subagents, from their first request; they keep the model for their task.",
+  },
+  {
+    kind: "main",
+    label: "Main conversation",
+    detail: "A share of conversations, at their start or after compaction. Needs a capable model.",
+  },
+];
+
+interface LocalEvidence {
+  served: number;
+  shadows: number;
+  compared: number;
+  agreed: number;
+}
+
+/** What the last week's records say about each local model: requests it served, and the shadow
+ *  runs — trials included — that measured it on agent turns. */
+function useLocalEvidence(): Map<string, LocalEvidence> {
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const report = useQuery({
+    queryKey: ["gatewayReport", "localEvidence"],
+    queryFn: () => api.getGatewayReport({ since, by: ["decision", "shadow-model"], scope: "org" }),
+    staleTime: 60_000,
+  });
+  const out = new Map<string, LocalEvidence>();
+  const entry = (model: string): LocalEvidence => {
+    const found = out.get(model) ?? { served: 0, shadows: 0, compared: 0, agreed: 0 };
+    out.set(model, found);
+    return found;
+  };
+  for (const row of report.data?.groups?.decision ?? []) {
+    if (row.key.startsWith("route:")) entry(row.key.slice(6)).served = row.applied_calls;
+  }
+  for (const row of report.data?.groups?.["shadow-model"] ?? []) {
+    if (row.shadow_calls === 0) continue;
+    Object.assign(entry(row.key), {
+      shadows: row.shadow_calls,
+      compared: row.shadow_compared_calls,
+      agreed: row.shadow_agreed_calls,
+    });
+  }
+  return out;
+}
+
+function LocalModels({
+  form,
+  errors,
+  onChange,
+}: {
+  form: SettingsForm;
+  errors: FormErrors;
+  onChange: (patch: Partial<SettingsForm>) => void;
+}) {
+  const evidence = useLocalEvidence();
+  const rows = form.localModels;
+  // The window the setups would hand out for the configuration as edited (nothing while invalid).
+  const edited = draftFromForm(form, []).draft;
+  const compact = edited ? compactWindowFor(edited.policy) : null;
+  const setRow = (i: number, patch: Partial<LocalModelRow>) =>
+    onChange({ localModels: rows.map((row, j) => (j === i ? { ...row, ...patch } : row)) });
+  const setDial = (kind: DialKind, patch: Partial<DialRow>) =>
+    onChange({ dials: { ...form.dials, [kind]: { ...form.dials[kind], ...patch } } });
+  const choices = [
+    ...rows.map((r) => r.model.trim()).filter((m) => m !== ""),
+    ...(form.localTarget.trim() && !rows.some((r) => r.model.trim() === form.localTarget.trim())
+      ? [form.localTarget.trim()]
+      : []),
+  ];
+  return (
+    <fieldset className="min-w-0 space-y-3">
+      <legend className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        Local models
+      </legend>
+      <p className="text-xs text-muted-foreground">
+        Models on your inference plane that may take Claude Code's work, listed small to large: a
+        request goes to the first that can take it. A local answer costs no API spend, only what
+        running the model costs, if you give it a cost; one that fails before it starts goes to
+        Anthropic, unseen by Claude Code. Measure a model before it serves: a dial's trial tries it
+        on conversations Anthropic still answers — in router mode too, never delaying anyone — and
+        shows how often it picks the same next action as Claude. Raising the share by the trial then
+        serves exactly the conversations tried.
+      </p>
+      {rows.length > 0 && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <Th>Logical id</Th>
+              <Th>Context (tokens)</Th>
+              <Th>Max output (tokens)</Th>
+              <Th>Tool calls</Th>
+              <Th>Images</Th>
+              <Th>Cost (USD / M tokens: in · out)</Th>
+              <Th>Last 7 days</Th>
+              <Th>
+                <span className="sr-only">Remove</span>
+              </Th>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((row, i) => {
+              const seen = evidence.get(row.model.trim());
+              return (
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity until an id is typed
+                <TableRow key={i}>
+                  <Td>
+                    <Input
+                      aria-label={`Local model (row ${i + 1})`}
+                      value={row.model}
+                      placeholder="coder-medium"
+                      spellCheck={false}
+                      className="min-w-36 font-mono"
+                      aria-invalid={errors[`local.${i}.model`] ? true : undefined}
+                      title={errors[`local.${i}.model`]}
+                      onChange={(e) => setRow(i, { model: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
+                    <Input
+                      aria-label={`Context (row ${i + 1})`}
+                      value={row.context}
+                      inputMode="numeric"
+                      className="w-28 tabular-nums"
+                      aria-invalid={errors[`local.${i}.context`] ? true : undefined}
+                      title={errors[`local.${i}.context`]}
+                      onChange={(e) => setRow(i, { context: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
+                    <Input
+                      aria-label={`Max output (row ${i + 1})`}
+                      value={row.maxOutput}
+                      inputMode="numeric"
+                      className="w-28 tabular-nums"
+                      aria-invalid={errors[`local.${i}.maxOutput`] ? true : undefined}
+                      title={errors[`local.${i}.maxOutput`]}
+                      onChange={(e) => setRow(i, { maxOutput: e.target.value })}
+                    />
+                  </Td>
+                  <Td>
+                    <Checkbox
+                      aria-label={`Follows tool calls (row ${i + 1})`}
+                      checked={row.tools}
+                      onCheckedChange={(v) => setRow(i, { tools: v === true })}
+                    />
+                  </Td>
+                  <Td>
+                    <Checkbox
+                      aria-label={`Takes images (row ${i + 1})`}
+                      checked={row.images}
+                      onCheckedChange={(v) => setRow(i, { images: v === true })}
+                    />
+                  </Td>
+                  <Td>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        aria-label={`Cost per million input tokens (row ${i + 1})`}
+                        value={row.inputRate}
+                        placeholder="—"
+                        inputMode="decimal"
+                        className="w-20 tabular-nums"
+                        aria-invalid={errors[`local.${i}.inputRate`] ? true : undefined}
+                        title={errors[`local.${i}.inputRate`]}
+                        onChange={(e) => setRow(i, { inputRate: e.target.value })}
+                      />
+                      <Input
+                        aria-label={`Cost per million output tokens (row ${i + 1})`}
+                        value={row.outputRate}
+                        placeholder="—"
+                        inputMode="decimal"
+                        className="w-20 tabular-nums"
+                        aria-invalid={errors[`local.${i}.outputRate`] ? true : undefined}
+                        title={errors[`local.${i}.outputRate`]}
+                        onChange={(e) => setRow(i, { outputRate: e.target.value })}
+                      />
+                    </div>
+                  </Td>
+                  <Td className="text-xs text-muted-foreground">
+                    {seen ? (
+                      <>
+                        served {seen.served.toLocaleString()}
+                        {seen.compared > 0 &&
+                          ` · same next action ${Math.round((seen.agreed / seen.compared) * 100)}% of ${seen.compared}`}
+                      </>
+                    ) : (
+                      "nothing yet"
+                    )}
+                  </Td>
+                  <Td>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove local model ${i + 1}`}
+                      onClick={() => onChange({ localModels: rows.filter((_, j) => j !== i) })}
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  </Td>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() =>
+          onChange({
+            localModels: [...rows, blankLocalModel()],
+          })
+        }
+      >
+        <Plus size={14} /> Add a local model
+      </Button>
+      <div className="space-y-2">
+        {DIALS.map(({ kind, label, detail }) => {
+          const dial = form.dials[kind];
+          return (
+            <div
+              key={kind}
+              className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_auto_auto_auto]"
+            >
+              <div>
+                <span className="block text-sm font-medium text-foreground">{label}</span>
+                <span className="block text-xs text-muted-foreground">{detail}</span>
+                {(errors[`dial.${kind}.share`] ||
+                  errors[`dial.${kind}.trial`] ||
+                  errors[`dial.${kind}.model`]) && (
+                  <span className="block text-xs text-destructive">
+                    {errors[`dial.${kind}.share`] ??
+                      errors[`dial.${kind}.trial`] ??
+                      errors[`dial.${kind}.model`]}
+                  </span>
+                )}
+              </div>
+              <Field label="Share (%)">
+                <Input
+                  aria-label={`${label} share`}
+                  value={dial.share}
+                  inputMode="decimal"
+                  className="w-24 tabular-nums"
+                  aria-invalid={errors[`dial.${kind}.share`] ? true : undefined}
+                  onChange={(e) => setDial(kind, { share: e.target.value })}
+                />
+              </Field>
+              <Field label="Trial (%)">
+                <Input
+                  aria-label={`${label} trial`}
+                  title="Also tried on the local model after Anthropic answers: the conversations just above the share."
+                  value={dial.trial}
+                  inputMode="decimal"
+                  className="w-24 tabular-nums"
+                  aria-invalid={errors[`dial.${kind}.trial`] ? true : undefined}
+                  onChange={(e) => setDial(kind, { trial: e.target.value })}
+                />
+              </Field>
+              <Field label="Model">
+                <NativeSelect
+                  aria-label={`${label} model`}
+                  value={dial.model}
+                  onChange={(e) => setDial(kind, { model: e.target.value })}
+                >
+                  <NativeSelectOption value="">Smallest that fits</NativeSelectOption>
+                  {choices.map((m) => (
+                    <NativeSelectOption key={m} value={m}>
+                      {m}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Field>
+              {kind === "subagents" && (
+                <div className="md:col-span-4">
+                  <Field label="Only these agent types (comma-separated; empty: every type)">
+                    <Input
+                      aria-label="Subagent types"
+                      value={dial.agentTypes}
+                      placeholder="Explore"
+                      spellCheck={false}
+                      aria-invalid={errors["dial.subagents.agentTypes"] ? true : undefined}
+                      onChange={(e) => setDial(kind, { agentTypes: e.target.value })}
+                    />
+                  </Field>
+                </div>
+              )}
+              {kind === "main" && compact !== null && (
+                <p
+                  className={`text-xs md:col-span-4 ${"tooSmall" in compact ? "text-destructive" : "text-muted-foreground"}`}
+                >
+                  {"tooSmall" in compact ? (
+                    <>
+                      The largest model these conversations can reach, <code>{compact.model}</code>,
+                      holds {compact.context.toLocaleString()} tokens. Claude Code compacts no
+                      earlier than 100,000, so long conversations will outgrow it and go to
+                      Anthropic: list one with 125,000 tokens of context or more.
+                    </>
+                  ) : (
+                    <>
+                      Claude Code compacts by the model it asked for, not the local one: the setups
+                      on Setup &amp; keys tell it to compact at {compact.window.toLocaleString()}{" "}
+                      tokens, while a conversation still fits <code>{compact.model}</code>'s{" "}
+                      {compact.context.toLocaleString()}.
+                      {compact.tight &&
+                        " That is as early as Claude Code compacts, with little room to spare."}
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}

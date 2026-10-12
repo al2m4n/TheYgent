@@ -1,18 +1,19 @@
 # Deployment and operations
 
-This page covers how TheYgent is built, run, and shipped: the Makefile that brings the stack up bare-metal, the docker-compose stack (plus a host-inference overlay for Apple Silicon), the kustomize-based Kubernetes deployment for minikube, the static contract guards under `deploy/tests`, the CI gates, the sample OTel stack, and the two Cloudflare Pages publish pipelines (user docs and marketing site). The organizing idea: these are **three run modes of the same three-process topology** — control-plane API on :8080, inference plane on :8081, interface on :5174, plus the opt-in durable worker. Only the wiring changes between modes, never the architecture.
+This page covers how TheYgent is built, run, and shipped: the Makefile that brings the stack up bare-metal, the docker-compose stack (plus a host-inference overlay for Apple Silicon), the kustomize-based Kubernetes deployment for minikube, the static contract guards under `deploy/tests`, the CI gates, the sample OTel stack, and the two Cloudflare Pages publish pipelines (user docs and marketing site). The organizing idea: these are **three run modes of the same topology** — control-plane API on :8080, inference plane on :8081, interface on :5174, the AI gateway on :8082, plus the opt-in durable worker. Only the wiring changes between modes, never the architecture.
 
 ## Design rules
 
-- **Never two architectures.** The same process types (control-plane API, inference plane, worker) run in every mode. `make up` bare-metal stays the first-class way of running the stack; compose and k8s are the second and third, and all stay supported.
+- **Never two architectures.** The same process types (control-plane API, inference plane, worker, AI gateway) run in every mode. `make up` bare-metal stays the first-class way of running the stack; compose and k8s are the second and third, and all stay supported.
 - **One migrator per mode, migrations before app start.** `make up` runs `alembic upgrade head` before starting services; compose has a one-shot `migrate` service that the control-plane and worker gate on (`service_completed_successfully`); k8s runs alembic in the control-plane's initContainer while the worker's `wait-for-db` initContainer only *polls* `SELECT version_num FROM alembic_version` — it never migrates, so two pods can't race DDL. `upgrade head` on a migrated schema is a cheap no-op, so restarts and scale-ups pass straight through.
 - **The inference plane never scales horizontally in-cluster.** `replicas: 1`, `strategy: Recreate`, no HPA. An instance pins model weights in memory and owns its RWO state PVC; two instances must never share a registry. Scale vertically, or run inference outside the cluster on a Metal/CUDA host and repoint `THEYGENT_INFERENCE_PLANE_URL`.
 - **Port-based service identity in the Makefile.** Services are found by the port they listen on (`lsof`), never by recorded PID — `$!` captures only the uv/pnpm wrapper, not the server child. `start` skips loudly if a port is already held (never silently leaves an old process serving stale code), and `down-apps` refuses to kill Docker-owned listeners, pointing at `make docker-down` instead.
-- **The host-port contract holds in every mode.** control-plane 8080, inference 8081, interface 5174 — under `make up`, `docker compose up`, and `kubectl port-forward` alike, so the SPA's baked-in `localhost` fallbacks and the default `THEYGENT_CORS_ORIGINS` work identically. Test-enforced.
+- **The host-port contract holds in every mode.** control-plane 8080, inference 8081, interface 5174, AI gateway 8082 — under `make up`, `docker compose up`, and `kubectl port-forward` alike, so the SPA's baked-in `localhost` fallbacks and the default `THEYGENT_CORS_ORIGINS` work identically. Test-enforced.
 - **An env name set in a deploy file must be read by first-party code.** `deploy/tests/contract_utils.py` scans `apps/*/src` and `packages/*/src` for `THEYGENT_*`/`VITE_*`/`DATABASE_URL` names; compose and k8s may only set names on that list (third-party names like `POSTGRES_*`, `HF_HOME` go in an explicit allowlist). A rename in code fails the deploy tests instead of silently configuring nothing.
 - **Empty env equals unset, everywhere.** Compose interpolates `${THEYGENT_DURABLE:-0}` / `${THEYGENT_SECRET_KEY:-}` style values, and first-party code treats empty strings exactly like unset — a manifest pass-through must never crash-loop a container.
 - **Base images are pinned with versioned tags.** No `:latest`, no rolling aliases (the guard requires a digit in the tag). The bundled llama.cpp server image is pinned to a specific build tag because the bare `server` tag floats with every upstream commit — bump deliberately and re-verify with a real chat.
 - **Secrets and weights never bake into images.** `.dockerignore` excludes `**/.env`, `**/.env.*`, and model-weight extensions (`**/*.gguf` etc.) at every depth; real k8s deployments replace the dev `theygent-secrets` Secret.
+- **A replicated process keeps no per-instance state an admin can change.** The AI gateway can store the organization's Anthropic key set from its admin page — right for one instance, wrong for replicas, which would each keep their own copy. Kubernetes therefore runs it with `THEYGENT_AI_GATEWAY_STORE_ORG_KEY=0`: the key comes from the `theygent-ai-gateway` Secret only, and the admin page says so. Test-enforced while the autoscaler allows more than one replica.
 - **Intentional contract changes update the guard in the same change.** Ports, service sets, env names, and image tags are all asserted by `deploy/tests` — changing one without updating its assertion is the drift the suite exists to catch.
 
 ## Layout
@@ -20,9 +21,9 @@ This page covers how TheYgent is built, run, and shipped: the Makefile that brin
 | Path | Role |
 |------|------|
 | `Makefile` | Run mode 1 (bare metal): install, engines, migrate, start/stop, tests, docker/k8s/otel/docs wrappers |
-| `docker-compose.yml` | Run mode 2: postgres, one-shot migrate, both planes, opt-in worker (profile), nginx interface |
+| `docker-compose.yml` | Run mode 2: postgres, one-shot migrate, both planes, opt-in worker and AI gateway (profiles), nginx interface |
 | `docker-compose.host-inference.yml` | Overlay: containerized inference disabled, control-plane/worker repointed at a host inference process |
-| `deploy/k8s/` | Run mode 3: kustomize manifests for minikube (namespace, config, storage, postgres, planes, worker, interface) |
+| `deploy/k8s/` | Run mode 3: kustomize manifests for minikube (namespace, config, storage, postgres, planes, worker, interface, AI gateway) |
 | `deploy/tests/` | Static contract guards over Dockerfiles, compose, and k8s manifests |
 | `deploy/otel/` | Sample observability stack (collector → Tempo → Grafana), a separate compose project |
 | `apps/*/Dockerfile` | Per-service images, all built from the repo-root context |
@@ -38,11 +39,11 @@ This page covers how TheYgent is built, run, and shipped: the Makefile that brin
 
 ### 1. Bare metal — `make up`
 
-`make up` = `install` (uv sync with extras + pnpm install) → `pg-up` (a dev Postgres container, `pgvector/pgvector:pg16`, volume `theygent-pgdata`, host :5432) → `migrate` (`alembic upgrade head`) → `start` (inference plane, control plane, interface as background processes; PIDs and logs under the gitignored `.run/`). `make engines` installs the local engine servers on macOS (llama.cpp, whisper.cpp, the MLX tools). The Makefile loads `.env` at parse time and exports every key, so `DATABASE_URL` and `THEYGENT_*` reach alembic, uvicorn, and vite without per-recipe sourcing. Day-to-day loop: `make restart` after backend changes (Postgres keeps running), `make status`, `make logs`.
+`make up` = `install` (uv sync with extras + pnpm install) → `pg-up` (a dev Postgres container, `pgvector/pgvector:pg16`, volume `theygent-pgdata`, host :5432) → `migrate` (`alembic upgrade head`) → `start` (inference plane, control plane, interface and AI gateway as background processes; PIDs and logs under the gitignored `.run/`). The gateway starts as `.env` describes: by default a standalone personal gateway on loopback that records locally; with `THEYGENT_CONTROL_PLANE_URL` and a service key it reports to the control plane, and in team mode it serves other machines. `make engines` installs the local engine servers on macOS (llama.cpp, whisper.cpp, the MLX tools). The Makefile loads `.env` at parse time and exports every key, so `DATABASE_URL` and `THEYGENT_*` reach alembic, uvicorn, and vite without per-recipe sourcing. Day-to-day loop: `make restart` after backend changes (Postgres keeps running), `make status`, `make logs`.
 
 ### 2. Containers — `make docker-up`
 
-`docker compose up` runs the same topology in containers: `postgres` (`pgvector/pgvector:pg18-trixie`, host :5433 so it never clashes with a bare-metal Postgres), the one-shot `migrate` service, `inference-plane`, `control-plane`, `interface` (nginx, :5174→80), and `worker` behind the `worker` profile — enable it with `THEYGENT_DURABLE=1 docker compose --profile worker up -d`. Compose auto-loads the repo `.env`, so the same knob file configures both run modes; in-container listen addresses and `DATABASE_URL` are fixed by compose and ignore it.
+`docker compose up` runs the same topology in containers: `postgres` (`pgvector/pgvector:pg18-trixie`, host :5433 so it never clashes with a bare-metal Postgres), the one-shot `migrate` service, `inference-plane`, `control-plane`, `interface` (nginx, :5174→80), and `worker` behind the `worker` profile — enable it with `THEYGENT_DURABLE=1 docker compose --profile worker up -d`. The `ai-gateway` (:8082) sits behind the `gateway` profile because it starts only with a gateway service key: bring the stack up, mint one as an admin (AI Gateway → Settings → Service keys), set `THEYGENT_AI_GATEWAY_SERVICE_KEY` in `.env`, then `docker compose --profile gateway up -d`. Its image runs team mode only — personal mode accepts requests without a key and so stays on loopback, which a published port cannot reach — with a fixed id (`gw-compose`, so a recreate does not add an instance to the AI Gateway page), state on the `ai-gateway-data` volume (unexported records, the last known config and keys, a stored org key), and a 5-minute stop grace so open streams finish. Compose auto-loads the repo `.env`, so the same knob file configures both run modes; in-container listen addresses and `DATABASE_URL` are fixed by compose and ignore it.
 
 The in-container inference image is the honest container story: it bundles only a pinned CPU llama.cpp server (verified executable at build time), so llamacpp plus `openai-compatible` are what run inside Linux containers. MLX cannot — Metal is unreachable from a Linux container — which is why the **host-inference overlay** exists:
 
@@ -55,19 +56,29 @@ The overlay parks the containerized inference plane under a disabled profile and
 ### 3. Kubernetes — `make k8s-up`
 
 `make k8s-up` is the one-shot dev flow: `k8s-load` (build + side-load the `:dev` images) →
-`kubectl apply -k deploy/k8s` → `kubectl rollout restart` on every Deployment → wait for the
-rollouts → `k8s-forward` (port-forward the three services). The `rollout restart` is
+`kubectl apply -k deploy/k8s` → `kubectl rollout restart` on every Deployment and the AI
+gateway StatefulSet → wait for the Deployments' rollouts → `k8s-forward` (port-forward the four
+services). The gateway is not waited for: it starts only once its Secret exists. The `rollout restart` is
 load-bearing: `apply -k` is a no-op when the manifests are unchanged (same `:dev` tag,
 `imagePullPolicy: IfNotPresent`), so a freshly reloaded image would otherwise never reach the
 running pods — restarting the Deployments is what rebinds them to the new image. `k8s-apply`
 depends on `k8s-load`, so an apply always ships freshly built images; run `k8s-load`,
 `k8s-forward`, or `k8s-down` on their own when you want just that step. `make k8s-down`
-(aliased `k8s-delete`) tears the whole namespace down — including all three PVCs, so registry,
-weights, artifacts, and the Postgres volume are all deleted.
+(aliased `k8s-delete`) tears the whole namespace down — including every PVC in it, so registry,
+weights, artifacts, the Postgres volume and the gateway's unexported records are all deleted.
+
+The AI gateway is a StatefulSet (HPA 1–5 @ 70% CPU, `podManagementPolicy: Parallel`), not a
+Deployment: each replica keeps its own 1Gi volume across restarts and rollouts — the request-log
+spool of records not yet exported, the last known config and key set — and a stable name, so it
+stays one instance on the AI Gateway page (its id is `gw-<pod name>`). A scaled-down replica's
+volume is retained and its records export when it returns. The pod waits in
+`CreateContainerConfigError` until the `theygent-ai-gateway` Secret exists (the service key is
+required, the org key optional); `/readyz` keeps a replica out of the Service until it has its
+developers' keys; a 300 s grace period plus a short `preStop` let open streams finish.
 
 `kubectl apply -k deploy/k8s` deploys namespace `theygent`: Deployments for control-plane (HPA 1–5 @ 70% CPU), worker (HPA 1–3 @ 75% CPU), inference-plane (pinned to 1, see design rules), and interface; a Postgres StatefulSet; ConfigMap `theygent-config`; Secret `theygent-secrets`; and PVCs `theygent-data` (2Gi, shared by control-plane + worker for artifacts), `inference-data` (10Gi, registry + weights), `pgdata` (5Gi). Images are exactly the compose-built `theygent/*:dev` tags with `imagePullPolicy: IfNotPresent`, side-loaded by `make k8s-load` — which uses `docker save` + `docker load` inside minikube's own daemon, because `minikube image load` silently keeps an existing same-tag image and a rebuilt `:dev` would never reach the cluster. The `docker save` half deliberately strips the minikube docker-env (`env -u DOCKER_HOST …`) so it always reads from the *host* daemon: if the caller had already run `eval $(minikube docker-env)`, an unguarded save would read the stale image back out of minikube and load it onto itself — a silent no-op that leaves pods on 4-week-old code. The load half forces `--shell bash` so `minikube docker-env` emits POSIX-parsable output regardless of the caller's `$SHELL`.
 
-Every PVC-mounting pod pins `runAsUser`/`fsGroup` to 10001, matching the numeric uid the images create — minikube's hostpath provisioner masks a mismatch, real block-storage classes do not. Probes target `/healthz` (liveness) and `/readyz` (readiness); the control-plane's `/readyz` is honest — Postgres *and* the inference plane must answer, so a pod leaves the Service while inference is down, by design. The worker has no probes (queue consumer, no HTTP surface). Dev access is `kubectl -n theygent port-forward` on 5174/8080/8081 so the SPA's baked URLs line up (`make k8s-forward` wires all three; the interface Service listens on :80, so its mapping is `5174:80`). `k8s-forward` reaps any orphaned prior forward first (`k8s-forward-stop`, matched on the namespace flag) — otherwise a stray forward from a crashed run keeps a port bound and the next start dies with `address already in use`; `k8s-down` reaps them too, since forwards are host processes a namespace delete would otherwise leave looping. A real deployment rebuilds the interface image with `VITE_CONTROL_PLANE_URL`/`VITE_INFERENCE_URL` and fronts it with an Ingress.
+Every PVC-mounting pod pins `runAsUser`/`fsGroup` to 10001, matching the numeric uid the images create — minikube's hostpath provisioner masks a mismatch, real block-storage classes do not. Probes target `/healthz` (liveness) and `/readyz` (readiness); the control-plane's `/readyz` is honest — Postgres *and* the inference plane must answer, so a pod leaves the Service while inference is down, by design. The worker has no probes (queue consumer, no HTTP surface). Dev access is `kubectl -n theygent port-forward` on 5174/8080/8081/8082 so the SPA's baked URLs line up (`make k8s-forward` wires all four; the interface Service listens on :80, so its mapping is `5174:80`). `k8s-forward` reaps any orphaned prior forward first (`k8s-forward-stop`, matched on the namespace flag) — otherwise a stray forward from a crashed run keeps a port bound and the next start dies with `address already in use`; `k8s-down` reaps them too, since forwards are host processes a namespace delete would otherwise leave looping. A real deployment rebuilds the interface image with `VITE_CONTROL_PLANE_URL`/`VITE_INFERENCE_URL`/`VITE_AI_GATEWAY_URL`, fronts the Services with an Ingress (the AI gateway's too: developers' Claude Code reaches it), and sets `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS` to the interface's public origin.
 
 Note the recorded worker-scaling caveat: all worker replicas share one durable executor identity, so a new replica's launch-time recovery redundantly re-claims in-flight workflows (step checkpointing converges) — scale the worker on sustained load, not flapping.
 
@@ -107,14 +118,15 @@ The k8s guard enforces both the value and that the ConfigMap actually reaches th
 | 8080 | control-plane API |
 | 8081 | inference plane |
 | 5174 | interface (nginx :80 in-container) |
+| 8082 | AI gateway |
 | 5432 | bare-metal dev Postgres |
 | 5433 | compose Postgres (host side) |
 | 4318 / 4317 | sample OTel collector (OTLP HTTP / gRPC) |
 | 3000 | sample Grafana |
 
-Key env vars on the deploy surface (see `.env.example` for the documented set): `DATABASE_URL` (asyncpg DSN), `THEYGENT_INFERENCE_PLANE_URL` (**must include `/v1`** — the data-plane root), `THEYGENT_INFERENCE_PLANE_HOST/PORT`, `THEYGENT_CONTROL_PLANE_HOST/PORT`, `THEYGENT_CORS_ORIGINS`, `THEYGENT_DURABLE`, `THEYGENT_SECRET_KEY` (Fernet key for stored connection secrets), `THEYGENT_INVOKE_TOKEN`, `THEYGENT_MAX_RESIDENT`, `THEYGENT_ARTIFACT_DIR`, plus build-time `VITE_CONTROL_PLANE_URL`/`VITE_INFERENCE_URL` (Vite inlines them; changing where the planes are reachable means rebuilding the interface image — it is not a runtime env var).
+Key env vars on the deploy surface (see `.env.example` for the documented set): `DATABASE_URL` (asyncpg DSN), `THEYGENT_INFERENCE_PLANE_URL` (**must include `/v1`** — the data-plane root), `THEYGENT_INFERENCE_PLANE_HOST/PORT`, `THEYGENT_CONTROL_PLANE_HOST/PORT`, `THEYGENT_CORS_ORIGINS`, `THEYGENT_DURABLE`, `THEYGENT_SECRET_KEY` (Fernet key for stored connection secrets), `THEYGENT_INVOKE_TOKEN`, `THEYGENT_MAX_RESIDENT`, `THEYGENT_ARTIFACT_DIR`; for the AI gateway `THEYGENT_CONTROL_PLANE_URL`, `THEYGENT_AI_GATEWAY_SERVICE_KEY`, `THEYGENT_AI_GATEWAY_ORG_API_KEY`, `THEYGENT_AI_GATEWAY_STORE_ORG_KEY`, `THEYGENT_AI_GATEWAY_AUTH_MODE`, `THEYGENT_AI_GATEWAY_HOST/PORT`, `THEYGENT_AI_GATEWAY_ID`, `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS`; plus build-time `VITE_CONTROL_PLANE_URL`/`VITE_INFERENCE_URL`/`VITE_AI_GATEWAY_URL` (Vite inlines them; changing where the services are reachable means rebuilding the interface image — they are not runtime env vars).
 
-Images are built from the **repo-root context** (`docker build -f apps/<app>/Dockerfile .`) because the uv/pnpm workspaces need the root manifests, in a two-layer pattern: a dependency layer (lockfile + every member `pyproject.toml`, `uv sync --locked --no-dev --no-install-workspace --package X`) then a source layer. Adding a Python workspace member means adding its `pyproject.toml` COPY to all three Python Dockerfiles — test-enforced. Notable build args: `WITH_MCP_LAUNCHERS` (default 1: node/npx + uvx shipped in control-plane and worker images so stdio MCP servers can launch, with `HOME=/data/home` because those servers spawn with a scrubbed environment and launcher caches derive from HOME) and `WITH_JS_RENDER` (default 0: an optional ~500MB chromium layer for JS-rendered crawling, installed outside `/data` so the volume never shadows it).
+Images are built from the **repo-root context** (`docker build -f apps/<app>/Dockerfile .`) because the uv/pnpm workspaces need the root manifests, in a two-layer pattern: a dependency layer (lockfile + every member `pyproject.toml`, `uv sync --locked --no-dev --no-install-workspace --package X`) then a source layer. Adding a Python workspace member means adding its `pyproject.toml` COPY to all four Python Dockerfiles — test-enforced. Notable build args: `WITH_MCP_LAUNCHERS` (default 1: node/npx + uvx shipped in control-plane and worker images so stdio MCP servers can launch, with `HOME=/data/home` because those servers spawn with a scrubbed environment and launcher caches derive from HOME) and `WITH_JS_RENDER` (default 0: an optional ~500MB chromium layer for JS-rendered crawling, installed outside `/data` so the volume never shadows it).
 
 Postgres pinning details worth knowing: Postgres 18 images moved the data directory to `/var/lib/postgresql` (not `.../data`) — both compose and the k8s StatefulSet mount that path, and mounting the old one would silently strand data inside the container layer. pgvector must ship in the image because a migration runs `CREATE EXTENSION vector`. The Makefile's dev Postgres stays on the pg16 image at the classic path.
 
@@ -150,7 +162,7 @@ Run them with `make test-deploy` (or `uv run --package theygent-control-plane py
 
 ## See also
 
-- [Architecture overview](./architecture.md) — the two-plane split and the three-process topology these run modes deploy
+- [Architecture overview](./architecture.md) — the two-plane split and the process topology these run modes deploy
 - [Control plane](./control-plane.md) — the API the migrator and probes belong to
 - [Inference plane](./inference-plane.md) — why it pins state and never scales horizontally
 - [Durable execution](./durable-execution.md) — the worker, durable mode, and what `THEYGENT_DURABLE` switches

@@ -23,6 +23,7 @@ They exist as separate packages because the things they define are the hard-to-r
 | `packages/ir/src/theygent_ir/graph.py` | The Agent Graph IR: `NODE_TYPE_KIND`, `EXECUTABLE_TYPES`, the document envelope, `ModelBinding`, tool bindings, all per-type config models, `parse_document`, `validate_graph`, `topological_order` |
 | `packages/ir/src/theygent_ir/contenthash.py` | `content_hash(ir)` — the one identity function |
 | `packages/ir/src/theygent_ir/registration.py` | The inference-plane registration payload: `ManagedBinding`, `ReachableBinding`, `parse_registration`, the frozen `MODALITIES` vocabulary, `Capabilities` |
+| `packages/ir/src/theygent_ir/gateway.py` | The AI gateway ↔ control plane wire types: `GatewayRequestRecord` and `GatewayEventBatch`, `GatewayConfig`, `GatewayKeySet`, `GatewayHeartbeat`, `FingerprintEntry` |
 | `packages/ir/tests/` | Pure-unit guards for both contracts (no DB, no HTTP) |
 | `packages/ir-types/scripts/generate.py` | One-way codegen: imports from `theygent_ir`, emits `ir.schema.json` and `node-types.json` |
 | `packages/ir-types/src/index.ts` | The only hand-written file: re-exports generated types, wraps `node-types.json` as `NODE_TYPES` / `kindForType(type)` |
@@ -115,6 +116,59 @@ Two same-named-looking shapes serve two different contracts, and they hash diffe
 
 `modality` lives only on registration because it answers a serving-time question (*which task does this engine serve?*), not a graph-authoring one — and because adding any field to the hashed `ModelBinding` would shift every saved agent's hash. The frozen vocabulary is `chat`, `vision`, `embeddings`, `audio.transcription`, `audio.speech`, `images.generation`; `vision` is a sub-capability of `chat` (it runs on `/v1/chat/completions`), while image generation is its own task. A reachable upstream is never probed, so its *declared* modality is the only routing signal surfaces have. `Capabilities` (tool calling, structured output, vision, reasoning, max context, modalities) rides alongside registration and derives `modalities` from its flags when left empty.
 
+## The AI gateway wire types
+
+`theygent_ir.gateway` is the contract between the AI gateway (which proxies a coding agent's
+Anthropic-format model traffic) and the control plane's `/gateway/*` API. It covers:
+
+- the per-request record the gateway reports;
+- the versioned configuration the control plane serves;
+- the key set the gateway authenticates developers against;
+- the heartbeat;
+- the auxiliary-request fingerprint catalog.
+
+Like every control-plane API it is snake_case, with no camelCase aliases (unlike registration). It
+is imported from the submodule rather than re-exported from `theygent_ir`.
+
+The plane boundary is enforced by the types:
+
+- **No free text.** Every free-form string field is a `Token` (at most 128 characters, no
+  whitespace) or a closed vocabulary, so prompt text cannot be stored in a record even by mistake.
+  A test scans the record's JSON Schema, at every depth, for any unconstrained string.
+- **No credentials.** Developer keys cross only as SHA-256 digests.
+- **No error messages.** Records carry error *types*, never messages, since an upstream message
+  can quote request content.
+- **Logical model ids only.** A local routing target is a logical model id, never an engine name,
+  per the data-plane rule.
+- **Every record has a decision.** A request refused before the policy ran is recorded with
+  `request_refused`, and one the policy failed on with `policy_error`, so the records add up to
+  the traffic.
+- **Token checks never show the token.** `GatewayTokenCheck` (a gateway asking whether a
+  TheYgent bearer is live) keeps its token out of every repr; `GatewayTokenCheckResult` names an
+  account and role exactly when it is active.
+- **Catalog suggestions are not decisions.** A `FingerprintEntry` carries the kind's status from
+  the config (the only home of routing rules) and, separately, a `known_kind` recognised by shape
+  with the `suggested_status` that kind's evidence supports.
+- **One vocabulary of setup warnings.** `SetupWarningCode` and `TOOL_SEARCH_OFF_MIN_TOOLS` are
+  shared, so the gateway's own report and the control plane's flag the same problems by the same
+  rule.
+- **One definition of the totals.** `GatewayTotals.of(record)` is a record's contribution
+  (calls, errors, tokens, cost, the cost without and with routing, calls and tokens routed, routes
+  applied, API calls avoided), and totals add field by field. The gateway's own report and the
+  control plane's per-day aggregates are both sums of it, so they agree by construction.
+- **Observer and router savings read the same way.** A record carries `cost_usd` (what ran) and,
+  where an applied route served it on another model, `baseline_usd` (its cost on the requested
+  model); an applied decision has no counterfactual, since its cost is the actual one. The saving
+  is baseline minus with-routing: what routing would save in observer mode, what it saved in
+  router mode. A record from before router mode (no baseline) adds up exactly as it did.
+- **Shadow runs are their own figures.** A record may carry a `shadow` (`ShadowRun`), but only for
+  a route that was not applied, and only on the target its decision named (validated). Its cost is
+  calibration spend, summed as `shadow_cost_usd` and never part of `cost_usd` or the saving. Only
+  an `answered` shadow adds output tokens, its own and the real exchange's, so their ratio
+  compares like with like.
+
+None of these models is hashed, and `packages/ir-types` does not generate them.
+
 ## `packages/ir-types`: the generated TypeScript mirror
 
 The frontend must agree with the backend about the IR without ever re-declaring it. The pipeline is one-way, from Python to TypeScript:
@@ -165,6 +219,7 @@ All suites here are fast, pure-unit, and run from the repo root:
 |---|---|---|
 | IR | `uv run --package theygent-ir pytest packages/ir/tests` | The pinned representative `contentHash`; view-strip / key-order / default-fill hash invariance; type/kind mismatch rejection; per-type config validation; multi-input rules (duplicate data edge, unfed required port); tool-channel capability rules; per-instance guardrail kind; cycle rejection; the guard that `graph.ModelBinding` has no `modality` field |
 | Registration | (same command — `test_registration.py`) | Additive back-compat (omitted modality ⇒ `"chat"` on both arms); the frozen vocabulary rejects unknowns; modality is not a `binding` value; the `model_dump(by_alias=True)` `registry.json` round-trip |
+| AI gateway wire | (same command — `test_gateway.py`) | JSON round-trip and unknown-key rejection for every model; the no-free-text schema scan; local targets refuse engine names; decision, batch, config and key-set consistency |
 | Gateway client | `uv run --package theygent-gateway-client pytest packages/gateway-client/tests` | The standard-kwargs / `extra_body` split, merge precedence, reserved-key stripping (pytest-asyncio) |
 | ir-types | `pnpm --filter @theygent/ir-types typecheck` + the CI drift guard | Generated output matches the committed files; no untracked generator output |
 

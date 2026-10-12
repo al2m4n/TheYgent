@@ -1,0 +1,1398 @@
+{
+ "name": "auxiliary-with-safeguards",
+ "description": "Side request sharing the main conversation's cached prefix, carrying a `safeguards` field (type dangerous_tool_use: the auto-mode safety check).",
+ "note": null,
+ "source": "interactive",
+ "client_version": "2.1.285",
+ "conversation": "interactive",
+ "sequence": 3,
+ "request_class": "auxiliary",
+ "request": {
+  "method": "POST",
+  "path": "/v1/messages",
+  "query": "beta=true",
+  "headers": [
+   [
+    "accept",
+    "application/json"
+   ],
+   [
+    "authorization",
+    "Bearer sk-ant-oat01-fixture"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "claude-cli/2.1.285 (external, cli)"
+   ],
+   [
+    "x-claude-code-session-id",
+    "00000000-0000-4000-8000-000000000011"
+   ],
+   [
+    "x-stainless-arch",
+    "arm64"
+   ],
+   [
+    "x-stainless-lang",
+    "js"
+   ],
+   [
+    "x-stainless-os",
+    "MacOS"
+   ],
+   [
+    "x-stainless-package-version",
+    "0.127.0"
+   ],
+   [
+    "x-stainless-retry-count",
+    "0"
+   ],
+   [
+    "x-stainless-runtime",
+    "node"
+   ],
+   [
+    "x-stainless-runtime-version",
+    "v26.3.0"
+   ],
+   [
+    "x-stainless-timeout",
+    "600"
+   ],
+   [
+    "anthropic-beta",
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24,fallback-credit-2026-06-01,dangerous-tool-use-2026-09-03,extended-cache-ttl-2025-04-11"
+   ],
+   [
+    "anthropic-dangerous-direct-browser-access",
+    "true"
+   ],
+   [
+    "anthropic-version",
+    "2023-06-01"
+   ],
+   [
+    "x-app",
+    "cli"
+   ],
+   [
+    "x-claude-code-request-class",
+    "auxiliary"
+   ],
+   [
+    "accept-encoding",
+    "gzip, deflate, br, zstd"
+   ]
+  ],
+  "body": {
+   "model": "claude-opus-5-5",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text 27c2931e 867ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 99437535 580ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 6a0ded20 125ch]"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text 154cdf44 46598ch]"
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_1",
+         "description": "[text ed2891e6 64ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "batch": {
+            "type": "array"
+           },
+           "container": {
+            "type": "object",
+            "properties": {
+             "kind": {
+              "type": "string"
+             },
+             "id": {
+              "type": "string"
+             },
+             "create": {
+              "type": "object"
+             }
+            },
+            "required": [
+             "[text 79523740 4ch]"
+            ]
+           },
+           "verbose": {
+            "type": "boolean"
+           },
+           "opId": {
+            "type": "string"
+           }
+          }
+         }
+        }
+       }
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_2",
+         "description": "[text 90dde47b 180ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "items": {
+            "type": "array",
+            "description": "[text accd3983 164ch]"
+           }
+          }
+         }
+        }
+       }
+      },
+      {
+       "type": "tool_addition",
+       "tool": {
+        "type": "tool_definition",
+        "definition": {
+         "name": "mcp__fixture__tool_3",
+         "description": "[text 9fffd4b3 69ch]",
+         "input_schema": {
+          "type": "object",
+          "properties": {
+           "ref": {
+            "type": "object",
+            "properties": {
+             "object": {
+              "type": "string",
+              "enum": [
+               "[text 6d695b8d 7ch]",
+               "[text c0be918a 4ch]",
+               "[text f8f4c9d3 4ch]",
+               "[text 09cd523a 9ch]",
+               "[text b174cffd 4ch]"
+              ]
+             },
+             "id": {
+              "type": "string"
+             }
+            },
+            "required": [
+             "[text ff5b16b1 6ch]",
+             "[text e89d34f7 2ch]"
+            ]
+           },
+           "engine": {
+            "type": "string"
+           },
+           "payload": {
+            "anyOf": [
+             {
+              "type": "object"
+             },
+             {
+              "type": "string"
+             }
+            ]
+           },
+           "container": {
+            "type": "object",
+            "properties": {
+             "kind": {
+              "type": "string"
+             },
+             "id": {
+              "type": "string"
+             },
+             "version": {
+              "type": "string"
+             }
+            },
+            "required": [
+             "[text 79523740 4ch]",
+             "[text e89d34f7 2ch]"
+            ]
+           },
+           "verbose": {
+            "type": "boolean"
+           },
+           "opId": {
+            "type": "string"
+           },
+           "answering": {
+            "type": "string",
+            "maxLength": 64
+           }
+          },
+          "required": [
+           "[text c6836859 3ch]",
+           "[text 8096d16c 7ch]"
+          ]
+         }
+        }
+       }
+      }
+     ],
+     "output_config": {
+      "effort": "medium"
+     }
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "",
+       "signature": "fixture-signature"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_fixture0055",
+       "name": "Bash",
+       "input": {
+        "command": "[text 70ba0652 178ch]",
+        "description": "[text d32af895 37ch]"
+       },
+       "caller": {
+        "type": "direct"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "tool_use_id": "toolu_fixture0055",
+       "type": "tool_result",
+       "content": "[text 3fbb2e3d 43ch]",
+       "is_error": false
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "[text dbdc959b 49ch]"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "tool_use",
+       "id": "toolu_fixture0056",
+       "name": "Bash",
+       "input": {
+        "command": "[text a7e8dfd1 185ch]",
+        "description": "[text 6a802643 24ch]"
+       },
+       "caller": {
+        "type": "direct"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "tool_result",
+       "content": "[text ee6fc5ad 848ch]",
+       "is_error": true,
+       "tool_use_id": "toolu_fixture0056"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "[text 27340e06 49ch]"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "",
+       "signature": "fixture-signature"
+      },
+      {
+       "type": "tool_use",
+       "id": "toolu_fixture0057",
+       "name": "Bash",
+       "input": {
+        "command": "[text 43c613b7 204ch]",
+        "description": "[text 9e5060a2 32ch]"
+       },
+       "caller": {
+        "type": "direct"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": [
+      {
+       "tool_use_id": "toolu_fixture0057",
+       "type": "tool_result",
+       "content": "[text 59e40f08 27ch]",
+       "is_error": false
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": "[text 01284091 49ch]"
+    },
+    {
+     "role": "assistant",
+     "content": [
+      {
+       "type": "thinking",
+       "thinking": "",
+       "signature": "fixture-signature"
+      },
+      {
+       "type": "text",
+       "text": "[text 124ff9b9 2477ch]",
+       "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+       }
+      }
+     ]
+    },
+    {
+     "role": "user",
+     "content": "[text fd1ad32d 253ch]"
+    }
+   ],
+   "system": [
+    {
+     "type": "text",
+     "text": "x-anthropic-billing-header: cc_version=2.1.285.624; cc_entrypoint=cli;"
+    },
+    {
+     "type": "text",
+     "text": "[text d0bb09f8 57ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    },
+    {
+     "type": "text",
+     "text": "[text 4540eb97 6546ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ],
+   "tools": [
+    {
+     "name": "Agent",
+     "description": "[text ff5182cc 1771ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text f47f24d3 42ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 9cbc3bd8 33ch]",
+        "type": "string"
+       },
+       "subagent_type": {
+        "description": "[text 97930208 50ch]",
+        "type": "string"
+       },
+       "model": {
+        "description": "[text 888e6bb4 358ch]",
+        "type": "string",
+        "enum": [
+         "sonnet",
+         "opus",
+         "haiku",
+         "fable"
+        ]
+       },
+       "isolation": {
+        "description": "[text eef8f1c9 221ch]",
+        "type": "string",
+        "enum": [
+         "worktree",
+         "remote"
+        ]
+       }
+      },
+      "required": [
+       "description",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Artifact",
+     "description": "[text 2783d348 19870ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "action": {
+        "description": "[text c4e16c7f 196ch]",
+        "type": "string",
+        "enum": [
+         "publish",
+         "list",
+         "read",
+         "delete",
+         "open",
+         "pin",
+         "unpin",
+         "quickstart"
+        ]
+       },
+       "file_path": {
+        "description": "[text ac6538be 312ch]",
+        "type": "string"
+       },
+       "asset": {
+        "description": "[text 8868e13e 278ch]",
+        "type": "boolean"
+       },
+       "file_paths": {
+        "description": "[text 520b2a95 445ch]",
+        "minItems": 1,
+        "maxItems": 25,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 1024,
+         "pattern": "^[^\\0]*$"
+        }
+       },
+       "from_url": {
+        "description": "[text bcf3596d 115ch]",
+        "type": "string",
+        "maxLength": 512
+       },
+       "asset_ids": {
+        "description": "[text f4916d38 159ch]",
+        "minItems": 1,
+        "maxItems": 10,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "pattern": "^[0-9a-f]{32}$"
+        }
+       },
+       "favicon": {
+        "description": "[text 44e21cba 44ch]",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 32
+       },
+       "icon": {
+        "description": "[text dcb5bdfa 362ch]",
+        "type": "string",
+        "maxLength": 40
+       },
+       "files": {
+        "description": "[text 2995e72c 947ch]",
+        "anyOf": [
+         {
+          "maxItems": 255,
+          "type": "array",
+          "items": {
+           "type": "object",
+           "properties": {
+            "path": {
+             "description": "[text 5c942529 161ch]",
+             "type": "string",
+             "minLength": 1,
+             "maxLength": 512
+            },
+            "contentType": {
+             "description": "[text 215fa19b 114ch]",
+             "type": "string"
+            }
+           },
+           "required": [
+            "path"
+           ],
+           "additionalProperties": false
+          }
+         },
+         {
+          "type": "object",
+          "propertyNames": {
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 512
+          },
+          "additionalProperties": {
+           "anyOf": [
+            {
+             "type": "string",
+             "minLength": 1,
+             "maxLength": 512
+            },
+            {
+             "type": "object",
+             "properties": {
+              "from": {
+               "description": "[text 89fb95d8 141ch]",
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 512
+              },
+              "contentType": {
+               "description": "[text 94a82521 104ch]",
+               "type": "string"
+              }
+             },
+             "required": [
+              "from"
+             ],
+             "additionalProperties": false
+            },
+            {
+             "type": "object",
+             "properties": {
+              "artifact": {
+               "description": "[text 8f1a2695 155ch]",
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 512
+              },
+              "path": {
+               "description": "[text d3388c2e 103ch]",
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 512
+              },
+              "ver": {
+               "description": "[text 2dcdf601 162ch]",
+               "type": "string",
+               "minLength": 1,
+               "maxLength": 64
+              }
+             },
+             "required": [
+              "artifact",
+              "path"
+             ],
+             "additionalProperties": false
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         }
+        ]
+       },
+       "root": {
+        "description": "[text 16774387 357ch]",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+       },
+       "pin": {
+        "description": "[text b91d1907 223ch]",
+        "type": "boolean"
+       },
+       "limit": {
+        "description": "[text 7617aad5 66ch]",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+       },
+       "scope": {
+        "description": "[text b4dbd6a3 181ch]",
+        "type": "string",
+        "enum": [
+         "mine",
+         "shared",
+         "all",
+         "types",
+         "files",
+         "assets"
+        ]
+       },
+       "type_query": {
+        "description": "[text 83651ce8 338ch]",
+        "type": "string",
+        "maxLength": 200
+       },
+       "type": {
+        "description": "[text 13cdcbb0 237ch]",
+        "type": "string",
+        "maxLength": 200
+       },
+       "intent": {
+        "description": "[text 1032a83d 213ch]",
+        "type": "string",
+        "enum": [
+         "document",
+         "slides",
+         "design",
+         "other"
+        ]
+       },
+       "design_systems": {
+        "description": "[text aaf71793 264ch]",
+        "type": "boolean"
+       },
+       "title": {
+        "description": "[text bbce6e70 315ch]",
+        "type": "string"
+       },
+       "description": {
+        "description": "[text cba3f691 59ch]",
+        "type": "string",
+        "maxLength": 1000
+       },
+       "label": {
+        "description": "[text a767f33d 125ch]",
+        "type": "string",
+        "maxLength": 60
+       },
+       "overwrite_unread": {
+        "description": "[text 94478f7c 525ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 512
+        }
+       },
+       "url": {
+        "description": "[text 1733ce3b 884ch]",
+        "type": "string"
+       },
+       "type_url": {
+        "description": "[text bdbc6cf8 343ch]",
+        "type": "string",
+        "maxLength": 2048
+       },
+       "auto_open": {
+        "description": "[text c8349d32 521ch]",
+        "type": "string",
+        "enum": [
+         "at_create",
+         "after_first_write"
+        ]
+       },
+       "prompt": {
+        "description": "[text e9ad5b3c 107ch]",
+        "type": "string"
+       },
+       "force": {
+        "description": "[text e3048fc0 360ch]",
+        "type": "boolean"
+       },
+       "out_dir": {
+        "description": "[text d6a0f215 428ch]",
+        "type": "string",
+        "maxLength": 4096
+       },
+       "path": {
+        "description": "[text e8115d3f 416ch]",
+        "type": "string",
+        "maxLength": 512
+       },
+       "paths": {
+        "description": "[text 14739ae8 250ch]",
+        "minItems": 1,
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "maxLength": 512
+        }
+       },
+       "after": {
+        "description": "[text 97d7ae14 95ch]",
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_=-]{1,4096}$"
+       },
+       "page": {
+        "description": "[text 6e41214e 153ch]",
+        "type": "boolean"
+       },
+       "capabilities": {
+        "description": "[text b7830cce 220ch]",
+        "type": "object",
+        "propertyNames": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 64
+        },
+        "additionalProperties": {}
+       },
+       "contract": {
+        "description": "[text f5cd37b4 272ch]",
+        "anyOf": [
+         {
+          "type": "string",
+          "const": "latest"
+         },
+         {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d{0,3})\\.(0|[1-9]\\d{0,4})\\.(0|[1-9]\\d{0,5})$"
+         }
+        ]
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "AskUserQuestion",
+     "description": "[text 844e03b8 1786ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "questions": {
+        "description": "[text efd0d7fc 41ch]",
+        "minItems": 1,
+        "maxItems": 4,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "question": {
+           "description": "[text 47831f92 247ch]",
+           "type": "string"
+          },
+          "header": {
+           "description": "[text 2d76b9c4 104ch]",
+           "type": "string"
+          },
+          "options": {
+           "description": "[text e0f2ae6c 228ch]",
+           "minItems": 2,
+           "maxItems": 4,
+           "type": "array",
+           "items": {
+            "type": "object",
+            "properties": {
+             "label": {
+              "description": "[text 5e00bf0a 130ch]",
+              "type": "string"
+             },
+             "description": {
+              "description": "[text e8558003 131ch]",
+              "type": "string"
+             },
+             "preview": {
+              "description": "[text 11c02802 207ch]",
+              "type": "string"
+             }
+            },
+            "required": [
+             "label",
+             "description"
+            ],
+            "additionalProperties": false
+           }
+          },
+          "multiSelect": {
+           "description": "[text 9cdde305 122ch]",
+           "default": false,
+           "type": "boolean"
+          }
+         },
+         "required": [
+          "question",
+          "header",
+          "options",
+          "multiSelect"
+         ],
+         "additionalProperties": false
+        }
+       },
+       "answers": {
+        "description": "[text b0ad28a9 50ch]",
+        "type": "object",
+        "propertyNames": {
+         "type": "string"
+        },
+        "additionalProperties": {
+         "type": "string"
+        }
+       },
+       "annotations": {
+        "description": "[text 75d24f6b 108ch]",
+        "type": "object",
+        "propertyNames": {
+         "type": "string"
+        },
+        "additionalProperties": {
+         "type": "object",
+         "properties": {
+          "preview": {
+           "description": "[text 292a6d6c 74ch]",
+           "type": "string"
+          },
+          "notes": {
+           "description": "[text 249c96bb 50ch]",
+           "type": "string"
+          }
+         },
+         "additionalProperties": false
+        }
+       },
+       "metadata": {
+        "description": "[text 76d6162d 77ch]",
+        "type": "object",
+        "properties": {
+         "source": {
+          "description": "[text da150cad 122ch]",
+          "type": "string"
+         }
+        },
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "questions"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Bash",
+     "description": "[text 9c4d7e7b 1183ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "command": {
+        "description": "[text 8c1609cf 22ch]",
+        "type": "string"
+       },
+       "timeout": {
+        "description": "[text e2215b32 70ch]",
+        "type": "number"
+       },
+       "description": {
+        "description": "[text 93d385dd 926ch]",
+        "type": "string"
+       },
+       "run_in_background": {
+        "description": "[text 10c49126 182ch]",
+        "type": "boolean"
+       },
+       "dangerouslyDisableSandbox": {
+        "description": "[text d2824ebf 90ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Edit",
+     "description": "[text 1ced2991 360ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2f4ea387 39ch]",
+        "type": "string"
+       },
+       "old_string": {
+        "description": "[text 08891bb7 19ch]",
+        "type": "string"
+       },
+       "new_string": {
+        "description": "[text 16e8ccb9 63ch]",
+        "type": "string"
+       },
+       "replace_all": {
+        "description": "[text 3b5cd450 53ch]",
+        "default": false,
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "file_path",
+       "old_string",
+       "new_string"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListAgents",
+     "description": "[text 9eeb551c 777ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "channel": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       },
+       "q": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Read",
+     "description": "[text 7212f90c 790ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2cce1e6f 37ch]",
+        "type": "string"
+       },
+       "offset": {
+        "description": "[text c55cb4ef 92ch]",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+       },
+       "limit": {
+        "description": "[text 94244167 83ch]",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+       },
+       "pages": {
+        "description": "[text 604a67dc 113ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReportFindings",
+     "description": "[text 8c156cd1 574ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "level": {
+        "description": "[text 10bdac91 30ch]",
+        "type": "string",
+        "enum": [
+         "low",
+         "medium",
+         "high",
+         "xhigh",
+         "max"
+        ]
+       },
+       "findings": {
+        "description": "[text b3214641 60ch]",
+        "maxItems": 32,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "file": {
+           "description": "[text 04336ab8 48ch]",
+           "type": "string"
+          },
+          "line": {
+           "description": "[text ceee7899 37ch]",
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "summary": {
+           "description": "[text 0f47ee36 36ch]",
+           "type": "string"
+          },
+          "short_summary": {
+           "description": "[text 9c679b2d 96ch]",
+           "type": "string",
+           "maxLength": 60
+          },
+          "failure_scenario": {
+           "description": "[text d95e4bf5 42ch]",
+           "type": "string"
+          },
+          "category": {
+           "description": "[text e655e635 110ch]",
+           "type": "string",
+           "maxLength": 40
+          },
+          "verdict": {
+           "description": "[text eec3762a 57ch]",
+           "type": "string",
+           "enum": [
+            "CONFIRMED",
+            "PLAUSIBLE"
+           ]
+          },
+          "outcome": {
+           "description": "[text 2f8eadf3 78ch]",
+           "type": "string",
+           "enum": [
+            "fixed",
+            "skipped",
+            "no_change_needed"
+           ]
+          }
+         },
+         "required": [
+          "file",
+          "summary",
+          "failure_scenario"
+         ],
+         "additionalProperties": false
+        }
+       }
+      },
+      "required": [
+       "findings"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ScheduleWakeup",
+     "description": "[text 2d4de8f0 3148ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "delaySeconds": {
+        "description": "[text 457e421a 98ch]",
+        "type": "number"
+       },
+       "reason": {
+        "description": "[text 87cc33f7 136ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text c50480b3 355ch]",
+        "type": "string"
+       },
+       "stop": {
+        "description": "[text 95359fc2 154ch]",
+        "type": "boolean"
+       },
+       "noop": {
+        "description": "[text 5c2ea389 307ch]",
+        "type": "boolean"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "SendFeedback",
+     "description": "[text 8a02b416 3467ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "type": {
+        "description": "[text b478f46a 30ch]",
+        "type": "string",
+        "enum": [
+         "bug",
+         "idea",
+         "missing_capability"
+        ]
+       },
+       "title": {
+        "description": "[text b6cc3f1f 46ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "details": {
+        "description": "[text f7017cf3 424ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "area": {
+        "description": "[text 37d57bf2 135ch]",
+        "type": "string"
+       },
+       "failure_mode": {
+        "description": "[text 88099d23 240ch]",
+        "type": "string",
+        "enum": [
+         "instruction_following",
+         "destructive_actions",
+         "code_quality",
+         "repetition_and_looping",
+         "model_regression",
+         "overconfidence_and_hallucination",
+         "context_and_memory",
+         "overeager",
+         "over_correction",
+         "stopping_short",
+         "dispute_or_decline",
+         "subagent_overspawn",
+         "tone_or_preachiness",
+         "excessive_questions",
+         "unwanted_scope",
+         "other"
+        ]
+       },
+       "task_category": {
+        "description": "[text 76e74091 158ch]",
+        "type": "string",
+        "enum": [
+         "code_edit",
+         "debug",
+         "explain",
+         "plan",
+         "shell",
+         "search",
+         "review",
+         "other"
+        ]
+       }
+      },
+      "required": [
+       "type",
+       "title",
+       "details"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Skill",
+     "description": "[text 1aee8b30 1417ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "skill": {
+        "description": "[text 7a121837 71ch]",
+        "type": "string"
+       },
+       "args": {
+        "description": "[text 0972ebc0 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "skill"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ToolSearch",
+     "description": "[text 45fb0b06 953ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "query": {
+        "description": "[text 828ca284 99ch]",
+        "type": "string"
+       },
+       "max_results": {
+        "description": "[text 698adf39 48ch]",
+        "default": 5,
+        "type": "number"
+       }
+      },
+      "required": [
+       "query",
+       "max_results"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "DeferredToolPlaceholder",
+     "description": "[text c1cab8b8 83ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     },
+     "defer_loading": true
+    },
+    {
+     "name": "Write",
+     "description": "[text fe532834 240ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 4846848f 71ch]",
+        "type": "string"
+       },
+       "content": {
+        "description": "[text 59a5e2a9 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    }
+   ],
+   "metadata": {
+    "user_id": "fixture"
+   },
+   "max_tokens": 128000,
+   "thinking": {
+    "type": "adaptive"
+   },
+   "context_management": {
+    "edits": [
+     {
+      "type": "clear_thinking_20251015",
+      "keep": "all"
+     }
+    ]
+   },
+   "safeguards": [
+    {
+     "type": "dangerous_tool_use"
+    }
+   ],
+   "output_config": {
+    "effort": "medium"
+   },
+   "stream": true
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/event-stream; charset=utf-8"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-representative-claim",
+    "five_hour"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-status",
+    "rejected"
+   ],
+   [
+    "anthropic-ratelimit-unified-reset",
+    "1791120000"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-utilization",
+    "0.2"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-reset",
+    "1791640800"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-reset",
+    "1791120000"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-fallback-percentage",
+    "0.5"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-disabled-reason",
+    "org_level_disabled"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-utilization",
+    "0.09"
+   ],
+   [
+    "anthropic-ratelimit-unified-status",
+    "allowed"
+   ],
+   [
+    "request-id",
+    "req_fixture0053"
+   ]
+  ],
+  "events": [
+   "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus-5-5\",\"id\":\"msg_fixture0054\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":96,\"cache_creation_input_tokens\":1246,\"cache_read_input_tokens\":44477,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":1246},\"output_tokens\":7,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"diagnostics\":null,\"context_management\":null}}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+   "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text fc0ea6e9 26ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text fa9efef0 27ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text ffc2432c 12ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 8b1d9098 24ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 867f999e 27ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 67ed2d1d 11ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text ab787765 5ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 37f80f05 3ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 73328965 23ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 7c80e30c 2ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 5fac4a0d 27ch]\"}}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text 268245c1 5ch]\"}}\n\n",
+   "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+   "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null,\"safeguard_results\":[{\"type\":\"dangerous_tool_use\",\"status\":{\"type\":\"available\",\"tool_uses\":{}}}]},\"usage\":{\"input_tokens\":96,\"cache_creation_input_tokens\":1246,\"cache_read_input_tokens\":44477,\"output_tokens\":59,\"output_tokens_details\":{\"thinking_tokens\":0},\"iterations\":[{\"input_tokens\":96,\"output_tokens\":59,\"cache_read_input_tokens\":44477,\"cache_creation_input_tokens\":1246,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":1246},\"type\":\"message\"}]},\"context_management\":{\"applied_edits\":[]}}\n\n",
+   "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  ]
+ },
+ "abort_after_events": null
+}

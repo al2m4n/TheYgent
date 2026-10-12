@@ -66,7 +66,7 @@ Three contracts hold the system together. All three are deliberately hard to cha
 
 ## Process topology
 
-Three process types, identical in every deployment mode:
+Four process types, identical in every deployment mode:
 
 ```mermaid
 flowchart LR
@@ -85,6 +85,11 @@ flowchart LR
     E3["vLLM"]
   end
   HOSTED["any OpenAI-compatible API\n(registered by the user)"]
+  subgraph dev["Developer machines"]
+    CC["Claude Code\nCLI · IDE · desktop"]
+  end
+  AG["AI gateway :8082\n(user's trust domain)"]
+  ANT["Anthropic API"]
 
   UI -->|"run orchestration, sessions, traces"| API
   UI -->|"raw prompts, audio, images (direct)"| GW
@@ -94,6 +99,11 @@ flowchart LR
   W --- PG
   GW --> E1 & E2 & E3
   GW -->|passthrough| HOSTED
+  CC -->|"Anthropic Messages"| AG
+  AG -->|"the same bytes"| ANT
+  AG -->|"metadata only: records, heartbeats"| API
+  AG -->|"local models: shares, trials"| GW
+  UI -->|"org key (admin, direct)"| AG
 ```
 
 Notes on the topology:
@@ -122,8 +132,17 @@ Notes on the topology:
   on a desktop the control plane runs the identical runtime in-process and the worker
   binary is unused. Same code, two deployables — never two architectures. See
   [durable-execution.md](./durable-execution.md).
+- **The AI gateway** sits on a coding agent's model path (Claude Code → the Anthropic
+  Messages API), in the user's trust domain like the inference plane: it sees prompts and
+  credentials, forwards them byte-for-byte, and sends the control plane metadata only —
+  per-request records whose wire types refuse free text, and heartbeats. It records what
+  each exchange cost and what a routing policy would have done, and in router mode applies
+  that policy: to a cheaper Anthropic model, or — in the shares an admin sets per kind of
+  request — to local models on the inference plane, reached through the same shared client like
+  any other caller of `/v1/*`. The control plane holds its versioned config, developers' gateway
+  keys and the reports. See [ai-gateway.md](./ai-gateway.md).
 
-The same three process types run in every mode: `make up` on bare metal, Docker Compose,
+The same four process types run in every mode: `make up` on bare metal, Docker Compose,
 or Kubernetes. Only the inference target and the wiring change. See
 [deployment.md](./deployment.md).
 
@@ -166,6 +185,7 @@ the walk, [control-plane.md](./control-plane.md) for persistence and spans,
 | [apps/control-plane](../../apps/control-plane) | FastAPI orchestration API + graph runtime | Python, uv |
 | [apps/inference-plane](../../apps/inference-plane) | Engine manager + OpenAI-compatible gateway | Python, uv |
 | [apps/worker](../../apps/worker) | Durable-runtime host (separate deployable) | Python, uv |
+| [apps/ai-gateway](../../apps/ai-gateway) | Anthropic-Messages proxy for coding agents (observer and router) | Python, uv |
 | [apps/interface](../../apps/interface) | React SPA: visual builder + every operator surface | TS, pnpm, Vite |
 | [apps/web](../../apps/web) | Static marketing site (theygent.ai) | plain HTML/CSS/JS |
 | [packages/ir](../../packages/ir) | Pydantic IR models — the single source of truth | Python, uv |
@@ -216,6 +236,7 @@ justification:
 - [graph-execution.md](./graph-execution.md) — the walker and the node set
 - [durable-execution.md](./durable-execution.md) — crash-safe runs and the worker
 - [inference-plane.md](./inference-plane.md) — engines, bindings, the gateway
+- [ai-gateway.md](./ai-gateway.md) — the coding agents' proxy: observer, policy, records
 - [interface.md](./interface.md) — the SPA and the canvas
 - [ir-and-packages.md](./ir-and-packages.md) — the IR, codegen, gateway client
 - [deployment.md](./deployment.md) — run modes, CI, operations

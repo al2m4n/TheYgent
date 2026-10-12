@@ -1,0 +1,2654 @@
+{
+ "name": "main-tool-search-off",
+ "description": "One-line prompt with tool search off: every connector tool sent upfront.",
+ "note": null,
+ "source": "headless",
+ "client_version": "2.1.285",
+ "conversation": "tool-search-off",
+ "sequence": 1,
+ "request_class": "main",
+ "request": {
+  "method": "POST",
+  "path": "/v1/messages",
+  "query": "beta=true",
+  "headers": [
+   [
+    "accept",
+    "application/json"
+   ],
+   [
+    "authorization",
+    "Bearer sk-ant-oat01-fixture"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "user-agent",
+    "claude-cli/2.1.285 (external, sdk-cli)"
+   ],
+   [
+    "x-claude-code-session-id",
+    "00000000-0000-4000-8000-00000000000d"
+   ],
+   [
+    "x-stainless-arch",
+    "arm64"
+   ],
+   [
+    "x-stainless-lang",
+    "js"
+   ],
+   [
+    "x-stainless-os",
+    "MacOS"
+   ],
+   [
+    "x-stainless-package-version",
+    "0.127.0"
+   ],
+   [
+    "x-stainless-retry-count",
+    "0"
+   ],
+   [
+    "x-stainless-runtime",
+    "node"
+   ],
+   [
+    "x-stainless-runtime-version",
+    "v26.3.0"
+   ],
+   [
+    "x-stainless-timeout",
+    "600"
+   ],
+   [
+    "anthropic-beta",
+    "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,thinking-token-count-2026-05-13,context-management-2025-06-27,prompt-caching-scope-2026-01-05,mid-conversation-system-2026-04-07,per-turn-control-2026-07-01,mid-conversation-tool-changes-2026-07-01,inline-tools-2026-09-15,advisor-tool-2026-03-01,effort-2025-11-24,extended-cache-ttl-2025-04-11"
+   ],
+   [
+    "anthropic-dangerous-direct-browser-access",
+    "true"
+   ],
+   [
+    "anthropic-version",
+    "2023-06-01"
+   ],
+   [
+    "x-app",
+    "cli"
+   ],
+   [
+    "x-claude-code-prompt-id",
+    "00000000-0000-4000-8000-00000000000e"
+   ],
+   [
+    "x-claude-code-request-class",
+    "main"
+   ],
+   [
+    "accept-encoding",
+    "gzip, deflate, br, zstd"
+   ]
+  ],
+  "body": {
+   "model": "claude-opus-5-5",
+   "messages": [
+    {
+     "role": "user",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text a461242f 859ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text 99437535 580ch]"
+      },
+      {
+       "type": "text",
+       "text": "[text edb00121 19ch]"
+      }
+     ]
+    },
+    {
+     "role": "system",
+     "content": [
+      {
+       "type": "text",
+       "text": "[text 6c21e365 36893ch]",
+       "cache_control": {
+        "type": "ephemeral",
+        "ttl": "1h"
+       }
+      }
+     ],
+     "output_config": {
+      "effort": "medium"
+     }
+    }
+   ],
+   "system": [
+    {
+     "type": "text",
+     "text": "x-anthropic-billing-header: cc_version=2.1.285.552; cc_entrypoint=sdk-cli;"
+    },
+    {
+     "type": "text",
+     "text": "[text b0a700d9 62ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    },
+    {
+     "type": "text",
+     "text": "[text f2f57bcc 6090ch]",
+     "cache_control": {
+      "type": "ephemeral",
+      "ttl": "1h"
+     }
+    }
+   ],
+   "tools": [
+    {
+     "name": "Agent",
+     "description": "[text 15f7371a 1628ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text f47f24d3 42ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 9cbc3bd8 33ch]",
+        "type": "string"
+       },
+       "subagent_type": {
+        "description": "[text 97930208 50ch]",
+        "type": "string"
+       },
+       "model": {
+        "description": "[text 888e6bb4 358ch]",
+        "type": "string",
+        "enum": [
+         "sonnet",
+         "opus",
+         "haiku",
+         "fable"
+        ]
+       },
+       "run_in_background": {
+        "description": "[text 3f783742 286ch]",
+        "type": "boolean"
+       },
+       "isolation": {
+        "description": "[text eef8f1c9 221ch]",
+        "type": "string",
+        "enum": [
+         "worktree",
+         "remote"
+        ]
+       }
+      },
+      "required": [
+       "description",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Bash",
+     "description": "[text c20915bc 1493ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "command": {
+        "description": "[text 8c1609cf 22ch]",
+        "type": "string"
+       },
+       "timeout": {
+        "description": "[text e2215b32 70ch]",
+        "type": "number"
+       },
+       "description": {
+        "description": "[text 93d385dd 926ch]",
+        "type": "string"
+       },
+       "run_in_background": {
+        "description": "[text 10c49126 182ch]",
+        "type": "boolean"
+       },
+       "dangerouslyDisableSandbox": {
+        "description": "[text d2824ebf 90ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "command"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronCreate",
+     "description": "[text e2c136cc 2595ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "cron": {
+        "description": "[text 57a3e768 151ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text 203e11b2 40ch]",
+        "type": "string"
+       },
+       "recurring": {
+        "description": "[text d13dd03c 224ch]",
+        "type": "boolean"
+       },
+       "durable": {
+        "description": "[text 547405ef 128ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "cron",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronDelete",
+     "description": "[text fcbb5eca 100ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "id": {
+        "description": "[text 7b4046e7 30ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "id"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "CronList",
+     "description": "[text e36a22c7 60ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "DesignSync",
+     "description": "[text ae63a76c 3742ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "method": {
+        "type": "string",
+        "enum": [
+         "list_projects",
+         "get_project",
+         "list_files",
+         "get_file",
+         "finalize_plan",
+         "write_files",
+         "delete_files",
+         "register_assets",
+         "unregister_assets",
+         "create_project",
+         "report_validate"
+        ]
+       },
+       "projectId": {
+        "description": "[text ad2eb3b5 64ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "path": {
+        "description": "[text 7947f63a 27ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "writes": {
+        "description": "[text 1060eafa 286ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "deletes": {
+        "description": "[text 2d8d21b1 100ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "planId": {
+        "description": "[text 28d31ea3 97ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "files": {
+        "description": "[text c52ebf27 134ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "path": {
+           "description": "[text 075ef6d9 58ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 256
+          },
+          "localPath": {
+           "description": "[text 4b12a0cb 256ch]",
+           "type": "string",
+           "minLength": 1
+          },
+          "data": {
+           "description": "[text 1f19ec1f 160ch]",
+           "type": "string"
+          },
+          "encoding": {
+           "description": "[text 74396f71 38ch]",
+           "type": "string",
+           "enum": [
+            "base64"
+           ]
+          },
+          "mimeType": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "path"
+         ],
+         "additionalProperties": false
+        }
+       },
+       "paths": {
+        "description": "[text a1f1c7ca 189ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        }
+       },
+       "name": {
+        "description": "[text a63b17c2 54ch]",
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+       },
+       "assets": {
+        "description": "[text b5b4ec8e 152ch]",
+        "maxItems": 256,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "name": {
+           "description": "[text fe42a370 58ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 255
+          },
+          "path": {
+           "description": "[text 924a510a 64ch]",
+           "type": "string",
+           "minLength": 1,
+           "maxLength": 256
+          },
+          "subtitle": {
+           "description": "[text f4575dca 55ch]",
+           "type": "string",
+           "maxLength": 255
+          },
+          "viewport": {
+           "description": "[text 5c813df2 41ch]",
+           "type": "object",
+           "properties": {
+            "width": {
+             "type": "integer",
+             "exclusiveMinimum": 0,
+             "maximum": 9007199254740991
+            },
+            "height": {
+             "type": "integer",
+             "exclusiveMinimum": 0,
+             "maximum": 9007199254740991
+            }
+           },
+           "required": [
+            "width"
+           ],
+           "additionalProperties": false
+          },
+          "group": {
+           "description": "[text f1653b99 348ch]",
+           "type": "string",
+           "maxLength": 64
+          }
+         },
+         "required": [
+          "name",
+          "path"
+         ],
+         "additionalProperties": false
+        }
+       },
+       "localDir": {
+        "description": "[text 352cfa71 229ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "counts": {
+        "description": "[text ac5fcbfe 104ch]",
+        "type": "object",
+        "properties": {
+         "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "bad": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "thin": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "variantsIdentical": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         },
+         "iterations": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+         }
+        },
+        "required": [
+         "total",
+         "bad",
+         "thin",
+         "variantsIdentical",
+         "iterations"
+        ],
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "method"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Edit",
+     "description": "[text 1ced2991 360ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2f4ea387 39ch]",
+        "type": "string"
+       },
+       "old_string": {
+        "description": "[text 08891bb7 19ch]",
+        "type": "string"
+       },
+       "new_string": {
+        "description": "[text 16e8ccb9 63ch]",
+        "type": "string"
+       },
+       "replace_all": {
+        "description": "[text 3b5cd450 53ch]",
+        "default": false,
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "file_path",
+       "old_string",
+       "new_string"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "EnterWorktree",
+     "description": "[text ce3fb700 3220ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "name": {
+        "description": "[text ab2fbcc6 221ch]",
+        "type": "string"
+       },
+       "path": {
+        "description": "[text 7cdec52b 262ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ExitWorktree",
+     "description": "[text 04282f44 1923ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "action": {
+        "description": "[text e17275d7 69ch]",
+        "type": "string",
+        "enum": [
+         "keep",
+         "remove"
+        ]
+       },
+       "discard_changes": {
+        "description": "[text 7b0509a2 143ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListAgents",
+     "description": "[text 9eeb551c 777ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "channel": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       },
+       "q": {
+        "description": "[text ba1ae3ff 41ch]",
+        "type": "string",
+        "maxLength": 256
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ListMcpResourcesTool",
+     "description": "[text 727ed1ce 351ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 59714675 43ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Monitor",
+     "description": "[text c584fcca 6581ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "description": {
+        "description": "[text 56571396 85ch]",
+        "type": "string"
+       },
+       "timeout_ms": {
+        "description": "[text e3ef279c 147ch]",
+        "default": 300000,
+        "type": "number",
+        "minimum": 1000,
+        "maximum": 3600000
+       },
+       "command": {
+        "description": "[text bf561e2e 75ch]",
+        "type": "string"
+       },
+       "ws": {
+        "description": "[text 4d958d9e 159ch]",
+        "type": "object",
+        "properties": {
+         "url": {
+          "type": "string"
+         },
+         "protocols": {
+          "type": "array",
+          "items": {
+           "type": "string",
+           "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+          }
+         }
+        },
+        "required": [
+         "url"
+        ],
+        "additionalProperties": false
+       }
+      },
+      "required": [
+       "description",
+       "timeout_ms"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "NotebookEdit",
+     "description": "[text c01ebbc7 619ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "notebook_path": {
+        "description": "[text 4e2add4a 87ch]",
+        "type": "string"
+       },
+       "cell_id": {
+        "description": "[text ce3dc46c 151ch]",
+        "type": "string"
+       },
+       "new_source": {
+        "description": "[text d9f219e4 27ch]",
+        "type": "string"
+       },
+       "cell_type": {
+        "description": "[text 004fab61 141ch]",
+        "type": "string",
+        "enum": [
+         "code",
+         "markdown"
+        ]
+       },
+       "edit_mode": {
+        "description": "[text b64a3040 72ch]",
+        "type": "string",
+        "enum": [
+         "replace",
+         "insert",
+         "delete"
+        ]
+       }
+      },
+      "required": [
+       "notebook_path",
+       "new_source"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "PushNotification",
+     "description": "[text f5f2aae3 1362ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "message": {
+        "description": "[text 974c1c3f 74ch]",
+        "type": "string",
+        "minLength": 1
+       },
+       "status": {
+        "type": "string",
+        "const": "proactive"
+       }
+      },
+      "required": [
+       "message",
+       "status"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Read",
+     "description": "[text 7212f90c 790ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 2cce1e6f 37ch]",
+        "type": "string"
+       },
+       "offset": {
+        "description": "[text c55cb4ef 92ch]",
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+       },
+       "limit": {
+        "description": "[text 94244167 83ch]",
+        "type": "integer",
+        "exclusiveMinimum": 0,
+        "maximum": 9007199254740991
+       },
+       "pages": {
+        "description": "[text 604a67dc 113ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReadMcpResourceDirTool",
+     "description": "[text 1ddb0ec4 513ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 1866da86 19ch]",
+        "type": "string"
+       },
+       "uri": {
+        "description": "[text 42163d05 34ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "server",
+       "uri"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReadMcpResourceTool",
+     "description": "[text 42906153 234ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "server": {
+        "description": "[text 1866da86 19ch]",
+        "type": "string"
+       },
+       "uri": {
+        "description": "[text 78ff1497 24ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "server",
+       "uri"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "RemoteTrigger",
+     "description": "[text f8c9a6af 2834ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "action": {
+        "type": "string",
+        "enum": [
+         "list",
+         "get",
+         "create",
+         "update",
+         "run",
+         "create_webhook_trigger",
+         "list_runs",
+         "get_run_log"
+        ]
+       },
+       "trigger_id": {
+        "description": "[text 345479c0 44ch]",
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+       },
+       "session_id": {
+        "description": "[text 2b9d36df 79ch]",
+        "type": "string",
+        "pattern": "^[\\w-]+$"
+       },
+       "cursor": {
+        "description": "[text 381c84e9 57ch]",
+        "type": "string",
+        "maxLength": 1024
+       },
+       "body": {
+        "description": "[text a6dd6b67 48ch]",
+        "type": "object",
+        "propertyNames": {
+         "type": "string"
+        },
+        "additionalProperties": {}
+       }
+      },
+      "required": [
+       "action"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ReportFindings",
+     "description": "[text 8c156cd1 574ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "level": {
+        "description": "[text 10bdac91 30ch]",
+        "type": "string",
+        "enum": [
+         "low",
+         "medium",
+         "high",
+         "xhigh",
+         "max"
+        ]
+       },
+       "findings": {
+        "description": "[text b3214641 60ch]",
+        "maxItems": 32,
+        "type": "array",
+        "items": {
+         "type": "object",
+         "properties": {
+          "file": {
+           "description": "[text 04336ab8 48ch]",
+           "type": "string"
+          },
+          "line": {
+           "description": "[text ceee7899 37ch]",
+           "type": "integer",
+           "minimum": -9007199254740991,
+           "maximum": 9007199254740991
+          },
+          "summary": {
+           "description": "[text 0f47ee36 36ch]",
+           "type": "string"
+          },
+          "short_summary": {
+           "description": "[text 9c679b2d 96ch]",
+           "type": "string",
+           "maxLength": 60
+          },
+          "failure_scenario": {
+           "description": "[text d95e4bf5 42ch]",
+           "type": "string"
+          },
+          "category": {
+           "description": "[text e655e635 110ch]",
+           "type": "string",
+           "maxLength": 40
+          },
+          "verdict": {
+           "description": "[text eec3762a 57ch]",
+           "type": "string",
+           "enum": [
+            "CONFIRMED",
+            "PLAUSIBLE"
+           ]
+          },
+          "outcome": {
+           "description": "[text 2f8eadf3 78ch]",
+           "type": "string",
+           "enum": [
+            "fixed",
+            "skipped",
+            "no_change_needed"
+           ]
+          }
+         },
+         "required": [
+          "file",
+          "summary",
+          "failure_scenario"
+         ],
+         "additionalProperties": false
+        }
+       }
+      },
+      "required": [
+       "findings"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "ScheduleWakeup",
+     "description": "[text 2d4de8f0 3148ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "delaySeconds": {
+        "description": "[text 457e421a 98ch]",
+        "type": "number"
+       },
+       "reason": {
+        "description": "[text 87cc33f7 136ch]",
+        "type": "string"
+       },
+       "prompt": {
+        "description": "[text c50480b3 355ch]",
+        "type": "string"
+       },
+       "stop": {
+        "description": "[text 95359fc2 154ch]",
+        "type": "boolean"
+       },
+       "noop": {
+        "description": "[text 5c2ea389 307ch]",
+        "type": "boolean"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "SendMessage",
+     "description": "[text 3010889b 4259ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "to": {
+        "description": "[text e5035522 155ch]",
+        "type": "string",
+        "allOf": [
+         {
+          "pattern": "^[^\\n\\r]*$"
+         },
+         {
+          "pattern": "^[\\s\\S]{0,300}$"
+         }
+        ]
+       },
+       "summary": {
+        "description": "[text a0716b0b 167ch]",
+        "type": "string",
+        "maxLength": 200
+       },
+       "message": {
+        "default": "",
+        "description": "[text 31741892 247ch]",
+        "type": "string"
+       },
+       "notify_when_idle": {
+        "description": "[text e85dd235 289ch]",
+        "type": "boolean"
+       }
+      },
+      "required": [
+       "to",
+       "message"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Skill",
+     "description": "[text 1aee8b30 1417ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "skill": {
+        "description": "[text 7a121837 71ch]",
+        "type": "string"
+       },
+       "args": {
+        "description": "[text 0972ebc0 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "skill"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "TaskStop",
+     "description": "[text cd414e87 378ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "task_id": {
+        "description": "[text d928ed9c 126ch]",
+        "type": "string"
+       },
+       "shell_id": {
+        "description": "[text 3d7ec738 31ch]",
+        "type": "string"
+       }
+      },
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "WebFetch",
+     "description": "[text 7c2f991b 469ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "url": {
+        "description": "[text 4bd7b4ce 29ch]",
+        "type": "string",
+        "format": "uri"
+       },
+       "prompt": {
+        "description": "[text 14b8768c 40ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "url",
+       "prompt"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "WebSearch",
+     "description": "[text 9bb8001a 334ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "query": {
+        "description": "[text 71e46962 23ch]",
+        "type": "string",
+        "minLength": 2
+       },
+       "allowed_domains": {
+        "description": "[text 96a1ee3c 46ch]",
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       },
+       "blocked_domains": {
+        "description": "[text f50d52d1 47ch]",
+        "type": "array",
+        "items": {
+         "type": "string"
+        }
+       }
+      },
+      "required": [
+       "query"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "Write",
+     "description": "[text fe532834 240ch]",
+     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+       "file_path": {
+        "description": "[text 4846848f 71ch]",
+        "type": "string"
+       },
+       "content": {
+        "description": "[text 59a5e2a9 32ch]",
+        "type": "string"
+       }
+      },
+      "required": [
+       "file_path",
+       "content"
+      ],
+      "additionalProperties": false
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_1",
+     "description": "[text ed2891e6 64ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_35",
+     "description": "[text c77ae699 77ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_36",
+     "description": "[text ae1aad82 241ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_37",
+     "description": "[text 291f9574 254ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_2",
+     "description": "[text 90dde47b 180ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_38",
+     "description": "[text 14082eb2 69ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_39",
+     "description": "[text cce3fc80 221ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_3",
+     "description": "[text 9fffd4b3 69ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_40",
+     "description": "[text 7481ce4d 223ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_41",
+     "description": "[text 7a3c3bd4 678ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_42",
+     "description": "[text 4f047a16 318ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_43",
+     "description": "[text 11770b41 187ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_44",
+     "description": "[text 984ec678 108ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_45",
+     "description": "[text 572eeb96 214ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_46",
+     "description": "[text d80d9653 183ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_47",
+     "description": "[text e8f603fd 164ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_48",
+     "description": "[text 99c3e5b8 208ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_49",
+     "description": "[text 3dd5d423 271ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_50",
+     "description": "[text 0c3370d7 980ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_51",
+     "description": "[text 56b99833 486ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_52",
+     "description": "[text 7f0c9491 154ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_53",
+     "description": "[text 6db66475 151ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_54",
+     "description": "[text 50c00f68 129ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_55",
+     "description": "[text 179e5b2e 87ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_56",
+     "description": "[text 46e8aff5 144ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_57",
+     "description": "[text 7055837c 133ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_58",
+     "description": "[text 42736f65 611ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_59",
+     "description": "[text 968be3e3 412ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_60",
+     "description": "[text 580945e7 230ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_61",
+     "description": "[text fd20199c 244ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_62",
+     "description": "[text 7a923384 233ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_63",
+     "description": "[text 0485e715 186ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_64",
+     "description": "[text 59023ff0 289ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_65",
+     "description": "[text d87a85e0 421ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_66",
+     "description": "[text 11a34ef5 147ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_67",
+     "description": "[text bd29be57 181ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_68",
+     "description": "[text a0fe0c16 238ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_69",
+     "description": "[text 26ff946c 234ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_70",
+     "description": "[text d84915cc 422ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_71",
+     "description": "[text 56b2618c 190ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_72",
+     "description": "[text 9ae384f1 157ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_73",
+     "description": "[text 9d1d177c 195ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_74",
+     "description": "[text 18e2d6ba 933ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_75",
+     "description": "[text f08b644b 316ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_76",
+     "description": "[text 173c7e97 428ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_77",
+     "description": "[text 2d6caf2c 375ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_78",
+     "description": "[text d7868905 445ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_79",
+     "description": "[text 6c89966a 229ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_80",
+     "description": "[text d575ab42 591ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_81",
+     "description": "[text 80b9cf72 790ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_82",
+     "description": "[text 27310a3a 36ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_83",
+     "description": "[text 28e26dce 209ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_84",
+     "description": "[text 8c41faab 33ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_85",
+     "description": "[text 5f6092c4 322ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_86",
+     "description": "[text f140aa98 38ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_87",
+     "description": "[text 976b2e5f 212ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_88",
+     "description": "[text d1f75c28 396ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_89",
+     "description": "[text 6d58a12b 270ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_90",
+     "description": "[text 0e19d967 572ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_91",
+     "description": "[text 8da386fc 153ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_92",
+     "description": "[text 365701cc 661ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_93",
+     "description": "[text eae6b516 668ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_94",
+     "description": "[text 2ed0ad79 991ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_95",
+     "description": "[text 99e6cfdb 457ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_96",
+     "description": "[text 5b554bbc 177ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_97",
+     "description": "[text 544dc1a5 752ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_98",
+     "description": "[text 22b92b04 290ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_99",
+     "description": "[text 193d74f8 318ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_100",
+     "description": "[text c29dab15 196ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_101",
+     "description": "[text 5309edc2 179ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_102",
+     "description": "[text 6e100fa3 718ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_103",
+     "description": "[text ee9ef29a 1547ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_104",
+     "description": "[text 763b2476 689ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_105",
+     "description": "[text b272c393 210ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_106",
+     "description": "[text c83cbae1 671ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_107",
+     "description": "[text 2563b56c 59ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_108",
+     "description": "[text c681b7ca 141ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_109",
+     "description": "[text ca72d4a8 1763ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_110",
+     "description": "[text 1a583e51 916ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_111",
+     "description": "[text d049f1a8 533ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_112",
+     "description": "[text 02ef117f 136ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_113",
+     "description": "[text bc4ec9de 270ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_114",
+     "description": "[text 305eafb7 166ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_115",
+     "description": "[text 6682b248 115ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_116",
+     "description": "[text 91ca7ce0 378ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_117",
+     "description": "[text 9a877207 450ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_118",
+     "description": "[text c3e2b138 292ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_119",
+     "description": "[text a7eb3b95 515ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_120",
+     "description": "[text 3bd03129 212ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_121",
+     "description": "[text 51fa3a06 270ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_122",
+     "description": "[text 79048432 135ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_123",
+     "description": "[text 145e042e 1051ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_124",
+     "description": "[text b24c04cc 451ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_125",
+     "description": "[text a570ebfa 1086ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_126",
+     "description": "[text de35153d 698ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_127",
+     "description": "[text bfbe26f7 1001ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_128",
+     "description": "[text 2d7bad93 55ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_129",
+     "description": "[text 5356e91f 1979ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_130",
+     "description": "[text aa5d7170 974ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_131",
+     "description": "[text 7fd89438 462ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_132",
+     "description": "[text 07885c66 1788ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_133",
+     "description": "[text ef3cd9bf 1742ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_134",
+     "description": "[text 8ab7a4bb 1383ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_135",
+     "description": "[text 9d35b820 880ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_136",
+     "description": "[text c96b9d12 438ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_137",
+     "description": "[text 7d871279 1811ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_138",
+     "description": "[text 50b860db 726ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_139",
+     "description": "[text 49d19e1c 1043ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_140",
+     "description": "[text dea715de 447ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_141",
+     "description": "[text 8dbf564c 431ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_142",
+     "description": "[text 99837c0f 1738ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_143",
+     "description": "[text 14de0e70 578ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_144",
+     "description": "[text 054f87cf 1158ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_145",
+     "description": "[text 458f5a9d 272ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_146",
+     "description": "[text 48b08b08 409ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_147",
+     "description": "[text 8552c08a 844ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_148",
+     "description": "[text 1f393f5c 590ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_149",
+     "description": "[text dbe95d3c 199ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_150",
+     "description": "[text 2121dfcd 329ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_151",
+     "description": "[text 6b986067 267ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_152",
+     "description": "[text fa170a02 263ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_153",
+     "description": "[text bed0be0d 322ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_154",
+     "description": "[text 89a3fac0 59ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_155",
+     "description": "[text 2c0a9dff 1977ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_156",
+     "description": "[text 23a9a4a9 1415ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_157",
+     "description": "[text 5528939a 1167ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_158",
+     "description": "[text 63c22d09 379ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_159",
+     "description": "[text ee1c0c02 270ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_160",
+     "description": "[text b774b5a1 1624ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_161",
+     "description": "[text f6610305 538ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_162",
+     "description": "[text 33285594 409ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_163",
+     "description": "[text 404988c0 266ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_164",
+     "description": "[text 1e5df6b3 474ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_165",
+     "description": "[text 524ee827 308ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_166",
+     "description": "[text 52c7987d 251ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_167",
+     "description": "[text 94f9139e 1109ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_168",
+     "description": "[text c1c63d58 556ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_169",
+     "description": "[text 994c0c2a 1949ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_170",
+     "description": "[text 9326358e 1234ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_171",
+     "description": "[text b58d035f 1429ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_172",
+     "description": "[text a4f89a7c 267ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_4",
+     "description": "[text e5c2924d 27ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_5",
+     "description": "[text eb4e361c 14ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_6",
+     "description": "[text cdf8ff56 28ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_7",
+     "description": "[text 04f2b8e5 42ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_8",
+     "description": "[text 91dc2d7c 135ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_9",
+     "description": "[text 2608a023 49ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_10",
+     "description": "[text c591c3f8 28ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_11",
+     "description": "[text 816d65fe 25ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_12",
+     "description": "[text 1f4fb755 15ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_13",
+     "description": "[text ed4ca124 26ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_14",
+     "description": "[text 6a8baa0d 17ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_15",
+     "description": "[text 30e7b362 43ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_16",
+     "description": "[text acd84f62 149ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_17",
+     "description": "[text 50dd5d65 132ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_18",
+     "description": "[text c9fd3324 27ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_19",
+     "description": "[text 1bdadd95 25ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_20",
+     "description": "[text 10f0d06c 124ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_21",
+     "description": "[text 83564771 30ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_22",
+     "description": "[text 5beca3cf 82ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_23",
+     "description": "[text cd59c760 45ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_24",
+     "description": "[text d684a98e 123ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_25",
+     "description": "[text 00cc4f2e 31ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_26",
+     "description": "[text 67db4d78 64ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_27",
+     "description": "[text 03b77a98 313ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_28",
+     "description": "[text 0ad12698 191ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_29",
+     "description": "[text 9d8fc133 75ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_30",
+     "description": "[text 7d7ac609 181ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_31",
+     "description": "[text 798a7b30 233ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_32",
+     "description": "[text 2d0a1796 122ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_33",
+     "description": "[text 488b4371 402ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_34",
+     "description": "[text 4b702fb1 98ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_173",
+     "description": "[text f5164cd9 938ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_174",
+     "description": "[text 04b9f819 2061ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    },
+    {
+     "name": "mcp__fixture__tool_175",
+     "description": "[text 1b720613 41ch]",
+     "input_schema": {
+      "type": "object",
+      "properties": {}
+     }
+    }
+   ],
+   "metadata": {
+    "user_id": "fixture"
+   },
+   "max_tokens": 128000,
+   "thinking": {
+    "type": "adaptive",
+    "display": "omitted"
+   },
+   "context_management": {
+    "edits": [
+     {
+      "type": "clear_thinking_20251015",
+      "keep": "all"
+     }
+    ]
+   },
+   "output_config": {
+    "effort": "medium"
+   },
+   "stream": true
+  }
+ },
+ "response": {
+  "status": 200,
+  "headers": [
+   [
+    "content-type",
+    "text/event-stream; charset=utf-8"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-representative-claim",
+    "five_hour"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-status",
+    "rejected"
+   ],
+   [
+    "anthropic-ratelimit-unified-reset",
+    "1791076800"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-utilization",
+    "0.24"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-reset",
+    "1791640800"
+   ],
+   [
+    "anthropic-ratelimit-unified-5h-reset",
+    "1791076800"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-status",
+    "allowed"
+   ],
+   [
+    "anthropic-ratelimit-unified-fallback-percentage",
+    "0.5"
+   ],
+   [
+    "anthropic-ratelimit-unified-overage-disabled-reason",
+    "org_level_disabled"
+   ],
+   [
+    "anthropic-ratelimit-unified-7d-utilization",
+    "0.04"
+   ],
+   [
+    "anthropic-ratelimit-unified-status",
+    "allowed"
+   ],
+   [
+    "request-id",
+    "req_fixture0046"
+   ]
+  ],
+  "events": [
+   "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus-5-5\",\"id\":\"msg_fixture0047\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"container\":null,\"stop_reason\":null,\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":184191,\"cache_read_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":184191},\"output_tokens\":4,\"service_tier\":\"standard\",\"inference_geo\":\"not_available\"},\"diagnostics\":null,\"context_management\":null}}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+   "event: ping\ndata: {\"type\":\"ping\"}\n\n",
+   "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"[text e3cac742 2ch]\"}}\n\n",
+   "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+   "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"container\":null},\"usage\":{\"input_tokens\":2,\"cache_creation_input_tokens\":184191,\"cache_read_input_tokens\":0,\"output_tokens\":4,\"output_tokens_details\":{\"thinking_tokens\":0},\"iterations\":[{\"input_tokens\":2,\"output_tokens\":4,\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":184191,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":184191},\"type\":\"message\"}]},\"context_management\":{\"applied_edits\":[]}}\n\n",
+   "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  ]
+ },
+ "abort_after_events": null
+}

@@ -4,10 +4,11 @@
 # Build from the REPO ROOT (the pnpm workspace needs the root manifests):
 #   docker build -f apps/interface/Dockerfile -t theygent/interface:dev .
 #
-# The SPA calls the control-plane and inference-plane straight from the BROWSER, so the URLs
-# are baked at build time (Vite inlines import.meta.env). The defaults —
-# http://localhost:8080 and http://localhost:8081 — are right whenever those ports are
-# published on the machine running the browser (docker compose, kubectl port-forward).
+# The SPA calls the control-plane, the inference-plane and the AI gateway's admin surface
+# straight from the BROWSER, so the URLs are baked at build time (Vite inlines
+# import.meta.env). The defaults — http://localhost:8080, :8081 and :8082 — are right whenever
+# those ports are published on the machine running the browser (docker compose, kubectl
+# port-forward).
 # Override for a real deployment:
 #   docker build --build-arg VITE_CONTROL_PLANE_URL=https://api.example.com ...
 
@@ -33,10 +34,12 @@ COPY apps/interface apps/interface
 
 ARG VITE_CONTROL_PLANE_URL=
 ARG VITE_INFERENCE_URL=
+ARG VITE_AI_GATEWAY_URL=
 # An EMPTY build arg must not reach Vite: it would inline "" and defeat the SPA's own
 # localhost fallbacks — so unset the blanks before building.
 RUN sh -c '[ -n "$VITE_CONTROL_PLANE_URL" ] || unset VITE_CONTROL_PLANE_URL; \
     [ -n "$VITE_INFERENCE_URL" ] || unset VITE_INFERENCE_URL; \
+    [ -n "$VITE_AI_GATEWAY_URL" ] || unset VITE_AI_GATEWAY_URL; \
     pnpm --filter @theygent/interface build'
 
 FROM ${NGINX_BASE}

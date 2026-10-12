@@ -36,7 +36,7 @@ Three screen recordings of the real product, if you would rather see it than rea
 
 ## How it fits together
 
-TheYgent runs as three local services, brought up together with `make up`:
+TheYgent runs as four local services, brought up together with `make up`:
 
 ```mermaid
 graph LR
@@ -46,11 +46,17 @@ graph LR
     CP --> PG[(Postgres)]
     IP --> ENG[Local engines: llama.cpp / MLX / vLLM]
     IP --> API[Any OpenAI-compatible API you register]
+    CC[Claude Code] --> AG[AI gateway :8082]
+    AG --> ANT[Anthropic API]
+    AG -->|local models| IP
+    AG -->|metadata only| CP
 ```
 
 - The **interface** is the web app where you build, chat, and observe.
 - The **control plane** orchestrates agents: it stores agent versions, executes graphs, records runs and sessions, and handles triggers. It talks to models only over HTTP.
 - The **inference plane** is yours alone: it holds the model registry, downloads weights, spawns and supervises local engine servers, and proxies to any remote API you register. When you chat directly with a model, raw media (voice recordings, images) goes to it straight from your browser; in an agent run — which the control plane orchestrates — that media is uploaded to the control plane as an artifact and handed to nodes by reference.
+
+- The **AI gateway** sits between your team's Claude Code and its models to cut what it costs: it records what each exchange cost and what routing would save, then — when you choose — routes work to cheaper Claude models, and to models you run yourself in the shares you set. See [AI Gateway](ai-gateway/index.md).
 
 The [architecture page](concepts/index.md) explains the split and exactly where each kind of data lives.
 

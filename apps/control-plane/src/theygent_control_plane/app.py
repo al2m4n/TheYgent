@@ -31,7 +31,8 @@ import os
 import re
 import shutil
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from datetime import UTC, date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Literal, cast, get_args
 from urllib.parse import urljoin
@@ -49,6 +50,7 @@ from fastapi.responses import (
 )
 from openai import APIConnectionError, APIStatusError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError
@@ -63,15 +65,33 @@ from theygent_ir import (
     parse_document,
     validate_graph,
 )
+from theygent_ir.gateway import (
+    CredentialProfile,
+    FingerprintEntry,
+    FingerprintRule,
+    FingerprintStatus,
+    GatewayEventBatch,
+    GatewayHeartbeat,
+    GatewayTokenCheck,
+    GatewayTokenCheckResult,
+    Token,
+    target_problem,
+)
 from theygent_ir.graph import BindingName
 
 from theygent_control_plane import db
+from theygent_control_plane.ai_gateway import catalog as gateway_catalog
+from theygent_control_plane.ai_gateway import reports as gateway_reports
+from theygent_control_plane.ai_gateway.store import AiGatewayStore, ConfigConflict, ConfigDraft
 from theygent_control_plane.artifacts import LocalArtifactStore
 from theygent_control_plane.auth import (
     API_KEY_TOKEN_PREFIX,
+    GATEWAY_SERVICE_TOKEN_PREFIX,
     MIN_PASSWORD_LENGTH,
     SESSION_TOKEN_PREFIX,
+    ApiKey,
     AuthStore,
+    GatewayServiceCaller,
     OidcError,
     Role,
     StateSealer,
@@ -111,6 +131,7 @@ from theygent_control_plane.mcp.registry import (
     build_install,
     builtin_registries,
 )
+from theygent_control_plane.models import AiGatewayRequestArchiveRow
 from theygent_control_plane.observability import (
     INPROC_EXECUTOR,
     CaptureLevel,
@@ -125,6 +146,8 @@ from theygent_control_plane.rag.parse import supported_extension
 from theygent_control_plane.rag.retrieve import RetrievalError
 from theygent_control_plane.rag.store import RagSourceKind
 from theygent_control_plane.reasoning import ThinkSplitter, split_think
+from theygent_control_plane.retention import DEFAULT_INTERVAL_S as DEFAULT_RETENTION_INTERVAL_S
+from theygent_control_plane.retention import RetentionSweeper
 from theygent_control_plane.run import _SECRETISH_CONFIG_KEYS as _SECRETISH_CONFIG_KEYS
 from theygent_control_plane.run import (
     BenchCase,
@@ -377,7 +400,9 @@ class IoPolicyRequest(BaseModel):
     # default, surfaced in the response so the UI shows the real behavior, not a lie. Keyed to the
     # STABLE agent id — editing it never changes the agent's contentHash (immutability of versions).
     io_capture: CaptureLevel
-    io_retention_seconds: int | None = None
+    #: Captured I/O older than this many seconds is deleted; ``None`` follows the platform's
+    #: ``telemetry.io_retention_days`` (0 there: keep).
+    io_retention_seconds: int | None = Field(default=None, ge=1)
     redact_rules: dict[str, Any] | None = None
 
 
@@ -584,6 +609,79 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class CreateGatewayKeyRequest(BaseModel):
+    name: str
+
+
+class SetCredentialProfileRequest(BaseModel):
+    credential_profile: CredentialProfile
+
+
+class FingerprintRuleRequest(BaseModel):
+    """An admin's review of one auxiliary-request kind; saved as a rule in a new config version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: FingerprintStatus
+    label: Token | None = None
+
+
+def _etag(version: int) -> str:
+    return f'"{version}"'
+
+
+def _etag_matches(header: str | None, version: int | None) -> bool:
+    """Whether an ``If-None-Match``/``If-Match`` value names ``version`` (weak tags count; ``*``
+    matches any existing version)."""
+    if header is None or version is None:
+        return False
+    tags = {tag.strip().removeprefix("W/") for tag in header.split(",")}
+    return "*" in tags or _etag(version) in tags
+
+
+#: A report covers the last week unless asked otherwise.
+_GATEWAY_REPORT_DEFAULT_RANGE = timedelta(days=7)
+_GATEWAY_REPORT_DEFAULT_BY = "class,client,model"
+
+
+def _report_range(
+    since: datetime | None, until: datetime | None
+) -> tuple[datetime, datetime] | JSONResponse:
+    end = _aware(until) if until is not None else datetime.now(UTC)
+    start = _aware(since) if since is not None else end - _GATEWAY_REPORT_DEFAULT_RANGE
+    if start >= end:
+        return _error("since must be before until", status=400, code="invalid_report_range")
+    return start, end
+
+
+def _aware(moment: datetime) -> datetime:
+    """A timestamp without a zone is UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def _expect_etag(if_match: str | None) -> Callable[[int | None], bool] | None:
+    """An ``If-Match`` header as a check on the current config version (none without one)."""
+    if if_match is None:
+        return None
+    return lambda current: _etag_matches(if_match, current)
+
+
+def _config_conflict(exc: ConfigConflict) -> JSONResponse:
+    return _error(
+        f"the gateway config is now at version {exc.current}; reload and retry",
+        status=412,
+        code="config_version_conflict",
+    )
+
+
+def _gateway_key_payload(key: ApiKey) -> dict[str, Any]:
+    """A gateway or service key's public shape. Gateway keys carry no role: they open a gateway,
+    never this API."""
+    payload = key.model_dump(mode="json")
+    payload.pop("role", None)
+    return payload
+
+
 class CreateApiKeyRequest(BaseModel):
     # ``role`` defaults to the caller's own; anything wider is a 400 (keys narrow, never widen).
     name: str
@@ -647,6 +745,39 @@ class UpdateProviderRequest(BaseModel):
 #: PUT /artifacts/{ref} accepts caller-chosen refs, so it must enforce the full shape — a mere
 #: prefix check admits ``art_X.type`` (another artifact's content-type sidecar) or a NUL byte.
 _ARTIFACT_REF_RE = re.compile(r"art_[0-9ABCDEFGHJKMNPQRSTVWXYZ]{26}")
+
+
+#: An AI gateway sends at most MAX_EVENT_BATCH records of a few KB each; a larger body is refused
+#: with 413, which makes the gateway send smaller batches.
+_GATEWAY_EVENTS_MAX_BYTES = 4 * 1024 * 1024
+
+
+def _gateway_events_too_large() -> JSONResponse:
+    return _error(
+        f"event batch exceeds {_GATEWAY_EVENTS_MAX_BYTES // (1024 * 1024)} MiB; send fewer records",
+        status=413,
+        code="event_batch_too_large",
+    )
+
+
+#: A location step shown as-is: a list index, or a snake_case name like every wire field's.
+_SAFE_LOC = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _validation_summary(exc: ValidationError, *, limit: int = 5) -> str:
+    """Where and why validation failed — never the offending values, which could quote content.
+    A location step that is not an index or a field-like name (a caller's dictionary key) reads
+    ``<key>``: keys are caller text too."""
+
+    def step(part: object) -> str:
+        if isinstance(part, int) or (isinstance(part, str) and _SAFE_LOC.fullmatch(part)):
+            return str(part)
+        return "<key>"
+
+    errors = exc.errors(include_input=False, include_url=False, include_context=False)
+    parts = [f"{'.'.join(step(p) for p in e['loc']) or 'body'}: {e['msg']}" for e in errors[:limit]]
+    more = f" (+{len(errors) - limit} more)" if len(errors) > limit else ""
+    return "; ".join(parts) + more
 
 
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
@@ -771,6 +902,8 @@ def create_app(
     durable: bool = False,
     dbos_fast_polling: bool = False,
     settings_refresh_s: float = 15.0,
+    start_retention: bool = True,
+    retention_interval_s: float = DEFAULT_RETENTION_INTERVAL_S,
 ) -> FastAPI:
     # Durable mode re-points the unattended ``fire()`` seam (schedules + webhooks) at the
     # DBOS durable worker and replaces the in-process dispatcher with DBOS dynamic schedules.
@@ -787,6 +920,7 @@ def create_app(
     triggers = TriggerStore()
     bench = BenchStore()  # saved benchmark results + suites/cases + param presets
     rag_store = RagStore()  # retrieval sources/documents/chunks + hybrid search
+    ai_gateway_store = AiGatewayStore()  # the AI gateway's records, usage, configs, catalog
     # The tool/MCP auth seam. ``connections`` persists the (non-secret) bindings the IR's
     # ``tools`` block references by id; ``secrets`` encrypts the material behind each ``secret_ref``
     # (resolved server-side, inside the step — never in the IR/span/journal). Keys come from
@@ -1045,9 +1179,18 @@ def create_app(
         # The cross-process live-apply loop: re-reads platform_setting, diffs, re-runs hooks —
         # what makes a "live" setting true on a replica that didn't handle the PATCH.
         settings_service.start_refresher(settings_refresh_s)
+        # Archives old AI gateway request rows and expires run I/O past its retention; the first
+        # sweep waits one interval, so a restart never sweeps on boot.
+        retention = RetentionSweeper(
+            app.state.sessionmaker, settings_service.get, interval_s=retention_interval_s
+        )
+        app.state.retention = retention
+        if start_retention:
+            retention.start()
         try:
             yield
         finally:
+            await retention.stop()
             await settings_service.stop_refresher()
             # Stop in-flight retrieval ingests first (they write through the sessionmaker).
             await rag_ingest.shutdown()
@@ -1158,6 +1301,29 @@ def create_app(
                     if await auth_store.resolve_api_key(session, presented) is not None:
                         return
         raise AuthError("a valid bearer token is required (Authorization: Bearer …)")
+
+    async def require_gateway_service(
+        authorization: str | None = Header(default=None),
+    ) -> GatewayServiceCaller:
+        # The AI gateway's service surface (/gateway/*). Only a gateway's own service key opens
+        # it: no session bearer, no personal API key, no developer's gateway key.
+        presented = _bearer_token(authorization)
+        if presented is not None and presented.startswith(GATEWAY_SERVICE_TOKEN_PREFIX):
+            async with tx() as session:
+                caller = await auth_store.resolve_gateway_service_key(session, presented)
+            if caller is not None:
+                return caller
+        raise AuthError("a gateway service key is required (Authorization: Bearer tygs_…)")
+
+    async def require_reader_or_gateway(
+        request: Request, authorization: str | None = Header(default=None)
+    ) -> Principal | GatewayServiceCaller:
+        # What both audiences read (the gateway config): a gateway with its service key, or any
+        # signed-in user.
+        presented = _bearer_token(authorization)
+        if presented is not None and presented.startswith(GATEWAY_SERVICE_TOKEN_PREFIX):
+            return await require_gateway_service(authorization)
+        return await require_auth(request, authorization)
 
     async def get_session() -> AsyncIterator[AsyncSession]:
         # Request-scoped session for read handlers. Writes that outlive the handler
@@ -5335,6 +5501,530 @@ def create_app(
         if user is None:  # the session was revoked between mint and redeem
             raise AuthError("invalid or expired sign-in code — start the sign-in again")
         return {"token": bearer, "user": _user_payload(user)}
+
+    # ── AI gateway service surface: /gateway/* ───────────────────────────
+    # Called by AI gateways (apps/ai-gateway) with their service key, never by the interface.
+    # Every body is the gateway's wire types (theygent_ir.gateway), which refuse free text; a
+    # rejection names field locations, never the values, which could quote content.
+
+    @app.post("/gateway/events")
+    async def ingest_gateway_events(
+        request: Request, caller: GatewayServiceCaller = Depends(require_gateway_service)
+    ) -> Any:
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > _GATEWAY_EVENTS_MAX_BYTES:
+            return _gateway_events_too_large()
+        data = await request.body()
+        if len(data) > _GATEWAY_EVENTS_MAX_BYTES:
+            return _gateway_events_too_large()
+        try:
+            batch = GatewayEventBatch.model_validate_json(data)
+        except ValidationError as exc:
+            return _error(
+                f"invalid event batch: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_event_batch",
+            )
+        async with tx() as session:
+            ack = await ai_gateway_store.ingest(
+                session, batch, service_key_id=caller.key_id, received_at=datetime.now(UTC)
+            )
+        return ack.model_dump(mode="json")
+
+    @app.get("/gateway/keys/sync", dependencies=[Depends(require_gateway_service)])
+    async def sync_gateway_keys(since: int | None = Query(default=None)) -> Any:
+        # The key set gateways authenticate developers against: digests only. 304 when the
+        # gateway already holds this version; triggers move the version with every change.
+        async with tx() as session:
+            if since is not None and since == await ai_gateway_store.key_set_version(session):
+                return Response(status_code=304)
+            key_set = await ai_gateway_store.key_set(session, generated_at=datetime.now(UTC))
+        return key_set.model_dump(mode="json")
+
+    @app.post("/gateway/introspect", dependencies=[Depends(require_gateway_service)])
+    async def introspect_for_gateway(req: GatewayTokenCheck) -> Any:
+        # A gateway's admin surface accepts the same bearers this API does: a session or a
+        # personal API key. Everything else is inactive, gateway keys included.
+        result = GatewayTokenCheckResult(active=False)
+        async with tx() as session:
+            if req.token.startswith(SESSION_TOKEN_PREFIX):
+                user = await auth_store.resolve_session(session, req.token)
+                if user is not None:
+                    result = GatewayTokenCheckResult(active=True, user_id=user.id, role=user.role)
+            elif req.token.startswith(API_KEY_TOKEN_PREFIX):
+                resolved = await auth_store.resolve_api_key(session, req.token)
+                if resolved is not None:
+                    key_user, role = resolved
+                    result = GatewayTokenCheckResult(active=True, user_id=key_user.id, role=role)
+        return result.model_dump(mode="json")
+
+    # -- config: immutable versions; the version is the ETag --
+
+    @app.get("/gateway/config", dependencies=[Depends(require_reader_or_gateway)])
+    async def get_gateway_config(
+        if_none_match: str | None = Header(default=None),
+    ) -> Any:
+        async with tx() as session:
+            config = await ai_gateway_store.latest_config(session)
+        if config is None:
+            return _error(
+                "no gateway config has been saved yet", status=404, code="gateway_config_not_found"
+            )
+        headers = {"ETag": _etag(config.version)}
+        if _etag_matches(if_none_match, config.version):
+            return Response(status_code=304, headers=headers)
+        return JSONResponse(config.model_dump(mode="json"), headers=headers)
+
+    @app.put("/gateway/config")
+    async def put_gateway_config(
+        request: Request,
+        if_match: str | None = Header(default=None),
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        try:
+            draft = ConfigDraft.model_validate_json(await request.body())
+        except ValidationError as exc:
+            return _error(
+                f"invalid gateway config: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_gateway_config",
+            )
+        # A target no Claude Code request could go to would only ever show "target can't take
+        # it". Checked when an admin saves, never on read, so a version saved earlier still loads.
+        for name in ("subagent_target", "main_target"):
+            target = getattr(draft.policy, name)
+            if target is not None and (problem := target_problem(target)) is not None:
+                return _error(
+                    f"invalid gateway config: policy.{name}: {problem}",
+                    status=422,
+                    code="invalid_gateway_config",
+                )
+        try:
+            async with tx() as session:
+                config = await ai_gateway_store.update_config(
+                    session,
+                    lambda _latest: draft,
+                    by=principal.id,
+                    now=datetime.now(UTC),
+                    # Lost-update guard: a write applies only on the version it was read at.
+                    expect=_expect_etag(if_match),
+                )
+        except ConfigConflict as exc:
+            return _config_conflict(exc)
+        except ValidationError as exc:
+            return _error(
+                f"invalid gateway config: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_gateway_config",
+            )
+        logger.info(
+            "ai_gateway.config_saved", extra={"version": config.version, "mode": config.mode}
+        )
+        return JSONResponse(
+            config.model_dump(mode="json"),
+            status_code=201,
+            headers={"ETag": _etag(config.version)},
+        )
+
+    @app.get("/gateway/config/versions", dependencies=[Depends(require_auth)])
+    async def list_gateway_config_versions() -> Any:
+        async with tx() as session:
+            versions = await ai_gateway_store.config_versions(session)
+        return {"versions": [v.model_dump(mode="json") for v in versions]}
+
+    @app.get("/gateway/config/versions/{version}", dependencies=[Depends(require_auth)])
+    async def get_gateway_config_version(version: int) -> Any:
+        async with tx() as session:
+            config = await ai_gateway_store.config(session, version)
+        if config is None:
+            return _error(
+                f"no gateway config version {version}",
+                status=404,
+                code="gateway_config_not_found",
+            )
+        return JSONResponse(config.model_dump(mode="json"), headers={"ETag": _etag(version)})
+
+    # -- instances: each gateway reports itself; the acknowledgement names what is current --
+
+    @app.post("/gateway/heartbeat")
+    async def gateway_heartbeat(
+        request: Request, caller: GatewayServiceCaller = Depends(require_gateway_service)
+    ) -> Any:
+        try:
+            beat = GatewayHeartbeat.model_validate_json(await request.body())
+        except ValidationError as exc:
+            return _error(
+                f"invalid heartbeat: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_heartbeat",
+            )
+        async with tx() as session:
+            ack = await ai_gateway_store.record_heartbeat(
+                session, beat, service_key_id=caller.key_id, now=datetime.now(UTC)
+            )
+        return ack.model_dump(mode="json")
+
+    @app.get("/gateway/instances", dependencies=[Depends(require_auth)])
+    async def list_gateway_instances() -> Any:
+        async with tx() as session:
+            instances = await ai_gateway_store.instances(session, now=datetime.now(UTC))
+        return {"instances": [i.model_dump(mode="json") for i in instances]}
+
+    # -- usage reports: everyone reads their own; totals for viewers; detail across people for
+    # admins (gateway_usage:read / gateway_usage:read_all) --
+
+    def _gateway_scope(
+        principal: Principal, scope: str | None, developer_id: str | None
+    ) -> gateway_reports.Scope | JSONResponse:
+        """The records a reader asked for, if they may see them. ``mine`` is the reader's own
+        records (the default below admin); ``org`` is everyone's, optionally one developer's."""
+        everyone = authorize(principal, "gateway_usage:read_all", None)
+        chosen = scope or ("org" if everyone else "mine")
+        if chosen not in ("org", "mine"):
+            return _error("scope is org or mine", status=400, code="invalid_report_scope")
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        if chosen == "mine":
+            if developer_id is not None and developer_id != principal.id:
+                raise AuthError(
+                    "another developer's usage needs the admin role", code="forbidden", status=403
+                )
+            return gateway_reports.Scope(developer_id=principal.id or "")
+        if developer_id is not None and developer_id != principal.id and not everyone:
+            raise AuthError(
+                "another developer's usage needs the admin role", code="forbidden", status=403
+            )
+        return gateway_reports.Scope(developer_id=developer_id)
+
+    def _identifying_allowed(principal: Principal, scope: gateway_reports.Scope) -> bool:
+        """Per-developer and per-session detail is open for one's own records, or to admins."""
+        own = scope.developer_id is not None and scope.developer_id == principal.id
+        return own or authorize(principal, "gateway_usage:read_all", None)
+
+    @app.get("/gateway/report")
+    async def gateway_report(
+        since: datetime | None = Query(default=None),
+        until: datetime | None = Query(default=None),
+        by: str = Query(default=_GATEWAY_REPORT_DEFAULT_BY),
+        scope: str | None = Query(default=None),
+        developer_id: str | None = Query(default=None),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        window = _report_range(since, until)
+        if isinstance(window, JSONResponse):
+            return window
+        dimensions = [d.strip() for d in by.split(",") if d.strip()]
+        unknown = [d for d in dimensions if d not in gateway_reports.DIMENSIONS]
+        if unknown:
+            return _error(
+                f"unknown report dimension(s) {', '.join(unknown)}; choose from "
+                f"{', '.join(gateway_reports.DIMENSIONS)}",
+                status=400,
+                code="invalid_report_dimension",
+            )
+        reader = _gateway_scope(principal, scope, developer_id)
+        if isinstance(reader, JSONResponse):
+            return reader
+        identifying = sorted(set(dimensions) & gateway_reports.IDENTIFYING)
+        if identifying and not _identifying_allowed(principal, reader):
+            raise AuthError(
+                f"grouping everyone's usage by {', '.join(identifying)} needs the admin role",
+                code="forbidden",
+                status=403,
+            )
+        async with tx() as session:
+            report = await gateway_reports.build_report(
+                session,
+                scope=reader,
+                since=window[0],
+                until=window[1],
+                dimensions=dimensions,
+                # A seat belongs to one person: listed only where individuals may be seen.
+                include_seats=_identifying_allowed(principal, reader),
+            )
+        return report.model_dump(mode="json")
+
+    @app.get("/gateway/sessions")
+    async def gateway_sessions(
+        since: datetime | None = Query(default=None),
+        until: datetime | None = Query(default=None),
+        before: datetime | None = Query(default=None),
+        limit: int = Query(default=50, ge=1, le=500),
+        scope: str | None = Query(default=None),
+        developer_id: str | None = Query(default=None),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        window = _report_range(since, until)
+        if isinstance(window, JSONResponse):
+            return window
+        reader = _gateway_scope(principal, scope, developer_id)
+        if isinstance(reader, JSONResponse):
+            return reader
+        if not _identifying_allowed(principal, reader):
+            raise AuthError("everyone's sessions need the admin role", code="forbidden", status=403)
+        async with tx() as session:
+            sessions = await gateway_reports.list_sessions(
+                session,
+                scope=reader,
+                since=window[0],
+                until=window[1],
+                limit=limit,
+                before=_aware(before) if before is not None else None,
+            )
+        return {"sessions": [s.model_dump(mode="json") for s in sessions]}
+
+    @app.get("/gateway/sessions/{session_id}")
+    async def gateway_session(
+        session_id: str,
+        after: str | None = Query(default=None),
+        limit: int = Query(default=500, ge=1, le=2000),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        everyone = authorize(principal, "gateway_usage:read_all", None)
+        reader = gateway_reports.Scope(developer_id=None if everyone else principal.id or "")
+        async with tx() as session:
+            detail = await gateway_reports.session_detail(
+                session, session_id, scope=reader, limit=limit, after=after
+            )
+        if detail is None:
+            # Another developer's session is indistinguishable from a nonexistent one.
+            return _error(
+                f"unknown session {session_id!r}", status=404, code="gateway_session_not_found"
+            )
+        return detail.model_dump(mode="json")
+
+    # -- the fingerprint catalog: observed kinds joined with the latest config's rules --
+
+    @app.get("/gateway/fingerprints")
+    async def list_gateway_fingerprints(principal: Principal = Depends(require_auth)) -> Any:
+        if not authorize(principal, "gateway_usage:read", None):
+            raise AuthError("reading gateway usage is not allowed", code="forbidden", status=403)
+        async with tx() as session:
+            version, listed = await gateway_catalog.entries(session, ai_gateway_store)
+        return {
+            "config_version": version,
+            "fingerprints": [e.model_dump(mode="json") for e in listed],
+        }
+
+    @app.put("/gateway/fingerprints/{fingerprint}")
+    async def set_gateway_fingerprint_rule(
+        fingerprint: str,
+        request: Request,
+        if_match: str | None = Header(default=None),
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        try:
+            req = FingerprintRuleRequest.model_validate_json(await request.body())
+            # Checks the fingerprint itself (16 hex digits) before anything is saved.
+            FingerprintRule(fingerprint=fingerprint, status=req.status, label=req.label)
+        except ValidationError as exc:
+            return _error(
+                f"invalid fingerprint rule: {_validation_summary(exc)}",
+                status=422,
+                code="invalid_fingerprint_rule",
+            )
+        try:
+            async with tx() as session:
+                config = await ai_gateway_store.update_config(
+                    session,
+                    gateway_catalog.with_rule(fingerprint, req.status, req.label),
+                    by=principal.id,
+                    now=datetime.now(UTC),
+                    expect=_expect_etag(if_match),
+                )
+                listed = await gateway_catalog.entry(session, ai_gateway_store, fingerprint)
+        except ConfigConflict as exc:
+            return _config_conflict(exc)
+        logger.info(
+            "ai_gateway.fingerprint_reviewed",
+            extra={"fingerprint": fingerprint, "status": req.status, "version": config.version},
+        )
+        entry = listed or FingerprintEntry(fingerprint=fingerprint, status="unreviewed")
+        return JSONResponse(
+            {"config_version": config.version, "fingerprint": entry.model_dump(mode="json")},
+            headers={"ETag": _etag(config.version)},
+        )
+
+    # -- developers' gateway keys: a developer mints and revokes their own; admins see all --
+
+    @app.post("/gateway/keys", status_code=201)
+    async def create_gateway_key(
+        req: CreateGatewayKeyRequest, principal: Principal = Depends(require_auth)
+    ) -> Any:
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_gateway_key")
+        async with tx() as session:
+            bearer, key = await auth_store.create_api_key(
+                session, user_id=principal.id or "", name=req.name, role="viewer", kind="gateway"
+            )
+        logger.info("ai_gateway.key_created", extra={"key_id": key.id})
+        # The raw token appears in THIS response and never again.
+        return JSONResponse(
+            {"token": bearer, "gateway_key": _gateway_key_payload(key)}, status_code=201
+        )
+
+    @app.get("/gateway/keys")
+    async def list_gateway_keys(
+        all_users: bool = Query(default=False, alias="all"),
+        principal: Principal = Depends(require_auth),
+    ) -> Any:
+        if all_users and principal.role != "admin":
+            raise AuthError(
+                "listing every developer's keys requires the admin role",
+                code="forbidden",
+                status=403,
+            )
+        async with tx() as session:
+            keys = await auth_store.list_api_keys(
+                session, None if all_users else principal.id or "", kind="gateway"
+            )
+        return {"gateway_keys": [_gateway_key_payload(k) for k in keys]}
+
+    @app.delete("/gateway/keys/{key_id}")
+    async def revoke_gateway_key(key_id: str, principal: Principal = Depends(require_auth)) -> Any:
+        async with tx() as session:
+            key = await auth_store.get_api_key(session, key_id, kind="gateway")
+            if key is None or (key.user_id != principal.id and principal.role != "admin"):
+                # Another account's key id is indistinguishable from a nonexistent one.
+                return _error(
+                    f"unknown gateway key {key_id!r}", status=404, code="gateway_key_not_found"
+                )
+            await auth_store.revoke_api_key(session, key_id)
+        logger.info("ai_gateway.key_revoked", extra={"key_id": key_id})
+        return Response(status_code=204)
+
+    # -- gateways' own service keys and developers' credential profiles: admins only --
+
+    @app.post("/gateway/service-keys", status_code=201)
+    async def create_gateway_service_key(
+        req: CreateGatewayKeyRequest, principal: Principal = Depends(require_admin)
+    ) -> Any:
+        if not req.name.strip():
+            return _error("name is required", status=400, code="invalid_service_key")
+        async with tx() as session:
+            bearer, key = await auth_store.create_api_key(
+                session,
+                user_id=principal.id or "",
+                name=req.name,
+                role="admin",
+                kind="gateway_service",
+            )
+        logger.info("ai_gateway.service_key_created", extra={"key_id": key.id})
+        return JSONResponse(
+            {"token": bearer, "service_key": _gateway_key_payload(key)}, status_code=201
+        )
+
+    @app.get("/gateway/service-keys", dependencies=[Depends(require_admin)])
+    async def list_gateway_service_keys() -> Any:
+        async with tx() as session:
+            keys = await auth_store.list_api_keys(session, None, kind="gateway_service")
+        return {"service_keys": [_gateway_key_payload(k) for k in keys]}
+
+    @app.delete("/gateway/service-keys/{key_id}", dependencies=[Depends(require_admin)])
+    async def revoke_gateway_service_key(key_id: str) -> Any:
+        async with tx() as session:
+            if await auth_store.get_api_key(session, key_id, kind="gateway_service") is None:
+                return _error(
+                    f"unknown service key {key_id!r}", status=404, code="service_key_not_found"
+                )
+            await auth_store.revoke_api_key(session, key_id)
+        logger.info("ai_gateway.service_key_revoked", extra={"key_id": key_id})
+        return Response(status_code=204)
+
+    @app.get("/gateway/archive", dependencies=[Depends(require_admin)])
+    async def list_gateway_archive() -> Any:
+        # The days whose request rows were archived: the records they hold and their size.
+        async with tx() as session:
+            rows = await session.execute(
+                select(
+                    AiGatewayRequestArchiveRow.day,
+                    func.sum(AiGatewayRequestArchiveRow.record_count).label("records"),
+                    func.count().label("chunks"),
+                    func.sum(func.length(AiGatewayRequestArchiveRow.records)).label("bytes"),
+                )
+                .group_by(AiGatewayRequestArchiveRow.day)
+                .order_by(AiGatewayRequestArchiveRow.day.desc())
+            )
+            before = await gateway_reports.archived_before(session)
+        return {
+            "archived_before": before.isoformat() if before else None,
+            "days": [
+                {
+                    "day": row.day.isoformat(),
+                    "records": int(row.records),
+                    "chunks": int(row.chunks),
+                    "bytes": int(row.bytes),
+                }
+                for row in rows
+            ],
+        }
+
+    @app.get("/gateway/archive/{day}", dependencies=[Depends(require_admin)])
+    async def download_gateway_archive(day: str) -> Any:
+        # One day's archived records: JSON lines of GatewayRequestRecord, gzip-compressed (the
+        # day's chunks, concatenated, are one gzip stream).
+        try:
+            wanted = date.fromisoformat(day)
+        except ValueError:
+            return _error(f"not a day: {day!r} (YYYY-MM-DD)", status=400, code="invalid_day")
+        async with tx() as session:
+            chunks = list(
+                (
+                    await session.execute(
+                        select(AiGatewayRequestArchiveRow.records)
+                        .where(AiGatewayRequestArchiveRow.day == wanted)
+                        .order_by(
+                            AiGatewayRequestArchiveRow.created_at, AiGatewayRequestArchiveRow.id
+                        )
+                    )
+                ).scalars()
+            )
+        if not chunks:
+            return _error(f"nothing archived for {day}", status=404, code="archive_not_found")
+        return Response(
+            b"".join(chunks),
+            media_type="application/gzip",
+            headers={
+                "content-disposition": (
+                    f'attachment; filename="ai-gateway-requests-{wanted.isoformat()}.jsonl.gz"'
+                )
+            },
+        )
+
+    @app.get("/gateway/me")
+    async def get_gateway_developer_me(principal: Principal = Depends(require_auth)) -> Any:
+        # The caller's own billing profile and key count: what their setup snippets depend on.
+        async with tx() as session:
+            me = await ai_gateway_store.developer(session, principal.id or "")
+        if me is None:
+            return _error("no account behind this credential", status=404, code="user_not_found")
+        return me.model_dump(mode="json")
+
+    @app.get("/gateway/developers", dependencies=[Depends(require_admin)])
+    async def list_gateway_developers() -> Any:
+        async with tx() as session:
+            developers = await ai_gateway_store.developers(session)
+        return {"developers": [d.model_dump(mode="json") for d in developers]}
+
+    @app.put("/gateway/developers/{user_id}")
+    async def set_gateway_credential_profile(
+        user_id: str,
+        req: SetCredentialProfileRequest,
+        principal: Principal = Depends(require_admin),
+    ) -> Any:
+        async with tx() as session:
+            known = await ai_gateway_store.set_credential_profile(
+                session, user_id, req.credential_profile, by=principal.id, now=datetime.now(UTC)
+            )
+        if not known:
+            return _error(f"unknown user {user_id!r}", status=404, code="user_not_found")
+        logger.info(
+            "ai_gateway.credential_profile_set",
+            extra={"user_id": user_id, "credential_profile": req.credential_profile},
+        )
+        return {"user_id": user_id, "credential_profile": req.credential_profile}
 
     # ── liveness / readiness ─────────────────────────────────────────────
 

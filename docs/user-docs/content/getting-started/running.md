@@ -1,6 +1,6 @@
 # Running TheYgent
 
-With the code [installed](installation.md), a single command brings up all three services. This page covers starting them, checking they're healthy, stopping them, and the one optional process — the durable worker — you'll only need for certain agents.
+With the code [installed](installation.md), a single command brings up all four services. This page covers starting them, checking they're healthy, stopping them, and the one optional process — the durable worker — you'll only need for certain agents.
 
 ## Start everything: `make up`
 
@@ -14,7 +14,7 @@ make up
 
 1. **install** — `uv sync` (Python dependencies) and `pnpm install` (interface dependencies).
 2. **migrate** — apply the control-plane database schema to your `DATABASE_URL`.
-3. **start** — launch the three services as background processes.
+3. **start** — launch the four services as background processes.
 
 From a fresh clone with `.env` set and `make engines` done, this is the only command you need. Once it finishes, open the interface in your browser:
 
@@ -22,15 +22,16 @@ From a fresh clone with `.env` set and `make engines` done, this is the only com
 
 On a fresh install the interface greets you with a **first-run wizard**: pick a username and password to create the install's admin account, and you land in the app signed in. Everything about accounts, roles, and single sign-on is covered in [Users, roles & sign-in](../running/users.md).
 
-## The three services
+## The four services
 
 | Service | URL | What it does |
 |---|---|---|
 | Inference plane | `http://127.0.0.1:8081` | Runs your local model engines and proxies any remote APIs you register. Owns the model registry and the Hugging Face model catalog. |
 | Control plane | `http://127.0.0.1:8080` | Agents, runs, sessions, triggers, MCP servers, observability. Backed by your Postgres. |
 | Interface | `http://localhost:5174` | The web app you work in. Your browser talks to both planes directly. |
+| AI gateway | `http://127.0.0.1:8082` | Sits between Claude Code and the Anthropic API, recording what each exchange cost and what routing would save. As shipped it is a personal gateway for this machine; see [AI Gateway](../ai-gateway/index.md). |
 
-If a port is already taken, `make up` skips that service loudly rather than clobbering it — you'll see a message like `already on :8080 — skipping (use 'make restart')`. Process ids and logs land under `.run/` (`.run/inference-plane.log`, `.run/control-plane.log`, `.run/interface.log`).
+If a port is already taken, `make up` skips that service loudly rather than clobbering it — you'll see a message like `already on :8080 — skipping (use 'make restart')`. Process ids and logs land under `.run/` (`.run/inference-plane.log`, `.run/control-plane.log`, `.run/interface.log`, `.run/ai-gateway.log`).
 
 ```mermaid
 graph LR
@@ -45,12 +46,12 @@ graph LR
 
 ```bash
 make status   # which services are up
-make logs     # tail all three service logs
+make logs     # tail all four service logs
 ```
 
 ## Health checks
 
-Both planes expose two endpoints:
+Both planes (and the AI gateway, on `:8082`) expose two endpoints:
 
 - **`GET /healthz`** — a plain liveness check (is the process up?).
 - **`GET /readyz`** — a readiness check.
@@ -68,12 +69,12 @@ The **control plane's** `/readyz` checks both your Postgres and the inference pl
 
 ```bash
 make restart   # stop, then start — use this to pick up backend code changes
-make down      # stop all three services
+make down      # stop all four services
 ```
 
 ## When you need the worker (durable runs)
 
-Most agents run on the normal interactive path and need nothing beyond the three services above. **Durable execution** — runs that checkpoint each step so they survive a crash and can pause for human input — is required for the `human`, `subgraph`, `loop`, and `map` node types, and for durable runs launched from the Bench (the `POST /agents/{id}/durable-runs` path).
+Most agents run on the normal interactive path and need nothing beyond the services above. **Durable execution** — runs that checkpoint each step so they survive a crash and can pause for human input — is required for the `human`, `subgraph`, `loop`, and `map` node types, and for durable runs launched from the Bench (the `POST /agents/{id}/durable-runs` path).
 
 There are two ways to enable it:
 
@@ -89,11 +90,11 @@ Without durable mode, running a durable-only agent returns a `durable_required` 
 | Target | Does |
 |---|---|
 | `make up` | install + migrate + start (the golden path) |
-| `make start` | start the three services (no install/migrate) |
+| `make start` | start the four services (no install/migrate) |
 | `make restart` | stop, then start |
-| `make down` | stop all three services |
+| `make down` | stop all four services |
 | `make status` | show which services are up |
-| `make logs` | tail all three service logs |
+| `make logs` | tail all four service logs |
 | `make install` | install Python + interface dependencies |
 | `make engines` | install the local model engines (macOS) |
 | `make migrate` | apply the database schema |

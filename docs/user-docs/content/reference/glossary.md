@@ -6,6 +6,10 @@ The terms used across TheYgent and this documentation, in alphabetical order. Wh
 
 One of the three node [kinds](#kind). Activity nodes do non-deterministic work with side effects — calling a model (`llm`), running a tool (`tool`, `mcp_tool`), transcribing audio, generating an image. See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
 
+### AI gateway
+
+The service between Claude Code and its models (port 8082). It records what each exchange cost and what a routing policy would do with it, and in [router mode](#router-mode) applies that policy: cheaper Claude models, or [local models](../ai-gateway/local-models.md) in the shares an admin sets. Runs in [personal or team mode](../ai-gateway/index.md#personal-or-team). See [AI Gateway](../ai-gateway/index.md).
+
 ### Agent
 
 A published, runnable AI workflow: a [graph](#graph) of [nodes](#node) plus its model and tool [bindings](#binding), published under an id. You build agents in the [editor](../building/editor.md) (where work-in-progress lives as a [draft](#draft)) and run them from the Bench, from chat, or behind a [trigger](#trigger). See [Agents & graphs](../concepts/agents-and-graphs.md).
@@ -62,6 +66,10 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
+### Gateway key
+
+A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See [Set up Claude Code](../ai-gateway/setup.md).
+
 ### Generated server
 
 An MCP server TheYgent mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
@@ -94,6 +102,10 @@ The policy governing whether a run's per-node input/output payloads are recorded
 
 The category of a [node](#node): `activity`, `orchestration`, or `boundary`. Every node type has exactly one correct kind (the `guardrail` is the one exception, whose kind follows its check type). See [Nodes, ports & edges](../concepts/nodes-ports-edges.md).
 
+### Local trial
+
+A slice of conversations, just above a local dial's share, that the [AI gateway](#ai-gateway) still sends to Anthropic and then tries on the local model, recording whether it picked the same next action. It measures a model before it serves. See [Local models](../ai-gateway/local-models.md).
+
 ### Logical model id
 
 The name you give a model when you register it (for example `triage-fast`) and the only thing you ever put in a `model` field. It hides the engine and weights behind it, so swapping a local model for a hosted one is one registration change with no graph edits. See [Models & engines](../concepts/models-and-engines.md).
@@ -109,6 +121,17 @@ What kind of input/output a model handles: `chat`, `vision`, `embeddings`, `audi
 ### Node
 
 One step in a [graph](#graph): a typed box with a config, in-[ports](#port), and out-ports. Seventeen types are executable, across the three [kinds](#kind). See the [node reference](../building/nodes/index.md).
+
+### Observer mode
+
+The [AI gateway](#ai-gateway) mode that records every exchange — its cost and what routing would have done — without changing it. Its counterpart, *passthrough*, forwards without recording. See [AI Gateway](../ai-gateway/index.md#observer-router-and-passthrough).
+
+### Router mode
+
+The [AI gateway](#ai-gateway) mode that applies the routing decisions observer mode only records: a
+routed request runs on the target model — a cheaper Anthropic model, with nothing else changed, or
+a [local model](../ai-gateway/local-models.md). See
+[AI Gateway](../ai-gateway/index.md#observer-router-and-passthrough).
 
 ### Orchestration
 
@@ -129,6 +152,18 @@ A named document collection agents retrieve from — filled by uploading files o
 ### Run
 
 One execution of an agent or graph. It moves through statuses `created → streaming → waiting → completed | failed`, persists in Postgres, and survives restarts. Its output is the value that reached the `output` node. See [Runs & sessions](../concepts/runs-and-sessions.md).
+
+### Service key
+
+An [AI gateway](#ai-gateway)'s credential towards the control plane (`tygs_…`), minted by an admin under **AI Gateway → Settings → Service keys**. It lets the gateway fetch its configuration and developers' keys and deliver its records. See [Running the gateway](../ai-gateway/running.md#attach-it-to-the-control-plane).
+
+### Shadow run
+
+A copy of a request the [AI gateway](#ai-gateway) sends, after the real exchange, to a model that did not answer it — the target routing would have used, or a local model on [trial](#local-trial) — to measure it. Claude Code never sees it. See [Reports & policy](../ai-gateway/reports.md#the-report-tab).
+
+### Side request
+
+A small request Claude Code sends besides the conversation itself — a session title, a suggestion, a check. The [AI gateway](#ai-gateway)'s Catalog lists each kind it has seen and what routing may do with it. See [Reports & policy](../ai-gateway/reports.md#catalog-admins).
 
 ### Session
 

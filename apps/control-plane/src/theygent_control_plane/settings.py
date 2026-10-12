@@ -165,6 +165,29 @@ CATALOG: tuple[SettingSpec, ...] = (
         group="telemetry",
     ),
     SettingSpec(
+        key="telemetry.io_retention_days",
+        type="int",
+        default=0,
+        constraints={"min": 0, "max": 3650},
+        description=(
+            "Delete captured run inputs and outputs after this many days, for agents that set no "
+            "retention of their own. 0 keeps them. A run's record, timing and spans stay."
+        ),
+        group="telemetry",
+    ),
+    SettingSpec(
+        key="ai_gateway.request_retention_days",
+        type="int",
+        default=90,
+        constraints={"min": 0, "max": 3650},
+        description=(
+            "Keep each AI gateway request in detail for this many days. Older days move to a "
+            "compressed archive you can download, and reports read them from daily totals, so "
+            "no figure changes. 0 keeps every request in detail."
+        ),
+        group="ai_gateway",
+    ),
+    SettingSpec(
         key="mcp.call_timeout_s",
         type="float",
         default=120.0,

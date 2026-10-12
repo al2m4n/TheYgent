@@ -50,6 +50,7 @@ the lint gates that guard every commit.
 | `packages/gateway-client/tests/` | Unit tests for the chat-param split (standard fields as kwargs, engine knobs via `extra_body`). |
 | `apps/inference-plane/tests/` | Fast suite (fake upstream, manual clock) + `integration`-marked real-engine tests. |
 | `apps/control-plane/tests/` | Fast suite (ephemeral Postgres, fake inference plane, fake MCP/HTTP servers) + `integration`-marked cross-process tests. |
+| `apps/ai-gateway/tests/` | Fast suite: the real gateway against a fake Anthropic upstream, injected key/config/event seams, content-free Claude Code fixtures. No network. |
 | `apps/interface/tests/` | Vitest unit/component tests (`*.test.ts(x)`) plus `smoke/hand_drive.py`, a hand-drive smoke against a live stack. |
 | `deploy/tests/` | Static containerization contract guards (Dockerfiles, compose, k8s manifests). |
 | `.pre-commit-config.yaml` | Local hooks mirroring the CI gates, run with the workspace-pinned tool versions. |
@@ -142,6 +143,34 @@ Background loops are gated by `create_app` flags (`start_dispatcher`,
 `dispatcher_interval_s`, `settings_refresh_s`), so the fast suite drives the schedule
 dispatcher's `tick()` and settings refresh directly instead of sleeping.
 
+### `apps/ai-gateway` — the real proxy, a fake Anthropic
+
+`tests/conftest.py` builds the real app; `create_app` takes injectable seams for everything
+outside it:
+
+- **`_fake_anthropic.py`** — a real local HTTP server that records every request exactly as
+  received and answers with deterministic bytes: a Claude-Code-shaped stream, a recorded
+  exchange replayed, or a misbehaviour on demand (a slow first byte, holding until the caller
+  hangs up, breaking mid-stream, an error). Pass-through, cancellation and stream relay are
+  exercised over real sockets.
+- **Key, config and event seams** — `StaticKeySource`, `StaticConfigSource` and a recording
+  event sink stand in for the control plane; the token check for the admin surface is
+  injected the same way. The control plane's side of the contract is tested in its own suite
+  against the same `theygent_ir.gateway` types.
+- **`tests/fixtures/exchanges/`** — real Claude Code exchanges rebuilt without content (counts
+  and settings kept, all text replaced). `test_fixtures.py` scans every fixture for paths,
+  emails, credentials, foreign ids and prose: the repository is public.
+- **`test_e2e_claude_code.py`** (`integration`, opt-in) — the one test against the real thing:
+  headless Claude Code, driven by the Agent SDK with the setup the AI Gateway page hands out,
+  through a real gateway to the real Anthropic API. Claude Code's full toolset keeps its prompt
+  large enough to cache, and the test requires cached tokens, so cache writes and reads — where
+  accounting goes wrong — are always compared. The child Claude Code gets none of the caller's
+  settings files or `CLAUDE*`/`ANTHROPIC*` variables except the credentials, since a caller
+  inside another Claude Code session would hand it its base URL and session.
+- **An empty gateway environment per test** — an autouse fixture clears
+  `THEYGENT_AI_GATEWAY_*` and `THEYGENT_CONTROL_PLANE_URL`, because `make test` exports the
+  developer's `.env`.
+
 ## Unit vs integration
 
 Everything above is the fast tier: no network, no model weights, no engine binaries, safe
@@ -156,6 +185,8 @@ each gates on its prerequisites, skipping clean when they are absent:
 | `THEYGENT_MLX_REASONING_MODEL` (a think-token model, e.g. `mlx-community/Qwen3-0.6B-4bit`) + `mlx_lm.server` on PATH | Real MLX reasoning: thinking reaches the caller as `reasoning_content`, streamed live, kept on a tool-call turn |
 | `THEYGENT_VLLM_CUDA=1` (or `nvidia-smi`) + `THEYGENT_VLLM_MODEL` | vLLM on a real CUDA host (still unverified — no CUDA runner) |
 | `DATABASE_URL` | Control-plane integration (real Postgres, no testcontainers) |
+| `THEYGENT_E2E_CLAUDE_CODE=1` (+ Claude Code credentials) | The AI gateway end to end: the Agent SDK drives headless Claude Code through a real gateway to the real Anthropic API, in personal and team mode and in router mode (a conversation, and an Explore subagent, asked for on Opus 5.5 and served by Sonnet 5.5), and the gateway's per-model totals must equal Claude Code's own `modelUsage`. Spends real (small) model usage; `THEYGENT_E2E_MODEL` picks the observer runs' model, Haiku 4.5 by default |
+| `THEYGENT_E2E_LOCAL_MODEL` (a logical chat model id) + a running inference plane | The AI gateway's local route against a real local model: the session-title request's shape answered locally, checked, and returned as Claude Code reads it (the upstream faked, so nothing is spent); with `THEYGENT_E2E_CLAUDE_CODE=1` too, an Explore subagent served by the local model and a router-mode local trial. `THEYGENT_E2E_INFERENCE_PLANE_URL` names the plane (default `http://127.0.0.1:8081/v1`) |
 
 Run them serially — they spawn real engine processes against a shared HF cache and real
 unified memory, so parallelizing races engine spawns, not test code:
@@ -244,7 +275,8 @@ because it regenerates the TypeScript types from the Pydantic IR; on failure it 
 regenerated files in the working tree ready to commit.
 
 In CI (`.github/workflows/ci.yml`), the `fast` job is the PR gate: Ruff, `ty`
-(non-blocking), the three fast pytest suites, and the deploy guards. The `frontend` job
+(non-blocking), the four fast pytest suites (IR, inference plane, control plane, AI gateway),
+and the deploy guards. The `frontend` job
 runs the drift guard, Biome, `tsc` + build, and Vitest. The `integration` job is the
 non-blocking real-engine tier described above.
 

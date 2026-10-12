@@ -12,7 +12,7 @@ migration and these models in lock-step by hand.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from pgvector.sqlalchemy import Vector
@@ -20,9 +20,14 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Computed,
+    Date,
+    Float,
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
+    PrimaryKeyConstraint,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -771,7 +776,9 @@ class ApiKeyRow(Base):
     """One long-lived programmatic credential (``tyk_…`` bearer, stored hashed). ``role`` is
     the key's OWN role, capped at the owner's role when minted; the effective authority at use
     time is min(key.role, owner.role), so demoting a user instantly narrows every key they
-    minted. ``revoked_at`` soft-deletes — the row stays as an audit breadcrumb."""
+    minted. ``revoked_at`` soft-deletes — the row stays as an audit breadcrumb. ``kind`` says
+    what the key opens: ``personal`` keys the management API; ``gateway`` (a developer's key for
+    an AI gateway) and ``gateway_service`` (a gateway's own key) never do."""
 
     __tablename__ = "api_key"
 
@@ -786,6 +793,7 @@ class ApiKeyRow(Base):
     created_at: Mapped[datetime] = mapped_column(_TZ)
     last_used_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)
+    kind: Mapped[str] = mapped_column(String, server_default="personal")
 
     __table_args__ = (
         Index("uq_api_key_token_hash", "token_hash", unique=True),
@@ -813,3 +821,234 @@ class AuthProviderRow(Base):
     updated_at: Mapped[datetime] = mapped_column(_TZ)
 
     __table_args__ = (Index("uq_auth_provider_slug", "slug", unique=True),)
+
+
+# ── AI gateway rows ───────────────────────────────────────────────────────────────────────────────
+# The control plane's side of the AI gateway (``apps/ai-gateway``, migration ``0020_ai_gateway``).
+# Everything here is metadata the gateway's wire types (``theygent_ir.gateway``) carry — never
+# prompt or response content. ``ai_gateway_`` because "gateway" already names the inference
+# gateway client in this service.
+
+
+class AiGatewayRequestRow(Base):
+    """One exchange a gateway handled. ``id`` is the gateway's record id — the idempotency key a
+    re-sent batch dedupes on. ``started_at`` is the gateway's clock (the event time); a session's
+    timeline orders by it, ties broken by ``id``."""
+
+    __tablename__ = "ai_gateway_request"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    gateway_id: Mapped[str] = mapped_column(String)
+    service_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    received_at: Mapped[datetime] = mapped_column(_TZ)
+    started_at: Mapped[datetime] = mapped_column(_TZ)
+    config_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    endpoint: Mapped[str] = mapped_column(String)
+    status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    outcome: Mapped[str] = mapped_column(String)
+    error_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    developer_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    credential_kind: Mapped[str] = mapped_column(String)
+    credential_profile: Mapped[str] = mapped_column(String)
+    client: Mapped[str | None] = mapped_column(String, nullable=True)
+    client_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    parent_agent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    prompt_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    request_class: Mapped[str] = mapped_column(String)
+    request_class_raw: Mapped[str | None] = mapped_column(String, nullable=True)
+    compaction: Mapped[str | None] = mapped_column(String, nullable=True)
+    context_compacted: Mapped[str | None] = mapped_column(String, nullable=True)
+    fingerprint: Mapped[str | None] = mapped_column(String, nullable=True)
+    shares_main_prefix: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    shape: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    requested_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    served_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    tool_use_count: Mapped[int] = mapped_column(Integer)
+    input_tokens: Mapped[int] = mapped_column(BigInteger)
+    output_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_write_5m_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_write_1h_tokens: Mapped[int] = mapped_column(BigInteger)
+    timing: Mapped[dict] = mapped_column(JSONB)
+    seat_allowance: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The cost on the requested model where an applied route served it elsewhere (router mode).
+    baseline_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pricing_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    decision_action: Mapped[str] = mapped_column(String)  # stay | route
+    decision_target_kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    decision_target_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    decision_reasons: Mapped[list] = mapped_column(JSONB)  # reason codes, in order
+    counterfactual_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decision_applied: Mapped[bool] = mapped_column(Boolean)
+    # A copy sent to the decision's target after the exchange (``ShadowRun``), where one ran.
+    shadow: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_ai_gateway_request_started", "started_at"),
+        Index("ix_ai_gateway_request_developer", "developer_id", "started_at"),
+        Index("ix_ai_gateway_request_session", "session_id", "started_at"),
+        Index("ix_ai_gateway_request_fingerprint", "fingerprint"),
+    )
+
+
+class AiGatewayDailyUsageRow(Base):
+    """Per-day (UTC) aggregates by every dimension a report groups by — developer, client, class,
+    requested and served model, decision target, session, first reason and the model a shadow ran
+    on — maintained as records arrive. Reports read them for the days whose request rows were
+    archived (``archived_before`` on ``ai_gateway_state``), so archiving loses nothing a report
+    shows. A missing dimension value is ``''`` (the key cannot hold NULL): ``decision_target``
+    ``''`` means the decision was to stay, ``shadow_model`` ``''`` that no shadow ran.
+    ``first_at``/``last_at`` bound the requests the row sums."""
+
+    __tablename__ = "ai_gateway_daily_usage"
+
+    day: Mapped[date] = mapped_column(Date)
+    developer_id: Mapped[str] = mapped_column(String)
+    client: Mapped[str] = mapped_column(String)
+    request_class: Mapped[str] = mapped_column(String)
+    requested_model: Mapped[str] = mapped_column(String)
+    served_model: Mapped[str] = mapped_column(String)
+    decision_target: Mapped[str] = mapped_column(String)
+    calls: Mapped[int] = mapped_column(BigInteger)
+    errors: Mapped[int] = mapped_column(BigInteger)
+    input_tokens: Mapped[int] = mapped_column(BigInteger)
+    output_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_read_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_write_5m_tokens: Mapped[int] = mapped_column(BigInteger)
+    cache_write_1h_tokens: Mapped[int] = mapped_column(BigInteger)
+    cost_usd: Mapped[float] = mapped_column(Float)
+    unpriced_calls: Mapped[int] = mapped_column(BigInteger)
+    baseline_usd: Mapped[float] = mapped_column(Float)
+    with_routing_usd: Mapped[float] = mapped_column(Float)
+    routed_calls: Mapped[int] = mapped_column(BigInteger)
+    applied_calls: Mapped[int] = mapped_column(BigInteger)
+    routed_tokens: Mapped[int] = mapped_column(BigInteger)
+    routed_local_calls: Mapped[int] = mapped_column(BigInteger)
+    routed_local_tokens: Mapped[int] = mapped_column(BigInteger)
+    session_id: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    shadow_model: Mapped[str] = mapped_column(String)
+    first_at: Mapped[datetime] = mapped_column(_TZ)
+    last_at: Mapped[datetime] = mapped_column(_TZ)
+    shadow_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_answered_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_cost_usd: Mapped[float] = mapped_column(Float)
+    shadow_output_tokens: Mapped[int] = mapped_column(BigInteger)
+    shadowed_output_tokens: Mapped[int] = mapped_column(BigInteger)
+    shadow_compared_calls: Mapped[int] = mapped_column(BigInteger)
+    shadow_agreed_calls: Mapped[int] = mapped_column(BigInteger)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "day",
+            "developer_id",
+            "client",
+            "request_class",
+            "requested_model",
+            "served_model",
+            "decision_target",
+            "session_id",
+            "reason",
+            "shadow_model",
+            name="pk_ai_gateway_daily_usage",
+        ),
+        Index("ix_ai_gateway_daily_usage_session", "session_id"),
+    )
+
+
+class AiGatewayRequestArchiveRow(Base):
+    """Request rows moved out of ``ai_gateway_request`` once older than the retention period: the
+    records exactly as gateways sent them (``GatewayRequestRecord``), one JSON line each,
+    gzip-compressed. A day may span several chunks (late records archive later); concatenated, a
+    day's chunks are one valid gzip stream."""
+
+    __tablename__ = "ai_gateway_request_archive"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    day: Mapped[date] = mapped_column(Date)
+    record_count: Mapped[int] = mapped_column(Integer)
+    records: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+
+    __table_args__ = (Index("ix_ai_gateway_request_archive_day", "day"),)
+
+
+class AiGatewayInstanceRow(Base):
+    """The latest heartbeat of one gateway instance."""
+
+    __tablename__ = "ai_gateway_instance"
+
+    gateway_id: Mapped[str] = mapped_column(String, primary_key=True)
+    service_key_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    software_version: Mapped[str] = mapped_column(String)
+    mode: Mapped[str] = mapped_column(String)
+    config_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    key_set_version: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(_TZ)
+    spool_backlog: Mapped[int] = mapped_column(BigInteger)
+    upstream_reachable: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(_TZ)
+    last_seen_at: Mapped[datetime] = mapped_column(_TZ)
+
+
+class AiGatewayConfigRow(Base):
+    """One immutable config version; ``document`` is the ``GatewayConfig`` a gateway receives.
+    A change is a new row, so every record can name the version it was decided under."""
+
+    __tablename__ = "ai_gateway_config"
+
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    mode: Mapped[str] = mapped_column(String)
+    document: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(_TZ)
+    created_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class AiGatewayFingerprintRow(Base):
+    """What has been observed of one kind of auxiliary request. Its review status and label are
+    rules in the gateway config (the versioned document decisions are made under), never a
+    second copy here; a kind with no rule is ``unreviewed``, which the policy passes through."""
+
+    __tablename__ = "ai_gateway_fingerprint"
+
+    fingerprint: Mapped[str] = mapped_column(String, primary_key=True)
+    first_seen_at: Mapped[datetime] = mapped_column(_TZ)
+    last_seen_at: Mapped[datetime] = mapped_column(_TZ)
+    request_count: Mapped[int] = mapped_column(BigInteger)
+    client_versions: Mapped[list] = mapped_column(JSONB)
+    shape: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True), nullable=True)
+    shares_main_prefix: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+
+class AiGatewayDeveloperRow(Base):
+    """How a developer's gateway traffic is billed: ``passthrough`` (their own claude.ai login
+    or API key) or ``org_key`` (the organization's key, swapped in by the gateway)."""
+
+    __tablename__ = "ai_gateway_developer"
+
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("user_account.id", ondelete="CASCADE"), primary_key=True
+    )
+    credential_profile: Mapped[str] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(_TZ)
+    updated_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class AiGatewayStateRow(Base):
+    """The single row (``id`` 1) holding the key-set version. It is bumped in the same
+    transaction as any change to the live gateway keys, so a gateway never reads a new version
+    before the change behind it is visible."""
+
+    __tablename__ = "ai_gateway_state"
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    key_set_version: Mapped[int] = mapped_column(BigInteger)
+    #: Request rows that started before this UTC day were archived; reports read those days from
+    #: the daily aggregates. ``None``: nothing archived yet.
+    archived_before: Mapped[date | None] = mapped_column(Date, nullable=True)

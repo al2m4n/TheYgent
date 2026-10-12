@@ -109,6 +109,9 @@ curl -X POST http://localhost:8080/agents/agent.my-agent/invoke \
 !!! note "What opens `/invoke`"
     `POST /agents/{id}/invoke` accepts an API key **or** the per-deploy `THEYGENT_INVOKE_TOKEN` (see [Triggers](triggers.md#token-invoke)). Interactive `tys_…` session tokens deliberately do **not** open it — it is the unattended surface. With neither credential configured nor any key presented, the endpoint stays closed (`401`).
 
+!!! note "Gateway keys and service keys are different"
+    The [AI Gateway](../ai-gateway/index.md) has keys of its own: a developer's **gateway key** (`tyg_…`, from **AI Gateway → Setup & keys**) identifies them to a gateway, and a **service key** (`tygs_…`, minted by an admin) lets a gateway reach the control plane. Neither opens the management API — that takes a personal API key or a session.
+
 ## Single sign-on
 
 Admins configure sign-in providers under **Settings → Sign-in**. Each enabled provider becomes a button on the login screen; the whole flow is authorization code + PKCE, resolved server-side — the control plane exchanges the code and reads the provider's userinfo endpoint, then bounces the browser back to the interface with a fresh session token.

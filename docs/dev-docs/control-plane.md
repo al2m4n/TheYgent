@@ -66,7 +66,8 @@ A change to this service must not break these:
   whole-install export/import surface (`transfer:export` / `transfer:import`) route through
   `governance.authorize()`, which ranks the resolved role against a per-permission floor
   (`trace:read`/`io:read` = viewer, `agent:configure` = editor, settings and transfer =
-  admin). Do not add role logic elsewhere — the seam froze early precisely so enforcement
+  admin; AI-gateway usage: `gateway_usage:read` = viewer for totals and non-identifying
+  groupings, `gateway_usage:read_all` = admin for per-developer and per-session detail). Do not add role logic elsewhere — the seam froze early precisely so enforcement
   could land here once, with zero endpoint retrofit; ownership checks (a viewer's own chat
   sessions) live at the endpoints that carry an owner column.
 - **Errors use the house envelope**: every 4xx/5xx is `{"error": {"message", "code"}}` with
@@ -104,9 +105,10 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
+| `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog), keys, configs and instances (`store.py`); reports, sessions and timelines (`reports.py`, totals in SQL checked against `GatewayTotals`); the fingerprint catalog (`catalog.py`). Config writes read, check and save under one transaction lock |
 | `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
-| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0018` |
+| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0022` |
 
 ## HTTP surface
 
@@ -132,11 +134,16 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Bench | `POST/GET /bench/suites` · `POST/GET /bench/runs` · `GET /bench/compare` · `POST/GET/DELETE /bench/presets` |
 | Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `PUT /artifacts/{ref}` (preserve-ref restore for imports) · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
 | Transfer | `POST /export` · `POST /import` — the control-plane half of the whole-install bundle, behind `transfer:export` / `transfer:import` (see [Import/export](#importexport-the-transfer-bundle)) |
+| AI gateway keys | `GET /gateway/me` (the caller's credential profile and live key count) · `POST/GET /gateway/keys` · `DELETE /gateway/keys/{id}` — a developer's own `tyg_` keys (`?all=true` and revoking others' for admins) · `POST/GET /gateway/service-keys` · `DELETE /gateway/service-keys/{id}` (admin) · `GET /gateway/developers` · `PUT /gateway/developers/{user_id}` (admin; credential profile `passthrough` \| `org_key`) |
+| AI gateway config | `GET /gateway/config` (signed-in users and gateways; the version is the `ETag`, `304` on a matching `If-None-Match`, `404 gateway_config_not_found` before any config) · `PUT /gateway/config` (admin; saves the next immutable version with its author; optional `If-Match`, `412 config_version_conflict` when stale; `422 invalid_gateway_config` for a config the gateway would refuse, or a subagent or main target no Claude Code request could go to — checked against the shared `TARGET_CAPABILITIES` on save, never on read) · `GET /gateway/config/versions` · `GET /gateway/config/versions/{n}` · `GET /gateway/instances` (each gateway's latest heartbeat; offline after 120 s) |
+| AI gateway usage | `GET /gateway/report?since&until&by&scope&developer_id` (totals and groupings by `class`, `client`, `session`, `model` (requested, as Claude Code files it), `served-model`, `developer`, `decision`, `reason`, `shadow-model` (the model a shadow run ran on), `day`; default the last 7 days by class, client and model; plus the setup `warnings` by the gateway's own rules, and per-developer subscription `seats` — latest plan-window reading and use within the range, never read across a reset — listed only where individuals may be seen) · `GET /gateway/sessions` (most recently active first; `limit`, `before`) · `GET /gateway/sessions/{id}` (the timeline of requests and decisions; `limit`, `after` = the last request's id). Everyone reads their own records in full (`scope=mine`, the default below admin); at `scope=org` non-admins get totals and non-identifying groupings, admins everything, including `developer_id` drill-down; another developer's session reads as `404` |
+| AI gateway catalog | `GET /gateway/fingerprints` (every observed auxiliary kind with its stats, joined with the latest config's rules — `unreviewed` without one — plus rules for kinds not seen yet; the kinds identified in recorded Claude Code traffic are recognised by shape and *suggested* a status: quota check and main-prefix side request `never_route`, session title `allow_local`) · `PUT /gateway/fingerprints/{fingerprint}` (admin; saves a new config version changing that one rule, optional `If-Match`; `unreviewed` without a label removes the rule) |
+| AI gateway service | `POST /gateway/heartbeat` — a gateway reports itself; the acknowledgement names the latest config and key-set versions · `GET /gateway/keys/sync?since=` — the key set (digests, developer, credential profile), `304` when the gateway already holds the version · `POST /gateway/introspect` — whether a session or personal key is live, and its role, for a gateway's admin surface · `POST /gateway/events` — AI gateways deliver `GatewayEventBatch`es and get a `GatewayEventAck`. Opened only by a gateway's own service key (`tygs_…`, `api_key.kind` `gateway_service`, held by an enabled admin). Records are stored once by id (a re-sent batch is a no-op), the records that were new are added to the per-day aggregates (`GatewayTotals`, the same sums the gateway's own report uses), and auxiliary kinds feed the fingerprint catalog. `422 invalid_event_batch` names field locations, never values (a caller's dictionary key reads `<key>`); `413 event_batch_too_large` over 4 MiB |
 
 ## Postgres: schema, domain, stores
 
-One database, 27 tables in the `public` schema, owned end to end by the Alembic chain
-`0001 → 0019` (sessions were originally named `thread` — the chain replays history, and
+One database, 34 tables in the `public` schema, owned end to end by the Alembic chain
+`0001 → 0022` (sessions were originally named `thread` — the chain replays history, and
 the rename is itself a migration). By area:
 
 | Area | Tables |
@@ -149,7 +156,8 @@ the rename is itself a migration). By area:
 | RAG | `rag_source`, `rag_document`, `rag_chunk` (untyped pgvector column + dim + generated tsvector) |
 | Bench | `bench_suite`, `bench_case`, `bench_run`, `bench_preset` |
 | Platform | `platform_setting`, `gate_counter` (fixed-window rate limits) |
-| Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers), `auth_provider` (client secret behind a `secret_ref`) |
+| Identity | `user_account`, `auth_identity` (federated links), `auth_session`, `api_key` (both store sha256 token hashes, never bearers; `kind` is `personal`, `gateway` or `gateway_service`, and only `personal` keys authenticate this API), `auth_provider` (client secret behind a `secret_ref`) |
+| AI gateway | `ai_gateway_request` (one row per exchange, keyed by the gateway's record id), `ai_gateway_daily_usage` (per-day aggregates; `baseline_usd` and `applied_calls` since migration `0023`, for router mode; the shadow-run sums since `0024`, with the request's `shadow` run as JSONB; since `0025` keyed by session and first reason too, with each row's `first_at`/`last_at`, so reports can read an archived day from them alone; since `0027` keyed by the model a shadow ran on, which a local trial makes different from the decision's target), `ai_gateway_request_archive` (request rows past `ai_gateway.request_retention_days`, as gzip JSON-lines chunks per UTC day; `ai_gateway_state.archived_before` marks the archived days), `ai_gateway_instance` (latest heartbeat), `ai_gateway_config` (immutable versions), `ai_gateway_fingerprint` (what was observed of each auxiliary-request kind; review status is a rule in the config, the only home of decisions), `ai_gateway_developer` (credential profile), `ai_gateway_state` (the key-set version, moved by triggers — migration `0021` — in the same transaction as any change to the live gateway keys, an account's enabled state, or a credential profile, whichever code path or hand-run SQL made it). Metadata only: no prompt or response content |
 
 The durable runtime keeps its checkpoint tables in a separate `dbos` schema in the same
 database — owned by its own migrator, never by Alembic.
@@ -283,6 +291,25 @@ truncation-flagged, lazy-loaded on click. Effective capture is
 `min(deployment ceiling, agent policy or topology default)` — hosted topology defaults to
 metadata so raw payloads never default into a shared database, and capture `off` is a
 hard stop: not even byte sizes are recorded.
+
+### Retention
+
+`retention.py`'s `RetentionSweeper` runs once an hour, starting an hour after boot. Each batch is
+its own transaction under `pg_try_advisory_xact_lock`, so one replica sweeps and the others skip.
+It does two things:
+
+- **AI gateway request rows past `ai_gateway.request_retention_days` (default 90; 0 keeps them)
+  move to `ai_gateway_request_archive`.** The rows are read back as the records the gateway sent
+  (`store.record_from_row`), written as gzip JSON lines per UTC day, then deleted.
+  `ai_gateway_state.archived_before` advances to the cutoff before any row moves. The reports
+  (`ai_gateway/reports.py`) sum *units*: request rows on and after that day, and the daily
+  aggregates before it. So a report reads the same before, during and after a sweep, and a late
+  record for an archived day counts through the aggregates at once. Warnings, seat readings,
+  prices and timelines need request rows, so they cover the detailed days only.
+  `GET /gateway/archive[/{day}]` lists and serves the archive.
+- **`node_io` rows expire.** Rows older than their agent's `io_retention_seconds` (joined
+  through `run.graph_id`) are deleted, or older than `telemetry.io_retention_days` for agents
+  without a retention of their own (0 keeps them). Runs and spans stay.
 
 ### Import/export (the transfer bundle)
 

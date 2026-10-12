@@ -1,6 +1,6 @@
 [project]
 name = "theygent-inference-plane"
-version = "0.1.0"
+version = "1.0.0"
 description = "theygent inference plane — engine manager + L0 gateway (LiteLLM-based)"
 requires-python = ">=3.12"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }

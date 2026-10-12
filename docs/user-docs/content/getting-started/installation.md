@@ -83,7 +83,7 @@ vLLM is deliberately **not** installed by this target — it belongs on an NVIDI
 
 ## 4. Install dependencies and create the schema
 
-The recommended single command, [`make up`](running.md), installs dependencies, applies the database schema, and starts all three services in one step — so from a fresh clone with `.env` set and `make engines` done, you can jump straight to it.
+The recommended single command, [`make up`](running.md), installs dependencies, applies the database schema, and starts all four services in one step — so from a fresh clone with `.env` set and `make engines` done, you can jump straight to it.
 
 If you prefer to run the steps separately:
 
@@ -96,10 +96,11 @@ make migrate   # apply the control-plane database schema
 
 ## Where things land
 
-After installation, TheYgent keeps your data in three places, all under your control:
+After installation, TheYgent keeps your data in these places, all under your control:
 
 - **`~/.theygent/inference/`** — the local model registry, downloaded model weights (under `models/`), and local credentials for remote APIs.
 - **Your Postgres** (`DATABASE_URL`) — agents and their versions, runs, chat sessions, triggers, MCP registrations, connections, and observability traces.
+- **`~/.theygent/ai-gateway/`** — the [AI gateway](../ai-gateway/index.md)'s records not yet delivered, its last known configuration, and an organization key you set on it.
 - **`.run/`** — development log files and process ids (ignored by git).
 
 ## Next

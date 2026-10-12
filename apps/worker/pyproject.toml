@@ -1,6 +1,6 @@
 [project]
 name = "theygent-worker"
-version = "0.1.0"
+version = "1.0.0"
 description = "theygent durable worker — runs compiled IR workflows on DBOS (process type 2: the durable runtime)"
 requires-python = ">=3.12"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
