@@ -32,4 +32,28 @@
     <loc>https://theygent.ai/compare/flowise/</loc>
     <lastmod>2026-10-12</lastmod>
   </url>
+  <url>
+    <loc>https://theygent.ai/videos/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/videos/self-hosted-ai-agent-orchestration/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/videos/rag-file-upload-web-crawl/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/videos/voice-agent-pipeline/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/videos/local-and-remote-models/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/videos/kubernetes-deployment/</loc>
+    <lastmod>2026-10-12</lastmod>
+  </url>
 </urlset>

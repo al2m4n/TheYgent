@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Give Your LLM a Memory: RAG with File Upload and Web Crawl | TheYgent Video</title>
+    <meta name="description" content="Retrieval-augmented generation without code: one retrieval source from an uploaded PDF, one from crawling a docs site, both embedded locally into pgvector, then wired into an agent as tools the model calls when a question needs them." />
+    <link rel="canonical" href="https://theygent.ai/videos/rag-file-upload-web-crawl/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="video.other" />
+    <meta property="og:url" content="https://theygent.ai/videos/rag-file-upload-web-crawl/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Give Your LLM a Memory: RAG with File Upload and Web Crawl" />
+    <meta property="og:description" content="Retrieval-augmented generation without code: one retrieval source from an uploaded PDF, one from crawling a docs site, both embedded locally into pgvector, then wired into an agent as tools the model calls when a question needs them." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Give Your LLM a Memory: RAG with File Upload and Web Crawl" />
+    <meta name="twitter:description" content="Retrieval-augmented generation without code: one retrieval source from an uploaded PDF, one from crawling a docs site, both embedded locally into pgvector, then wired into an agent as tools the model calls when a question needs them." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/videos/rag-file-upload-web-crawl/#webpage",
+            "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/",
+            "name": "Give Your LLM a Memory: RAG with File Upload and Web Crawl",
+            "description": "Retrieval-augmented generation without code: one retrieval source from an uploaded PDF, one from crawling a docs site, both embedded locally into pgvector, then wired into an agent as tools the model calls when a question needs them.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "primaryImageOfPage": "https://i.ytimg.com/vi/jFc4on-kH_w/maxresdefault.jpg",
+            "breadcrumb": {
+              "@id": "https://theygent.ai/videos/rag-file-upload-web-crawl/#breadcrumb"
+            },
+            "mainEntity": {
+              "@id": "https://theygent.ai/videos/rag-file-upload-web-crawl/#video"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/videos/rag-file-upload-web-crawl/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Videos",
+                "item": "https://theygent.ai/videos/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Give Your LLM a Memory: RAG with File Upload and Web Crawl",
+                "item": "https://theygent.ai/videos/rag-file-upload-web-crawl/"
+              }
+            ]
+          },
+          {
+            "@type": "VideoObject",
+            "@id": "https://theygent.ai/videos/rag-file-upload-web-crawl/#video",
+            "name": "Give Your LLM a Memory: RAG with File Upload and Web Crawl",
+            "description": "Retrieval-augmented generation without code: one retrieval source from an uploaded PDF, one from crawling a docs site, both embedded locally into pgvector, then wired into an agent as tools the model calls when a question needs them.",
+            "thumbnailUrl": [
+              "https://i.ytimg.com/vi/jFc4on-kH_w/maxresdefault.jpg",
+              "https://i.ytimg.com/vi/jFc4on-kH_w/hqdefault.jpg"
+            ],
+            "uploadDate": "2026-08-09T13:22:15-07:00",
+            "duration": "PT9M34S",
+            "embedUrl": "https://www.youtube.com/embed/jFc4on-kH_w",
+            "contentUrl": "https://www.youtube.com/watch?v=jFc4on-kH_w",
+            "inLanguage": "en",
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "author": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "mainEntityOfPage": "https://theygent.ai/videos/rag-file-upload-web-crawl/",
+            "hasPart": [
+              {
+                "@type": "Clip",
+                "name": "Introduction",
+                "startOffset": 0,
+                "endOffset": 39,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=0"
+              },
+              {
+                "@type": "Clip",
+                "name": "Creating a retrieval source",
+                "startOffset": 39,
+                "endOffset": 94,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=39"
+              },
+              {
+                "@type": "Clip",
+                "name": "Uploading a PDF with a local embedding model",
+                "startOffset": 94,
+                "endOffset": 179,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=94"
+              },
+              {
+                "@type": "Clip",
+                "name": "A second source: crawling a docs site",
+                "startOffset": 179,
+                "endOffset": 261,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=179"
+              },
+              {
+                "@type": "Clip",
+                "name": "Building the agent: an LLM with a retrieval tool",
+                "startOffset": 261,
+                "endOffset": 362,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=261"
+              },
+              {
+                "@type": "Clip",
+                "name": "Testing general and legal questions; the trace",
+                "startOffset": 362,
+                "endOffset": 451,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=362"
+              },
+              {
+                "@type": "Clip",
+                "name": "Adding the technical source",
+                "startOffset": 451,
+                "endOffset": 492,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=451"
+              },
+              {
+                "@type": "Clip",
+                "name": "Testing a technical question",
+                "startOffset": 492,
+                "endOffset": 546,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=492"
+              },
+              {
+                "@type": "Clip",
+                "name": "Publishing the agent",
+                "startOffset": 546,
+                "endOffset": 574,
+                "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/?t=546"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- The faceted mark, defined once and re-used. Gradient stops are CSS-driven so a theme flip re-ramps every instance. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <defs>
+        <linearGradient id="tyRamp" x1="191" y1="46" x2="191" y2="380" gradientUnits="userSpaceOnUse">
+          <stop class="ms1" offset="0" />
+          <stop class="ms2" offset="0.4" />
+          <stop class="ms3" offset="0.72" />
+          <stop class="ms4" offset="1" />
+        </linearGradient>
+        <symbol id="ty-mark" viewBox="28 36 326 356">
+          <g fill="url(#tyRamp)">
+            <polygon points="38,46 63,46 63,71 38,71" />
+            <polygon points="87,67 106,68 105,87 87,87" />
+            <polygon points="56,94 81,94 82,120 56,120" />
+            <polygon points="115,85 310,85 341,120 115,120" />
+            <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184" />
+            <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><a href="/videos/">Videos</a></li>
+              <li><span aria-current="page">Give Your LLM a Memory: RAG with File Upload and Web Crawl</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Walkthrough · 9:34</p>
+          <h1 id="page-h">Give Your LLM a Memory: RAG with File Upload and Web Crawl</h1>
+          <div class="player cut-card">
+            <iframe
+              data-video-id="jFc4on-kH_w"
+              src="https://www.youtube-nocookie.com/embed/jFc4on-kH_w"
+              title="Give Your LLM a Memory: RAG with File Upload &amp; Web Crawl in TheYgent"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allowfullscreen
+            ></iframe>
+          </div>
+          <p class="vid-meta mono">
+            9:34 · Published August 9, 2026 ·
+            <a href="https://www.youtube.com/watch?v=jFc4on-kH_w" rel="noopener">Watch on YouTube</a> ·
+            <a href="https://www.youtube.com/@TheYgent" rel="noopener">All videos on YouTube</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="covers-h">
+        <div class="wrap watch-grid">
+          <div class="prose">
+            <h2 id="covers-h">What This Video Covers</h2>
+            <p>
+              Two ways to give an agent knowledge, with no code: upload a document, or crawl a website. The video creates a legal source from an uploaded PDF and a technical source by crawling the TheYgent docs (capped at 20 pages, with optional JavaScript rendering for sites that need a browser). Both are embedded by a local Nomic embedding model into pgvector in your own Postgres, and the crawl log shows which pages made it in.
+            </p>
+            <p>
+              Then it builds an agent on the canvas: an LLM with two retrieval tool nodes, each with a description that tells the model when to use it. In the test panel, a general question uses no tool, a question about data retention pulls section 4.3 of the PDF, and a question about importing a website searches the crawled docs — each tool call visible in the run trace. Publishing it makes the agent available over its endpoint.
+            </p>
+            <p>
+              The LLM in this demo is a hosted model; any model with tool calling, local or hosted, works the same way.
+            </p>
+            <h3>Try It Yourself</h3>
+            <ul>
+              <li><a href="https://docs.theygent.ai/latest/rag/" rel="noopener">RAG sources</a></li>
+              <li><a href="https://docs.theygent.ai/latest/building/nodes/rag/" rel="noopener">The RAG node</a></li>
+              <li><a href="https://docs.theygent.ai/latest/models/installing/" rel="noopener">Installing an embedding model</a></li>
+            </ul>
+          </div>
+          <nav class="chapters" aria-labelledby="chapters-h">
+            <h2 id="chapters-h">Chapters</h2>
+            <ol>
+                <li><a href="?t=0" data-seek="0"><span class="ts mono">0:00</span><span>Introduction</span></a></li>
+                <li><a href="?t=39" data-seek="39"><span class="ts mono">0:39</span><span>Creating a retrieval source</span></a></li>
+                <li><a href="?t=94" data-seek="94"><span class="ts mono">1:34</span><span>Uploading a PDF with a local embedding model</span></a></li>
+                <li><a href="?t=179" data-seek="179"><span class="ts mono">2:59</span><span>A second source: crawling a docs site</span></a></li>
+                <li><a href="?t=261" data-seek="261"><span class="ts mono">4:21</span><span>Building the agent: an LLM with a retrieval tool</span></a></li>
+                <li><a href="?t=362" data-seek="362"><span class="ts mono">6:02</span><span>Testing general and legal questions; the trace</span></a></li>
+                <li><a href="?t=451" data-seek="451"><span class="ts mono">7:31</span><span>Adding the technical source</span></a></li>
+                <li><a href="?t=492" data-seek="492"><span class="ts mono">8:12</span><span>Testing a technical question</span></a></li>
+                <li><a href="?t=546" data-seek="546"><span class="ts mono">9:06</span><span>Publishing the agent</span></a></li>
+            </ol>
+          </nav>
+        </div>
+      </section>
+
+      <section class="section vids" aria-labelledby="more-h">
+        <div class="wrap">
+          <h2 id="more-h" class="prose">More Walkthroughs</h2>
+          <div class="card-grid vid-grid">
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/self-hosted-ai-agent-orchestration/" aria-label="Watch: Self-Hosted AI Agent Orchestration: A Full Tour — 23:52">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">23:52</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-accent"></i>the platform</span>
+                <h3><a href="/videos/self-hosted-ai-agent-orchestration/">Self-Hosted AI Agent Orchestration: A Full Tour</a></h3>
+                <p>Clone the repo, bring the stack up, install a model, then build, run, and trace an agent — the full tour.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/voice-agent-pipeline/" aria-label="Watch: Voice In, Voice Out: A No-Code AI Agent Pipeline — 5:54">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">5:54</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-violet"></i>voice</span>
+                <h3><a href="/videos/voice-agent-pipeline/">Voice In, Voice Out: A No-Code AI Agent Pipeline</a></h3>
+                <p>Speech-to-text, a model, and text-to-speech wired on the canvas — a spoken conversation with an agent you built.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/local-and-remote-models/" aria-label="Watch: Run Local and Remote AI Models in One Agent — 7:01">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">7:01</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-amber"></i>hybrid</span>
+                <h3><a href="/videos/local-and-remote-models/">Run Local and Remote AI Models in One Agent</a></h3>
+                <p>A local model triages and handles the easy work; the hard question goes to a hosted API — one graph, each branch calling its own model.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/kubernetes-deployment/" aria-label="Watch: How to Deploy TheYgent to Kubernetes — 6:41">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">6:41</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-slate"></i>deploy</span>
+                <h3><a href="/videos/kubernetes-deployment/">How to Deploy TheYgent to Kubernetes</a></h3>
+                <p>Build the images, load them into a cluster, apply the manifests, and sign in — the same stack, on Kubernetes.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

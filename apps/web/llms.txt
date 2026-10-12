@@ -38,9 +38,14 @@ Key facts:
 
 ## Videos
 
-- [Self-Hosted AI Agent Orchestration](https://www.youtube.com/watch?v=3LE_VrIbe0I) (23:52): full walkthrough — clone the repository, bring the three local services up, install a model, then build, run, and trace an agent
-- [Voice In, Voice Out: A No-Code AI Agent Pipeline](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54): a voice agent built on the canvas — speech-to-text, a language model, and text-to-speech, served by local engines
-- [Run Local + Remote AI Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01): a local model triages and answers easy requests while a router sends hard ones to a hosted API, each branch calling its model directly
+Each walkthrough has a page with the video, its chapters, and a written summary. All of them are on the YouTube channel: https://www.youtube.com/@TheYgent
+
+- [All video walkthroughs](https://theygent.ai/videos/): the five screen recordings, with chapters and summaries
+- [Self-Hosted AI Agent Orchestration: A Full Tour](https://theygent.ai/videos/self-hosted-ai-agent-orchestration/) (23:52): install, create the admin account, install a model with a fit check, benchmark it, then build, trace, and publish an agent with an MCP tool
+- [Give Your LLM a Memory: RAG with File Upload and Web Crawl](https://theygent.ai/videos/rag-file-upload-web-crawl/) (9:34): one retrieval source from an uploaded PDF and one from crawling a docs site, embedded locally into pgvector and wired into an agent as tools
+- [Voice In, Voice Out: A No-Code AI Agent Pipeline](https://theygent.ai/videos/voice-agent-pipeline/) (5:54): Whisper transcribes, a local model answers, Kokoro speaks the answer — all on local engines
+- [Run Local and Remote AI Models in One Agent](https://theygent.ai/videos/local-and-remote-models/) (7:01): a local model triages each request and a router sends hard ones to a hosted API
+- [How to Deploy TheYgent to Kubernetes](https://theygent.ai/videos/kubernetes-deployment/) (6:41): build and load the images, apply the manifests, port-forward, and sign in
 
 ## Guides
 

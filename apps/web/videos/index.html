@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TheYgent Video Walkthroughs — No-Code AI Agents on Local Models</title>
+    <meta name="description" content="Screen recordings of TheYgent on real hardware: the full platform tour, RAG with file upload and web crawl, a local voice agent, local and hosted models in one agent, and a Kubernetes deployment." />
+    <link rel="canonical" href="https://theygent.ai/videos/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://theygent.ai/videos/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="TheYgent Video Walkthroughs" />
+    <meta property="og:description" content="Screen recordings of TheYgent on real hardware: the full platform tour, RAG with file upload and web crawl, a local voice agent, local and hosted models in one agent, and a Kubernetes deployment." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TheYgent Video Walkthroughs" />
+    <meta name="twitter:description" content="Screen recordings of TheYgent on real hardware: the full platform tour, RAG with file upload and web crawl, a local voice agent, local and hosted models in one agent, and a Kubernetes deployment." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "CollectionPage",
+            "@id": "https://theygent.ai/videos/#webpage",
+            "url": "https://theygent.ai/videos/",
+            "name": "TheYgent Video Walkthroughs",
+            "description": "Screen recordings of TheYgent on real hardware: the full platform tour, RAG with file upload and web crawl, a local voice agent, local and hosted models in one agent, and a Kubernetes deployment.",
+            "inLanguage": "en",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "breadcrumb": {
+              "@id": "https://theygent.ai/videos/#breadcrumb"
+            },
+            "mainEntity": {
+              "@type": "ItemList",
+              "itemListElement": [
+                {
+                  "@type": "ListItem",
+                  "position": 1,
+                  "url": "https://theygent.ai/videos/self-hosted-ai-agent-orchestration/",
+                  "name": "Self-Hosted AI Agent Orchestration: A Full Tour"
+                },
+                {
+                  "@type": "ListItem",
+                  "position": 2,
+                  "url": "https://theygent.ai/videos/rag-file-upload-web-crawl/",
+                  "name": "Give Your LLM a Memory: RAG with File Upload and Web Crawl"
+                },
+                {
+                  "@type": "ListItem",
+                  "position": 3,
+                  "url": "https://theygent.ai/videos/voice-agent-pipeline/",
+                  "name": "Voice In, Voice Out: A No-Code AI Agent Pipeline"
+                },
+                {
+                  "@type": "ListItem",
+                  "position": 4,
+                  "url": "https://theygent.ai/videos/local-and-remote-models/",
+                  "name": "Run Local and Remote AI Models in One Agent"
+                },
+                {
+                  "@type": "ListItem",
+                  "position": 5,
+                  "url": "https://theygent.ai/videos/kubernetes-deployment/",
+                  "name": "How to Deploy TheYgent to Kubernetes"
+                }
+              ]
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/videos/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Videos",
+                "item": "https://theygent.ai/videos/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <!-- The faceted mark, defined once and re-used. Gradient stops are CSS-driven so a theme flip re-ramps every instance. -->
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute">
+      <defs>
+        <linearGradient id="tyRamp" x1="191" y1="46" x2="191" y2="380" gradientUnits="userSpaceOnUse">
+          <stop class="ms1" offset="0" />
+          <stop class="ms2" offset="0.4" />
+          <stop class="ms3" offset="0.72" />
+          <stop class="ms4" offset="1" />
+        </linearGradient>
+        <symbol id="ty-mark" viewBox="28 36 326 356">
+          <g fill="url(#tyRamp)">
+            <polygon points="38,46 63,46 63,71 38,71" />
+            <polygon points="87,67 106,68 105,87 87,87" />
+            <polygon points="56,94 81,94 82,120 56,120" />
+            <polygon points="115,85 310,85 341,120 115,120" />
+            <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184" />
+            <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159" />
+          </g>
+        </symbol>
+      </defs>
+    </svg>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><span aria-current="page">Videos</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Walkthroughs · Screen Recordings</p>
+          <h1 id="page-h">See TheYgent <span class="ramp-text">Actually Running.</span></h1>
+          <p class="lede">
+            Screen recordings of the real product on real hardware — no mockups. Each page has the video, its chapters,
+            and a written summary, so you can jump to the part you need. New videos land on
+            <a class="inline-link" href="https://www.youtube.com/@TheYgent" rel="noopener">the YouTube channel</a> first.
+          </p>
+        </div>
+      </section>
+
+      <section class="section vids" aria-labelledby="all-h">
+        <div class="wrap">
+          <h2 id="all-h" class="prose">All Walkthroughs</h2>
+          <div class="card-grid vid-grid">
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/self-hosted-ai-agent-orchestration/" aria-label="Watch: Self-Hosted AI Agent Orchestration: A Full Tour — 23:52">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">23:52</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-accent"></i>the platform</span>
+                <h3><a href="/videos/self-hosted-ai-agent-orchestration/">Self-Hosted AI Agent Orchestration: A Full Tour</a></h3>
+                <p>Clone the repo, bring the stack up, install a model, then build, run, and trace an agent — the full tour.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/rag-file-upload-web-crawl/" aria-label="Watch: Give Your LLM a Memory: RAG with File Upload and Web Crawl — 9:34">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">9:34</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-green"></i>retrieval</span>
+                <h3><a href="/videos/rag-file-upload-web-crawl/">Give Your LLM a Memory: RAG with File Upload and Web Crawl</a></h3>
+                <p>Upload a PDF, crawl a docs site, and wire both into an agent as retrieval tools — no code.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/voice-agent-pipeline/" aria-label="Watch: Voice In, Voice Out: A No-Code AI Agent Pipeline — 5:54">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">5:54</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-violet"></i>voice</span>
+                <h3><a href="/videos/voice-agent-pipeline/">Voice In, Voice Out: A No-Code AI Agent Pipeline</a></h3>
+                <p>Speech-to-text, a model, and text-to-speech wired on the canvas — a spoken conversation with an agent you built.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/local-and-remote-models/" aria-label="Watch: Run Local and Remote AI Models in One Agent — 7:01">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">7:01</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-amber"></i>hybrid</span>
+                <h3><a href="/videos/local-and-remote-models/">Run Local and Remote AI Models in One Agent</a></h3>
+                <p>A local model triages and handles the easy work; the hard question goes to a hosted API — one graph, each branch calling its own model.</p>
+              </div>
+            </article>
+            <article class="vid cut-card">
+              <a class="vid-thumb" href="/videos/kubernetes-deployment/" aria-label="Watch: How to Deploy TheYgent to Kubernetes — 6:41">
+                <svg class="vid-mark" viewBox="28 36 326 356" aria-hidden="true"><use href="#ty-mark" /></svg>
+                <span class="vid-btn" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M8 5.2v13.6L19 12z" /></svg>
+                </span>
+                <span class="vid-dur mono" aria-hidden="true">6:41</span>
+              </a>
+              <div class="vid-body">
+                <span class="vid-kicker mono"><i class="dia dia-slate"></i>deploy</span>
+                <h3><a href="/videos/kubernetes-deployment/">How to Deploy TheYgent to Kubernetes</a></h3>
+                <p>Build the images, load them into a cluster, apply the manifests, and sign in — the same stack, on Kubernetes.</p>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

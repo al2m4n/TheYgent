@@ -324,3 +324,74 @@ a.cap .cap-more {
 .deeper .card-grid {
   margin-top: 30px;
 }
+
+/* ── Video watch pages ───────────────────────────────────────────────────── */
+/* The player is the page's main content (search engines index a video only where it is),
+   so it sits right under the heading at full width. */
+.player {
+  --cut: 18px;
+  margin-top: 26px;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+.player iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.vid-meta {
+  margin-top: 14px;
+  font-size: 0.82rem;
+  color: var(--text-3);
+}
+.vid-meta a {
+  color: color-mix(in oklab, var(--accent) 82%, var(--text));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.watch-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: clamp(28px, 4vw, 56px);
+  align-items: start;
+}
+.chapters h2 {
+  font-size: clamp(22px, 2.6vw, 28px);
+}
+.chapters ol {
+  margin-top: 16px;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+.chapters li {
+  border-bottom: 1px solid var(--border);
+}
+.chapters a {
+  display: grid;
+  grid-template-columns: 4.2em 1fr;
+  gap: 10px;
+  padding: 10px 2px;
+  color: var(--text-2);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+.chapters a:hover {
+  color: var(--text);
+}
+.chapters .ts {
+  color: color-mix(in oklab, var(--accent) 82%, var(--text));
+  font-size: 0.84rem;
+  padding-top: 0.1em;
+}
+@media (max-width: 860px) {
+  .watch-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.vids-more {
+  margin-top: 26px;
+  font-size: 0.96rem;
+}
