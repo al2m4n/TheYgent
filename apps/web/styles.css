@@ -552,6 +552,7 @@ h3 {
 .hero::before,
 .build::before,
 .caps::before,
+.gateway::before,
 .faq::before,
 .cta-final::before {
   content: "";
@@ -567,6 +568,7 @@ h3 {
 .hero > *,
 .build > *,
 .caps > *,
+.gateway > *,
 .faq > *,
 .cta-final > * {
   position: relative;
@@ -636,6 +638,38 @@ h3 {
   grid-template-columns: 1.02fr 0.98fr;
   gap: clamp(28px, 4vw, 60px);
   align-items: center;
+}
+.hero-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.hero-tags .eyebrow {
+  margin-bottom: 0;
+}
+.announce {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.74rem;
+  color: var(--text);
+  padding: 4px 13px 4px 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--periwinkle) 38%, transparent);
+  background: color-mix(in oklab, var(--periwinkle) 11%, var(--elev));
+  transition: border-color 0.15s ease;
+}
+.announce:hover {
+  border-color: var(--periwinkle);
+}
+.announce-tag {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--ramp);
+  color: #fff;
+  font-weight: 600;
 }
 .hero-copy .eyebrow .dia {
   background: var(--green);
@@ -1515,6 +1549,110 @@ h3 {
   background: var(--green);
 }
 
+/* ═══════════════════════════ AI GATEWAY ════════════════════════════════════ */
+.gw-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: clamp(28px, 4vw, 56px);
+  align-items: center;
+}
+/* the panel's one-line rows must not widen the column past a phone's width */
+.gw-copy,
+.gw-visual {
+  min-width: 0;
+}
+/* the panel leads on a wide screen, so the section doesn't mirror production above it */
+@media (min-width: 941px) {
+  .gw-visual {
+    order: -1;
+  }
+}
+.gw-points {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 30px;
+}
+.gw-points li {
+  padding: 14px 16px 15px;
+}
+.gw-points .pt-v {
+  font-size: 0.9rem;
+}
+.gw-points .pt-k {
+  margin-bottom: 5px;
+}
+
+/* the session panel: one row per request, asked → served, with the reason under it */
+.gw-body {
+  padding: 12px 16px 6px;
+  font-size: 0.7rem;
+}
+.gw-head,
+.gw-row {
+  display: grid;
+  grid-template-columns: minmax(0, 92px) minmax(0, 1fr) 52px;
+  gap: 12px;
+  align-items: baseline;
+}
+.gw-head {
+  color: var(--text-3);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.gw-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.gw-row:last-child {
+  border-bottom: 0;
+}
+.gw-kind {
+  color: var(--text-2);
+}
+.gw-kind em {
+  display: block;
+  font-style: normal;
+  color: var(--text-3);
+}
+.gw-route {
+  min-width: 0;
+}
+.gw-model {
+  display: block;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gw-to {
+  color: var(--text-3);
+}
+.gw-cheaper {
+  color: var(--accent);
+}
+.gw-local {
+  color: var(--violet);
+}
+.gw-why {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 3px;
+  color: var(--text-3);
+}
+.gw-why .dia {
+  width: 5px;
+  height: 5px;
+  margin-right: 0.6em;
+  top: 0;
+}
+.gw-cost {
+  text-align: right;
+  color: var(--text-2);
+}
+.gw-free {
+  color: var(--green);
+}
+
 /* ═══════════════════════════ FAQ ═══════════════════════════════════════════ */
 .faq-list {
   margin-top: 34px;
@@ -1677,7 +1815,12 @@ html.js .reveal.in {
 }
 
 /* ═══════════════════════════ RESPONSIVE ════════════════════════════════════ */
-@media (max-width: 940px) {
+/* The links and the GitHub button need about 1070px; below that the burger takes over,
+   and its menu opens at every width the burger shows. */
+.nav-mobile[hidden] {
+  display: none;
+}
+@media (max-width: 1100px) {
   .nav-links {
     display: none;
   }
@@ -1687,10 +1830,22 @@ html.js .reveal.in {
   .nav-burger {
     display: inline-flex;
   }
+  /* the hidden links' auto margins no longer push the actions to the right edge */
+  .nav-actions {
+    margin-left: auto;
+  }
+}
+@media (min-width: 1101px) {
+  .nav-mobile {
+    display: none !important;
+  }
+}
+@media (max-width: 940px) {
   .hero-grid,
   .build-grid,
   .qs-grid,
-  .prod-grid {
+  .prod-grid,
+  .gw-grid {
     grid-template-columns: 1fr;
   }
   .build-visual {
@@ -1704,9 +1859,6 @@ html.js .reveal.in {
   }
 }
 @media (max-width: 620px) {
-  .nav-mobile[hidden] {
-    display: none;
-  }
   .card-grid {
     grid-template-columns: 1fr;
   }
@@ -1733,14 +1885,18 @@ html.js .reveal.in {
   .datasheet {
     padding: 16px;
   }
+  /* narrower label and cost columns leave the route its room on a phone */
+  .gw-head,
+  .gw-row {
+    grid-template-columns: minmax(0, 72px) minmax(0, 1fr) 44px;
+    gap: 8px;
+  }
+  .gw-body {
+    padding-inline: 14px;
+  }
   /* three mono columns don't fit a phone — let the sheet scroll sideways rather than clip. */
   .ds-table {
     min-width: 430px;
-  }
-}
-@media (min-width: 621px) {
-  .nav-mobile {
-    display: none !important;
   }
 }
 
