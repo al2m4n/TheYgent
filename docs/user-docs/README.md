@@ -24,7 +24,7 @@ mike maintains the version tree (one subdirectory per version + a version picker
 header) on the `gh-pages` branch; the workflow then deploys that whole tree to Cloudflare
 Pages with wrangler.
 
-Domain-root files (`robots.txt`, `llms.txt`, `404.html`, and the favicons) live in `root/`
+Domain-root files (`robots.txt`, `llms.txt`, `404.html`, `_redirects`, and the favicons) live in `root/`
 here — mike owns the `gh-pages` root, so the workflow copies everything in that directory
 into the deploy tree on every publish. Two entries there are not plain copies:
 `redirect-index.html` is mike's `set-default` template (it renders the root redirect page,
@@ -35,10 +35,12 @@ Every build also writes `llms-full.txt` at the root of its version (`/latest/llm
 once a release ships): the `hooks/llms_full.py` MkDocs hook concatenates each page's
 Markdown in nav order, so an answer engine or coding agent can read the whole documentation
 in one request. The domain-root `llms.txt` links to it.
-`site_url` in `mkdocs.yml` deliberately ends in `/latest/`: pages are served under mike's
-version prefixes, and anchoring the URL at the stable alias makes every version's
-canonical link and sitemap point at `/latest/`, so search rankings and AI citations never
-fragment across versions.
+Every version's canonical links and sitemap point at `/latest/`, so search rankings and AI
+citations never fragment across versions. During `mike deploy`, mike's plugin rewrites
+`site_url` to `site_url` + the version name; `mkdocs.yml` therefore sets the bare domain as
+`site_url` and the plugin's `canonical_version: latest`. (Versions up to v1.0.1 were built
+with `/latest/` already in `site_url`, which produced `/latest/<version>/…` canonicals;
+`root/_redirects` sends those URLs to the pages they meant.)
 
 One-time setup for a fork/new deployment:
 

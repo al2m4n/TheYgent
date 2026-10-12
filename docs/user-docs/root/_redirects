@@ -1,0 +1,13 @@
+# Cloudflare Pages redirects for docs.theygent.ai — docs.yml copies this file to the deploy root.
+#
+# Versions v0.1.0 through v1.0.1 were built while mike appended the version being deployed to a
+# site_url that already ended in /latest/, so their canonical links and sitemaps name
+# /latest/<version>/<page>, a path that never existed. Search engines found those URLs; each one
+# goes to the /latest/ page it meant. Later versions build with canonical_version: latest
+# (mkdocs.yml) and emit correct URLs, so this list never grows.
+/latest/v0.1.0/* /latest/:splat 301
+/latest/v0.1.1/* /latest/:splat 301
+/latest/v0.2.0/* /latest/:splat 301
+/latest/v0.2.1/* /latest/:splat 301
+/latest/v1.0.0/* /latest/:splat 301
+/latest/v1.0.1/* /latest/:splat 301
