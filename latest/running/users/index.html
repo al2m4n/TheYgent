@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://docs.theygent.ai/latest/v0.2.1/running/users/">
+        <link rel="canonical" href="https://docs.theygent.ai/latest/v1.0.0/running/users/">
       
       
         <link rel="prev" href="../triggers/">
@@ -436,6 +436,28 @@
     
   
   Running Agents
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../ai-gateway/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  AI Gateway
 
         </a>
       </li>
@@ -2584,6 +2606,14 @@
           
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
     
@@ -2598,6 +2628,192 @@
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../ai-gateway/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI Gateway
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_11" id="__nav_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    AI Gateway
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai-gateway/setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Set Up Claude Code
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai-gateway/reports/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reports & Policy
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai-gateway/local-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai-gateway/running/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Running the Gateway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
         
           
           <div class="md-nav__link md-nav__container">
@@ -2620,8 +2836,8 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_11_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_11">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_12">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2670,10 +2886,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_12" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_13" >
         
           
-          <label class="md-nav__link" for="__nav_12" id="__nav_12_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_13" id="__nav_13_label" tabindex="0">
             
   
   
@@ -2691,8 +2907,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_12_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_12">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_13_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_13">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -3172,6 +3388,10 @@
 <div class="admonition note">
 <p class="admonition-title">What opens <code>/invoke</code></p>
 <p><code>POST /agents/{id}/invoke</code> accepts an API key <strong>or</strong> the per-deploy <code>THEYGENT_INVOKE_TOKEN</code> (see <a href="../triggers/#token-invoke">Triggers</a>). Interactive <code>tys_…</code> session tokens deliberately do <strong>not</strong> open it — it is the unattended surface. With neither credential configured nor any key presented, the endpoint stays closed (<code>401</code>).</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Gateway keys and service keys are different</p>
+<p>The <a href="../../ai-gateway/">AI Gateway</a> has keys of its own: a developer's <strong>gateway key</strong> (<code>tyg_…</code>, from <strong>AI Gateway → Setup &amp; keys</strong>) identifies them to a gateway, and a <strong>service key</strong> (<code>tygs_…</code>, minted by an admin) lets a gateway reach the control plane. Neither opens the management API — that takes a personal API key or a session.</p>
 </div>
 <h2 id="single-sign-on">Single sign-on<a class="headerlink" href="#single-sign-on" title="Permanent link">&para;</a></h2>
 <p>Admins configure sign-in providers under <strong>Settings → Sign-in</strong>. Each enabled provider becomes a button on the login screen; the whole flow is authorization code + PKCE, resolved server-side — the control plane exchanges the code and reads the provider's userinfo endpoint, then bounces the browser back to the interface with a fresh session token.</p>
