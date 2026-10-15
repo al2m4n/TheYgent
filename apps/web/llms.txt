@@ -51,6 +51,7 @@ Each walkthrough has a page with the video, its chapters, and a written summary.
 
 - [Private & offline AI agents](https://theygent.ai/private-ai/): local models only — where data lives, every network touchpoint and when it happens, and running offline or air-gapped
 - [Local AI agents on Apple Silicon](https://theygent.ai/apple-silicon/): MLX for chat, vision, and text-to-speech; llama.cpp and whisper.cpp for embeddings and speech-to-text; setting up on a Mac
+- [Reduce Claude Code cost with the AI Gateway](https://theygent.ai/ai-gateway/): what Claude Code costs per session, subagent, and developer; routing subagents and cold-cache turns to a cheaper Claude model; serving a measured share with local models; personal and team gateways, and what leaves them
 
 ## Comparisons
 

@@ -1000,6 +1000,7 @@ h3 {
 }
 .pointset {
   list-style: none;
+  padding: 0;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 20px;

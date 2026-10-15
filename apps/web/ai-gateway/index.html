@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reduce Claude Code Cost with a Self-Hosted AI Gateway | TheYgent</title>
+    <meta name="description" content="Track what Claude Code costs per session and developer, then route subagents to a cheaper Claude model or local models you run — on a gateway you host." />
+    <link rel="canonical" href="https://theygent.ai/ai-gateway/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/ai-gateway/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Reduce Claude Code Cost, Measured on Your Own Traffic" />
+    <meta property="og:description" content="A gateway you run between Claude Code and the Anthropic API: spend per session and developer, routing to a cheaper Claude model, and a share of the work served by your own local models." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Reduce Claude Code Cost, Measured on Your Own Traffic" />
+    <meta name="twitter:description" content="A gateway you run between Claude Code and the Anthropic API: spend per session and developer, routing to a cheaper Claude model, and a share of the work served by your own local models." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <!-- Structured data. FAQPage answers stay verbatim-identical to the visible FAQ below
+         (.github/scripts/check_web_pages.py enforces it). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/ai-gateway/#webpage",
+            "url": "https://theygent.ai/ai-gateway/",
+            "name": "Reduce Claude Code Cost with a Self-Hosted AI Gateway | TheYgent",
+            "description": "Track what Claude Code costs per session and developer, then route subagents to a cheaper Claude model or local models you run — on a gateway you host.",
+            "inLanguage": "en",
+            "dateModified": "2026-10-15",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "breadcrumb": {
+              "@id": "https://theygent.ai/ai-gateway/#breadcrumb"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/ai-gateway/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "AI Gateway",
+                "item": "https://theygent.ai/ai-gateway/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/ai-gateway/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "How do I reduce what Claude Code costs?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Measure first. Run TheYgent's AI Gateway between Claude Code and the Anthropic API in observer mode: it records what every request cost and what routing would have saved, without changing anything. Then switch to router mode to move subagents and cold-cache turns to a cheaper Claude model — Sonnet 5.5 is half the list price of Opus 5.5 — and, if you choose, a share of the work to models you run yourself. Keep tool search on, too: Claude Code turns it off behind a custom base URL, and every request then carries every connected tool's definition."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can Claude Code use a local model?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, through the AI Gateway in router mode. You set a share per kind of request — side requests such as session titles, subagents, and the main conversation — and the gateway answers that share with a model on your TheYgent inference plane, at no API spend. Each model is measured first: a trial sends copies of real requests to it while Anthropic still answers, and records how often it picked the same next action. Whatever a local model can't take goes to Anthropic before Claude Code sees anything."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does routing change my prompts or break prompt caching?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. A request routed to a cheaper Claude model changes in one place, its model; everything else reaches Anthropic exactly as Claude Code sent it. Because a prompt cache belongs to one model, the gateway moves a conversation only where its cache is cold anyway — when a subagent starts, when a conversation starts, or after compaction — and keeps it there until the next cold point."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does the AI Gateway see my code?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes — it relays Claude Code's prompts, code, and credentials, so it runs where you run it: your machine or your cluster. It never writes a prompt or a response anywhere, and never stores a credential except an organization key you give it. TheYgent's control plane receives metadata only: timings, model names, token counts, costs, and the reasons behind each routing decision."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does it work with a Claude subscription?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, from the CLI and IDE extensions: the gateway forwards your own Claude login or API key unchanged. On a claude.ai plan, the Report's dollar figures are the API-equivalent value of your traffic, not a bill, and it shows how much of the plan's five-hour and weekly allowance you used. The desktop app reaches a gateway only with an API key, so it works through a team gateway billed to the organization's key."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How much will the AI Gateway save?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "That depends on your traffic, which is why observer mode comes first: it shows what routing would save on your own requests before anything changes. In one measurement, the same exploration subagent cost about half as much on Sonnet 5.5 as on Opus 5.5, and a request a local model answers has no API spend. Savings are estimates that assume the target writes as much as the model Claude Code asked for; shadow runs check that assumption."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><span aria-current="page">AI Gateway</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>AI Gateway · Claude Code · Self-Hosted</p>
+          <h1 id="page-h">Reduce Claude Code Cost, <span class="ramp-text">Measured on Your Own Traffic.</span></h1>
+          <p class="lede">
+            TheYgent&rsquo;s AI Gateway sits between Claude Code and the Anthropic API. It shows what every session,
+            subagent, and developer costs, and what routing would save — then, when you choose, sends subagents and
+            cold-cache turns to a cheaper Claude model and a share of the work to local models you run. It runs on your
+            machine or your cluster, and ships with TheYgent 1.0.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#try">Try It on Your Machine&nbsp;↓</a>
+            <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/ai-gateway/" rel="noopener">Read the AI Gateway Guide&nbsp;→</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="cost-h">
+        <div class="wrap prose">
+          <h2 id="cost-h">Where Claude Code&rsquo;s Cost Goes</h2>
+          <p>
+            A Claude Code session is more than your prompts. It is a main conversation, the subagents it starts (an
+            <code>Explore</code> subagent, for example), compaction when the context fills, and small side requests
+            such as session titles and quota checks — each priced at the model it asked for. With
+            <code>CLAUDE_CODE_GATEWAY_HINT_HEADERS=1</code> in its setup, Claude Code labels every request, so the
+            gateway can record each one&rsquo;s kind, model, tokens (cache reads and writes included), and cost.
+          </p>
+          <p>
+            Two things move the bill most. The first is which model answers: Sonnet 5.5 is half the list price of
+            Opus 5.5, and a subagent starts with an empty cache, so moving it to a cheaper model costs nothing extra.
+            The second is how much each request carries. Behind a custom base URL, Claude Code turns MCP tool search
+            off, and every request then carries the definition of every connected tool: in one measurement with many
+            connectors loaded, a one-line prompt went from about 28,000 to 184,000 input tokens. The gateway&rsquo;s
+            setup turns tool search back on with <code>ENABLE_TOOL_SEARCH=true</code>, and its Report warns when your
+            traffic shows it off.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="modes-h">
+        <div class="wrap">
+          <h2 id="modes-h" class="prose">Observe, Route, Then Go Local</h2>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="modes-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Mode</th>
+                    <th scope="col">What it does</th>
+                    <th scope="col">What reaches Anthropic</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Observer</th>
+                    <td>Records every exchange — its cost, its kind, and what routing would have done and saved.</td>
+                    <td>Every request, exactly as Claude Code sent it.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Router: a cheaper Claude</th>
+                    <td>Runs subagents and cold-cache turns on the target you name, such as <code>claude-sonnet-5-5</code>.</td>
+                    <td>The same bytes with one change, the model. A target that refuses hands the request back to the model Claude Code asked for, unseen.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Router: your own models</th>
+                    <td>Answers a share of each kind of request — side requests, subagents, the main conversation — with models on your inference plane.</td>
+                    <td>Whatever the local models don&rsquo;t answer: requests that don&rsquo;t translate, quota checks, token counting, and every fallback.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Passthrough</th>
+                    <td>Forwards traffic and records nothing.</td>
+                    <td>Everything, unrecorded.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="note">
+            An admin picks the mode on the AI Gateway&rsquo;s Settings tab, and every save is a new, immutable
+            configuration version. A gateway attached to the control plane forwards in passthrough until someone saves
+            one, so an organization&rsquo;s traffic is recorded only once someone chose to record it; a personal gateway
+            on its own records from the start.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="policy-h">
+        <div class="wrap gw-grid">
+          <div class="gw-copy">
+            <div class="prose">
+              <h2 id="policy-h">How the Gateway Decides What Moves</h2>
+              <p>
+                Prompt caches belong to one model, so switching mid-conversation throws a warm cache away and pays to
+                rebuild it. The policy considers a move only where the cache is cold anyway, then keeps that decision
+                until the next cold point. Every decision carries its reason, in the same words the Sessions tab uses.
+              </p>
+            </div>
+            <ul class="pointset gw-points">
+              <li>
+                <span class="pt-k mono"><i class="dia dia-accent"></i>subagent spawn</span>
+                <span class="pt-v">A subagent starts with an empty cache — the clearest saving. In measurements, the same exploration subagent cost about half as much on Sonnet 5.5 as on Opus 5.5.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-green"></i>cold cache</span>
+                <span class="pt-v">The main conversation at its start, after compaction, or once its cache expired — and only if you name a target for it.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-violet"></i>follows cache</span>
+                <span class="pt-v">Every later request stays on the model the cache is on, so a conversation never switches model mid-turn.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-amber"></i>never routed</span>
+                <span class="pt-v">Claude Code&rsquo;s quota check, auto mode&rsquo;s safety checks, side requests that ride the main conversation&rsquo;s cache, and kinds of side request nobody has reviewed.</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="gw-visual">
+            <div class="panel gw-panel cut-card" role="img" aria-label="A Claude Code session in the AI Gateway's observer mode: an Explore subagent's two requests would route from Opus 5.5 to Sonnet 5.5, saving $0.053, while the main conversation and a session-title side request stay on the models Claude Code asked for. Nothing was changed.">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">AI Gateway · Session 9b2f… · Observer</span>
+                <span class="run-pill mono"><span class="run-dot"></span>Observing</span>
+              </div>
+              <div class="gw-body mono" aria-hidden="true">
+                <div class="gw-head">
+                  <span>request</span>
+                  <span>asked → would route</span>
+                  <span class="gw-cost">cost</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">main</span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5</span>
+                    <span class="gw-why"><i class="dia dia-slate"></i>no target set</span>
+                  </span>
+                  <span class="gw-cost">$0.071</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">subagent<em>Explore</em></span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5 <span class="gw-to">→</span> <span class="gw-cheaper">sonnet-5-5</span></span>
+                    <span class="gw-why"><i class="dia dia-accent"></i>subagent spawn</span>
+                  </span>
+                  <span class="gw-cost">$0.094</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">subagent<em>Explore</em></span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5 <span class="gw-to">→</span> <span class="gw-cheaper">sonnet-5-5</span></span>
+                    <span class="gw-why"><i class="dia dia-violet"></i>follows cache</span>
+                  </span>
+                  <span class="gw-cost">$0.012</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">side<em>title</em></span>
+                  <span class="gw-route">
+                    <span class="gw-model">haiku-5-5</span>
+                    <span class="gw-why"><i class="dia dia-amber"></i>unreviewed kind</span>
+                  </span>
+                  <span class="gw-cost">$0.001</span>
+                </div>
+                <div class="gw-row">
+                  <span class="gw-kind">main</span>
+                  <span class="gw-route">
+                    <span class="gw-model">opus-5-5</span>
+                    <span class="gw-why"><i class="dia dia-slate"></i>warm cache</span>
+                  </span>
+                  <span class="gw-cost">$0.019</span>
+                </div>
+              </div>
+              <div class="panel-foot mono">
+                <span>5 requests</span>
+                <span class="hash">would save $0.053</span>
+                <span class="dur"><i class="dia dia-green"></i>Nothing changed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="local-h">
+        <div class="wrap">
+          <div class="prose">
+            <h2 id="local-h">Route Claude Code to a Local LLM, One Share at a Time</h2>
+            <p>
+              In router mode, the gateway can answer part of Claude Code&rsquo;s work with models on your TheYgent
+              inference plane: models you install from the in-app catalog and run on its built-in engines —
+              <strong>llama.cpp</strong> on any machine, <strong>MLX</strong> on Apple Silicon — or a model on your own
+              GPU servers, registered as OpenAI-compatible. A request a local model answers costs no API spend. How much
+              goes local is a dial per kind of request:
+            </p>
+          </div>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="local-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Dial</th>
+                    <th scope="col">Starts at</th>
+                    <th scope="col">What goes local</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Side requests</th>
+                    <td>100%</td>
+                    <td>Kinds of side request, such as session titles, that an admin reviewed as <em>local model</em> in the Catalog.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Subagents</th>
+                    <td>0%</td>
+                    <td>A share of subagents, each from its first request to its last — optionally only some agent types, such as <code>Explore</code>.</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Main conversation</th>
+                    <td>0%</td>
+                    <td>A share of conversations, from their start or their last compaction.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="prose">
+            <p>
+              Each dial has a <strong>share</strong>, served locally, and a <strong>trial</strong>, measured locally
+              while Anthropic still answers. A trial sends a copy of each real request to the local model after the
+              fact and records whether it picked the same next action as Claude — the same tool first, or answering
+              where Claude answered. Small models follow agent work poorly: in one measurement, a
+              4-billion-parameter model matched Claude on 1 real exploration turn in 6. So agent shares start at zero,
+              and you raise them on your own evidence. A conversation that outgrows its local model moves to a larger
+              listed one, and to Anthropic only when none can take it.
+            </p>
+            <p>
+              A local model answers only what translates faithfully: text, tool definitions, tool calls and their
+              results, and images for a model that takes them. Until its first text or its first whole tool call goes
+              out, any failure — an error, no start in time, an unusable answer — sends the original request to
+              Anthropic, and Claude Code never sees it. Documents, Anthropic&rsquo;s server tools, token counting, and
+              the quota check always stay with Anthropic, so the gateway still needs an Anthropic credential: local
+              models extend it, they don&rsquo;t replace it.
+            </p>
+          </div>
+          <p class="note">
+            The local route is verified with llama.cpp. For a team, serve the model on an engine that handles several
+            requests at once, such as a llama.cpp model with parallel slots: a request that waits past the
+            gateway&rsquo;s time limit goes to Anthropic instead.
+            <a href="https://docs.theygent.ai/latest/ai-gateway/local-models/" rel="noopener">Local models: setup, trials, and limits.</a>
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="track-h">
+        <div class="wrap prose">
+          <h2 id="track-h">Claude Code Usage and Cost Tracking, Self-Hosted</h2>
+          <p>
+            Every exchange becomes a record: the model Claude Code asked for and the one that served it, tokens, cost,
+            the request&rsquo;s kind, and the decision with its reason. The AI Gateway page in TheYgent turns those
+            records into:
+          </p>
+          <ul>
+            <li>
+              <strong>Report</strong> — spend, what it costs with routing, the saving, and calls, by day, broken down
+              by request kind, client, requested model, served model, decision, reason, developer, or session.
+            </li>
+            <li>
+              <strong>Sessions</strong> — every request of a Claude Code session in order, with what the policy did or
+              would have done, and why.
+            </li>
+            <li>
+              <strong>Shadow runs</strong> — copies of requests sent to a routing target or a local model after the
+              exchange ends, showing how much the target wrote and how often it picked the same next action. Claude Code
+              never waits for them.
+            </li>
+            <li>
+              <strong>Setup warnings</strong> — tool search off, requests not labelled, a model with no known price —
+              each with its fix.
+            </li>
+            <li>
+              <strong>Subscription seats</strong> — for developers on a claude.ai plan, how much of the plan&rsquo;s
+              five-hour and weekly allowance their traffic used.
+            </li>
+          </ul>
+          <p>
+            Prices are Anthropic&rsquo;s published list prices, checked for changes every week, plus contracted rates
+            where an admin enters them. A personal gateway gives the same totals from one command:
+            <code>theygent-ai-gateway report --since 24h</code>.
+          </p>
+          <p>
+            Claude Code prices every token at the model it asked for, so once the gateway routes, Claude Code&rsquo;s
+            own cost display overstates spend. One Explore subagent task cost $0.16 on Opus 5.5 and $0.08 on
+            Sonnet 5.5; routed to Sonnet, it still shows about $0.16 in Claude Code. The token counts agree — the
+            gateway&rsquo;s Report is the figure to trust for cost.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="trust-h">
+        <div class="wrap">
+          <h2 id="trust-h" class="prose">Your Gateway, Your Trust Domain</h2>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="trust-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col"><span class="visually-hidden">Setting</span></th>
+                    <th scope="col">Personal</th>
+                    <th scope="col">Team</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Serves</th>
+                    <td>You, on your own machine</td>
+                    <td>Every developer who points Claude Code at it</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Listens on</th>
+                    <td>Loopback only (<code>127.0.0.1:8082</code>)</td>
+                    <td>Any address you choose</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Identifies callers by</th>
+                    <td>Nobody — it is yours</td>
+                    <td>Each developer&rsquo;s gateway key (<code>tyg_…</code>); no key, or a revoked one, is refused</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Billing</th>
+                    <td>Your own Claude login or API key</td>
+                    <td>Each developer&rsquo;s own credential, or the organization&rsquo;s key</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Records</th>
+                    <td>Kept locally and read with the <code>report</code> command, or attached to the control plane</td>
+                    <td>Sent to the control plane: the AI Gateway page</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Runs with</th>
+                    <td><code>make up</code></td>
+                    <td><code>make up</code>, Docker Compose (<code>--profile gateway</code>), or Kubernetes</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="prose">
+            <p>
+              The gateway relays Claude Code&rsquo;s prompts, code, and credentials, so it runs where you run it,
+              beside Claude Code. It never writes a prompt or a response anywhere, never stores a credential except an
+              organization key you give it, and never sends a gateway key upstream. What it sends to TheYgent&rsquo;s
+              control plane is metadata only: timings, model names, token counts, costs, the routing decision and its
+              reasons, and Claude Code&rsquo;s session and agent ids — never prompt or response text. Developers see
+              their own records in full; admins see everyone&rsquo;s.
+            </p>
+          </div>
+          <p class="honesty">
+            The gateway is a hop you add on purpose, and the Anthropic API stays its upstream: whatever a local model
+            doesn&rsquo;t answer goes to Anthropic as before. Savings shown before you route are estimates that assume
+            the target writes as much as the model Claude Code asked for; shadow runs check that, and the figures for
+            what actually ran are exact.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" id="try" aria-labelledby="try-h">
+        <div class="wrap prose">
+          <h2 id="try-h">Try It on Your Machine</h2>
+          <p>
+            A personal gateway needs no keys. <code>make up</code> starts it with the rest of TheYgent, on
+            <code>127.0.0.1:8082</code>:
+          </p>
+          <pre><code>git clone https://github.com/al2m4n/TheYgent.git &amp;&amp; cd TheYgent
+cp .env.example .env   # ships a personal gateway on 127.0.0.1:8082
+make up</code></pre>
+          <p>Then point Claude Code at it, in the shell you start Claude Code from:</p>
+          <pre><code>export ANTHROPIC_BASE_URL='http://localhost:8082'
+export CLAUDE_CODE_GATEWAY_HINT_HEADERS='1'
+export ENABLE_TOOL_SEARCH='true'</code></pre>
+          <p>
+            Work as usual — your own Claude login or API key goes through unchanged — and read what your traffic cost,
+            and what routing would save:
+          </p>
+          <pre><code>uv run --package theygent-ai-gateway theygent-ai-gateway report --since 24h</code></pre>
+          <p>
+            You need <code>uv</code>, <code>pnpm</code>, and a Postgres to point at — <code>make up</code> starts one
+            in Docker if you don&rsquo;t have your own. To see the gateway on the AI Gateway page and to route, attach
+            it to the control plane with a service key, then save observer or router mode on
+            <strong>AI Gateway → Settings</strong>. For a team, IDEs, <code>settings.json</code>, and the desktop app,
+            see <a href="https://docs.theygent.ai/latest/ai-gateway/setup/" rel="noopener">Set Up Claude Code</a>; for
+            Docker Compose and Kubernetes, see
+            <a href="https://docs.theygent.ai/latest/ai-gateway/running/" rel="noopener">Running the Gateway</a>.
+          </p>
+        </div>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>How do I reduce what Claude Code costs?</h3></summary>
+              <p>
+                Measure first. Run TheYgent&rsquo;s AI Gateway between Claude Code and the Anthropic API in observer
+                mode: it records what every request cost and what routing would have saved, without changing anything.
+                Then switch to router mode to move subagents and cold-cache turns to a cheaper Claude model — Sonnet 5.5
+                is half the list price of Opus 5.5 — and, if you choose, a share of the work to models you run yourself.
+                Keep tool search on, too: Claude Code turns it off behind a custom base URL, and every request then
+                carries every connected tool&rsquo;s definition.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can Claude Code use a local model?</h3></summary>
+              <p>
+                Yes, through the AI Gateway in router mode. You set a share per kind of request — side requests such as
+                session titles, subagents, and the main conversation — and the gateway answers that share with a model
+                on your TheYgent inference plane, at no API spend. Each model is measured first: a trial sends copies of
+                real requests to it while Anthropic still answers, and records how often it picked the same next action.
+                Whatever a local model can&rsquo;t take goes to Anthropic before Claude Code sees anything.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does routing change my prompts or break prompt caching?</h3></summary>
+              <p>
+                No. A request routed to a cheaper Claude model changes in one place, its model; everything else reaches
+                Anthropic exactly as Claude Code sent it. Because a prompt cache belongs to one model, the gateway moves
+                a conversation only where its cache is cold anyway — when a subagent starts, when a conversation starts,
+                or after compaction — and keeps it there until the next cold point.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does the AI Gateway see my code?</h3></summary>
+              <p>
+                Yes — it relays Claude Code&rsquo;s prompts, code, and credentials, so it runs where you run it: your
+                machine or your cluster. It never writes a prompt or a response anywhere, and never stores a credential
+                except an organization key you give it. TheYgent&rsquo;s control plane receives metadata only: timings,
+                model names, token counts, costs, and the reasons behind each routing decision.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does it work with a Claude subscription?</h3></summary>
+              <p>
+                Yes, from the CLI and IDE extensions: the gateway forwards your own Claude login or API key unchanged.
+                On a claude.ai plan, the Report&rsquo;s dollar figures are the API-equivalent value of your traffic, not
+                a bill, and it shows how much of the plan&rsquo;s five-hour and weekly allowance you used. The desktop
+                app reaches a gateway only with an API key, so it works through a team gateway billed to the
+                organization&rsquo;s key.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>How much will the AI Gateway save?</h3></summary>
+              <p>
+                That depends on your traffic, which is why observer mode comes first: it shows what routing would save
+                on your own requests before anything changes. In one measurement, the same exploration subagent cost
+                about half as much on Sonnet 5.5 as on Opus 5.5, and a request a local model answers has no API spend.
+                Savings are estimates that assume the target writes as much as the model Claude Code asked for; shadow
+                runs check that assumption.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="next-h">
+        <div class="wrap">
+          <h2 id="next-h" class="prose">Keep Reading</h2>
+          <div class="card-grid">
+            <a class="cap cut-card" href="https://docs.theygent.ai/latest/ai-gateway/setup/" rel="noopener">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>docs</span>
+              <h3>Set Up Claude Code</h3>
+              <p>The settings per client — terminal, IDEs, <code>settings.json</code>, the desktop app — and why each one is there.</p>
+              <span class="cap-more mono">Open the docs →</span>
+            </a>
+            <a class="cap cut-card" href="https://docs.theygent.ai/latest/ai-gateway/reports/" rel="noopener">
+              <span class="cap-kicker mono"><i class="dia dia-amber"></i>docs</span>
+              <h3>Reports &amp; Policy</h3>
+              <p>Reading the figures, every reason label, and how the policy decides what moves.</p>
+              <span class="cap-more mono">Open the docs →</span>
+            </a>
+            <a class="cap cut-card" href="/private-ai/">
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>privacy</span>
+              <h3>Private &amp; Offline AI</h3>
+              <p>Where your data lives, and everything TheYgent ever connects to.</p>
+              <span class="cap-more mono">Read more →</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
