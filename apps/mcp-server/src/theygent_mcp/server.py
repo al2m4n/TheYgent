@@ -560,6 +560,9 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         """Add a document from text (notes, a generated summary, an API response) to an `upload`
         retrieval source."""
         source_id = await _source_id(source_id)
+        # The control plane picks the parser from the extension; a bare name is Markdown.
+        if not Path(filename).suffix:
+            filename += ".md"
         await _upload(source_id, filename, text.encode(), "text/markdown")
         return {"uploaded": True, "filename": filename, "bytes": len(text.encode())}
 

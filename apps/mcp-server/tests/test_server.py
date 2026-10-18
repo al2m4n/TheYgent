@@ -484,6 +484,16 @@ async def test_add_rag_files_walks_a_project_tree(
     assert nothing["results"] == [{"path": "*.rs", "error": "no files match this pattern"}]
 
 
+async def test_add_rag_text_names_a_bare_document_as_markdown(planes: FakePlanes) -> None:
+    async with _client(planes) as client:
+        out = await _call(
+            client, "add_rag_text", source_id="Team docs", filename="standup", text="# Notes"
+        )
+    assert out["filename"] == "standup.md"
+    sent = planes.last("POST", "/rag/sources/rag_1/documents")
+    assert sent.url.params["filename"] == "standup.md" and sent.content == b"# Notes"
+
+
 async def test_create_rag_source_requires_a_root_url_to_crawl(planes: FakePlanes) -> None:
     async with _client(planes) as client:
         with pytest.raises(ToolError, match="root_url"):
