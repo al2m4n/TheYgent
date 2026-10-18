@@ -1,0 +1,55 @@
+{
+  "label": "direct-qwen3.6-35b-cache-off",
+  "base": "http://127.0.0.1:18323/v1",
+  "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+  "calls": [
+    {
+      "run": 1,
+      "step": 1,
+      "prompt_tokens": 1042,
+      "cached_tokens": 0,
+      "ttft_s": 2.141,
+      "total_s": 3.142
+    },
+    {
+      "run": 1,
+      "step": 2,
+      "prompt_tokens": 1352,
+      "cached_tokens": 0,
+      "ttft_s": 2.604,
+      "total_s": 3.327
+    },
+    {
+      "run": 1,
+      "step": 3,
+      "prompt_tokens": 1664,
+      "cached_tokens": 0,
+      "ttft_s": 3.061,
+      "total_s": 4.06
+    },
+    {
+      "run": 2,
+      "step": 1,
+      "prompt_tokens": 1044,
+      "cached_tokens": 0,
+      "ttft_s": 2.133,
+      "total_s": 3.135
+    },
+    {
+      "run": 2,
+      "step": 2,
+      "prompt_tokens": 1354,
+      "cached_tokens": 0,
+      "ttft_s": 2.573,
+      "total_s": 3.234
+    },
+    {
+      "run": 2,
+      "step": 3,
+      "prompt_tokens": 1663,
+      "cached_tokens": 0,
+      "ttft_s": 3.038,
+      "total_s": 4.048
+    }
+  ]
+}
