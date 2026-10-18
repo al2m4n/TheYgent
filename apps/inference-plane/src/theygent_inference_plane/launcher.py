@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import glob
 import json
+import math
 import os
 import re
 import shutil
@@ -41,6 +42,7 @@ from theygent_inference_plane.binary import (
     LlamaServerNotFound,
     resolve_engine_command,
     resolve_llama_server_binary,
+    resolve_mlx_python,
 )
 from theygent_inference_plane.capabilities import (
     REASONING_MARKERS,
@@ -309,9 +311,16 @@ LLAMACPP_LAUNCH_FLAGS: dict[str, str] = {
     "batchSize": "-b",
     "ubatchSize": "-ub",
 }
+#: MLX chat launch settings for mixture-of-experts models larger than memory. ``streamExperts``
+#: serves the model with its routed experts left on disk and read on demand
+#: (``mlx_expert_stream``); ``expertCacheGb`` sizes the GPU cache of experts it keeps, which
+#: otherwise takes half the machine's memory less the model's dense part.
+MLX_STREAM_PARAMS: tuple[str, ...] = ("streamExperts", "expertCacheGb")
 #: Registration params that configure the engine process rather than a request — the gateway
 #: never forwards them as generation params.
-LAUNCH_PARAMS: frozenset[str] = frozenset({"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS})
+LAUNCH_PARAMS: frozenset[str] = frozenset(
+    {"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS, *MLX_STREAM_PARAMS}
+)
 #: The modalities llama-server itself serves; the launch settings apply to these only.
 _LLAMA_SERVER_MODALITIES = ("chat", "vision", "embeddings")
 
@@ -329,11 +338,13 @@ def launch_params_defect(binding: object) -> str | None:
     registration, so a typo or a setting for the wrong engine fails loudly instead of being
     ignored at every launch."""
     params = getattr(binding, "params", {}) or {}
+    engine = getattr(binding, "binding", None)
+    modality = getattr(binding, "modality", None)
+    if defect := _mlx_stream_defect(params, engine, modality):
+        return defect
     present = [k for k in LLAMACPP_LAUNCH_FLAGS if k in params]
     if not present:
         return None
-    engine = getattr(binding, "binding", None)
-    modality = getattr(binding, "modality", None)
     if engine != "llamacpp" or modality not in _LLAMA_SERVER_MODALITIES:
         return (
             f"launch settings {present} apply to llamacpp chat, vision and embeddings "
@@ -344,6 +355,44 @@ def launch_params_defect(binding: object) -> str | None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return f"launch setting {key!r} must be a positive integer, got {value!r}"
     return None
+
+
+def _mlx_stream_defect(params: dict, engine: object, modality: object) -> str | None:
+    present = [k for k in MLX_STREAM_PARAMS if k in params]
+    if not present:
+        return None
+    if engine != "mlx" or modality != "chat":
+        return (
+            f"launch settings {present} apply to mlx chat bindings only "
+            f"(this is {engine} {modality})"
+        )
+    stream = params.get("streamExperts", False)
+    if not isinstance(stream, bool):
+        return f"launch setting 'streamExperts' must be true or false, got {stream!r}"
+    if "expertCacheGb" in params:
+        size = params["expertCacheGb"]
+        if (
+            isinstance(size, bool)
+            or not isinstance(size, int | float)
+            or not math.isfinite(size)
+            or size <= 0
+        ):
+            return f"launch setting 'expertCacheGb' must be a positive number of GB, got {size!r}"
+        if not stream:
+            return (
+                "launch setting 'expertCacheGb' sizes a streamed model's expert cache; "
+                "set 'streamExperts': true with it"
+            )
+    return None
+
+
+#: The expert-streaming server, spawned by path in mlx-lm's interpreter (see ``MlxLauncher``).
+EXPERT_STREAM_SERVER = Path(__file__).with_name("mlx_expert_stream.py")
+
+
+def mlx_streams_experts(binding: ManagedBinding) -> bool:
+    """Whether an mlx chat binding is served with its experts streamed from disk."""
+    return binding.binding == "mlx" and binding.params.get("streamExperts") is True
 
 
 def _trained_context(binding: ManagedBinding) -> int | None:
@@ -906,15 +955,18 @@ class MlxLauncher:
         assert self._command is not None
         # mlx_lm.server takes the model id/path directly; for local-path it is the
         # model dir. Unified memory => no GPU/VRAM flags (that's vLLM's concern).
-        return [
-            *self._command,
-            "--model",
-            binding.model,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ]
+        serve = ["--model", binding.model, "--host", "127.0.0.1", "--port", str(port)]
+        if not mlx_streams_experts(binding):
+            return [*self._command, *serve]
+        if defect := launch_params_defect(binding):
+            # Registration refuses these; one that arrived another way (an import) fails here.
+            raise RuntimeError(defect)
+        # The expert-streaming server is mlx_lm.server with its loader swapped, so it runs in
+        # mlx-lm's own interpreter, by file path; -I keeps this package's directory off its path.
+        command = [resolve_mlx_python(self._command), "-I", str(EXPERT_STREAM_SERVER), *serve]
+        if (cache_gb := binding.params.get("expertCacheGb")) is not None:
+            command += ["--expert-cache-gb", str(cache_gb)]
+        return command
 
     async def launch(self, binding: ManagedBinding) -> EngineHandle:
         if self._command is None:

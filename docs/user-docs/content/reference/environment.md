@@ -62,6 +62,7 @@ Each engine binary is resolved from `PATH` by default; set the matching variable
 | `THEYGENT_LLAMACPP_BIN` | `llama-server` (chat, embeddings, vision) |
 | `THEYGENT_WHISPERCPP_BIN` | `whisper-server` (speech-to-text) |
 | `THEYGENT_MLX_BIN` | `mlx_lm.server` (chat, Apple Silicon) |
+| `THEYGENT_MLX_PYTHON` | The Python that mlx-lm is installed in, for [expert streaming](../models/engines.md#moe-models-bigger-than-memory-expert-streaming). Found from `mlx_lm.server` when unset; set it if that fails. |
 | `THEYGENT_MLX_VLM_BIN` | `mlx_vlm.server` (vision, Apple Silicon) |
 | `THEYGENT_MLX_AUDIO_BIN` | `mlx_audio.server` (text-to-speech, Apple Silicon) |
 | `THEYGENT_SDCPP_BIN` | `sd-cli` (image generation) |

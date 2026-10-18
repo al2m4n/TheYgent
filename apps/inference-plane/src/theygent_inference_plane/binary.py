@@ -75,6 +75,47 @@ def resolve_engine_command(
     )
 
 
+MLX_PYTHON_ENV_VAR = "THEYGENT_MLX_PYTHON"
+
+
+def resolve_mlx_python(server_command: list[str]) -> str:
+    """The Python interpreter mlx-lm is installed in, for servers TheYgent runs inside mlx-lm's
+    environment (expert streaming). ``server_command`` is the resolved ``mlx_lm.server`` command.
+
+    Resolution order: ``THEYGENT_MLX_PYTHON``; the interpreter of a ``python -m mlx_lm.server``
+    command; the ``#!`` line of an ``mlx_lm.server`` script (an absolute interpreter, or
+    ``/usr/bin/env <name>`` looked up on ``PATH``). Anything else fails loudly.
+    """
+    explicit = os.environ.get(MLX_PYTHON_ENV_VAR)
+    if explicit:
+        if os.path.isfile(explicit) and os.access(explicit, os.X_OK):
+            return os.path.abspath(explicit)
+        raise EngineBinaryNotFound(f"{MLX_PYTHON_ENV_VAR}={explicit!r} is not an executable file")
+    if len(server_command) >= 3 and server_command[1] == "-m":
+        return server_command[0]
+
+    script = server_command[0]
+    try:
+        with open(script, "rb") as fh:
+            first_line = fh.readline(512)
+    except OSError as exc:
+        raise EngineBinaryNotFound(f"cannot read {script} to find mlx-lm's Python: {exc}") from exc
+    interpreter = None
+    if first_line.startswith(b"#!"):
+        parts = first_line[2:].decode(errors="replace").split()
+        if parts and os.path.basename(parts[0]) == "env":
+            names = [p for p in parts[1:] if not p.startswith("-")]
+            interpreter = shutil.which(names[0]) if names else None
+        elif parts:
+            interpreter = parts[0]
+    if interpreter and os.path.isfile(interpreter) and os.access(interpreter, os.X_OK):
+        return interpreter
+    raise EngineBinaryNotFound(
+        f"cannot tell which Python runs {script} (no usable #! line); set {MLX_PYTHON_ENV_VAR} "
+        "to the interpreter mlx-lm is installed in"
+    )
+
+
 def resolve_llama_server_binary(explicit: str | None = None) -> str:
     """Return an absolute path to ``llama-server`` or raise loudly."""
     return resolve_engine_command(
