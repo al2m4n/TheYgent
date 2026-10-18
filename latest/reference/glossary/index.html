@@ -3039,6 +3039,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#expert-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expert streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gateway-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3164,6 +3175,17 @@
     <span class="md-ellipsis">
       
         MCP (Model Context Protocol)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mixture-of-experts-moe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture of experts (MoE)
       
     </span>
   </a>
@@ -3637,6 +3659,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#expert-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Expert streaming
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#gateway-key" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3762,6 +3795,17 @@
     <span class="md-ellipsis">
       
         MCP (Model Context Protocol)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mixture-of-experts-moe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Mixture of experts (MoE)
       
     </span>
   </a>
@@ -4042,6 +4086,8 @@
 <p>A model that turns text into a vector so that similar meanings land near each other — the model behind retrieval. Each <a href="#rag-source">RAG source</a> pins one embedding model (a <a href="#logical-model-id">logical id</a>) at creation, because vectors from different models are not comparable. See <a href="../../rag/">RAG sources</a>.</p>
 <h3 id="engine">Engine<a class="headerlink" href="#engine" title="Permanent link">&para;</a></h3>
 <p>The underlying server program that runs a model — <code>llama.cpp</code>, an MLX server, <code>whisper.cpp</code>, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See <a href="../../models/engines/">Engines</a>.</p>
+<h3 id="expert-streaming">Expert streaming<a class="headerlink" href="#expert-streaming" title="Permanent link">&para;</a></h3>
+<p>Running a <a href="#mixture-of-experts-moe">mixture-of-experts</a> model on MLX with its experts left on disk: each layer reads only the experts its router picks, and recently used ones stay in a memory cache. It lets a model bigger than memory run, with exactly the answers the fully loaded model gives, at lower speed. Off by default; turned on per model. See <a href="../../models/engines/#moe-models-bigger-than-memory-expert-streaming">Engines</a>.</p>
 <h3 id="gateway-key">Gateway key<a class="headerlink" href="#gateway-key" title="Permanent link">&para;</a></h3>
 <p>A developer's key for a team-mode <a href="#ai-gateway">AI gateway</a> (<code>tyg_…</code>), created on <strong>AI Gateway → Setup &amp; keys</strong> and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See <a href="../../ai-gateway/setup/">Set up Claude Code</a>.</p>
 <h3 id="generated-server">Generated server<a class="headerlink" href="#generated-server" title="Permanent link">&para;</a></h3>
@@ -4066,6 +4112,8 @@
 <p>The name you give a model when you register it (for example <code>triage-fast</code>) and the only thing you ever put in a <code>model</code> field. It hides the engine and weights behind it, so swapping a local model for a hosted one is one registration change with no graph edits. See <a href="../../concepts/models-and-engines/">Models &amp; engines</a>.</p>
 <h3 id="mcp-model-context-protocol">MCP (Model Context Protocol)<a class="headerlink" href="#mcp-model-context-protocol" title="Permanent link">&para;</a></h3>
 <p>An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over <code>stdio</code>, reached remotely over HTTP or SSE, or <a href="#generated-server">generated in-process</a> from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the <code>mcp_tool</code> node. Servers are added by hand or installed from a <a href="#hub-mcp-registry">hub</a>. See <a href="../../mcp/">MCP servers</a> and <a href="../../building/nodes/mcp/">MCP tools</a>.</p>
+<h3 id="mixture-of-experts-moe">Mixture of experts (MoE)<a class="headerlink" href="#mixture-of-experts-moe" title="Permanent link">&para;</a></h3>
+<p>A model design that splits most of a model's weights into many small "experts" and uses only a few of them for each token, chosen by a small router in every layer — Qwen3.6-35B-A3B has 35 billion parameters but uses about 3 billion per token (the "A3B"). It computes like a small model but needs the memory of a large one, unless its experts are <a href="#expert-streaming">streamed</a>. The catalog marks these models <strong>MoE</strong>.</p>
 <h3 id="modality">Modality<a class="headerlink" href="#modality" title="Permanent link">&para;</a></h3>
 <p>What kind of input/output a model handles: <code>chat</code>, <code>vision</code>, <code>embeddings</code>, <code>audio.transcription</code>, <code>audio.speech</code>, or <code>images.generation</code>. A model is registered for one modality; it is a third axis orthogonal to <a href="#binding">binding</a> and <a href="#source">source</a>. See <a href="../../concepts/models-and-engines/">Models &amp; engines</a>.</p>
 <h3 id="node">Node<a class="headerlink" href="#node" title="Permanent link">&para;</a></h3>

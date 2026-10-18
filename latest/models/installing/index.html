@@ -3092,7 +3092,7 @@
 <ol>
 <li>Open <strong>Registries</strong> from the sidebar (under <strong>Configuration</strong>).</li>
 <li>Click <strong>Add model</strong>, then <strong>Browse Hugging Face →</strong>.</li>
-<li><strong>Search</strong> for a model — e.g. <code>qwen</code>, <code>llama</code>, <code>phi</code> — and narrow with the <strong>Size</strong>, <strong>Sort</strong>, <strong>Engines</strong>, and task/capability filters. Only models you can run appear.</li>
+<li><strong>Search</strong> for a model — e.g. <code>qwen</code>, <code>llama</code>, <code>phi</code> — and narrow with the <strong>Size</strong>, <strong>Sort</strong>, <strong>Engines</strong>, and task/capability filters (<strong>Reasoning</strong>, <strong>Tools</strong>, <strong>MoE</strong>). Only models you can run appear.</li>
 <li><strong>Expand a card</strong> to see its variants (quantizations). Each has a <strong>fit badge</strong> against your RAM — prefer one marked <em>recommended</em> that shows <strong>fits</strong>.</li>
 <li>Click <strong>Install</strong> on the variant. In the dialog, confirm the <strong>Logical id</strong> — the short name agents and chat will use ("how agents reference it"). One is suggested; for a llama.cpp variant the quantization is appended so different quants get distinct ids.</li>
 <li>Click <strong>Download &amp; install</strong>.</li>
@@ -3101,6 +3101,10 @@
 <div class="admonition tip">
 <p class="admonition-title">Quick-add by id or URL</p>
 <p>If you already know the exact model, skip the browse dialog: in <strong>Add model → Hugging Face</strong>, paste the id or URL (for example <code>mlx-community/Qwen2.5-0.5B-Instruct-4bit</code>) and press <strong>Add</strong> to jump straight to its variants.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Mixture-of-experts models bigger than memory</p>
+<p>Cards marked <strong>MoE</strong> are mixture-of-experts models (the <strong>MoE</strong> chip shows only those). When you install the MLX variant of one that won't fit in your memory, the dialog offers <strong>Stream experts from disk</strong>, ticked for you: the model then keeps only the experts in use in memory and reads the rest from your SSD, so it can run — slower, with the same answers. You can turn it off later in the model's settings. See <a href="../engines/#moe-models-bigger-than-memory-expert-streaming">expert streaming</a>.</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Modality is detected for you</p>
@@ -3138,11 +3142,12 @@
 <p>Models registered with <strong>source <code>local-path</code></strong> are <em>not</em> copied here — they stay wherever you pointed the registration.</p>
 <p>Catalog installs also record <em>where they came from</em> (the repository and variant), so a registry export can re-download the same weights on another machine — the weights themselves are never part of an export. See <a href="../#moving-models-to-another-machine">Moving models to another machine</a>.</p>
 <h2 id="editing-a-registered-model">Editing a registered model<a class="headerlink" href="#editing-a-registered-model" title="Permanent link">&para;</a></h2>
-<p>Click a row in the <strong>Installed</strong> table (not one of its buttons) to open its settings. For a catalog install this reopens the catalog detail; for anything else it opens an editable modal. What you can change depends on the binding:</p>
+<p>Click a model's logical id in the <strong>Installed</strong> table to open its settings. For a model registered from a Hugging Face id (source <code>hf</code>) this reopens its catalog detail, with an <strong>Edit registration</strong> button for the settings; for anything else it opens the editable settings directly. What you can change depends on the binding:</p>
 <ul>
 <li><strong>Logical id</strong> and <strong>Binding</strong> are read-only. Renaming isn't an edit — register under a new logical id instead.</li>
 <li><strong>Model</strong>, <strong>Source</strong> (or <strong>Base URL</strong> for reachable endpoints), and <strong>Modality</strong> are editable.</li>
 <li>For a <strong>managed</strong> engine with a lifecycle, you can set the <strong>Idle timeout (seconds)</strong> and tick <strong>Keep warm (never auto-evict)</strong> to keep the model resident.</li>
+<li>For an <strong>MLX chat</strong> model, <strong>Stream experts from disk</strong> turns <a href="../engines/#moe-models-bigger-than-memory-expert-streaming">expert streaming</a> on or off, and <strong>Expert cache (GB)</strong> sizes its memory cache (blank means half your memory, less the model's core). Models that stream show a <strong>streams experts</strong> badge in the table.</li>
 <li>For a <strong>reachable</strong> endpoint, you can edit the <strong>Credential</strong> and a <strong>Params (JSON)</strong> block.</li>
 </ul>
 <h2 id="deleting-a-model">Deleting a model<a class="headerlink" href="#deleting-a-model" title="Permanent link">&para;</a></h2>

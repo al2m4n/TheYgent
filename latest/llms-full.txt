@@ -4093,7 +4093,7 @@ The catalog browses Hugging Face and downloads straight into your inference plan
 
 1. Open **Registries** from the sidebar (under **Configuration**).
 2. Click **Add model**, then **Browse Hugging Face →**.
-3. **Search** for a model — e.g. `qwen`, `llama`, `phi` — and narrow with the **Size**, **Sort**, **Engines**, and task/capability filters. Only models you can run appear.
+3. **Search** for a model — e.g. `qwen`, `llama`, `phi` — and narrow with the **Size**, **Sort**, **Engines**, and task/capability filters (**Reasoning**, **Tools**, **MoE**). Only models you can run appear.
 4. **Expand a card** to see its variants (quantizations). Each has a **fit badge** against your RAM — prefer one marked *recommended* that shows **fits**.
 5. Click **Install** on the variant. In the dialog, confirm the **Logical id** — the short name agents and chat will use ("how agents reference it"). One is suggested; for a llama.cpp variant the quantization is appended so different quants get distinct ids.
 6. Click **Download & install**.
@@ -4102,6 +4102,9 @@ The download appears in the notification center (bottom-right) with a progress b
 
 !!! tip "Quick-add by id or URL"
     If you already know the exact model, skip the browse dialog: in **Add model → Hugging Face**, paste the id or URL (for example `mlx-community/Qwen2.5-0.5B-Instruct-4bit`) and press **Add** to jump straight to its variants.
+
+!!! tip "Mixture-of-experts models bigger than memory"
+    Cards marked **MoE** are mixture-of-experts models (the **MoE** chip shows only those). When you install the MLX variant of one that won't fit in your memory, the dialog offers **Stream experts from disk**, ticked for you: the model then keeps only the experts in use in memory and reads the rest from your SSD, so it can run — slower, with the same answers. You can turn it off later in the model's settings. See [expert streaming](engines.md#moe-models-bigger-than-memory-expert-streaming).
 
 !!! note "Modality is detected for you"
     A catalog install sets the model's modality from the repository's declared task — a vision model registers as `vision`, an embeddings model as `embeddings`, and so on — so the right server spawns automatically on first use. You don't pick it by hand.
@@ -4150,11 +4153,12 @@ Catalog installs also record *where they came from* (the repository and variant)
 
 ## Editing a registered model
 
-Click a row in the **Installed** table (not one of its buttons) to open its settings. For a catalog install this reopens the catalog detail; for anything else it opens an editable modal. What you can change depends on the binding:
+Click a model's logical id in the **Installed** table to open its settings. For a model registered from a Hugging Face id (source `hf`) this reopens its catalog detail, with an **Edit registration** button for the settings; for anything else it opens the editable settings directly. What you can change depends on the binding:
 
 - **Logical id** and **Binding** are read-only. Renaming isn't an edit — register under a new logical id instead.
 - **Model**, **Source** (or **Base URL** for reachable endpoints), and **Modality** are editable.
 - For a **managed** engine with a lifecycle, you can set the **Idle timeout (seconds)** and tick **Keep warm (never auto-evict)** to keep the model resident.
+- For an **MLX chat** model, **Stream experts from disk** turns [expert streaming](engines.md#moe-models-bigger-than-memory-expert-streaming) on or off, and **Expert cache (GB)** sizes its memory cache (blank means half your memory, less the model's core). Models that stream show a **streams experts** badge in the table.
 - For a **reachable** endpoint, you can edit the **Credential** and a **Params (JSON)** block.
 
 ## Deleting a model
@@ -4336,6 +4340,50 @@ Under the `mlx` binding, the modalities map to distinct server programs:
 - **Image generation** — a wrapper around `mflux-generate` (see the binaries note below).
 
 MLX does **not** serve embeddings or speech-to-text — use llama.cpp (embeddings) and whisper.cpp (transcription) for those, on the same machine.
+
+### MoE models bigger than memory (expert streaming)
+
+A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
+
+It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:
+
+- **When installing**: the catalog marks mixture-of-experts models **MoE**, and for an MLX variant that won't fit, the install dialog offers **Stream experts from disk**, already ticked. See [Installing local models](installing.md).
+- **Later**: in **Registries**, open the model and tick **Stream experts from disk** in its settings; **Expert cache (GB)** sets the cache size. Untick it to load the model fully again.
+- **Through the API**, with these registration `params`:
+
+| Setting (`params` key) | Default | Effect |
+|---|---|---|
+| `streamExperts` | `false` | `true` serves the model with its experts streamed from disk. |
+| `expertCacheGb` | Half your machine's memory, less the part of the model that stays loaded | How much memory the expert cache may use. Requires `streamExperts: true`. |
+
+For example, registering a model through the inference plane's API:
+
+```bash
+curl -X PUT http://127.0.0.1:8081/admin/models/big-moe \
+  -H 'Content-Type: application/json' \
+  -d '{"binding": "mlx", "source": "hf", "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+       "params": {"streamExperts": true, "expertCacheGb": 8}}'
+```
+
+Like the llama.cpp launch settings, these configure the engine when it starts and are never sent with a request. A value that isn't `true`/`false` or a positive number, `expertCacheGb` without `streamExperts`, or either setting on anything but an MLX chat model is refused when you register it (`422 invalid_binding`).
+
+What to expect, measured with `Qwen3.6-35B-A3B-4bit` (20 GB) on a 36 GB Apple Silicon Mac, generating 128 tokens:
+
+| How it runs | Memory used | Speed |
+|---|---|---|
+| Fully loaded (streaming off) | 19.7 GB | 53 tokens/s |
+| Streaming, every expert in the cache | 20 GB | 34 tokens/s |
+| Streaming, 4 GB expert cache, experts read from the SSD | 5.7 GB | 9 tokens/s |
+| Streaming, smallest cache, every expert read from the SSD | 1.8 GB | 4 tokens/s |
+
+Speed depends mostly on how many of the experts a reply needs are already in the cache, then on your SSD.
+
+!!! warning "Limits of expert streaming"
+    - **Only for models that don't fit.** A model that fits in memory is always faster fully loaded.
+    - **MoE models in MLX format only**, on Apple Silicon, for chat. A model the feature can't stream — one without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX — is refused when its engine starts, and the model's engine log says why.
+    - **Long prompts are slow from a cold disk.** Processing a long prompt touches nearly every expert, so the first reply to a long prompt can take several seconds per 2,000 tokens before the cache warms up.
+    - **Parallel requests** use more distinct experts at once, so the cache helps less.
+    - LoRA adapters aren't supported with streaming.
 
 ## vLLM
 
@@ -7327,6 +7375,7 @@ Each engine binary is resolved from `PATH` by default; set the matching variable
 | `THEYGENT_LLAMACPP_BIN` | `llama-server` (chat, embeddings, vision) |
 | `THEYGENT_WHISPERCPP_BIN` | `whisper-server` (speech-to-text) |
 | `THEYGENT_MLX_BIN` | `mlx_lm.server` (chat, Apple Silicon) |
+| `THEYGENT_MLX_PYTHON` | The Python that mlx-lm is installed in, for [expert streaming](../models/engines.md#moe-models-bigger-than-memory-expert-streaming). Found from `mlx_lm.server` when unset; set it if that fails. |
 | `THEYGENT_MLX_VLM_BIN` | `mlx_vlm.server` (vision, Apple Silicon) |
 | `THEYGENT_MLX_AUDIO_BIN` | `mlx_audio.server` (text-to-speech, Apple Silicon) |
 | `THEYGENT_SDCPP_BIN` | `sd-cli` (image generation) |
@@ -7463,6 +7512,10 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
+### Expert streaming
+
+Running a [mixture-of-experts](#mixture-of-experts-moe) model on MLX with its experts left on disk: each layer reads only the experts its router picks, and recently used ones stay in a memory cache. It lets a model bigger than memory run, with exactly the answers the fully loaded model gives, at lower speed. Off by default; turned on per model. See [Engines](../models/engines.md#moe-models-bigger-than-memory-expert-streaming).
+
 ### Gateway key
 
 A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See [Set up Claude Code](../ai-gateway/setup.md).
@@ -7510,6 +7563,10 @@ The name you give a model when you register it (for example `triage-fast`) and t
 ### MCP (Model Context Protocol)
 
 An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+
+### Mixture of experts (MoE)
+
+A model design that splits most of a model's weights into many small "experts" and uses only a few of them for each token, chosen by a small router in every layer — Qwen3.6-35B-A3B has 35 billion parameters but uses about 3 billion per token (the "A3B"). It computes like a small model but needs the memory of a large one, unless its experts are [streamed](#expert-streaming). The catalog marks these models **MoE**.
 
 ### Modality
 
@@ -7698,7 +7755,13 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Cause.** The variant's estimated memory need exceeds a safe fraction of your RAM. The fit badge warns before you install.
 
-**Fix.** Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant `recommended` — the largest that comfortably fits. See [Installing local models](../models/installing.md).
+**Fix.** Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant `recommended` — the largest that comfortably fits. If the card is marked **MoE** and you're on an Apple Silicon Mac, the MLX variant can run anyway with **Stream experts from disk** (offered in the install dialog). See [Installing local models](../models/installing.md).
+
+### A model with expert streaming won't start, or is slow
+
+**Cause.** Expert streaming works only for mixture-of-experts chat models in MLX format, and is refused when its engine starts for anything else — a model without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX. The reason is in the model's engine log. When it does run, its speed depends on how many of the experts a reply needs are already in its cache, then on your SSD.
+
+**Fix.** Open the model's **Logs** to read the refusal; for a model that can't stream, untick **Stream experts from disk** in its settings. If a streamed model is slow, give it a bigger **Expert cache (GB)**, and expect the first reply to a long prompt to be slow from a cold disk. If the model fits in memory, it's faster with streaming off. See [expert streaming](../models/engines.md#moe-models-bigger-than-memory-expert-streaming).
 
 ### `logical_id_exists` (409) when installing from the catalog
 

@@ -3067,6 +3067,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-model-with-expert-streaming-wont-start-or-is-slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model with expert streaming won't start, or is slow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#logical_id_exists-409-when-installing-from-the-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3796,6 +3807,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-model-with-expert-streaming-wont-start-or-is-slow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A model with expert streaming won't start, or is slow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#logical_id_exists-409-when-installing-from-the-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4377,7 +4399,10 @@
 <p><strong>Fix.</strong> Use a model registered for the right modality, or fix the base URL. Hosted APIs usually need a trailing <code>/v1</code>. See <a href="../../models/remote/">Remote models</a>.</p>
 <h3 id="a-model-download-shows-a-too-large-fit-badge-or-loads-slowly-fails">A model download shows a "too large" fit badge, or loads slowly / fails<a class="headerlink" href="#a-model-download-shows-a-too-large-fit-badge-or-loads-slowly-fails" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> The variant's estimated memory need exceeds a safe fraction of your RAM. The fit badge warns before you install.</p>
-<p><strong>Fix.</strong> Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant <code>recommended</code> — the largest that comfortably fits. See <a href="../../models/installing/">Installing local models</a>.</p>
+<p><strong>Fix.</strong> Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant <code>recommended</code> — the largest that comfortably fits. If the card is marked <strong>MoE</strong> and you're on an Apple Silicon Mac, the MLX variant can run anyway with <strong>Stream experts from disk</strong> (offered in the install dialog). See <a href="../../models/installing/">Installing local models</a>.</p>
+<h3 id="a-model-with-expert-streaming-wont-start-or-is-slow">A model with expert streaming won't start, or is slow<a class="headerlink" href="#a-model-with-expert-streaming-wont-start-or-is-slow" title="Permanent link">&para;</a></h3>
+<p><strong>Cause.</strong> Expert streaming works only for mixture-of-experts chat models in MLX format, and is refused when its engine starts for anything else — a model without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX. The reason is in the model's engine log. When it does run, its speed depends on how many of the experts a reply needs are already in its cache, then on your SSD.</p>
+<p><strong>Fix.</strong> Open the model's <strong>Logs</strong> to read the refusal; for a model that can't stream, untick <strong>Stream experts from disk</strong> in its settings. If a streamed model is slow, give it a bigger <strong>Expert cache (GB)</strong>, and expect the first reply to a long prompt to be slow from a cold disk. If the model fits in memory, it's faster with streaming off. See <a href="../../models/engines/#moe-models-bigger-than-memory-expert-streaming">expert streaming</a>.</p>
 <h3 id="logical_id_exists-409-when-installing-from-the-catalog"><code>logical_id_exists</code> (409) when installing from the catalog<a class="headerlink" href="#logical_id_exists-409-when-installing-from-the-catalog" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> You chose a logical id that's already registered.</p>
 <p><strong>Fix.</strong> Pick a different logical id in the install dialog, or delete the existing registration first.</p>

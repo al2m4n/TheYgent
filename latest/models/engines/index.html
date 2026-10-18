@@ -2067,6 +2067,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="MLX">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#moe-models-bigger-than-memory-expert-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MoE models bigger than memory (expert streaming)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3096,6 +3113,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="MLX">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#moe-models-bigger-than-memory-expert-streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MoE models bigger than memory (expert streaming)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3278,6 +3312,85 @@
 <li><strong>Image generation</strong> — a wrapper around <code>mflux-generate</code> (see the binaries note below).</li>
 </ul>
 <p>MLX does <strong>not</strong> serve embeddings or speech-to-text — use llama.cpp (embeddings) and whisper.cpp (transcription) for those, on the same machine.</p>
+<h3 id="moe-models-bigger-than-memory-expert-streaming">MoE models bigger than memory (expert streaming)<a class="headerlink" href="#moe-models-bigger-than-memory-expert-streaming" title="Permanent link">&para;</a></h3>
+<p>A <strong>mixture-of-experts</strong> (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With <strong>expert streaming</strong>, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.</p>
+<p>It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:</p>
+<ul>
+<li><strong>When installing</strong>: the catalog marks mixture-of-experts models <strong>MoE</strong>, and for an MLX variant that won't fit, the install dialog offers <strong>Stream experts from disk</strong>, already ticked. See <a href="../installing/">Installing local models</a>.</li>
+<li><strong>Later</strong>: in <strong>Registries</strong>, open the model and tick <strong>Stream experts from disk</strong> in its settings; <strong>Expert cache (GB)</strong> sets the cache size. Untick it to load the model fully again.</li>
+<li><strong>Through the API</strong>, with these registration <code>params</code>:</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Setting (<code>params</code> key)</th>
+<th>Default</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>streamExperts</code></td>
+<td><code>false</code></td>
+<td><code>true</code> serves the model with its experts streamed from disk.</td>
+</tr>
+<tr>
+<td><code>expertCacheGb</code></td>
+<td>Half your machine's memory, less the part of the model that stays loaded</td>
+<td>How much memory the expert cache may use. Requires <code>streamExperts: true</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>For example, registering a model through the inference plane's API:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>http://127.0.0.1:8081/admin/models/big-moe<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;binding&quot;: &quot;mlx&quot;, &quot;source&quot;: &quot;hf&quot;, &quot;model&quot;: &quot;mlx-community/Qwen3.6-35B-A3B-4bit&quot;,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s1">       &quot;params&quot;: {&quot;streamExperts&quot;: true, &quot;expertCacheGb&quot;: 8}}&#39;</span>
+</code></pre></div>
+<p>Like the llama.cpp launch settings, these configure the engine when it starts and are never sent with a request. A value that isn't <code>true</code>/<code>false</code> or a positive number, <code>expertCacheGb</code> without <code>streamExperts</code>, or either setting on anything but an MLX chat model is refused when you register it (<code>422 invalid_binding</code>).</p>
+<p>What to expect, measured with <code>Qwen3.6-35B-A3B-4bit</code> (20 GB) on a 36 GB Apple Silicon Mac, generating 128 tokens:</p>
+<table>
+<thead>
+<tr>
+<th>How it runs</th>
+<th>Memory used</th>
+<th>Speed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fully loaded (streaming off)</td>
+<td>19.7 GB</td>
+<td>53 tokens/s</td>
+</tr>
+<tr>
+<td>Streaming, every expert in the cache</td>
+<td>20 GB</td>
+<td>34 tokens/s</td>
+</tr>
+<tr>
+<td>Streaming, 4 GB expert cache, experts read from the SSD</td>
+<td>5.7 GB</td>
+<td>9 tokens/s</td>
+</tr>
+<tr>
+<td>Streaming, smallest cache, every expert read from the SSD</td>
+<td>1.8 GB</td>
+<td>4 tokens/s</td>
+</tr>
+</tbody>
+</table>
+<p>Speed depends mostly on how many of the experts a reply needs are already in the cache, then on your SSD.</p>
+<div class="admonition warning">
+<p class="admonition-title">Limits of expert streaming</p>
+<ul>
+<li><strong>Only for models that don't fit.</strong> A model that fits in memory is always faster fully loaded.</li>
+<li><strong>MoE models in MLX format only</strong>, on Apple Silicon, for chat. A model the feature can't stream — one without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX — is refused when its engine starts, and the model's engine log says why.</li>
+<li><strong>Long prompts are slow from a cold disk.</strong> Processing a long prompt touches nearly every expert, so the first reply to a long prompt can take several seconds per 2,000 tokens before the cache warms up.</li>
+<li><strong>Parallel requests</strong> use more distinct experts at once, so the cache helps less.</li>
+<li>LoRA adapters aren't supported with streaming.</li>
+</ul>
+</div>
 <h2 id="vllm">vLLM<a class="headerlink" href="#vllm" title="Permanent link">&para;</a></h2>
 <p><strong>vLLM</strong> targets <strong>NVIDIA/CUDA GPU hosts</strong> and is built for high-throughput serving. In this build it is <strong>experimental and unverified</strong>: the <code>vllm</code> binding exists and targets chat, but it has not been confirmed on the maintainers' hardware, and it is deliberately left out of the automatic engine install.</p>
 <div class="admonition warning">
@@ -3357,7 +3470,7 @@
   Resident --&gt; Resident: more calls (stays warm)</code></pre>
 <h2 id="installing-the-engine-binaries">Installing the engine binaries<a class="headerlink" href="#installing-the-engine-binaries" title="Permanent link">&para;</a></h2>
 <p>The engines are separate programs. On macOS, one target installs the managed set:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>make<span class="w"> </span>engines
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>make<span class="w"> </span>engines
 </code></pre></div>
 <div class="tabbed-set tabbed-alternate" data-tabs="1:3"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><input id="__tabbed_1_3" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">Apple Silicon Mac</label><label for="__tabbed_1_2">Linux / other</label><label for="__tabbed_1_3">NVIDIA GPU host</label></div>
 <div class="tabbed-content">
@@ -3376,7 +3489,7 @@
 <p>TheYgent launches and supervises these binaries but never builds or downloads them — that part is on you (or on <code>make engines</code>).</p>
 <h2 id="checking-whats-ready">Checking what's ready<a class="headerlink" href="#checking-whats-ready" title="Permanent link">&para;</a></h2>
 <p>Which engines and modalities your machine can actually run is reported by the inference plane's readiness endpoint. Every (engine, modality) <strong>slot</strong> shows separately — a chat slot as the bare engine name (<code>llamacpp</code>, <code>mlx</code>), a non-chat slot as <code>engine:modality</code> (<code>mlx:vision</code>, <code>llamacpp:audio.transcription</code>) — and a not-ready slot carries a reason with an install hint:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>http://localhost:8081/readyz
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>http://localhost:8081/readyz
 </code></pre></div>
 <p>The service stays "ready" as long as <strong>any</strong> engine is available, so a Mac without CUDA still serves llama.cpp and MLX happily. The catalog's engine filters mirror this — it only offers models for slots that are ready.</p>
 <h2 id="related-pages">Related pages<a class="headerlink" href="#related-pages" title="Permanent link">&para;</a></h2>
