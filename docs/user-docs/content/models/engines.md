@@ -57,6 +57,16 @@ Under the `mlx` binding, the modalities map to distinct server programs:
 
 MLX does **not** serve embeddings or speech-to-text — use llama.cpp (embeddings) and whisper.cpp (transcription) for those, on the same machine.
 
+### MLX launch settings
+
+`mlx_lm.server` keeps the processed state of recent prompts and reuses the one whose start matches a new request, so an agent's next step processes only what's new since its last call. On a 35B model that's the difference between about 0.9 seconds and 2–3 seconds before the first token of each step.
+
+| Setting (`params` key) | Default | Effect |
+|---|---|---|
+| `promptCacheSize` | `10` | How many prompt states the engine keeps for reuse. Raise it when one model serves several agents or concurrent runs; each state takes memory (about 0.1 GB for a 1,500-token prompt on a 35B model). |
+
+Like the other launch settings it applies when the engine starts, is never sent with a request, and is refused at registration (`422 invalid_binding`) unless it's a positive integer on an MLX chat model.
+
 ### MoE models bigger than memory (expert streaming)
 
 A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.

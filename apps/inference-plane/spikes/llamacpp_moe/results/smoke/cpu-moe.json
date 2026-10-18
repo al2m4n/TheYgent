@@ -1,0 +1,20 @@
+{
+  "label": "smoke-cpu-moe",
+  "model": "/Users/al2m4n/.theygent/inference/models/unsloth_Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+  "flags": [
+    "--cpu-moe"
+  ],
+  "file_gb": 2.5,
+  "cached_before": 1.0,
+  "cached_after": 1.0,
+  "load_seconds": 1.0,
+  "request_seconds": 0.8,
+  "prompt_tokens": 25,
+  "prompt_tps": 277.25,
+  "decode_tokens": 32,
+  "decode_tps": 46.58,
+  "peak_rss_gb": 3.24,
+  "peak_footprint_gb": 0.71,
+  "model_buffers_mib": {},
+  "text": "A mixture-of-experts (MoE) model routes tokens to different specialized expert subnetworks based on the content or context of the input. Each token is"
+}

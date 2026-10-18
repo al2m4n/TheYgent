@@ -316,10 +316,15 @@ LLAMACPP_LAUNCH_FLAGS: dict[str, str] = {
 #: (``mlx_expert_stream``); ``expertCacheGb`` sizes the GPU cache of experts it keeps, which
 #: otherwise takes half the machine's memory less the model's dense part.
 MLX_STREAM_PARAMS: tuple[str, ...] = ("streamExperts", "expertCacheGb")
+#: MLX chat launch settings → the ``mlx_lm.server`` flag each becomes (the expert-streaming server
+#: passes them through to it). ``promptCacheSize`` is how many prompt states the server keeps for
+#: reuse; a model serving several agents or concurrent runs can outgrow mlx-lm's default of 10,
+#: and each request then reprocesses its whole prompt.
+MLX_LAUNCH_FLAGS: dict[str, str] = {"promptCacheSize": "--prompt-cache-size"}
 #: Registration params that configure the engine process rather than a request — the gateway
 #: never forwards them as generation params.
 LAUNCH_PARAMS: frozenset[str] = frozenset(
-    {"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS, *MLX_STREAM_PARAMS}
+    {"pooling", "mmproj", *LLAMACPP_LAUNCH_FLAGS, *MLX_STREAM_PARAMS, *MLX_LAUNCH_FLAGS}
 )
 #: The modalities llama-server itself serves; the launch settings apply to these only.
 _LLAMA_SERVER_MODALITIES = ("chat", "vision", "embeddings")
@@ -342,6 +347,8 @@ def launch_params_defect(binding: object) -> str | None:
     modality = getattr(binding, "modality", None)
     if defect := _mlx_stream_defect(params, engine, modality):
         return defect
+    if defect := _mlx_server_defect(params, engine, modality):
+        return defect
     present = [k for k in LLAMACPP_LAUNCH_FLAGS if k in params]
     if not present:
         return None
@@ -355,6 +362,31 @@ def launch_params_defect(binding: object) -> str | None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             return f"launch setting {key!r} must be a positive integer, got {value!r}"
     return None
+
+
+def _mlx_server_defect(params: dict, engine: object, modality: object) -> str | None:
+    present = [k for k in MLX_LAUNCH_FLAGS if k in params]
+    if not present:
+        return None
+    if engine != "mlx" or modality != "chat":
+        return (
+            f"launch settings {present} apply to mlx chat bindings only "
+            f"(this is {engine} {modality})"
+        )
+    for key in present:
+        value = params[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return f"launch setting {key!r} must be a positive integer, got {value!r}"
+    return None
+
+
+def mlx_launch_flags(binding: ManagedBinding) -> list[str]:
+    """The ``mlx_lm.server`` flags a registration's MLX launch settings become."""
+    flags: list[str] = []
+    for key, flag in MLX_LAUNCH_FLAGS.items():
+        if key in binding.params:
+            flags += [flag, str(binding.params[key])]
+    return flags
 
 
 def _mlx_stream_defect(params: dict, engine: object, modality: object) -> str | None:
@@ -955,12 +987,20 @@ class MlxLauncher:
         assert self._command is not None
         # mlx_lm.server takes the model id/path directly; for local-path it is the
         # model dir. Unified memory => no GPU/VRAM flags (that's vLLM's concern).
-        serve = ["--model", binding.model, "--host", "127.0.0.1", "--port", str(port)]
-        if not mlx_streams_experts(binding):
-            return [*self._command, *serve]
         if defect := launch_params_defect(binding):
             # Registration refuses these; one that arrived another way (an import) fails here.
             raise RuntimeError(defect)
+        serve = [
+            "--model",
+            binding.model,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            *mlx_launch_flags(binding),
+        ]
+        if not mlx_streams_experts(binding):
+            return [*self._command, *serve]
         # The expert-streaming server is mlx_lm.server with its loader swapped, so it runs in
         # mlx-lm's own interpreter, by file path; -I keeps this package's directory off its path.
         command = [resolve_mlx_python(self._command), "-I", str(EXPERT_STREAM_SERVER), *serve]

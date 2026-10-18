@@ -1,0 +1,21 @@
+{
+  "label": "smoke-gpu",
+  "model": "/Users/al2m4n/.theygent/inference/models/unsloth_Qwen3-4B-Instruct-2507-GGUF/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+  "flags": [],
+  "file_gb": 2.5,
+  "cached_before": 1.0,
+  "cached_after": 1.0,
+  "load_seconds": 1.0,
+  "request_seconds": 0.5,
+  "prompt_tokens": 25,
+  "prompt_tps": 263.97,
+  "decode_tokens": 16,
+  "decode_tps": 39.86,
+  "peak_rss_gb": 3.24,
+  "peak_footprint_gb": 0.72,
+  "model_buffers_mib": {
+    "CPU_Mapped": 304.28,
+    "MTL0_Mapped": 2375.91
+  },
+  "text": "A mixture-of-experts (MoE) model routes tokens to different specialized expert"
+}

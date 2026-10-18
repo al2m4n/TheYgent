@@ -1,0 +1,55 @@
+{
+  "label": "plane-qwen3-0.6b",
+  "base": "http://127.0.0.1:18081/v1",
+  "model": "agent-small",
+  "calls": [
+    {
+      "run": 1,
+      "step": 1,
+      "prompt_tokens": 921,
+      "cached_tokens": 0,
+      "ttft_s": 1.586,
+      "total_s": 1.859
+    },
+    {
+      "run": 1,
+      "step": 2,
+      "prompt_tokens": 1220,
+      "cached_tokens": 921,
+      "ttft_s": 0.202,
+      "total_s": 0.493
+    },
+    {
+      "run": 1,
+      "step": 3,
+      "prompt_tokens": 1520,
+      "cached_tokens": 1220,
+      "ttft_s": 0.206,
+      "total_s": 0.512
+    },
+    {
+      "run": 2,
+      "step": 1,
+      "prompt_tokens": 923,
+      "cached_tokens": 892,
+      "ttft_s": 0.113,
+      "total_s": 0.383
+    },
+    {
+      "run": 2,
+      "step": 2,
+      "prompt_tokens": 1222,
+      "cached_tokens": 923,
+      "ttft_s": 0.2,
+      "total_s": 0.489
+    },
+    {
+      "run": 2,
+      "step": 3,
+      "prompt_tokens": 1522,
+      "cached_tokens": 1222,
+      "ttft_s": 0.207,
+      "total_s": 0.512
+    }
+  ]
+}

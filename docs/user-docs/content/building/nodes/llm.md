@@ -54,13 +54,16 @@ The **Model parameters** section edits the generation params stored on the bindi
 | Stop | comma-separated | Sequences that end generation immediately. |
 | Presence penalty | −2–2 | Nudges the model toward new topics. |
 | Frequency penalty | −2–2 | Reduces word-for-word repetition. |
-| Seed | integer | Best-effort determinism for reproducible runs. |
+| Seed | integer | Best-effort determinism for reproducible runs. On MLX, see the note below. |
 | Reasoning | on / off | Turns the model's hidden thinking phase on or off. Leave unset for the model's default. |
 | Reasoning effort | low / medium / high | How much a reasoning model thinks before answering. |
 | Tool choice | auto / none / required | Shown only if the model advertises tool-calling. |
 | JSON / structured output | text / json_object | Shown only if the model advertises structured output. `json_object` asks for valid JSON. |
 
 Each field has a **?** help tooltip. The last two are **capability-gated** — the editor hides them unless the model reports it supports them, so you never set a switch the model will ignore.
+
+!!! note "Seed and prompt reuse on MLX"
+    A local MLX model reuses an agent's earlier prompt from one step to the next, so each step processes only what's new. A request with a **Seed** is handled on its own path, which on hybrid models such as Qwen3.5 and Qwen3.6 turns that reuse off: every step reprocesses its whole prompt. Measured on Qwen3.6-35B-A3B, a tool step's wait for the first token went from about 0.9 seconds to 2.5–3 seconds. Leave **Seed** unset for agents on these models unless you need reproducible runs.
 
 The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`. A local model (llama.cpp, MLX) also receives the effort as the chat-template variable `chat_template_kwargs.reasoning_effort`, which is where templates such as gpt-oss read it; a model reached by URL receives only the `reasoning_effort` field.
 
