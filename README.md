@@ -73,6 +73,10 @@ sent it there.
   choose — routes work to cheaper Claude models and, in shares you set and measure first, to
   open models you run yourself. Per-session timelines explain every decision.
 
+- **An MCP server for coding agents** — connect Claude Code, Codex or OpenCode and they can
+  offload work to your local models, run and build TheYgent agents, and index and search your
+  docs and code (`make mcp-setup` prints the setup).
+
 ## Architecture at a glance
 
 Two planes, four process types, one topology everywhere:
@@ -128,6 +132,7 @@ The full contributor docs live in [docs/dev-docs](docs/dev-docs/README.md):
 | [Durable execution](docs/dev-docs/durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [Inference plane](docs/dev-docs/inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
 | [AI gateway](docs/dev-docs/ai-gateway.md) | The Claude Code proxy: pass-through, identity, the routing policy, local models and trials, records, the admin surface |
+| [MCP server](docs/dev-docs/mcp-server.md) | TheYgent as tools for coding agents: the tools, auth with personal API keys, local-file indexing |
 | [Interface](docs/dev-docs/interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [IR and packages](docs/dev-docs/ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [Deployment](docs/dev-docs/deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |

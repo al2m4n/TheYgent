@@ -60,6 +60,8 @@ graph LR
 
 - The **AI gateway** sits between your team's Claude Code and its models to cut what it costs: it records what each exchange cost and what routing would save, then — when you choose — routes work to cheaper Claude models, and to models you run yourself in the shares you set. See [AI Gateway](ai-gateway/index.md).
 
+- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — TheYgent as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use TheYgent from coding agents](coding-agents/index.md).
+
 The [architecture page](concepts/index.md) explains the split and exactly where each kind of data lives.
 
 ## Where to next
@@ -71,3 +73,4 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 | Build, test, and publish your first agent | [First agent](getting-started/first-agent.md) |
 | Understand agents, graphs, runs, and versioning | [Concepts](concepts/index.md) |
 | Look up what every node does | [Node reference](building/nodes/index.md) |
+| Use TheYgent from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |

@@ -100,6 +100,19 @@ Claude Code *at* the gateway.
 | `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | Where the gateway reaches [local models](../ai-gateway/local-models.md): the requests a local dial sends there, trials and local shadow runs — the same variable and default as the control plane's. **Must include the `/v1` suffix.** When nothing answers there, those requests go to the Anthropic API. |
 | `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS` | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated browser origins allowed to call the gateway's admin surface — the interface's Settings tab. Add the interface's origin if you serve it elsewhere. |
 
+## MCP server (coding agents)
+
+The [MCP server](../coding-agents/index.md) that coding agents start reads these from the
+environment the coding tool launches it with.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `THEYGENT_API_KEY` | unset | A personal API key (`tyk_…`, from the profile menu → **API keys**). Required by the agent, run, sample and retrieval tools; the model tools work without it. |
+| `THEYGENT_CONTROL_PLANE_URL` | `http://127.0.0.1:8080` | The control plane the agent, run and retrieval tools call. |
+| `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | The inference plane the model tools call directly. **Must include the `/v1` suffix.** |
+| `THEYGENT_MCP_DEFAULT_MODEL` | the first chat model | The logical model id `ask_model` uses when the coding agent names none. |
+| `THEYGENT_MCP_RUN_TIMEOUT_S` | `600` | Seconds an agent run or a model call may take before the tool reports a timeout. |
+
 ## Interface (build-time)
 
 The web app reads these at build time (Vite `VITE_*` variables). Change them only if you moved a service off its default address.

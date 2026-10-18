@@ -37,7 +37,7 @@ repos:
       # `|| true` to make it a hard gate later. ──
       - id: ty
         name: ty type-check (non-blocking — CI hedge)
-        entry: bash -c 'uv run --frozen ty check apps/inference-plane apps/control-plane apps/worker apps/ai-gateway/src apps/ai-gateway/tests packages/ir packages/gateway-client || true'
+        entry: bash -c 'uv run --frozen ty check apps/inference-plane apps/control-plane apps/worker apps/ai-gateway/src apps/ai-gateway/tests apps/mcp-server packages/ir packages/gateway-client || true'
         language: system
         types_or: [python, pyi]
         pass_filenames: false

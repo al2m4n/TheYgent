@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Give Your Coding Agent Your Local Models: TheYgent as an MCP Server | TheYgent Blog</title>
+    <meta name="description" content="TheYgent 1.2 ships an MCP server: Claude Code, Codex, and OpenCode can hand files to your local models without reading them, run and build your agents, and search your docs and code." />
+    <link rel="canonical" href="https://theygent.ai/blog/coding-agents-local-models-mcp/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/blog/coding-agents-local-models-mcp/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Give Your Coding Agent Your Local Models: TheYgent as an MCP Server | TheYgent Blog" />
+    <meta property="og:description" content="TheYgent 1.2 ships an MCP server: Claude Code, Codex, and OpenCode can hand files to your local models without reading them, run and build your agents, and search your docs and code." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:published_time" content="2026-10-19" />
+    <meta property="article:author" content="Arman Bahlakeh" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Give Your Coding Agent Your Local Models: TheYgent as an MCP Server | TheYgent Blog" />
+    <meta name="twitter:description" content="TheYgent 1.2 ships an MCP server: Claude Code, Codex, and OpenCode can hand files to your local models without reading them, run and build your agents, and search your docs and code." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BlogPosting",
+            "@id": "https://theygent.ai/blog/coding-agents-local-models-mcp/#article",
+            "headline": "Give Your Coding Agent Your Local Models: TheYgent as an MCP Server",
+            "description": "TheYgent 1.2 ships an MCP server: Claude Code, Codex, and OpenCode can hand files to your local models without reading them, run and build your agents, and search your docs and code.",
+            "datePublished": "2026-10-19",
+            "dateModified": "2026-10-19",
+            "inLanguage": "en",
+            "wordCount": 846,
+            "author": {
+              "@type": "Person",
+              "name": "Arman Bahlakeh"
+            },
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "mainEntityOfPage": "https://theygent.ai/blog/coding-agents-local-models-mcp/",
+            "isPartOf": {
+              "@id": "https://theygent.ai/blog/#blog"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/blog/coding-agents-local-models-mcp/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Blog",
+                "item": "https://theygent.ai/blog/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Give Your Coding Agent Your Local Models: TheYgent as an MCP Server",
+                "item": "https://theygent.ai/blog/coding-agents-local-models-mcp/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <article aria-labelledby="page-h">
+        <header class="page-hero">
+          <div class="wrap">
+            <nav class="crumbs mono" aria-label="Breadcrumb">
+              <ol>
+                <li><a href="/">TheYgent</a></li>
+                <li><a href="/blog/">Blog</a></li>
+                <li><span aria-current="page">Coding Agents over MCP</span></li>
+              </ol>
+            </nav>
+            <p class="eyebrow mono"><i class="dia"></i>Engineering · <time datetime="2026-10-19">October 19, 2026</time> · 4 min read</p>
+            <h1 id="page-h">Give Your Coding Agent Your Local Models: TheYgent as an MCP Server</h1>
+            <p class="lede">TheYgent 1.2 ships an MCP server: Claude Code, Codex, and OpenCode can hand files to your local models without reading them, run and build your agents, and search your docs and code.</p>
+            <p class="checked mono">By Arman Bahlakeh</p>
+          </div>
+        </header>
+
+        <div class="band page-section">
+          <div class="wrap prose post-body">
+<p>A coding agent spends most of its effort reading. It reads logs to find the one failing line, docs to find the one setting, and source files to find the one function. All of that reading goes through the agent's own model and fills its context window, even when a much smaller model could have done the reading and reported back.</p>
+<p>TheYgent 1.2 ships an <strong>MCP server</strong>. Add it to Claude Code, Codex, or OpenCode, and the coding agent gets the platform as tools: the models on your machine, the agents you built, and retrieval over your documents and code. This post covers what that gives a coding agent and how the pieces fit.</p>
+<h2 id="four-jobs">Four jobs a coding agent can hand off</h2>
+<p><strong>Offload to a local model.</strong> <code>ask_model</code> sends a prompt to a model on your TheYgent inference plane and returns the answer. Use it for summaries, commit messages, release-note drafts, classification, extraction, and second opinions. The useful part is <code>files</code>. The coding agent names a log or a document, and the MCP server reads the file itself and sends it to the local model. Only the answer comes back. A build log the coding agent never reads never enters its context, and never reaches its provider.</p>
+<p><strong>Run the agents you built.</strong> Anything published on the canvas, such as a router, a PII firewall, or a review loop, is one <code>run_agent</code> call away. The run is an ordinary TheYgent run, on your own models and tools, with its full trace on the Runs page.</p>
+<p><strong>Build new agents.</strong> A coding agent is good at writing structured documents, and a TheYgent agent is one JSON document. The server hands it an authoring guide generated from the same node registry the runtime uses. It also gives it <code>validate_agent</code>, which applies the publishing rules locally, and <code>run_graph</code>, which test-runs a document without saving it. Ask for a commit-title agent and the coding agent writes it, tests it on two examples, and publishes it. The agent then opens in the visual editor like any other.</p>
+<p><strong>Search your docs and code.</strong> <code>add_rag_files</code> takes files, folders, or globs such as <code>docs/**/*.md</code>. It skips hidden, dependency, and build directories, and uploads everything else into a retrieval source embedded by your own model. Source code now indexes as plain text alongside PDFs and office documents. Each file is named by its path in the project, so two <code>index.ts</code> files stay two documents. <code>search_rag</code> then answers with the same hybrid semantic and keyword retrieval that agents use.</p>
+<h2 id="what-it-looks-like">What it looks like</h2>
+<p>These came from end-to-end runs on a Mac. The test stack used a deliberately tiny chat model (Qwen3-0.6B on MLX) and nomic-embed-text on llama.cpp.</p>
+<ul>
+<li>We indexed the MCP server's own source folder plus the developer docs, 21 files, with one <code>add_rag_files</code> call. They were embedded and searchable about nine seconds later. A question about how directories are walked came back with the right function as the top passage.</li>
+<li>A commit-title agent was built, validated, test-run, and published entirely through tools. It then ran from Claude Code by name.</li>
+<li>For a reasoning model, <code>think: false</code> turns thinking off per call. The same commit-title prompt took 16 generated tokens instead of 417.</li>
+<li>Claude Code was asked to have the local model list the errors in an 800-line log. It passed the log as <code>files</code>, never read it, and got back both errors.</li>
+</ul>
+<p>A model this small is right about what is in a file more often than about its details. Pick the model for the job. A 4B or larger local model is a better default for summaries you'll act on.</p>
+<h2 id="what-goes-where">What goes where</h2>
+<p>The MCP server runs on your machine, launched by the coding tool over stdio, and holds no state. It is a client of TheYgent's two planes, just like the web interface. Model calls go straight to the inference plane and never touch the control plane. Agent runs, retrieval, and samples go to the control plane with a personal API key, which acts with your role. Nothing new is exposed. The server uses the same documented endpoints the interface does.</p>
+<p>Your coding agent's own model still sees whatever the agent reads and whatever a tool returns. The MCP server changes what the agent has to read.</p>
+<h2 id="connect-it">Connect it</h2>
+<p>With TheYgent running and a personal API key created (profile menu, <strong>API keys → Create</strong>), run <code>make mcp-setup</code> in your checkout. It prints the configuration for Claude Code, Codex, and OpenCode with your path filled in. For Claude Code:</p>
+<pre><code class="language-bash">claude mcp add theygent --scope user -e 'THEYGENT_API_KEY=tyk_…your key' \
+  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp
+</code></pre>
+<p>Then ask for outcomes in plain words: <em>"have TheYgent's local model summarize the failures in build.log"</em> or <em>"index docs/ in TheYgent and tell me how auth is configured"</em>. A line in your <code>CLAUDE.md</code> or <code>AGENTS.md</code> saying when to prefer the local model turns that into a habit. The docs have a snippet.</p>
+<h2 id="try-it">Try it</h2>
+<ul>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/TheYgent">github.com/al2m4n/TheYgent</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.theygent.ai/latest/coding-agents/">connecting coding agents</a> and <a href="https://docs.theygent.ai/latest/coding-agents/tools/">tools &amp; recipes</a></li>
+<li><strong>Overview:</strong> <a href="/coding-agents/">the MCP server for coding agents</a></li>
+</ul>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/coding-agents/">MCP Server for Coding Agents</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

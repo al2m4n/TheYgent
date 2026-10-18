@@ -62,8 +62,15 @@ const STATUS_TONE: Record<RagSourceStatus, Tone> = {
 
 const KIND_TONE: Record<RagSourceKind, Tone> = { upload: "violet", crawl: "cyan" };
 
-// The document formats the server-side extractor accepts for an upload source.
-const UPLOAD_ACCEPT = ".pdf,.docx,.pptx,.xlsx,.md,.txt,.html,.csv,.json,.epub";
+// The document formats the server-side extractor accepts for an upload source: documents, plus
+// source code and config, which index as plain text.
+const UPLOAD_ACCEPT = [
+  ".pdf,.docx,.pptx,.xlsx,.xls,.md,.markdown,.txt,.text,.rst,.html,.htm,.csv,.json,.xml,.epub",
+  ".py,.pyi,.js,.jsx,.mjs,.cjs,.ts,.tsx,.go,.rs,.java,.kt,.kts,.swift,.c,.h,.cc,.cpp,.hpp,.cs",
+  ".rb,.php,.scala,.dart,.lua,.r,.jl,.ex,.exs,.erl,.clj,.hs,.ml,.zig,.vue,.svelte,.css,.scss",
+  ".sass,.less,.sh,.bash,.zsh,.fish,.ps1,.sql,.graphql,.gql,.proto,.tf,.hcl,.yaml,.yml,.toml",
+  ".ini,.cfg,.conf,.gradle,.cmake,.mk",
+].join(",");
 const UPLOAD_EXTENSIONS = new Set(UPLOAD_ACCEPT.split(","));
 
 /** Split dropped/picked files into uploadable vs rejected-by-extension. The `accept` attribute
