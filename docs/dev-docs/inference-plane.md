@@ -133,12 +133,13 @@ Spawned engine stdout goes to a temp file, not a pipe (a long-lived server nobod
 
 ## Catalog, download, and capability detection
 
-The `CatalogProvider` protocol (`list`/`get`/`install_plan`) normalizes discovery into `CatalogEntry`/`CatalogVariant`/`InstallPlan` types; providers return plans and never perform side effects — the `Downloader` executes them. The built-in Hugging Face provider:
+The `CatalogProvider` protocol (`list`/`get`/`install_plan`) normalizes discovery into `CatalogEntry`/`CatalogVariant`/`InstallPlan` types; providers return plans and never perform side effects — the `Downloader` executes them. `POST /admin/catalog/install` may carry registration `params` (a named extension of the install request): the route checks them with `launch_params_defect` against the binding the download will register, refusing a defect with `422 invalid_binding` before any byte is fetched, and `InstallPlan.params` lands them on that binding — how the install dialog turns on `streamExperts`. The built-in Hugging Face provider:
 
 - lists per engine library (MLX-format repos for `mlx`, GGUF for `llamacpp`; vLLM is deliberately absent until proven), filtered to engines whose launchers are actually ready — the catalog never surfaces a model that can't run here;
 - maps the repo's `pipeline_tag` to a modality (e.g. `image-text-to-text` → `vision`, `text-to-speech` → `audio.speech`), because modality is a property of the *model*, not the engine — this is what makes the manager spawn the right server for an installed model with no user input;
 - computes conservative RAM fit badges (`fits`/`tight`/`too-large`) sized against available memory — on Apple Silicon, unified memory RAM *is* the budget;
 - surfaces browse-time capability hints (reasoning, tool calling, vision, max context) using the *same* pure detectors in `capabilities.py` as the post-install live probe, so a hint and a probe can never disagree by construction;
+- marks mixture-of-experts entries (`CatalogEntry.moe`, a named additive extension like the capability hints) with `detect_moe`: Hugging Face's `expand=config` subset carries no MoE flag, so any one of an expert-count key (`num_experts`, `num_experts_per_tok`, …), a model type or architecture naming MoE or a MoE-only family (Mixtral, DeepSeek V2+, gpt-oss, Llama 4, …), or an `-A3B`-style active-parameter size in the repo name suffices — the hint that lets the interface offer expert streaming;
 - refuses text-to-image variants that are one **component** of a model rather than a model (`CatalogVariant.unusableReason`, `UninstallableVariant` → `422 incomplete_weights`), so a denoiser published without its VAE and text encoder is never downloaded.
 
 ### Complete diffusion checkpoints

@@ -30,6 +30,7 @@ from theygent_ir import Modality
 
 from theygent_inference_plane.capabilities import (
     chat_template_from_config,
+    detect_moe,
     detect_vision,
     template_implies_reasoning,
     template_implies_tools,
@@ -166,6 +167,11 @@ class CatalogEntry(_Wire):
     tool_calling: bool = False
     vision: bool = False
     max_context: int | None = None
+    #: A mixture-of-experts model (expert-count config keys, a MoE model type or architecture, or
+    #: an active-parameter size in the name). On MLX such a model can run with its experts
+    #: streamed from disk when it does not fit in memory. A named additive extension of the
+    #: normalized CatalogEntry seam, like the capability hints above.
+    moe: bool = False
     installed: bool = False  # already in the local registry (cross-referenced by the route)
     installed_as: str | None = None  # the logical id it's installed under, if any
     variants: list[CatalogVariant] = Field(
@@ -185,6 +191,9 @@ class InstallPlan(_Wire):
     modality: Modality = "chat"
     filename: str | None = None  # specific gguf for llamacpp; None ⇒ whole repo (mlx)
     total_bytes: int | None = None  # for the progress denominator
+    #: Registration params for the installed binding (the install request's own, e.g.
+    #: ``streamExperts``), checked like a manual registration's before the download starts.
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 # The ``list`` method name (the provider seam) shadows the builtin inside the class body, so route
@@ -389,8 +398,15 @@ def _apply_hf_capabilities(entry: CatalogEntry, mi: Any) -> None:
         ctx = gguf.get("context_length")
         if isinstance(ctx, int) and ctx > 0:
             entry.max_context = ctx
+    # The repo name alone can say MoE ("…-30B-A3B"), so this hint needs no expanded metadata.
+    entry.moe = detect_moe(
+        name=entry.ref,
+        architectures=architectures,
+        model_type=model_type,
+        config_keys=config_keys,
+    )
     if template is None and not architectures and not config_keys:
-        return  # nothing to derive from — leave defaults
+        return  # nothing else to derive from — leave defaults
     entry.reasoning = template_implies_reasoning(template)
     entry.tool_calling = template_implies_tools(template)
     entry.vision = detect_vision(

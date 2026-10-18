@@ -526,3 +526,207 @@ describe("catalog api client", () => {
     expect(post?.body).toMatchObject({ repo: expect.any(String), logicalId: "qwen-fast" });
   });
 });
+
+describe("Mixture-of-experts and expert streaming", () => {
+  const base = LIST.entries[0];
+  const MOE_ENTRY = {
+    ...base,
+    ref: "mlx-community/Qwen3.6-35B-A3B-4bit",
+    title: "Qwen3.6-35B-A3B-4bit",
+    engines: ["mlx"],
+    moe: true,
+  };
+  const MOE_DETAIL = {
+    ...MOE_ENTRY,
+    variants: [
+      {
+        id: "",
+        label: "4bit",
+        engine: "mlx",
+        modality: "chat",
+        filename: null,
+        sizeBytes: 20 * GB,
+        fit: "too-large",
+        recommended: false,
+        quality: "balanced",
+        fitReason: "~24 GB needed · 16 GB RAM",
+      },
+    ],
+  };
+
+  function moeMock() {
+    const calls: { path: string; method: string; body?: Record<string, unknown> }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        const body = init?.body ? JSON.parse(init.body as string) : undefined;
+        const path = pathOf(url);
+        calls.push({ path, method, body });
+        if (path === "/admin/catalog/models")
+          return jsonResponse({
+            engines: ["mlx", "llamacpp"],
+            entries: [MOE_ENTRY, { ...base, moe: false }],
+          });
+        if (path.startsWith("/admin/catalog/models/")) return jsonResponse(MOE_DETAIL);
+        if (path === "/admin/catalog/install" && method === "POST")
+          return jsonResponse({
+            id: "dl-1",
+            logicalId: body?.logicalId,
+            repo: body?.repo,
+            engine: "mlx",
+            status: "downloading",
+            doneBytes: 0,
+            totalBytes: 20 * GB,
+            error: null,
+          });
+        return jsonResponse({ downloads: [] });
+      }),
+    );
+    return calls;
+  }
+
+  it("badges MoE models and the MoE chip filters to them", async () => {
+    moeMock();
+    renderBrowse();
+    await screen.findByText("Qwen3.6-35B-A3B-4bit");
+    expect(screen.getByText("Qwen2.5-7B-Instruct-GGUF")).toBeInTheDocument();
+    expect(screen.getByTitle(/mixture of experts/)).toBeInTheDocument(); // the card's MoE badge
+
+    fireEvent.click(screen.getByRole("button", { name: "MoE" }));
+    await waitFor(() =>
+      expect(screen.queryByText("Qwen2.5-7B-Instruct-GGUF")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("Qwen3.6-35B-A3B-4bit")).toBeInTheDocument();
+  });
+
+  it("offers expert streaming, pre-ticked, for an MLX MoE variant that won't fit", async () => {
+    const calls = moeMock();
+    renderBrowse();
+    fireEvent.click(await screen.findByRole("button", { name: /Qwen3\.6-35B-A3B-4bit/ }));
+    await screen.findByText("4bit");
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    await screen.findByText("Install model");
+    expect(screen.getByText(/with expert streaming it can still run/)).toBeInTheDocument();
+    const streaming = screen.getByRole("checkbox", { name: "Stream experts from disk" });
+    expect(streaming).toBeChecked();
+
+    fireEvent.click(screen.getByRole("button", { name: /Download & install/ }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/admin/catalog/install")).toBe(true));
+    const install = calls.find((c) => c.path === "/admin/catalog/install");
+    expect(install?.body?.params).toEqual({ streamExperts: true });
+  });
+
+  it("installs without streaming params when the box is cleared", async () => {
+    const calls = moeMock();
+    renderBrowse();
+    fireEvent.click(await screen.findByRole("button", { name: /Qwen3\.6-35B-A3B-4bit/ }));
+    await screen.findByText("4bit");
+    fireEvent.click(screen.getByRole("button", { name: "Install" }));
+    await screen.findByText("Install model");
+    fireEvent.click(screen.getByRole("checkbox", { name: "Stream experts from disk" }));
+    fireEvent.click(screen.getByRole("button", { name: /Download & install/ }));
+    await waitFor(() => expect(calls.some((c) => c.path === "/admin/catalog/install")).toBe(true));
+    expect(calls.find((c) => c.path === "/admin/catalog/install")?.body?.params).toBeUndefined();
+  });
+
+  it("model settings turn streaming on and off and size the cache", async () => {
+    const puts: Record<string, unknown>[] = [];
+    let binding: Record<string, unknown> = {
+      binding: "mlx",
+      source: "local-path",
+      model: "/models/qwen36",
+      modality: "chat",
+      params: { temperature: 0.2 },
+      lifecycle: { keepWarm: false, idleTimeoutSec: 900, priority: 0 },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = pathOf(url);
+        if (path === "/admin/models")
+          return jsonResponse({ models: [{ logicalId: "big", binding }] });
+        if (path === "/admin/models/big" && init?.method === "PUT") {
+          binding = JSON.parse(init.body as string);
+          puts.push(binding);
+          return jsonResponse({ logicalId: "big", binding });
+        }
+        if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+        return jsonResponse({ downloads: [] });
+      }),
+    );
+    renderRegistries();
+    fireEvent.click(await screen.findByRole("button", { name: "big" }));
+    const streaming = await screen.findByRole("checkbox", { name: "Stream experts from disk" });
+    expect(streaming).not.toBeChecked();
+    fireEvent.click(streaming);
+    fireEvent.change(screen.getByPlaceholderText("auto"), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0].params).toEqual({ temperature: 0.2, streamExperts: true, expertCacheGb: 8 });
+
+    // The installed row now says so; reopening and clearing the switch drops both settings.
+    await screen.findByText("streams experts");
+    fireEvent.click(screen.getByRole("button", { name: "big" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Stream experts from disk" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1].params).toEqual({ temperature: 0.2 });
+  });
+
+  it("a hub-sourced model reaches its settings through Edit registration", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const path = pathOf(url);
+        if (path === "/admin/models")
+          return jsonResponse({
+            models: [
+              {
+                logicalId: "hub-moe",
+                binding: { binding: "mlx", source: "hf", model: MOE_ENTRY.ref, params: {} },
+              },
+            ],
+          });
+        if (path.startsWith("/admin/catalog/models/")) return jsonResponse(MOE_DETAIL);
+        if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+        return jsonResponse({ downloads: [] });
+      }),
+    );
+    renderRegistries();
+    fireEvent.click(await screen.findByRole("button", { name: "hub-moe" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Edit registration" }));
+    expect(
+      await screen.findByRole("checkbox", { name: "Stream experts from disk" }),
+    ).not.toBeChecked();
+  });
+
+  it("does not offer streaming on engines that cannot stream", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const path = pathOf(url);
+        if (path === "/admin/models")
+          return jsonResponse({
+            models: [
+              {
+                logicalId: "gguf-model",
+                binding: {
+                  binding: "llamacpp",
+                  source: "local-path",
+                  model: "/m.gguf",
+                  params: {},
+                },
+              },
+            ],
+          });
+        if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+        return jsonResponse({ downloads: [] });
+      }),
+    );
+    renderRegistries();
+    fireEvent.click(await screen.findByRole("button", { name: "gguf-model" }));
+    await screen.findByText(/Renaming isn't an edit/);
+    expect(screen.queryByRole("checkbox", { name: "Stream experts from disk" })).toBeNull();
+  });
+});

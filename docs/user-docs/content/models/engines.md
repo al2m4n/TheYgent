@@ -61,7 +61,11 @@ MLX does **not** serve embeddings or speech-to-text — use llama.cpp (embedding
 
 A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
 
-Turn it on in the model's registration `params`:
+It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:
+
+- **When installing**: the catalog marks mixture-of-experts models **MoE**, and for an MLX variant that won't fit, the install dialog offers **Stream experts from disk**, already ticked. See [Installing local models](installing.md).
+- **Later**: in **Registries**, open the model and tick **Stream experts from disk** in its settings; **Expert cache (GB)** sets the cache size. Untick it to load the model fully again.
+- **Through the API**, with these registration `params`:
 
 | Setting (`params` key) | Default | Effect |
 |---|---|---|

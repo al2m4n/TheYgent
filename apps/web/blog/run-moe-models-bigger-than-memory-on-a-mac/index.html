@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory | TheYgent Blog</title>
+    <meta name="description" content="How TheYgent’s MLX engine streams a mixture-of-experts model’s experts from the SSD, so a model that doesn’t fit in memory still runs with the same answers — and what it costs, measured." />
+    <link rel="canonical" href="https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory | TheYgent Blog" />
+    <meta property="og:description" content="How TheYgent’s MLX engine streams a mixture-of-experts model’s experts from the SSD, so a model that doesn’t fit in memory still runs with the same answers — and what it costs, measured." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:published_time" content="2026-10-18" />
+    <meta property="article:author" content="Arman Bahlakeh" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory | TheYgent Blog" />
+    <meta name="twitter:description" content="How TheYgent’s MLX engine streams a mixture-of-experts model’s experts from the SSD, so a model that doesn’t fit in memory still runs with the same answers — and what it costs, measured." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BlogPosting",
+            "@id": "https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/#article",
+            "headline": "Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory",
+            "description": "How TheYgent’s MLX engine streams a mixture-of-experts model’s experts from the SSD, so a model that doesn’t fit in memory still runs with the same answers — and what it costs, measured.",
+            "datePublished": "2026-10-18",
+            "dateModified": "2026-10-18",
+            "inLanguage": "en",
+            "wordCount": 1140,
+            "author": {
+              "@type": "Person",
+              "name": "Arman Bahlakeh"
+            },
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "mainEntityOfPage": "https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/",
+            "isPartOf": {
+              "@id": "https://theygent.ai/blog/#blog"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Blog",
+                "item": "https://theygent.ai/blog/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory",
+                "item": "https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <article aria-labelledby="page-h">
+        <header class="page-hero">
+          <div class="wrap">
+            <nav class="crumbs mono" aria-label="Breadcrumb">
+              <ol>
+                <li><a href="/">TheYgent</a></li>
+                <li><a href="/blog/">Blog</a></li>
+                <li><span aria-current="page">MoE on a Mac</span></li>
+              </ol>
+            </nav>
+            <p class="eyebrow mono"><i class="dia"></i>Engineering · <time datetime="2026-10-18">October 18, 2026</time> · 5 min read</p>
+            <h1 id="page-h">Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory</h1>
+            <p class="lede">How TheYgent’s MLX engine streams a mixture-of-experts model’s experts from the SSD, so a model that doesn’t fit in memory still runs with the same answers — and what it costs, measured.</p>
+            <p class="checked mono">By Arman Bahlakeh</p>
+          </div>
+        </header>
+
+        <div class="band page-section">
+          <div class="wrap prose post-body">
+<p>Most of the strongest open models released this year are <strong>mixtures of experts</strong>. Qwen3.6-35B-A3B, gpt-oss, DeepSeek V4, the newest Mixtral and GLM releases — they all compute like small models and need memory like big ones. On a Mac, where the GPU shares one pool of memory with everything else, that second part decides what you can run.</p>
+<p>TheYgent's MLX engine can now run a mixture-of-experts model whose weights don't fit in memory, by leaving most of it on the SSD and reading only what each token needs. The answers are the same ones the fully loaded model gives — token for token — only slower. This post explains how it works, what it costs, and what we learned measuring it.</p>
+<h2 id="what-a-mixture-of-experts-is">What a mixture of experts is</h2>
+<p>In a dense model, every token passes through every weight. Most of those weights sit in each layer's feed-forward block. A mixture-of-experts model replaces that one big block with many small ones — the <em>experts</em> — and adds a small <strong>router</strong> to every layer. For each token, the router scores all the experts and sends the token through only the best few.</p>
+<p>Qwen3.6-35B-A3B has 40 such layers with 256 experts each, and the router picks 8. The name says the rest: 35 billion parameters in total, about 3 billion <em>active</em> per token — the "A3B". You get the knowledge of a large model at the compute cost of a small one, which is why these models are fast.</p>
+<p>The catch is that different tokens pick different experts. A model never knows in advance which ones the next token will want, so normally all of them have to be in memory. A 35B mixture of experts needs the memory of a 35B model, even though each token only touches about a tenth of it.</p>
+<h2 id="leaving-the-experts-on-disk">Leaving the experts on disk</h2>
+<p>That tenth is the opening. In the 4-bit Qwen3.6-35B-A3B, the parts every token uses — attention, embeddings, the routers, the shared expert — come to 1.4 GB. The 10,240 routed experts are the other 18.1 GB, at 1.77 MB each. A token needs at most 8 of them per layer, about 566 MB in all.</p>
+<p>With <strong>expert streaming</strong> turned on, TheYgent loads only the shared part. At each mixture-of-experts layer, it waits for the router's choice, reads just those experts' bytes from the model files on disk — each expert is one contiguous slice of a stacked tensor, so a read is a plain file read — and runs MLX's own expert kernels on them. Recently used experts stay in a per-layer cache in GPU memory, so an expert the next token needs again costs nothing to fetch.</p>
+<p>Because the computation is the same kernels on the same bytes, the output doesn't change. We checked that directly: on a tiny random model, every logit is bit-identical to the fully loaded model's, and on the real 35B model, every streamed run produced the same 128 tokens as the fully loaded one.</p>
+<h2 id="what-it-costs">What it costs</h2>
+<p>Measured with Qwen3.6-35B-A3B in 4-bit (20 GB) on a 36 GB Apple Silicon Mac, generating 128 tokens:</p>
+<div class="cmp-wrap cut-card">
+<div class="cmp-scroll" tabindex="0" role="region" aria-label="Expert streaming measurements">
+<table class="cmp-table">
+<thead>
+<tr><th scope="col">How it runs</th><th scope="col">Memory used</th><th scope="col">Speed</th></tr>
+</thead>
+<tbody>
+<tr><th scope="row">Fully loaded</th><td>19.7 GB</td><td>53 tokens/s</td></tr>
+<tr><th scope="row">Streaming, every expert cached</th><td>20 GB</td><td>34 tokens/s</td></tr>
+<tr><th scope="row">Streaming, 4 GB cache, cold SSD</th><td>5.7 GB</td><td>9 tokens/s</td></tr>
+<tr><th scope="row">Streaming, smallest cache, cold SSD</th><td>1.8 GB</td><td>4 tokens/s</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+<p>So a model that needs 20 GB fully loaded answers in under 6 GB at 9 tokens a second, or under 2 GB at 4. That's slower than loading it — and if a model fits, loading it is always the better choice — but it turns "this model doesn't run here" into "this model runs here".</p>
+<h2 id="what-we-learned-measuring-it">What we learned measuring it</h2>
+<p>We built this as a measured experiment first, and a few results changed the design.</p>
+<ul>
+<li><strong>The cache matters more than the disk.</strong> A 4 GB cache holds 22% of the experts but served 75% of the lookups, because routing is skewed: some experts are far more popular than others. That alone doubled the speed over no cache.</li>
+<li><strong>Per-expert caching beats pinning whole layers.</strong> Spending a similar 3.6 GB to keep eight layers fully loaded — no streaming there at all — reached only 5 tokens a second. Caching the popular experts everywhere is worth more than removing work from a few layers.</li>
+<li><strong>Waiting for the router is cheap.</strong> Each layer has to stop and learn the router's choice before it can read anything. With every expert cached, that costs about a quarter of a millisecond per layer — real, but not the bottleneck. Misses are.</li>
+<li><strong>The cache has to be read in place.</strong> Our first cache assembled the chosen experts into a fresh array at every layer; at 100% hits that still ran at 24 tokens a second. A fixed bank of slots in GPU memory, read directly by the kernels, reached 34 — and updating a slot has to be a slice write, because an indexed write copied the whole 453 MB bank every time.</li>
+<li><strong>Rearranging the files helps only when the disk is the bottleneck.</strong> Repacking each expert into one contiguous record made cold reads 26% faster with no cache, and made no difference once the cache served most lookups. We left it out, since it would double the disk space a model takes.</li>
+</ul>
+<h2 id="the-limits">The limits</h2>
+<p>Expert streaming is for mixture-of-experts chat models in MLX format, on Apple Silicon. A dense model has nothing to stream — every token uses every weight — and a checkpoint the feature can't read is refused when its engine starts, with the reason in the engine log, rather than served wrong.</p>
+<p>The first reply to a long prompt is the slow part: processing a long prompt touches nearly every expert, so from a cold disk it can take several seconds per 2,000 tokens before the cache warms up. Several requests at once use more distinct experts, so the cache helps less. And speed depends on your SSD and on how much memory you give the cache.</p>
+<h2 id="turning-it-on">Turning it on</h2>
+<p>It's off by default and set per model. In TheYgent's Hugging Face catalog, mixture-of-experts models carry an <strong>MoE</strong> badge, and the <strong>MoE</strong> filter shows only those. When you install the MLX variant of one that won't fit your memory, the install dialog offers <strong>Stream experts from disk</strong>, already ticked. You can turn it on or off later in the model's settings, where <strong>Expert cache (GB)</strong> sizes the cache — by default, half your memory less the model's shared part. Or set it when registering a model through the API:</p>
+<pre><code class="language-bash">curl -X PUT http://localhost:8081/admin/models/big-moe \
+  -H 'Content-Type: application/json' \
+  -d '{
+    &quot;binding&quot;: &quot;mlx&quot;,
+    &quot;source&quot;: &quot;hf&quot;,
+    &quot;model&quot;: &quot;mlx-community/Qwen3.6-35B-A3B-4bit&quot;,
+    &quot;params&quot;: {&quot;streamExperts&quot;: true, &quot;expertCacheGb&quot;: 8}
+  }'
+</code></pre>
+<p>Agents don't change: they still call the model by its logical ID, and whether that model streams its experts is the inference plane's business.</p>
+<h2 id="try-it">Try it</h2>
+<ul>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/TheYgent">github.com/al2m4n/TheYgent</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.theygent.ai/latest/models/engines/#moe-models-bigger-than-memory-expert-streaming">expert streaming</a> and <a href="https://docs.theygent.ai/">the rest of the docs</a></li>
+<li><strong>On a Mac:</strong> <a href="/apple-silicon/">what runs where, and setting up</a></li>
+</ul>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
