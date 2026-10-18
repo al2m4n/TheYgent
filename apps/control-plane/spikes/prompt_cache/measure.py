@@ -100,7 +100,9 @@ QUESTIONS = [
 FALLBACK_CALLS = [("get_order", {"order_id": "A-1042"}), ("track_shipment", {"order_id": "A-1042"})]
 
 
-def stream_call(client: httpx.Client, base: str, model: str, messages, max_tokens: int) -> dict:
+def stream_call(
+    client: httpx.Client, base: str, model: str, messages, max_tokens: int, seed: int | None
+) -> dict:
     body = {
         "model": model,
         "messages": messages,
@@ -110,6 +112,7 @@ def stream_call(client: httpx.Client, base: str, model: str, messages, max_token
         "tool_choice": "auto",
         "temperature": 0,
         "max_tokens": max_tokens,
+        **({"seed": seed} if seed is not None else {}),
     }
     started = time.perf_counter()
     first = None
@@ -147,14 +150,16 @@ def stream_call(client: httpx.Client, base: str, model: str, messages, max_token
     }
 
 
-def run_agent(client: httpx.Client, base: str, model: str, question: str, max_tokens: int) -> list:
+def run_agent(
+    client: httpx.Client, base: str, model: str, question: str, max_tokens: int, seed: int | None
+) -> list:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": question},
     ]
     steps = []
     for round_index in range(3):
-        step = stream_call(client, base, model, messages, max_tokens)
+        step = stream_call(client, base, model, messages, max_tokens, seed)
         steps.append(
             {"step": round_index + 1, **{k: v for k, v in step.items() if k != "tool_calls"}}
         )
@@ -181,13 +186,16 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--max-tokens", type=int, default=48)
     parser.add_argument("--label", default="")
+    parser.add_argument("--seed", type=int, help="send this seed with every call")
     parser.add_argument("--out")
     args = parser.parse_args()
 
     with httpx.Client() as client:
         runs = []
         for run_index, question in enumerate(QUESTIONS, start=1):
-            for step in run_agent(client, args.base, args.model, question, args.max_tokens):
+            for step in run_agent(
+                client, args.base, args.model, question, args.max_tokens, args.seed
+            ):
                 row = {"run": run_index, **step}
                 runs.append(row)
                 print(json.dumps(row))

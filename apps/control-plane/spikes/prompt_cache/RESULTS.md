@@ -71,6 +71,11 @@ off (`--prompt-cache-size 0`). Each call generates up to 48 tokens.
   generates 48 tokens. Longer answers shift the balance toward generation (about 53 tokens/s for
   this model fully loaded on MLX).
 - **The prompt cache is small:** 10 sequences took 0.88 GB here.
+- **A `seed` turns reuse off entirely on this model.** The same replay with `seed: 7` on every call
+  (`results/direct-qwen3.6-35b-cache-on-seed.json`) reported 0 cached tokens on all six calls,
+  including the repeat run's system prompt, with first-token times of 2.0–3.0 s, the same as with the
+  cache off. mlx-lm serves a seeded request on its unbatched path, which saves no message-boundary
+  checkpoints, and a hybrid model's cache can't be cut back to a shared prefix.
 
 ## Conclusions
 
@@ -80,8 +85,7 @@ off (`--prompt-cache-size 0`). Each call generates up to 48 tokens.
   - mlx-lm's default of 10 cached sequences can be outgrown by many agents or concurrent runs on
     one model, which would turn reuse into misses. A `promptCacheSize` launch setting would let
     a busy model keep more.
-  - An agent that sets `seed` takes mlx-lm's unbatched path, which saves no message-boundary
-    checkpoints, so hybrid models would lose reuse. This is worth a note in the model-parameters
-    docs.
+  - An agent that sets `seed` loses all reuse on hybrid models (measured above). This is worth a
+    note in the model-parameters docs.
 - **A full agent run through the control plane wasn't done.** The replay uses the walker's own
   message helpers, so the requests have the same shapes.
