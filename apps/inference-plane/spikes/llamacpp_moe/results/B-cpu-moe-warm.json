@@ -1,0 +1,24 @@
+{
+  "label": "B-cpu-moe-warm",
+  "model": "/Users/al2m4n/.cache/huggingface/hub/models--unsloth--Qwen3.6-35B-A3B-GGUF/snapshots/a483e9e6cbd595906af30beda3187c2663a1118c/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+  "flags": [
+    "--cpu-moe"
+  ],
+  "file_gb": 22.13,
+  "cached_before": 0.962,
+  "cached_after": 1.0,
+  "load_seconds": 92.4,
+  "request_seconds": 257.3,
+  "prompt_tokens": 27,
+  "prompt_tps": 0.46,
+  "decode_tokens": 128,
+  "decode_tps": 0.64,
+  "peak_rss_gb": 24.21,
+  "peak_footprint_gb": 19.0,
+  "model_buffers_mib": {
+    "CPU_Mapped": 515.31,
+    "CPU_REPACK": 18662.0,
+    "MTL0_Mapped": 21098.65
+  },
+  "text": "Here's a thinking process:\n\n1.  **Analyze User Input:**\n   - **Topic:** Mixture-of-Experts (MoE) model routing of tokens\n   - **Format:** Three short paragraphs\n   - **Goal:** Explain the routing mechanism clearly and concisely\n\n2.  **Deconstruct the Topic (MoE Routing):**\n   - What is MoE? A neural network architecture that uses multiple \"expert\" subnetworks.\n   - How does routing work? A gating/network decides which expert(s) process each token.\n   - Key steps: Token input \u2192 Gating network computes"
+}
