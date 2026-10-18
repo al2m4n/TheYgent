@@ -10,7 +10,7 @@ The catalog browses Hugging Face and downloads straight into your inference plan
 
 1. Open **Registries** from the sidebar (under **Configuration**).
 2. Click **Add model**, then **Browse Hugging Face →**.
-3. **Search** for a model — e.g. `qwen`, `llama`, `phi` — and narrow with the **Size**, **Sort**, **Engines**, and task/capability filters. Only models you can run appear.
+3. **Search** for a model — e.g. `qwen`, `llama`, `phi` — and narrow with the **Size**, **Sort**, **Engines**, and task/capability filters (**Reasoning**, **Tools**, **MoE**). Only models you can run appear.
 4. **Expand a card** to see its variants (quantizations). Each has a **fit badge** against your RAM — prefer one marked *recommended* that shows **fits**.
 5. Click **Install** on the variant. In the dialog, confirm the **Logical id** — the short name agents and chat will use ("how agents reference it"). One is suggested; for a llama.cpp variant the quantization is appended so different quants get distinct ids.
 6. Click **Download & install**.
@@ -19,6 +19,9 @@ The download appears in the notification center (bottom-right) with a progress b
 
 !!! tip "Quick-add by id or URL"
     If you already know the exact model, skip the browse dialog: in **Add model → Hugging Face**, paste the id or URL (for example `mlx-community/Qwen2.5-0.5B-Instruct-4bit`) and press **Add** to jump straight to its variants.
+
+!!! tip "Mixture-of-experts models bigger than memory"
+    Cards marked **MoE** are mixture-of-experts models (the **MoE** chip shows only those). When you install the MLX variant of one that won't fit in your memory, the dialog offers **Stream experts from disk**, ticked for you: the model then keeps only the experts in use in memory and reads the rest from your SSD, so it can run — slower, with the same answers. You can turn it off later in the model's settings. See [expert streaming](engines.md#moe-models-bigger-than-memory-expert-streaming).
 
 !!! note "Modality is detected for you"
     A catalog install sets the model's modality from the repository's declared task — a vision model registers as `vision`, an embeddings model as `embeddings`, and so on — so the right server spawns automatically on first use. You don't pick it by hand.
@@ -67,11 +70,12 @@ Catalog installs also record *where they came from* (the repository and variant)
 
 ## Editing a registered model
 
-Click a row in the **Installed** table (not one of its buttons) to open its settings. For a catalog install this reopens the catalog detail; for anything else it opens an editable modal. What you can change depends on the binding:
+Click a model's logical id in the **Installed** table to open its settings. For a model registered from a Hugging Face id (source `hf`) this reopens its catalog detail, with an **Edit registration** button for the settings; for anything else it opens the editable settings directly. What you can change depends on the binding:
 
 - **Logical id** and **Binding** are read-only. Renaming isn't an edit — register under a new logical id instead.
 - **Model**, **Source** (or **Base URL** for reachable endpoints), and **Modality** are editable.
 - For a **managed** engine with a lifecycle, you can set the **Idle timeout (seconds)** and tick **Keep warm (never auto-evict)** to keep the model resident.
+- For an **MLX chat** model, **Stream experts from disk** turns [expert streaming](engines.md#moe-models-bigger-than-memory-expert-streaming) on or off, and **Expert cache (GB)** sizes its memory cache (blank means half your memory, less the model's core). Models that stream show a **streams experts** badge in the table.
 - For a **reachable** endpoint, you can edit the **Credential** and a **Params (JSON)** block.
 
 ## Deleting a model

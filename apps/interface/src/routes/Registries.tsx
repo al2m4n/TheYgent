@@ -10,6 +10,7 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Boxes,
   Brain,
   ChevronDown,
   ChevronUp,
@@ -357,6 +358,8 @@ function InstalledPanel() {
   // detail; everything else gets an editable settings form. Buttons inside the row keep their own
   // actions — the row handler ignores clicks that land on any button.
   const [inspectModel, setInspectModel] = useState<ModelView | null>(null);
+  // A hub-sourced row opens its catalog detail; this switches it to the registration settings.
+  const [editRegistration, setEditRegistration] = useState(false);
 
   // Filters: by engine (the model's binding — the category) and by resident/cold state, plus a
   // free-text search over the logical id + underlying model. Counts come from the full list.
@@ -520,6 +523,12 @@ function InstalledPanel() {
                             <ToneBadge tone="red">failed</ToneBadge>
                           </span>
                         )}
+                        {(m.binding.params as Record<string, unknown> | undefined)
+                          ?.streamExperts === true && (
+                          <span title="experts stream from disk (set in the model's settings)">
+                            <ToneBadge tone="violet">streams experts</ToneBadge>
+                          </span>
+                        )}
                         <span
                           className="mono max-w-[16rem] truncate text-muted-foreground"
                           title={full}
@@ -602,7 +611,7 @@ function InstalledPanel() {
         </Modal>
       )}
       {inspectModel &&
-        (inspectModel.binding.source === "hf" && inspectModel.binding.model ? (
+        (inspectModel.binding.source === "hf" && inspectModel.binding.model && !editRegistration ? (
           // A hub install: reopen the same catalog detail the browse/paste flows use — the hub ref
           // is the binding's `model`, and the entry is marked installed under this logical id.
           <Modal
@@ -611,13 +620,16 @@ function InstalledPanel() {
             onClose={() => setInspectModel(null)}
           >
             <Card className="gap-0 py-0">
-              <CardHeader className="px-4 py-2">
+              <CardHeader className="flex flex-row items-center justify-between gap-2 px-4 py-2">
                 <CardDescription
                   className="mono truncate text-[11px]"
                   title={inspectModel.binding.model}
                 >
                   {inspectModel.binding.model}
                 </CardDescription>
+                <Button variant="outline" size="sm" onClick={() => setEditRegistration(true)}>
+                  Edit registration
+                </Button>
               </CardHeader>
               <ModelDetail
                 entry={{
@@ -629,7 +641,13 @@ function InstalledPanel() {
             </Card>
           </Modal>
         ) : (
-          <RegistrationSettingsModal model={inspectModel} onClose={() => setInspectModel(null)} />
+          <RegistrationSettingsModal
+            model={inspectModel}
+            onClose={() => {
+              setInspectModel(null);
+              setEditRegistration(false);
+            }}
+          />
         ))}
       {confirmDelete && (
         <ConfirmDialog
@@ -916,6 +934,20 @@ function RegistrationSettingsModal({
     lifecycle?.idleTimeoutSec != null ? String(lifecycle.idleTimeoutSec) : "",
   );
 
+  // Expert streaming: an MLX chat model can serve a mixture-of-experts model larger than memory by
+  // reading its experts from disk (the `streamExperts` / `expertCacheGb` launch settings).
+  const storedParams = (binding.params ?? {}) as Record<string, unknown>;
+  const [streamExperts, setStreamExperts] = useState(storedParams.streamExperts === true);
+  const [expertCacheGb, setExpertCacheGb] = useState(
+    typeof storedParams.expertCacheGb === "number" ? String(storedParams.expertCacheGb) : "",
+  );
+  const streamable = binding.binding === "mlx" && (modality === "" || modality === "chat");
+  const cacheGbValue = Number(expertCacheGb);
+  const cacheGbError =
+    streamable && streamExperts && expertCacheGb.trim() && !(cacheGbValue > 0)
+      ? "must be a positive number of GB"
+      : null;
+
   // Reachable bindings pick a stored credential (a secret://NAME ref) from the user-side store.
   const { data: creds } = useQuery({
     queryKey: ["credentials"],
@@ -951,6 +983,16 @@ function RegistrationSettingsModal({
         next.params = parseParams();
       } else {
         next.source = source;
+        if (streamable) {
+          const { streamExperts: _s, expertCacheGb: _c, ...rest } = storedParams;
+          next.params = streamExperts
+            ? {
+                ...rest,
+                streamExperts: true,
+                ...(expertCacheGb.trim() ? { expertCacheGb: cacheGbValue } : {}),
+              }
+            : rest;
+        }
         if (lifecycle) {
           const idle = Number.parseInt(idleTimeout, 10);
           next.lifecycle = {
@@ -969,7 +1011,10 @@ function RegistrationSettingsModal({
     },
   });
 
-  const invalid = !modelField.trim() || (reachable && (!baseUrl.trim() || Boolean(paramsError)));
+  const invalid =
+    !modelField.trim() ||
+    (reachable && (!baseUrl.trim() || Boolean(paramsError))) ||
+    Boolean(cacheGbError);
 
   return (
     <Modal title={model.logicalId} width="max-w-2xl" onClose={onClose}>
@@ -1063,6 +1108,40 @@ function RegistrationSettingsModal({
               </label>
             </>
           )}
+          {streamable && (
+            <div className="col-span-2 space-y-2 rounded-md border border-border p-3">
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={streamExperts}
+                  onCheckedChange={(v) => setStreamExperts(v === true)}
+                  aria-label="Stream experts from disk"
+                />
+                <span>
+                  Stream experts from disk
+                  <span className="block text-[11px] leading-relaxed text-muted-foreground">
+                    For mixture-of-experts models bigger than memory: only the experts in use stay
+                    in memory and the rest are read from the SSD. Same answers, slower. A model that
+                    fits runs faster with this off.
+                  </span>
+                </span>
+              </label>
+              {streamExperts && (
+                <Field label="Expert cache (GB) — blank: half your memory, less the model's core">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.5"
+                    value={expertCacheGb}
+                    placeholder="auto"
+                    onChange={(e) => setExpertCacheGb(e.target.value)}
+                    className={cn(cacheGbError && "border-destructive")}
+                  />
+                </Field>
+              )}
+              {cacheGbError && <p className="text-[11px] text-destructive">{cacheGbError}</p>}
+            </div>
+          )}
           {reachable && (
             <div className="col-span-2">
               <Field label="Params (JSON object)">
@@ -1136,6 +1215,7 @@ export function BrowseModal({ onClose }: { onClose: () => void }) {
 const CAP_FILTERS = [
   { key: "reasoning", label: "Reasoning", icon: Brain },
   { key: "toolCalling", label: "Tools", icon: Wrench },
+  { key: "moe", label: "MoE", icon: Boxes },
 ] as const;
 type CapKey = (typeof CAP_FILTERS)[number]["key"];
 
@@ -1412,14 +1492,22 @@ function SkeletonList() {
 // render through here, so the two surfaces can never drift. The install-time probe stays
 // authoritative; `showApprox` marks browse-time values as hints it will confirm, while probe
 // results carry their own `approximate` flag.
-type CapsHints = Pick<CatalogEntry, "reasoning" | "toolCalling" | "vision" | "maxContext"> & {
+type CapsHints = Pick<
+  CatalogEntry,
+  "reasoning" | "toolCalling" | "vision" | "maxContext" | "moe"
+> & {
   structuredOutput?: boolean;
   approximate?: boolean;
 };
 
 function hasAnyCaps(caps: CapsHints): boolean {
   return Boolean(
-    caps.reasoning || caps.toolCalling || caps.structuredOutput || caps.vision || caps.maxContext,
+    caps.reasoning ||
+      caps.toolCalling ||
+      caps.structuredOutput ||
+      caps.vision ||
+      caps.maxContext ||
+      caps.moe,
   );
 }
 
@@ -1437,6 +1525,11 @@ function CapabilityBadges({
       {caps.toolCalling && <ToneBadge tone="green">tools</ToneBadge>}
       {caps.structuredOutput && <ToneBadge tone="green">structured</ToneBadge>}
       {caps.vision && <ToneBadge tone="green">vision</ToneBadge>}
+      {caps.moe && (
+        <span title="mixture of experts: only a few experts run per token">
+          <ToneBadge tone="violet">MoE</ToneBadge>
+        </span>
+      )}
       {/* Context windows are powers of two (32768 = 32k), so divide by 1024, not 1000. */}
       {caps.maxContext ? (
         <Badge variant="secondary">{`${Math.round(caps.maxContext / 1024)}k ctx`}</Badge>
@@ -1607,6 +1700,7 @@ function ModelDetail({
         <InstallDialog
           repo={ref_}
           title={data?.title ?? ref_}
+          moe={Boolean(data?.moe ?? entry.moe)}
           variant={installing}
           onClose={() => setInstalling(null)}
           onStarted={() => {
@@ -1661,12 +1755,14 @@ function VariantRow({ variant, onInstall }: { variant: CatalogVariant; onInstall
 function InstallDialog({
   repo,
   title,
+  moe = false,
   variant,
   onClose,
   onStarted,
 }: {
   repo: string;
   title: string;
+  moe?: boolean;
   variant: CatalogVariant;
   onClose: () => void;
   onStarted: () => void;
@@ -1677,6 +1773,11 @@ function InstallDialog({
     return `${base}${quant}`;
   }, [repo, title, variant]);
   const [logicalId, setLogicalId] = useState(suggested);
+  // An MLX mixture-of-experts chat model can run with its experts streamed from disk — offered
+  // (and pre-ticked) when the variant is not expected to fit, since a model that fits runs faster
+  // fully loaded.
+  const streamable = moe && variant.engine === "mlx" && (variant.modality ?? "chat") === "chat";
+  const [streamExperts, setStreamExperts] = useState(streamable && variant.fit !== "fits");
 
   const install = useMutation({
     mutationFn: () =>
@@ -1685,6 +1786,7 @@ function InstallDialog({
         engine: variant.engine,
         variantId: variant.id,
         logicalId: logicalId.trim(),
+        ...(streamable && streamExperts ? { params: { streamExperts: true } } : {}),
       }),
     onSuccess: (job) => {
       // Hand the job to the global center: a live progress card appears bottom-right and follows the
@@ -1706,8 +1808,27 @@ function InstallDialog({
         </p>
         {variant.fit === "too-large" && (
           <NoteBanner>
-            This variant likely exceeds your machine's memory. It may fail to load or run slowly.
+            {streamable
+              ? "This variant likely exceeds your machine's memory. It's a mixture-of-experts model, so with expert streaming it can still run: slower, with the same answers."
+              : "This variant likely exceeds your machine's memory. It may fail to load or run slowly."}
           </NoteBanner>
+        )}
+        {streamable && (
+          <label className="flex items-start gap-2 text-sm text-foreground">
+            <Checkbox
+              className="mt-0.5"
+              checked={streamExperts}
+              onCheckedChange={(v) => setStreamExperts(v === true)}
+              aria-label="Stream experts from disk"
+            />
+            <span>
+              Stream experts from disk
+              <span className="block text-[11px] leading-relaxed text-muted-foreground">
+                Keeps only the experts in use in memory and reads the rest from the SSD as needed.
+                Lets a model bigger than memory run; turn it off in the model's settings any time.
+              </span>
+            </span>
+          </label>
         )}
         <Field label="Logical id (how agents reference it)">
           <Input

@@ -46,10 +46,14 @@ Rules specific to `apps/inference-plane`. The repo-wide rules in the root
   (store, then env); listings return names + `hasValue`, never values. The browser writes
   the HF token directly to this plane — never proxy that write through the control plane.
 - **Model weights are downloaded here** (`/admin/catalog/*` → the in-plane downloader into
-  the local model dir) — that is the sovereignty promise made concrete. Engine *binaries*
-  are resolved (`binary.py`: env var → PATH → `python -m`) and supervised, never built or
-  bundled; a missing binary is a `/readyz` not-ready and a clean 503, never a 500 at first
-  inference.
+  the local model dir) — that is the sovereignty promise made concrete. Third-party engine
+  *binaries* are resolved (`binary.py`: env var → PATH → `python -m`) and supervised, never
+  built or bundled; a missing binary is a `/readyz` not-ready and a clean 503, never a 500 at
+  first inference. TheYgent's own engine programs ship in this package instead:
+  `image_server` (wraps diffusion CLIs) and `mlx_expert_stream` (`mlx_lm.server` with
+  experts streamed from disk). `mlx_expert_stream` runs in mlx-lm's interpreter, so it
+  imports only the stdlib, mlx, mlx-lm and mlx-lm's dependencies (numpy, huggingface_hub) —
+  never this package.
 
 ## Per-engine reality
 

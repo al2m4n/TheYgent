@@ -859,6 +859,14 @@ def create_app(
                 type_="invalid_request_error",
                 code="logical_id_exists",
             )
+        params = body.get("params") or {}
+        if not isinstance(params, dict):
+            return _openai_error(
+                "install `params` must be a JSON object of registration params",
+                status=422,
+                type_="invalid_request_error",
+                code="invalid_install",
+            )
         try:
             plan = await asyncio.to_thread(
                 catalog.install_plan, repo, engine, variant_id, logical_id
@@ -870,7 +878,20 @@ def create_app(
             )
         except CatalogError as exc:
             return _openai_error(str(exc), status=502, type_="server_error", code="catalog_error")
-        job = downloads.start(plan)
+        # The params land on the binding the finished download registers, so they are checked as
+        # a registration would check them — before any byte is fetched.
+        would_register = ManagedBinding(
+            binding=plan.engine,
+            source="local-path",
+            model=logical_id,
+            modality=plan.modality,
+            params=params,
+        )
+        if defect := launch_params_defect(would_register):
+            return _openai_error(
+                defect, status=422, type_="invalid_request_error", code="invalid_binding"
+            )
+        job = downloads.start(plan.model_copy(update={"params": params}))
         return JSONResponse(job.view(), status_code=202)
 
     @app.get("/admin/catalog/downloads")

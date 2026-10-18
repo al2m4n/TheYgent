@@ -39,8 +39,9 @@ These are the invariants a change must not break:
 | `transfer.py` | `GET /admin/export` / `POST /admin/import`: strict camelCase wire models, bindings verbatim minus runtime state, credential names only, per-model import semantics (skip / register / re-download / `weights_unavailable`) |
 | `eviction.py` | `EvictionPolicy` protocol + the count-ceiling, priority-then-LRU policy; `ResourceProbe` seam for a future byte-accounting policy |
 | `capabilities.py` | Pure, network-free capability detectors (reasoning/tool/vision/context) shared by the live probe and the catalog |
-| `binary.py` | `resolve_engine_command`: env var → `PATH` → `python -m` → not-found, resolved once at construction |
+| `binary.py` | `resolve_engine_command`: env var → `PATH` → `python -m` → not-found, resolved once at construction; `resolve_mlx_python`: the interpreter mlx-lm is installed in (`THEYGENT_MLX_PYTHON`, else the resolved `mlx_lm.server` command's `python -m` form or `#!` line), resolved at launch |
 | `image_server.py` | Bundled stdlib-only OpenAI images wrapper around one-shot CLI diffusion generators, serialized behind a lock; kills a render whose caller hangs up, and the render in flight when it is terminated. Spawned as `python -m theygent_inference_plane.image_server`, which runs the package `__init__` first — so the package root re-exports `create_app` lazily and a cold image-engine spawn never imports the app or LiteLLM (a fast-suite guard spawns the launcher's command and checks) |
+| `mlx_expert_stream.py` | Expert streaming: `mlx_lm.server` with its loader swapped so a mixture-of-experts model's routed experts stay on disk. Each MoE layer host-syncs on its router's top-k, reads only those experts' byte ranges from the safetensors files, and gathers them from a per-layer GPU slot bank (LRU, in-place slice updates; a call routing to more experts than slots is served from a compact set). Runs in mlx-lm's interpreter by file path with `-I`, so it imports only the stdlib, mlx, mlx-lm and mlx-lm's dependencies numpy and huggingface_hub (a fast-suite AST guard pins this); refuses a model it cannot stream before the server starts; exits if mlx-lm's startup load fails rather than leaving a server that never answers; `--selftest` checks streamed logits against the loaded model bit for bit |
 | `weights.py` | Stdlib GGUF header reader: is a local diffusion file a whole checkpoint or one component of one; the `IncompleteWeights` refusal and the architecture predicate the catalog spends before a download |
 | `credentials.py` | `CredentialStore` (write-only over the wire, `0600`) + `resolve_credential` for `secret://` refs |
 | `settings.py` | `SettingsStore` + `maxResident` resolution: env > stored > default, with env-pinning |
@@ -109,6 +110,8 @@ Every engine implements the same `EngineLauncher` protocol: `ready` / `not_ready
 
 **llama.cpp launch settings** are registration `params` keys (`ctxSize`, `parallel`, `batchSize`, `ubatchSize` → `-c`, `-np`, `-b`, `-ub`) — a named extension of the registration contract. Defaults: one slot, and the model's trained context (read from the GGUF header, `<architecture>.context_length`) capped at 32,768 for chat/vision; embeddings get a batch and micro-batch as large as their context (capped at 8,192), because llama-server rejects an embedding input larger than one physical batch. Registration refuses a non-integer value or a launch setting on any other engine (`422 invalid_binding`). Launch-only params (`LAUNCH_PARAMS`, including `pooling` and `mmproj`) are stripped by `merge_params`, so they never ride a request.
 
+**MLX expert streaming** is a second named extension of the registration contract: `streamExperts` (bool) and `expertCacheGb` (positive number, only with `streamExperts: true`), valid on `mlx` chat bindings only and refused otherwise (`422 invalid_binding`). They are `LAUNCH_PARAMS` too. The binding enum and the `(engine, modality)` dispatch are unchanged: `MlxLauncher` itself launches `mlx_expert_stream.py` in mlx-lm's interpreter instead of `mlx_lm.server` when `streamExperts` is true, and the handle, capability probe and OpenAI surface are mlx-lm's. Without `expertCacheGb` the server sizes the cache at half the machine's memory less the dense weights, at least top-k slots per layer and at most every expert. This is TheYgent-owned engine code, like `image_server`: the plane builds and ships it rather than resolving a third-party binary, and it depends on mlx-lm internals (`mlx_lm.server.load`, `ModelProvider.load_default`, `switch_layers.SwitchGLU`), so the server checks them at startup and fails with the mlx-lm version when one is missing. Design numbers and the rejected alternatives (a per-expert LRU of separate arrays, pinning whole layers, an expert-major repack) are in `apps/inference-plane/spikes/mlx_expert_streaming/RESULTS.md`.
+
 Dispatch is fail-closed on the exact key — reachable bindings never reach it, and a missing pair is an error, not a chat fallback:
 
 ```mermaid
@@ -130,12 +133,13 @@ Spawned engine stdout goes to a temp file, not a pipe (a long-lived server nobod
 
 ## Catalog, download, and capability detection
 
-The `CatalogProvider` protocol (`list`/`get`/`install_plan`) normalizes discovery into `CatalogEntry`/`CatalogVariant`/`InstallPlan` types; providers return plans and never perform side effects — the `Downloader` executes them. The built-in Hugging Face provider:
+The `CatalogProvider` protocol (`list`/`get`/`install_plan`) normalizes discovery into `CatalogEntry`/`CatalogVariant`/`InstallPlan` types; providers return plans and never perform side effects — the `Downloader` executes them. `POST /admin/catalog/install` may carry registration `params` (a named extension of the install request): the route checks them with `launch_params_defect` against the binding the download will register, refusing a defect with `422 invalid_binding` before any byte is fetched, and `InstallPlan.params` lands them on that binding — how the install dialog turns on `streamExperts`. The built-in Hugging Face provider:
 
 - lists per engine library (MLX-format repos for `mlx`, GGUF for `llamacpp`; vLLM is deliberately absent until proven), filtered to engines whose launchers are actually ready — the catalog never surfaces a model that can't run here;
 - maps the repo's `pipeline_tag` to a modality (e.g. `image-text-to-text` → `vision`, `text-to-speech` → `audio.speech`), because modality is a property of the *model*, not the engine — this is what makes the manager spawn the right server for an installed model with no user input;
 - computes conservative RAM fit badges (`fits`/`tight`/`too-large`) sized against available memory — on Apple Silicon, unified memory RAM *is* the budget;
 - surfaces browse-time capability hints (reasoning, tool calling, vision, max context) using the *same* pure detectors in `capabilities.py` as the post-install live probe, so a hint and a probe can never disagree by construction;
+- marks mixture-of-experts entries (`CatalogEntry.moe`, a named additive extension like the capability hints) with `detect_moe`: Hugging Face's `expand=config` subset carries no MoE flag, so any one of an expert-count key (`num_experts`, `num_experts_per_tok`, …), a model type or architecture naming MoE or a MoE-only family (Mixtral, DeepSeek V2+, gpt-oss, Llama 4, …), or an `-A3B`-style active-parameter size in the repo name suffices — the hint that lets the interface offer expert streaming;
 - refuses text-to-image variants that are one **component** of a model rather than a model (`CatalogVariant.unusableReason`, `UninstallableVariant` → `422 incomplete_weights`), so a denoiser published without its VAE and text encoder is never downloaded.
 
 ### Complete diffusion checkpoints
@@ -190,6 +194,7 @@ control plane.
 | `THEYGENT_INFERENCE_PLANE_MODEL_DIR` | Downloaded weights | `<state>/models` |
 | `THEYGENT_MAX_RESIDENT` | Pins `maxResident` (1–16) | unset |
 | `THEYGENT_CORS_ORIGINS` | Comma-separated browser origins; `""` disables | localhost dev ports |
+| `THEYGENT_MLX_PYTHON` | The interpreter mlx-lm is installed in, for expert streaming (otherwise found from the resolved `mlx_lm.server`) | unset |
 | `THEYGENT_LLAMACPP_BIN`, `THEYGENT_MLX_BIN`, `THEYGENT_MLX_VLM_BIN`, `THEYGENT_VLLM_BIN`, `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_MLX_AUDIO_BIN`, `THEYGENT_SDCPP_BIN`, `THEYGENT_MFLUX_BIN` | Explicit engine binary paths (otherwise `PATH`, then `python -m` where applicable) | unset |
 | `HF_TOKEN` | Env fallback for the reserved Hugging Face credential | unset |
 | `HUGGINGFACE_HUB_CACHE` / `HF_HOME` | Hub cache location | library default |
@@ -208,7 +213,7 @@ uv run --package theygent-inference-plane pytest
 
 The root pytest config applies `-n auto -m 'not integration'`. The suite's philosophy is "everything real except the weights": `tests/_fake_upstream.py` boots a *real* uvicorn OpenAI-compatible server on an ephemeral port, so the manager really spawns, LiteLLM really proxies HTTP, and SSE really streams — only the model is fake. `conftest.py` injects the fake launcher and a `ManualClock` and builds `create_app(enable_reaper=False, state_path=None)` so eviction and idle tests drive the reaper deterministically and all stores are in-memory.
 
-Real-engine tests are marked `@integration` and env-gated (`THEYGENT_GGUF_PATH`, `THEYGENT_MLX_MODEL`, `THEYGENT_VLLM_CUDA`, …); they must skip cleanly when prerequisites are absent:
+Real-engine tests are marked `@integration` and env-gated (`THEYGENT_GGUF_PATH`, `THEYGENT_MLX_MODEL`, `THEYGENT_MLX_STREAM_MODEL`, `THEYGENT_VLLM_CUDA`, …); they must skip cleanly when prerequisites are absent. Expert streaming's exactness check needs no model: `test_integration_mlx_expert_streaming.py` runs the server's `--selftest` on a tiny random MoE under mlx-lm's interpreter, and compares a real streamed model's reply with the fully loaded one when `THEYGENT_MLX_STREAM_MODEL` names a cached MLX MoE checkpoint:
 
 ```sh
 THEYGENT_GGUF_PATH=/path/to/model.gguf \

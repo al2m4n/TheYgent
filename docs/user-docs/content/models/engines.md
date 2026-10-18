@@ -57,6 +57,50 @@ Under the `mlx` binding, the modalities map to distinct server programs:
 
 MLX does **not** serve embeddings or speech-to-text — use llama.cpp (embeddings) and whisper.cpp (transcription) for those, on the same machine.
 
+### MoE models bigger than memory (expert streaming)
+
+A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
+
+It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:
+
+- **When installing**: the catalog marks mixture-of-experts models **MoE**, and for an MLX variant that won't fit, the install dialog offers **Stream experts from disk**, already ticked. See [Installing local models](installing.md).
+- **Later**: in **Registries**, open the model and tick **Stream experts from disk** in its settings; **Expert cache (GB)** sets the cache size. Untick it to load the model fully again.
+- **Through the API**, with these registration `params`:
+
+| Setting (`params` key) | Default | Effect |
+|---|---|---|
+| `streamExperts` | `false` | `true` serves the model with its experts streamed from disk. |
+| `expertCacheGb` | Half your machine's memory, less the part of the model that stays loaded | How much memory the expert cache may use. Requires `streamExperts: true`. |
+
+For example, registering a model through the inference plane's API:
+
+```bash
+curl -X PUT http://127.0.0.1:8081/admin/models/big-moe \
+  -H 'Content-Type: application/json' \
+  -d '{"binding": "mlx", "source": "hf", "model": "mlx-community/Qwen3.6-35B-A3B-4bit",
+       "params": {"streamExperts": true, "expertCacheGb": 8}}'
+```
+
+Like the llama.cpp launch settings, these configure the engine when it starts and are never sent with a request. A value that isn't `true`/`false` or a positive number, `expertCacheGb` without `streamExperts`, or either setting on anything but an MLX chat model is refused when you register it (`422 invalid_binding`).
+
+What to expect, measured with `Qwen3.6-35B-A3B-4bit` (20 GB) on a 36 GB Apple Silicon Mac, generating 128 tokens:
+
+| How it runs | Memory used | Speed |
+|---|---|---|
+| Fully loaded (streaming off) | 19.7 GB | 53 tokens/s |
+| Streaming, every expert in the cache | 20 GB | 34 tokens/s |
+| Streaming, 4 GB expert cache, experts read from the SSD | 5.7 GB | 9 tokens/s |
+| Streaming, smallest cache, every expert read from the SSD | 1.8 GB | 4 tokens/s |
+
+Speed depends mostly on how many of the experts a reply needs are already in the cache, then on your SSD.
+
+!!! warning "Limits of expert streaming"
+    - **Only for models that don't fit.** A model that fits in memory is always faster fully loaded.
+    - **MoE models in MLX format only**, on Apple Silicon, for chat. A model the feature can't stream — one without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX — is refused when its engine starts, and the model's engine log says why.
+    - **Long prompts are slow from a cold disk.** Processing a long prompt touches nearly every expert, so the first reply to a long prompt can take several seconds per 2,000 tokens before the cache warms up.
+    - **Parallel requests** use more distinct experts at once, so the cache helps less.
+    - LoRA adapters aren't supported with streaming.
+
 ## vLLM
 
 **vLLM** targets **NVIDIA/CUDA GPU hosts** and is built for high-throughput serving. In this build it is **experimental and unverified**: the `vllm` binding exists and targets chat, but it has not been confirmed on the maintainers' hardware, and it is deliberately left out of the automatic engine install.

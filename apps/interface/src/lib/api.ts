@@ -577,6 +577,7 @@ export interface CatalogVariant {
   id: string;
   label: string;
   engine: string;
+  modality?: string; // the task the install registers (chat unless the hub says otherwise)
   filename?: string | null;
   sizeBytes?: number | null;
   fit: Fit;
@@ -608,6 +609,9 @@ export interface CatalogEntry {
   toolCalling?: boolean;
   vision?: boolean;
   maxContext?: number | null;
+  // A mixture-of-experts model (expert-count config keys, a MoE model type, or an "-A3B"-style
+  // active-parameter size in the name). On MLX it can run with its experts streamed from disk.
+  moe?: boolean;
   installed?: boolean; // already in the local registry
   installedAs?: string | null; // the logical id it's installed under
   variants: CatalogVariant[];
@@ -2098,6 +2102,9 @@ export const api = {
     engine: string;
     variantId: string;
     logicalId: string;
+    // Registration params for the installed model (e.g. `streamExperts`), validated before the
+    // download starts.
+    params?: Record<string, unknown>;
   }) =>
     request<DownloadJob>(inferenceUrl(), "/admin/catalog/install", {
       method: "POST",

@@ -259,6 +259,7 @@ class Downloader:
                     source="local-path",
                     model=str(path),
                     modality=job.plan.modality,
+                    params=dict(job.plan.params),
                 )
             self._registry.put(job.plan.logical_id, binding)
             if self._installs is not None:

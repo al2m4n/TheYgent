@@ -96,7 +96,13 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Cause.** The variant's estimated memory need exceeds a safe fraction of your RAM. The fit badge warns before you install.
 
-**Fix.** Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant `recommended` — the largest that comfortably fits. See [Installing local models](../models/installing.md).
+**Fix.** Pick a smaller quantization variant (a lower-precision quant), or a smaller model. The catalog marks one variant `recommended` — the largest that comfortably fits. If the card is marked **MoE** and you're on an Apple Silicon Mac, the MLX variant can run anyway with **Stream experts from disk** (offered in the install dialog). See [Installing local models](../models/installing.md).
+
+### A model with expert streaming won't start, or is slow
+
+**Cause.** Expert streaming works only for mixture-of-experts chat models in MLX format, and is refused when its engine starts for anything else — a model without experts, one whose experts are a kind it doesn't read, or a checkpoint that wasn't converted for MLX. The reason is in the model's engine log. When it does run, its speed depends on how many of the experts a reply needs are already in its cache, then on your SSD.
+
+**Fix.** Open the model's **Logs** to read the refusal; for a model that can't stream, untick **Stream experts from disk** in its settings. If a streamed model is slow, give it a bigger **Expert cache (GB)**, and expect the first reply to a long prompt to be slow from a cold disk. If the model fits in memory, it's faster with streaming off. See [expert streaming](../models/engines.md#moe-models-bigger-than-memory-expert-streaming).
 
 ### `logical_id_exists` (409) when installing from the catalog
 

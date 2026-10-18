@@ -104,6 +104,14 @@
               },
               {
                 "@type": "Question",
+                "name": "Can TheYgent run a model that is bigger than my Mac memory?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, if it is a mixture-of-experts model in MLX format. With expert streaming turned on, TheYgent keeps the shared part of the model in memory and reads each layer of experts it needs from the SSD, caching the recently used ones. The answers are identical to the fully loaded model, only slower: in our measurements a 20 GB model ran at 9 tokens per second in under 6 GB of memory, against 53 fully loaded."
+                }
+              },
+              {
+                "@type": "Question",
                 "name": "Does TheYgent run on Linux too?",
                 "acceptedAnswer": {
                   "@type": "Answer",
@@ -292,6 +300,16 @@ make up                # interface on http://localhost:5174</code></pre>
             graph can also mix a local MLX model with a hosted API on another node, when you choose to.
           </p>
 
+          <h2>Models Bigger Than Your Mac&rsquo;s Memory</h2>
+          <p>
+            Many of the strongest open models are mixtures of experts: they use only a few of their experts for each
+            token, but normally need all of them in memory. On the <code>mlx</code> engine, TheYgent can stream a
+            mixture-of-experts model&rsquo;s experts from the SSD instead &mdash; the catalog marks these models
+            <strong>MoE</strong> and offers <strong>Stream experts from disk</strong> when one won&rsquo;t fit. The
+            answers are the same as the fully loaded model&rsquo;s, only slower.
+            <a class="inline-link" href="/blog/run-moe-models-bigger-than-memory-on-a-mac/">How it works, and the numbers&nbsp;&rarr;</a>
+          </p>
+
           <h2>Docker on a Mac</h2>
           <p>
             Containers on macOS can&rsquo;t reach the Apple GPU, so MLX runs on bare metal only. To use Docker Compose
@@ -330,6 +348,12 @@ make up                # interface on http://localhost:5174</code></pre>
               </p>
             </details>
             <details class="faq-item">
+              <summary><h3>Can TheYgent run a model that is bigger than my Mac memory?</h3></summary>
+              <p>
+                Yes, if it is a mixture-of-experts model in MLX format. With expert streaming turned on, TheYgent keeps the shared part of the model in memory and reads each layer of experts it needs from the SSD, caching the recently used ones. The answers are identical to the fully loaded model, only slower: in our measurements a 20 GB model ran at 9 tokens per second in under 6 GB of memory, against 53 fully loaded.
+              </p>
+            </details>
+            <details class="faq-item">
               <summary><h3>Does TheYgent run on Linux too?</h3></summary>
               <p>
                 Yes. On Linux, llama.cpp and whisper.cpp provide chat, vision, embeddings, and speech-to-text, and vLLM
@@ -355,6 +379,12 @@ make up                # interface on http://localhost:5174</code></pre>
               <h3>How It Compares</h3>
               <p>TheYgent next to Dify, n8n, Langflow, and Flowise — dated and sourced.</p>
               <span class="cap-more mono">See the comparison →</span>
+            </a>
+            <a class="cap cut-card" href="/blog/run-moe-models-bigger-than-memory-on-a-mac/">
+              <span class="cap-kicker mono"><i class="dia dia-violet"></i>blog</span>
+              <h3>MoE Models Bigger Than Memory</h3>
+              <p>Streaming a mixture of experts from the SSD: how it works and what it costs.</p>
+              <span class="cap-more mono">Read the post →</span>
             </a>
             <a class="cap cut-card" href="https://docs.theygent.ai/latest/models/engines/" rel="noopener">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>docs</span>

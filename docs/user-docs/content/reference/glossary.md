@@ -66,6 +66,10 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
+### Expert streaming
+
+Running a [mixture-of-experts](#mixture-of-experts-moe) model on MLX with its experts left on disk: each layer reads only the experts its router picks, and recently used ones stay in a memory cache. It lets a model bigger than memory run, with exactly the answers the fully loaded model gives, at lower speed. Off by default; turned on per model. See [Engines](../models/engines.md#moe-models-bigger-than-memory-expert-streaming).
+
 ### Gateway key
 
 A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See [Set up Claude Code](../ai-gateway/setup.md).
@@ -113,6 +117,10 @@ The name you give a model when you register it (for example `triage-fast`) and t
 ### MCP (Model Context Protocol)
 
 An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+
+### Mixture of experts (MoE)
+
+A model design that splits most of a model's weights into many small "experts" and uses only a few of them for each token, chosen by a small router in every layer — Qwen3.6-35B-A3B has 35 billion parameters but uses about 3 billion per token (the "A3B"). It computes like a small model but needs the memory of a large one, unless its experts are [streamed](#expert-streaming). The catalog marks these models **MoE**.
 
 ### Modality
 

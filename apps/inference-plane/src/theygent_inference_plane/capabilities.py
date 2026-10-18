@@ -16,6 +16,7 @@ redundant — the probe confirms what the catalog only guesses.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from typing import Any
 
@@ -116,6 +117,59 @@ def detect_vision(
     if any(marker in arch_text for marker in VISION_ARCH_MARKERS):
         return True
     return any(marker in _template_text(template) for marker in VISION_TEMPLATE_MARKERS)
+
+
+#: Config keys only a mixture-of-experts model carries — its routed expert count or per-token
+#: expert choice, under the names different families use.
+MOE_CONFIG_KEYS = (
+    "num_experts",
+    "num_local_experts",
+    "n_routed_experts",
+    "num_experts_per_tok",
+    "moe_intermediate_size",
+)
+#: Model types and architectures (config and GGUF spellings) of families that are always
+#: mixture-of-experts though their names do not say "moe". Every DeepSeek generation from V2 on
+#: is MoE, so its version-numbered types (``deepseek_v2`` … ``deepseek_v41``, ``DeepseekV3…``)
+#: match by prefix.
+MOE_FAMILIES = (
+    "mixtral",
+    "deepseek_v",
+    "deepseekv",
+    "deepseek2",
+    "gpt_oss",
+    "gpt-oss",
+    "gptoss",
+    "dots1",
+    "jamba",
+    "llama4",
+    "minimax",
+    "phimoe",
+    "qwen3_next",
+    "qwen3next",
+    "longcat_flash",
+)
+#: An active-parameter size in a repo name, as MoE releases spell it ("Qwen3-30B-A3B",
+#: "gemma-4-26B-A4B", "…-A2.7B").
+_ACTIVE_PARAMS = re.compile(r"(?<![a-z0-9])a\d+(?:\.\d+)?b(?![a-z0-9])")
+
+
+def detect_moe(
+    *,
+    name: str = "",
+    architectures: Iterable[str] | None = None,
+    model_type: str | None = None,
+    config_keys: Iterable[str] | None = None,
+) -> bool:
+    """True if any mixture-of-experts signal is present: an expert-count config key, a model type
+    or architecture naming MoE or a MoE-only family, or an active-parameter size in the repo name.
+    Best-effort — any single signal suffices."""
+    if any(k in set(config_keys or ()) for k in MOE_CONFIG_KEYS):
+        return True
+    arch_text = " ".join([*(architectures or []), model_type or ""]).lower()
+    if "moe" in arch_text or any(family in arch_text for family in MOE_FAMILIES):
+        return True
+    return bool(_ACTIVE_PARAMS.search(name.split("/")[-1].lower()))
 
 
 def chat_template_from_config(config: Any) -> object | None:

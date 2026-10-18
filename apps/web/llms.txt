@@ -83,6 +83,7 @@ Twelve ready-to-run agents ship with TheYgent (install from Settings → Samples
 
 ## Blog
 
+- [Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory](https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/): expert streaming on MLX — a mixture-of-experts model’s experts read from the SSD per token with a GPU cache, identical answers, measured speed and memory, and the limits
 - [Building a Local-First Agent Platform Where the Vendor Is Never in the Middle](https://theygent.ai/blog/local-first-agent-platform-architecture/): the architecture — two planes and one seam, logical model IDs, the engine manager, content-addressed agents, durable runs, and checkable privacy
 
 ## Source
