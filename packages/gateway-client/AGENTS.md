@@ -1,9 +1,31 @@
 # AGENTS.md — packages/gateway-client
 
 Rules for `packages/gateway-client` (`theygent_gateway_client`) — the one HTTP path from
-the control plane and worker to the inference plane. The repo-wide rules in the root
+the Python services to the inference plane's data plane. The repo-wide rules in the root
 [AGENTS.md](../../AGENTS.md) apply first; the design is documented in
 [docs/dev-docs/ir-and-packages.md](../../docs/dev-docs/ir-and-packages.md).
+
+## Where it sits
+
+- **Used by:** the [control plane](../../apps/control-plane/AGENTS.md) (runs, the walker's model
+  nodes, RAG embeddings, guardrail model checks), the [worker](../../apps/worker/AGENTS.md)
+  (constructed with `max_retries=0`), and the [AI gateway](../../apps/ai-gateway/AGENTS.md)'s local
+  route (also `max_retries=0`).
+- **Talks to:** the [inference plane](../../apps/inference-plane/AGENTS.md)'s `/v1/*`, with a
+  logical model id.
+
+## Map
+
+<!-- agents-map: covers=src/theygent_gateway_client -->
+<!-- agents-map: covers=tests -->
+
+| File | What it does |
+|------|--------------|
+| [`src/theygent_gateway_client/client.py`](src/theygent_gateway_client/client.py) | `GatewayClient` over the async `openai` SDK: `open_stream`, `complete`, `embed`, `transcribe`, `speak`, `generate_image`, `models`, `aclose`; chat-param cleaning |
+| [`src/theygent_gateway_client/__init__.py`](src/theygent_gateway_client/__init__.py) | Re-exports |
+| [`tests/test_chat_params.py`](tests/test_chat_params.py) | Param cleaning and chat kwargs |
+
+## Rules
 
 - **Transport-only, and it stays that way.** `GatewayClient` wraps the async OpenAI SDK
   pointed at the inference plane's `/v1/*` surface: it forwards a logical model id plus

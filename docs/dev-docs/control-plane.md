@@ -109,7 +109,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog), keys, configs and instances (`store.py`); reports, sessions and timelines (`reports.py`, totals in SQL checked against `GatewayTotals`); the fingerprint catalog (`catalog.py`). Config writes read, check and save under one transaction lock |
 | `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
-| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0022` |
+| `../../alembic/` | Async Alembic environment plus the linear migration chain `0001 → 0027` |
 
 ## HTTP surface
 
@@ -144,8 +144,8 @@ connection `hasSecret`, and the MCP hub and crawler catalog models. Lists use ke
 
 ## Postgres: schema, domain, stores
 
-One database, 34 tables in the `public` schema, owned end to end by the Alembic chain
-`0001 → 0022` (sessions were originally named `thread` — the chain replays history, and
+One database, 35 tables in the `public` schema, owned end to end by the Alembic chain
+`0001 → 0027` (sessions were originally named `thread` — the chain replays history, and
 the rename is itself a migration). By area:
 
 | Area | Tables |

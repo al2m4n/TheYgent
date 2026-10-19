@@ -138,8 +138,9 @@ The full contributor docs live in [docs/dev-docs](docs/dev-docs/README.md):
 | [Deployment](docs/dev-docs/deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |
 | [Testing](docs/dev-docs/testing.md) | Test suites, fixtures, integration tests, lint gates |
 
-Contributor rules — what must hold before a change lands — are in [AGENTS.md](AGENTS.md)
-(plus a per-app AGENTS.md in each app and package directory).
+Contributor rules — what must hold before a change lands — are in [AGENTS.md](AGENTS.md),
+which also maps every module's own `AGENTS.md` (what it does, how it connects, a file map,
+local rules).
 
 ## Getting started (development)
 

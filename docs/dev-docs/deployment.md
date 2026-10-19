@@ -138,11 +138,11 @@ Postgres pinning details worth knowing: Postgres 18 images moved the data direct
 
 `ci.yml` has three jobs:
 
-- **`fast`** (the PR gate, Ubuntu): `uv sync --locked` → ruff check + format check → ty check (*non-blocking* while the type checker is in preview) → per-package fast pytest suites (IR, inference `-m 'not integration'`, control-plane against a real ephemeral Postgres via testcontainers) → `deploy/tests`.
+- **`fast`** (the PR gate, Ubuntu): the context-file check (`.github/scripts/check_agent_docs.py`: every `AGENTS.md` stubbed, linked from the root, its links resolving, and every directory it declares fully mapped) → `uv sync --locked` → ruff check + format check → ty check (*non-blocking* while the type checker is in preview) → per-package fast pytest suites (IR, inference `-m 'not integration'`, control-plane against a real ephemeral Postgres via testcontainers) → `deploy/tests`.
 - **`frontend`**: pnpm frozen install → regenerate `@theygent/ir-types` from the Pydantic IR and fail on any diff *or* untracked generator output (the FE/BE lockstep drift guard) → biome check → build (`tsc --noEmit` + vite) → vitest.
 - **`integration`** (non-blocking, macOS): a real llama.cpp server against a small cached GGUF and a real MLX server, with Postgres built from brew (no Docker on macOS runners). Serial via `-n0` — never `-p no:xdist`, which would unregister the `-n` option the root addopts pass. A CUDA vLLM job is deliberately unwired: there is no CUDA runner, and faking it on a Mac would be a false green.
 
-Hard gates: ruff, biome, tsc, vitest, the fast pytest suites, `deploy/tests`, and the types drift guard. Everything installs with `--locked`/`--frozen-lockfile` — a stale lockfile fails loudly, never silently re-resolves. The same gates run locally as pre-commit hooks (`make hooks` once, `make lint` for a full pass), implemented as `repo: local` hooks driven through uv/pnpm so the exact workspace-pinned tool versions apply rather than a second drifting copy.
+Hard gates: the context-file check, ruff, biome, tsc, vitest, the fast pytest suites, `deploy/tests`, and the types drift guard. Everything installs with `--locked`/`--frozen-lockfile` — a stale lockfile fails loudly, never silently re-resolves. The same gates run locally as pre-commit hooks (`make hooks` once, `make lint` for a full pass), implemented as `repo: local` hooks driven through uv/pnpm so the exact workspace-pinned tool versions apply rather than a second drifting copy.
 
 ## Publish pipelines
 

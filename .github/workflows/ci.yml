@@ -35,6 +35,11 @@ jobs:
       TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v4
+      # The AGENTS.md context files: stubs, root links, relative links and anchors, and full
+      # coverage of every directory a map declares (`agents-map: covers=`). Stdlib only, so it
+      # runs before any install and fails the job in seconds.
+      - name: context files (AGENTS.md) in step with the tree
+        run: python3 .github/scripts/check_agent_docs.py
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
@@ -67,7 +72,6 @@ jobs:
   # Gates PRs touching the TS workspace: the IR type-drift guard + the interface SPA
   # (Biome · tsc · Vitest · build). The drift guard regenerates @theygent/ir-types from the
   # Pydantic IR and fails if the checked-in generated types moved — FE/BE IR stay in lockstep.
-  # The cockpit (apps/web) has been folded into the interface and removed.
   frontend:
     name: frontend (ir-types drift + interface)
     runs-on: ubuntu-latest
