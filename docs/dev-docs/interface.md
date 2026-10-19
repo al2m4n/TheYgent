@@ -106,7 +106,7 @@ See [./ir-and-packages.md](./ir-and-packages.md) for the generator's backend sid
 2. Build-time env — `VITE_CONTROL_PLANE_URL` / `VITE_INFERENCE_URL` / `VITE_AI_GATEWAY_URL`
 3. Defaults — `http://localhost:8080` (control) / `http://localhost:8081` (inference) / `http://localhost:8082` (AI gateway)
 
-Auth is `Authorization: Bearer <localStorage theygent.token || "dev-local">` in one function; swapping in real auth is a one-function change. Streaming rides fetch + `ReadableStream` rather than `EventSource` because the composer creates and streams from the same POST, needs custom headers, and needs programmatic abort.
+Auth is one function: `Authorization: Bearer <localStorage theygent.token>`, the `tys_…` session token `/auth/login` or `/auth/setup` minted (or a pasted `tyk_…` API key); no token sends no header, and a 401 `unauthorized` fires `UNAUTHORIZED_EVENT`, which returns the app to the sign-in screen. Streaming rides fetch + `ReadableStream` rather than `EventSource` because the composer creates and streams from the same POST, needs custom headers, and needs programmatic abort.
 
 The two-plane split is concrete in the browser: the SPA holds two base URLs and routes each request to the plane that owns it.
 

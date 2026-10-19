@@ -9,6 +9,58 @@ The gateway sits on a coding agent's model path (Claude Code → the Anthropic M
 mistake here breaks developers' everyday tool, leaks their code, or quietly makes every request
 more expensive. Treat every rule below as load-bearing.
 
+## What it is
+
+`apps/ai-gateway` (`theygent_ai_gateway`) is an Anthropic-Messages-compatible proxy on :8082. It
+forwards Claude Code's requests byte for byte, records what each exchange cost and what a routing
+policy would have done (observer mode), and in router mode applies that policy: a cheaper
+Anthropic model, or, in shares an admin sets, a local model on the inference plane. Personal mode
+runs on loopback with no keys; team mode authenticates developers with gateway keys from the
+control plane and reports to it. The full design is in
+[ai-gateway.md](../../docs/dev-docs/ai-gateway.md).
+
+## Where it sits
+
+- **Called by:** Claude Code (CLI, IDE, desktop) via `ANTHROPIC_BASE_URL`; the
+  [interface](../interface/AGENTS.md) on `/admin/*` only (status, the org key).
+- **Calls:** the upstream Anthropic API (`THEYGENT_AI_GATEWAY_UPSTREAM_URL`); the
+  [control plane](../control-plane/AGENTS.md)'s `/gateway/*` with a service key
+  (`THEYGENT_AI_GATEWAY_SERVICE_KEY`): config poll, heartbeat, key sync, token introspection,
+  record export (its side is [ai_gateway/](../control-plane/src/theygent_control_plane/ai_gateway/AGENTS.md));
+  the [inference plane](../inference-plane/AGENTS.md)'s `/v1/chat/completions` through
+  [packages/gateway-client](../../packages/gateway-client/AGENTS.md) for local routes and shadows.
+- **Wire contract:** `theygent_ir.gateway` in [packages/ir](../../packages/ir/AGENTS.md) — records,
+  config, key set, heartbeat, totals. Content-free by type.
+- **State (local):** `THEYGENT_AI_GATEWAY_STATE_DIR`: the JSONL request-log spool, the last known
+  good config and key set, a single-instance org key (`0600`).
+
+## Map
+
+<!-- agents-map: covers=src/theygent_ai_gateway -->
+
+All paths under [`src/theygent_ai_gateway/`](src/theygent_ai_gateway):
+
+| Module | What it does |
+|--------|--------------|
+| [`app.py`](src/theygent_ai_gateway/app.py) | `create_app` with injectable seams (`upstream_transport`, `observe`, `key_source`, `config_source`, `event_sink`); the lifespan (upstream client, key sync, config sync + heartbeat, exporter); `/healthz`, `/readyz`; the catch-all forward route |
+| [`settings.py`](src/theygent_ai_gateway/settings.py) | Every env setting, validated at startup (loopback rule, team mode needs a control plane and a service key) |
+| [`proxy.py`](src/theygent_ai_gateway/proxy.py) | The forward path: identity check, exact relay, the gateway's own refusals in Anthropic's error shape |
+| [`identity.py`](src/theygent_ai_gateway/identity.py) | Gateway keys (three ways to arrive), SHA-256 comparison, the synced key set kept on disk |
+| [`signals.py`](src/theygent_ai_gateway/signals.py), [`observe.py`](src/theygent_ai_gateway/observe.py) | What a request and a response say, parsed from copies without ever blocking or raising into the relay |
+| [`conversations.py`](src/theygent_ai_gateway/conversations.py) | Where a request sits in its conversation (cold boundaries: start, after compaction, cache expired) |
+| [`policy.py`](src/theygent_ai_gateway/policy.py), [`routing.py`](src/theygent_ai_gateway/routing.py) | The routing decision with reason codes, held per conversation segment; the `model` splice and target-refusal fallback |
+| [`local.py`](src/theygent_ai_gateway/local.py), [`translation.py`](src/theygent_ai_gateway/translation.py) | The local route: Anthropic ⇄ OpenAI translation (faithful or not at all), deadlines, fallback before commit |
+| [`shadow.py`](src/theygent_ai_gateway/shadow.py) | Shadow runs and local trials after the exchange; the daily cloud budget |
+| [`costs.py`](src/theygent_ai_gateway/costs.py), [`pricing.json`](src/theygent_ai_gateway/pricing.json), [`pricing_source.py`](src/theygent_ai_gateway/pricing_source.py) | Actual and counterfactual cost; the generated price list and its parser |
+| [`configsync.py`](src/theygent_ai_gateway/configsync.py) | The config in effect (one snapshot per exchange), last known good on disk, heartbeat |
+| [`requestlog.py`](src/theygent_ai_gateway/requestlog.py), [`report.py`](src/theygent_ai_gateway/report.py) | The JSONL spool and exporter; the local observer report (`theygent-ai-gateway report`) |
+| [`admin.py`](src/theygent_ai_gateway/admin.py), [`credentials.py`](src/theygent_ai_gateway/credentials.py) | `/admin/*` (camelCase, fail-closed) and the organization's Anthropic key |
+| [`__main__.py`](src/theygent_ai_gateway/__main__.py), [`asgi.py`](src/theygent_ai_gateway/asgi.py) | CLI (serve, `report`) and the side-effect-free ASGI module |
+| [`scripts/update_pricing.py`](scripts/update_pricing.py) | Regenerates `pricing.json` (`make ai-gateway-prices`; weekly by `.github/workflows/ai-gateway-pricing.yml`) |
+| [`spike/`](spike) | Research tooling (capture proxy, census, replay, fixture maker) and [FINDINGS.md](spike/FINDINGS.md); not product code |
+| [`PHASE1.md`](PHASE1.md), [`PHASE2.md`](PHASE2.md), [`PHASE3.md`](PHASE3.md) | Work plans |
+| [`tests/`](tests) | Fast suite against `tests/_fake_anthropic.py` and `tests/_fake_inference.py`; content-free exchange fixtures; opt-in end-to-end tests |
+
 ## The trust boundary
 
 - **The gateway lives in the user's trust domain.** It sees prompts, code and credentials. It

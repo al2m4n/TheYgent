@@ -21,7 +21,7 @@ Everything is driven by `make`:
 cp .env.example .env   # set DATABASE_URL to a reachable Postgres
 make up                # inference plane :8081 · control plane :8080 · interface :5174
 make test              # Python suites + interface vitest + deploy contract guards
-make lint              # ruff · ty · biome · tsc · ir-types drift
+make lint              # ruff · ty · biome · tsc · ir-types drift · agent docs
 ```
 
 See the [README](README.md) for engine setup (`make engines`) and the Docker/Kubernetes
@@ -38,8 +38,11 @@ The definition of done is in [AGENTS.md](AGENTS.md). In short:
    [docs/dev-docs](docs/dev-docs).
 3. New behavior lands with a test; bug fixes include a regression test.
 4. Frozen contracts are extended deliberately or not at all.
+5. The `AGENTS.md` context files covering the directories you touched stay true.
 
-Each app and package has its own `AGENTS.md` with local rules.
+Each module has its own `AGENTS.md`: what it does, how it connects to the rest, a file map, and
+local rules. The root [AGENTS.md](AGENTS.md) links them all. Read the one for the area you are
+changing before you start.
 
 ## Pull requests
 

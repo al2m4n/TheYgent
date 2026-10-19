@@ -1,7 +1,29 @@
 # AGENTS.md — web (marketing site)
 
 Rules for `apps/web`, the static marketing site for theygent.ai. The repo-wide rules in
-the root [AGENTS.md](../../AGENTS.md) apply first.
+the root [AGENTS.md](../../AGENTS.md) apply first. It is not part of the product: nothing
+imports it, and it imports nothing. Preview with `make web-up` (http://localhost:4321); see
+[README.md](README.md) for deploy setup.
+
+## Map
+
+<!-- agents-map: covers=. -->
+
+| Path | What it is |
+|------|------------|
+| [`index.html`](index.html), [`styles.css`](styles.css), [`main.js`](main.js) | The home page, the design system (tokens, faceted motif), progressive enhancement (theme, video facades, chapter seeking) |
+| [`pages.css`](pages.css) | Styles shared by every inner page (loaded after `styles.css`) |
+| [`ai-gateway/`](ai-gateway), [`apple-silicon/`](apple-silicon), [`coding-agents/`](coding-agents), [`crawlers/`](crawlers), [`private-ai/`](private-ai) | Feature landing pages, one `index.html` each |
+| [`compare/`](compare) | Comparison pages (the one place other products are named; rules below) |
+| [`templates/`](templates) | One page per shipped sample agent, mirroring `apps/control-plane/src/theygent_control_plane/samples/` |
+| [`blog/`](blog) | Long-form posts |
+| [`videos/`](videos) | Watch pages with VideoObject markup and chapter links |
+| [`sitemap.xml`](sitemap.xml), [`robots.txt`](robots.txt), [`llms.txt`](llms.txt), [`_headers`](_headers), [`404.html`](404.html), [`favicon.ico`](favicon.ico) | Indexing and hosting files; `lastmod` is stamped at deploy by `.github/scripts/web_sitemap.py` |
+| [`assets/`](assets) | Self-hosted Geist fonts, logos, images |
+| `BingSiteAuth.xml`, `2c3a1d08fc0c4282bde9e66bf199a0d2.txt` | Bing site verification and the IndexNow key file; keep |
+
+A new or renamed page also updates `sitemap.xml`, `llms.txt` and any nav that links it; a sample
+added in the control plane gets a page under `templates/`.
 
 - **No framework, no build step.** Plain HTML + CSS + a small progressive-enhancement
   `main.js`. The page must stay fully readable with JS off, and all motion respects

@@ -552,6 +552,7 @@ h3 {
 .hero::before,
 .build::before,
 .caps::before,
+.moe::before,
 .gateway::before,
 .faq::before,
 .cta-final::before {
@@ -568,6 +569,7 @@ h3 {
 .hero > *,
 .build > *,
 .caps > *,
+.moe > *,
 .gateway > *,
 .faq > *,
 .cta-final > * {
@@ -1654,6 +1656,143 @@ h3 {
   color: var(--green);
 }
 
+/* ═══════════════════════════ MOE ON A MAC ══════════════════════════════════ */
+.moe-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: clamp(28px, 4vw, 56px);
+  align-items: center;
+}
+/* the panel's rows must not widen the column past a phone's width */
+.moe-copy,
+.moe-visual {
+  min-width: 0;
+}
+.moe-points {
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 30px;
+}
+.moe-points li {
+  padding: 14px 16px 15px;
+}
+.moe-points .pt-v {
+  font-size: 0.9rem;
+}
+.moe-points .pt-k {
+  margin-bottom: 5px;
+}
+
+.moe-body {
+  padding: 14px 16px 8px;
+  font-size: 0.7rem;
+}
+/* where the experts live: a few layers of 16, routed / cached / on the SSD */
+.moe-experts {
+  padding-bottom: 14px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.moe-layer {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.moe-l {
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.moe-cells {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1fr));
+  gap: 4px;
+}
+.moe-cells i,
+.moe-legend i {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 2px;
+  border: 1px solid var(--border-2);
+  background: transparent;
+}
+.moe-cells i.c,
+.moe-legend i.c {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.moe-cells i.a,
+.moe-legend i.a {
+  background: var(--green);
+  border-color: var(--green);
+}
+.moe-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 10px 0 0 68px;
+  color: var(--text-3);
+}
+.moe-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.moe-legend i {
+  width: 9px;
+}
+
+/* the measured trade: memory against speed, one row per way of running */
+.moe-head,
+.moe-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.moe-head {
+  color: var(--text-3);
+  padding: 10px 0 8px;
+  border-bottom: 1px solid var(--border);
+}
+.moe-row {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.moe-row:last-child {
+  border-bottom: 0;
+}
+.moe-how {
+  color: var(--text-2);
+}
+.moe-how small {
+  display: block;
+  font-size: inherit;
+  color: var(--text-3);
+}
+.moe-bar {
+  display: grid;
+  gap: 4px;
+}
+.moe-bar b {
+  display: block;
+  height: 5px;
+  width: var(--w);
+  border-radius: 3px;
+  background: var(--text-3);
+}
+.moe-bar.moe-low b {
+  background: var(--green);
+}
+.moe-bar.moe-speed b {
+  background: var(--accent);
+}
+.moe-bar em {
+  font-style: normal;
+  color: var(--text-2);
+}
+
 /* ═══════════════════════════ FAQ ═══════════════════════════════════════════ */
 .faq-list {
   margin-top: 34px;
@@ -1847,7 +1986,8 @@ html.js .reveal.in {
   .build-grid,
   .qs-grid,
   .prod-grid,
-  .gw-grid {
+  .gw-grid,
+  .moe-grid {
     grid-template-columns: 1fr;
   }
   .build-visual {
@@ -1895,6 +2035,23 @@ html.js .reveal.in {
   }
   .gw-body {
     padding-inline: 14px;
+  }
+  .moe-body {
+    padding-inline: 14px;
+  }
+  .moe-layer {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 6px;
+  }
+  .moe-cells {
+    gap: 3px;
+  }
+  .moe-legend {
+    margin-left: 0;
+  }
+  .moe-head,
+  .moe-row {
+    gap: 8px;
   }
   /* three mono columns don't fit a phone — let the sheet scroll sideways rather than clip. */
   .ds-table {
