@@ -395,6 +395,35 @@ def test_the_model_calls_the_crawler_and_reads_a_budgeted_result(pg_url: str) ->
             assert call["attributes"]["crawler.max_charge_usd"] == 0.25
 
 
+def test_the_general_tool_result_cap_applies_on_top_of_the_crawler_budget(pg_url: str) -> None:
+    # The crawler trims its items to `resultChars` first; the llm's tool-result cap then applies to
+    # that text like any tool result. Both sets of facts land on the tool span.
+    with (
+        FakeApify() as fake,
+        FakeInference(
+            mode="tool_call",
+            tool_name="web_search",
+            tool_args={"query": "quiet hours bylaw"},
+            response="ok",
+        ) as inference,
+    ):
+        app = create_app(inference_base_url=inference.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            cid = _apify_connection(client, fake.base)
+            ir = capability_graph(cid)
+            llm = next(n for n in ir["nodes"] if n["id"] == "n_llm")
+            llm["config"]["maxToolResultChars"] = 120
+            body = _run(client, ir, "when do quiet hours start?")
+            assert body["status"] == "completed", body
+            tool_msg = next(m for m in _messages(inference) if m["role"] == "tool")
+            assert tool_msg["content"].startswith('{"markdown": "# Kettle valley')
+            assert "[tool result truncated: showing the first 120 of" in tool_msg["content"]
+            spans = client.get(f"/runs/{body['runId']}/trace").json()["spans"]
+            call = next(s for s in spans if (s["phase"] or "").startswith("tool.web_search"))
+            assert call["attributes"]["tool.result_truncated"] is True
+            assert call["attributes"]["crawler.actor"] == "apify/rag-web-browser"
+
+
 # ── the Crawlers browser's catalog endpoints ─────────────────────────────────
 
 
