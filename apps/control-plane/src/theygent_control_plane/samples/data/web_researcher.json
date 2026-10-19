@@ -1,0 +1,254 @@
+{
+  "id": "web-researcher",
+  "title": "Web researcher",
+  "description": "A local model that searches the web when a question needs current facts. A crawler node runs Apify's web-browser actor as a tool the model calls with one search query; the result count and the spend cap stay fixed on the node, and the model reads a trimmed result. Needs an Apify API token: after installing, set it as the secret of the sample-apify connection.",
+  "capabilities": [
+    "crawler node",
+    "web search as a model capability",
+    "per-call spend cap",
+    "result budget"
+  ],
+  "durable": false,
+  "input_example": "What did the latest Python release change?",
+  "model_slots": {
+    "local": {
+      "label": "Local model",
+      "description": "Decides when to search and answers from the pages it reads. Pick a model with tool-calling support.",
+      "keys": [
+        "researcher"
+      ]
+    }
+  },
+  "connections": [
+    {
+      "key": "apify",
+      "name": "sample-apify",
+      "kind": "http_auth",
+      "config": {
+        "baseUrl": "https://api.apify.com/v2",
+        "auth": {
+          "type": "bearer"
+        },
+        "provider": "apify"
+      }
+    }
+  ],
+  "ir": {
+    "schemaVersion": "1.0",
+    "id": "agt_sample_web_researcher",
+    "name": "sample-web-researcher",
+    "version": "1.0.0",
+    "metadata": {
+      "sample": "web-researcher"
+    },
+    "models": {
+      "researcher": {
+        "binding": "mlx",
+        "model": "your-local-model",
+        "params": {
+          "temperature": 0.0,
+          "maxTokens": 900,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    "tools": {},
+    "nodes": [
+      {
+        "id": "n_in",
+        "type": "input",
+        "kind": "boundary",
+        "label": "Question",
+        "ports": {
+          "in": [],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_llm",
+        "type": "llm",
+        "kind": "activity",
+        "label": "Research and answer",
+        "config": {
+          "model": "researcher",
+          "maxToolIterations": 4,
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a research assistant. When a question needs current or specific facts, call the web_search tool with one short search query, then answer from the pages it returns and name the URLs you used. Search again with a different query if the first results don't answer the question. If the pages still don't answer it, say so plainly instead of guessing."
+            },
+            {
+              "role": "user",
+              "content": "$in"
+            }
+          ]
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            },
+            {
+              "id": "tools",
+              "type": "any",
+              "required": false,
+              "role": "tool"
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            }
+          ]
+        }
+      },
+      {
+        "id": "web_search",
+        "type": "crawler",
+        "kind": "activity",
+        "label": "Web search (Apify)",
+        "config": {
+          "provider": "apify",
+          "actor": "apify/rag-web-browser",
+          "connection": "{connection:apify}",
+          "input": {
+            "maxResults": 3,
+            "outputFormats": [
+              "markdown"
+            ]
+          },
+          "expose": [
+            "query"
+          ],
+          "scalar": [],
+          "parameterSchema": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Search keywords, or the URL of one page to read."
+              }
+            },
+            "required": [
+              "query"
+            ]
+          },
+          "description": "Search the web and read the top three pages as Markdown. Use it for recent events and specific facts. Pass one short search query, or a URL to read that page.",
+          "limits": {
+            "timeoutSeconds": 120,
+            "maxChargeUsd": 0.05,
+            "maxItems": 3,
+            "itemLimit": 3,
+            "resultChars": 6000,
+            "fields": [
+              "searchResult",
+              "markdown"
+            ]
+          }
+        },
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any",
+              "required": false
+            }
+          ],
+          "out": [
+            {
+              "id": "out",
+              "type": "any"
+            },
+            {
+              "id": "err",
+              "type": "error"
+            },
+            {
+              "id": "use",
+              "type": "any",
+              "role": "tool"
+            }
+          ]
+        }
+      },
+      {
+        "id": "n_out",
+        "type": "output",
+        "kind": "boundary",
+        "label": "Answer",
+        "ports": {
+          "in": [
+            {
+              "id": "in",
+              "type": "any"
+            }
+          ],
+          "out": []
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_q",
+        "source": "n_in",
+        "sourceHandle": "out",
+        "target": "n_llm",
+        "targetHandle": "in",
+        "channel": "data"
+      },
+      {
+        "id": "e_cap",
+        "source": "web_search",
+        "sourceHandle": "use",
+        "target": "n_llm",
+        "targetHandle": "tools",
+        "channel": "tool"
+      },
+      {
+        "id": "e_out",
+        "source": "n_llm",
+        "sourceHandle": "out",
+        "target": "n_out",
+        "targetHandle": "in",
+        "channel": "data"
+      }
+    ],
+    "view": {
+      "nodes": {
+        "n_in": {
+          "position": {
+            "x": 0,
+            "y": 100
+          }
+        },
+        "n_llm": {
+          "position": {
+            "x": 300,
+            "y": 100
+          }
+        },
+        "web_search": {
+          "position": {
+            "x": 300,
+            "y": 300
+          }
+        },
+        "n_out": {
+          "position": {
+            "x": 600,
+            "y": 100
+          }
+        }
+      }
+    }
+  }
+}

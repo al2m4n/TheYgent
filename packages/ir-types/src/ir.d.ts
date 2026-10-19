@@ -162,11 +162,11 @@ export interface BuiltinTool {
   ref: Ref;
 }
 /**
- * An http/REST/GraphQL tool binding — the workhorse + the substrate for action tools
- * and crawler tools. ``connection`` is the id of an ``http_auth`` connection whose secret the
- * handler injects SERVER-SIDE at step time — never inline in the IR. The optional ``template``
- * names a provider request shape (e.g. ``slack.chat.postMessage``) for the small built-in action
- * set; everything else is the raw http tool config on the node.
+ * An http/REST/GraphQL tool binding — the workhorse + the substrate for action tools.
+ * ``connection`` is the id of an ``http_auth`` connection whose secret the handler injects
+ * SERVER-SIDE at step time — never inline in the IR. The optional ``template`` names a provider
+ * request shape (e.g. ``slack.chat.postMessage``) for the small built-in action set; everything
+ * else is the raw http tool config on the node.
  */
 export interface HttpTool {
   bodyTemplate?: Bodytemplate;

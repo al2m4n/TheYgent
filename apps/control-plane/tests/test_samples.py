@@ -50,7 +50,7 @@ def _slot_models(spec) -> dict[str, dict[str, str]]:  # type: ignore[no-untyped-
 
 def test_every_sample_renders_to_valid_ir() -> None:
     catalog = load_catalog()
-    assert len(catalog) == 12
+    assert len(catalog) == 13
     for spec in catalog:
         models = {
             slot: ("demo-local" if slot != "remote" else "demo-api", "llamacpp")
@@ -110,6 +110,7 @@ def test_list_samples_shape(client: TestClient) -> None:
         "voice-desk",
         "art-department",
         "handbook-qa",
+        "web-researcher",
         "editorial-loop",
         "batch-briefing",
     ]
@@ -119,6 +120,10 @@ def test_list_samples_shape(client: TestClient) -> None:
     assert set(by_id["private-sql-analyst"]["model_slots"]) == {"local", "remote"}
     transports = {c["transport"] for c in by_id["tool-belt"]["connections"]}
     assert transports == {"graphql", "openapi"}
+    # A provider-token connection is an http_auth one, with no MCP transport.
+    assert by_id["web-researcher"]["connections"] == [
+        {"key": "apify", "name": "sample-apify", "kind": "http_auth", "transport": None}
+    ]
     assert by_id["hybrid-reasoner"]["agent_id"] == "agt_sample_hybrid_reasoner"
     # The modality axis rides each slot so the UI can filter the picker.
     assert by_id["visual-inspector"]["model_slots"]["vision"]["modality"] == "vision"
@@ -266,7 +271,7 @@ def test_install_every_shipped_sample(client: TestClient) -> None:
     all_ids = [s["id"] for s in client.get("/samples").json()["samples"]]
     resp = client.post("/samples/install", json={"ids": all_ids, "models": _ALL_SLOT_MODELS})
     assert resp.status_code == 200, resp.text
-    assert [e["status"] for e in resp.json()["report"]] == ["installed"] * 12
+    assert [e["status"] for e in resp.json()["report"]] == ["installed"] * 13
     listed = client.get("/samples").json()["samples"]
     assert all(s["installed"] for s in listed)
 
@@ -274,6 +279,9 @@ def test_install_every_shipped_sample(client: TestClient) -> None:
     assert conns["sample-open-meteo"]["config"]["transport"] == "openapi"
     assert conns["sample-countries-graphql"]["config"]["transport"] == "graphql"
     assert conns["sample-crm-sqlite"]["config"]["transport"] == "stdio"
+    # The crawler sample's token connection ships without a secret — the user sets it.
+    assert conns["sample-apify"]["kind"] == "http_auth"
+    assert conns["sample-apify"]["hasSecret"] is False
 
     # Children published before their parents, so the parents' pins resolve.
     for child in ("agt_sample_briefing_worker", "agt_sample_editorial_writer"):
@@ -410,3 +418,74 @@ def test_viewer_can_browse_but_not_install(client: TestClient) -> None:
         "/samples/install", json={"ids": ["hybrid-reasoner"], "models": {}}, headers=headers
     )
     assert denied.status_code == 403
+
+
+def test_web_researcher_runs_end_to_end_against_a_fake_run_api(
+    pg_url: str, tmp_path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # Install the sample, give its connection a token (pointed at the local fake of the Apify run
+    # API), and run it: the scripted model calls web_search, reads the budgeted pages, answers.
+    from _fake_apify import FakeApify
+    from _fake_inference import FakeInference
+
+    monkeypatch.setenv("THEYGENT_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    with (
+        FakeApify() as apify,
+        FakeInference(
+            mode="tool_call",
+            tool_name="web_search",
+            tool_args={"query": "kettle valley quiet hours"},
+            response="Quiet hours run from 22:00 to 06:30 (news.example.org/quiet-hours).",
+        ) as inference,
+    ):
+        app = create_app(inference_base_url=inference.v1_url, database_url=pg_url)
+        with TestClient(app) as client:
+            resp = client.post(
+                "/samples/install",
+                json={
+                    "ids": ["web-researcher"],
+                    "models": {"local": {"logical_id": "demo-local", "binding": "mlx"}},
+                },
+            )
+            assert resp.status_code == 200, resp.text
+            (entry,) = resp.json()["report"]
+            assert entry["status"] == "installed", entry
+            (conn,) = entry["connections"]
+
+            # Without a token the crawl binds err and the model is told so — no crash.
+            unset = client.post(
+                "/agents/agt_sample_web_researcher/runs",
+                json={"input": "When are quiet hours?", "stream": False},
+            ).json()
+            assert unset["status"] == "completed", unset
+            tool_msg = next(m for m in inference.captured["messages"] if m["role"] == "tool")
+            assert "has no API token" in tool_msg["content"]
+
+            patched = client.patch(
+                f"/connections/{conn['connection_id']}",
+                json={
+                    "secret": "apify_api_test",
+                    "config": {
+                        "baseUrl": apify.base,
+                        "auth": {"type": "bearer"},
+                        "provider": "apify",
+                    },
+                },
+            )
+            assert patched.status_code == 200, patched.text
+            body = client.post(
+                "/agents/agt_sample_web_researcher/runs",
+                json={"input": "When are quiet hours in Kettle valley?", "stream": False},
+            ).json()
+            assert body["status"] == "completed", body
+            assert body["output"].startswith("Quiet hours run from 22:00")
+            (call,) = apify.calls
+            assert call["authorization"] == "Bearer apify_api_test"
+            assert call["input"] == {
+                "maxResults": 3,
+                "outputFormats": ["markdown"],
+                "query": "kettle valley quiet hours",
+            }
+            assert float(call["query"]["maxTotalChargeUsd"]) == 0.05
+            tool_msg = next(m for m in inference.captured["messages"] if m["role"] == "tool")
+            assert "22:00 to 06:30" in tool_msg["content"]

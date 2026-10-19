@@ -1,7 +1,7 @@
 """Platform settings — a typed catalog over ``platform_setting``, with an honest apply story.
 
-Telemetry export, I/O capture bounds, MCP timeouts/registries, and RAG ingest/retrieval defaults
-are editable at runtime. Three rules keep the surface honest:
+Telemetry export, I/O capture bounds, MCP timeouts/registries, RAG ingest/retrieval defaults, and
+the crawler spend ceiling are editable at runtime. Three rules keep the surface honest:
 
 1. **Precedence: explicit env > stored > default** — "explicit" means set AND non-empty (the
    empty-string-equals-unset convention every entrypoint already uses). An env-**pinned** key is
@@ -316,6 +316,20 @@ CATALOG: tuple[SettingSpec, ...] = (
             "own model at create time (that binding stays immutable)."
         ),
         group="rag",
+    ),
+    SettingSpec(
+        key="crawler.max_charge_usd",
+        type="float",
+        default=1.0,
+        env_var="THEYGENT_CRAWLER_MAX_CHARGE_USD",
+        env_mode="cap",
+        apply="live (next call)",
+        constraints={"min": 0.01, "max": 1000},
+        description=(
+            "The most one crawler call may charge, in USD, across every agent. A node's own "
+            "charge cap applies below it; a node without one gets this value."
+        ),
+        group="crawler",
     ),
     SettingSpec(
         key="auth.session_ttl_hours",

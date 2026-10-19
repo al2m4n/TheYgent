@@ -188,6 +188,8 @@ def _build_app(
         # Capture the full messages array so session-replay tests can assert the prior
         # turns (in order) were prepended to the new input.
         captured["messages"] = body.get("messages")
+        # The function schemas offered — what a model was shown it could call.
+        captured["tools"] = body.get("tools")
 
         if mode == "error_503":
             return JSONResponse(
@@ -444,6 +446,7 @@ class FakeInference:
             "run_id_header": None,
             "model": None,
             "messages": None,
+            "tools": None,
             "stream_options": None,
             "audio_hit": False,
             "audio_model": None,

@@ -50,7 +50,7 @@ connections the sample needs. See [Sample agents](../samples/index.md).
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/samples` | The catalog: title, capabilities, model slots, connections, and per-sample `installed` state. Any signed-in role. |
-| POST | `/samples/install` | Install by catalog id. Body `{ids, models: {slot: {logical_id, binding}}}`. Editor role. Unfilled slots → `400 sample_models_required`, an illegal binding → `400 sample_model_invalid` (nothing written in either case); unknown id → `404 sample_not_found`. Beyond agents (children first for composition samples), an install creates the sample's MCP connections and RAG sources (reused by name on reinstall) and registers any shipped trigger **disabled**. The response `report` carries one entry per sample — `installed`, `already_installed`, or `error` (that sample rolled back and persisted nothing; the rest of the batch still ran) — with `connections`, `rag_sources`, and `warnings` (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces. |
+| POST | `/samples/install` | Install by catalog id. Body `{ids, models: {slot: {logical_id, binding}}}`. Editor role. Unfilled slots → `400 sample_models_required`, an illegal binding → `400 sample_model_invalid` (nothing written in either case); unknown id → `404 sample_not_found`. Beyond agents (children first for composition samples), an install creates the sample's connections (MCP servers, or a provider's token connection with no token yet) and RAG sources (reused by name on reinstall) and registers any shipped trigger **disabled**. The response `report` carries one entry per sample — `installed`, `already_installed`, or `error` (that sample rolled back and persisted nothing; the rest of the batch still ran) — with `connections`, `rag_sources`, and `warnings` (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces. |
 
 ### Drafts
 
@@ -173,6 +173,16 @@ Named tool/MCP credentials. The `secret` is write-only and never returned. See [
 | POST | `/connections` | Create. Body `{name, kind, config, secret?, enabled?}`. `kind` is `http_auth` or `mcp_server`. |
 | GET | `/connections` | List (responses expose `hasSecret` only; secret-ish config keys redacted). |
 | GET / PATCH / DELETE | `/connections/{id}` | Read / update (a non-empty `secret` rotates in place without changing any content hash) / delete. |
+
+### Crawlers
+
+The Crawlers browser's read path: the provider's public store, proxied and cached for five minutes, and an Actor's input schema converted into a `crawler` node config. Editor role. Nothing is created — installing is the editor dropping the returned config on the canvas. `provider` defaults to `apify`, the only one; another value is `400 crawler_provider_unknown`. See [Crawler](../building/nodes/crawler.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/crawlers/catalog` | Search the store. Query `search?`, `category?`, `sort_by?` (`popularity` · `newest` · `relevance`), `limit?` (≤ 100), `offset?`. Returns `{entries, total, offset, limit}`; each entry carries `actor`, `title`, `author`, `categories`, `pricing {model, priceUsd, unit}`, `users30d`, `runs30d`, `successRate30d`. The store unreachable → `502 crawler_catalog_error`. |
+| GET | `/crawlers/catalog/actor?actor=…` | One Actor: its `entry`, `readmeSummary`, `defaultRunOptions`, its input `fields` (form-ready, each marked `exposable` when a model could fill it), and `suggested` — a complete node config plus `unfillable` required fields and a `suggestedId`. An id that isn't `username/actor-name` → `400 invalid_actor`; an unknown Actor → `404 crawler_not_found`; no input schema → `404 crawler_schema_unavailable`. |
+| POST | `/crawlers/catalog/convert` | Re-derive a node config for a choice of exposed fields. Body `{actor, provider?, expose?, scalar?, input?, description?, connection?, limits?}` (camelCase, like the config). Returns the same shape as `suggested`; `parameterSchema` always comes from the Actor's real input schema. |
 
 ### RAG sources
 

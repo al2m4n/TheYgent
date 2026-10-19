@@ -1,5 +1,184 @@
 {
   "types": {
+    "crawler": {
+      "configSchema": {
+        "$defs": {
+          "CrawlerLimits": {
+            "additionalProperties": false,
+            "description": "What one crawler call may cost, take, and return.\n\n``timeout_seconds`` bounds the run on the provider's side. The interactive runtime runs one\nsynchronous request, which the provider holds for at most 300 s, so it caps the run there; the\ndurable runtime starts the run and polls, so a crawl of any length survives a restart.\n``max_charge_usd`` caps the run's total charge \u2014 the cap that matters for pay-per-event actors\n\u2014 and is itself capped by the platform's per-call ceiling (``None`` = the ceiling).\n``max_items`` caps how many results a pay-per-result actor bills. ``item_limit`` bounds the\ndataset items read back; ``result_chars`` is the character budget a model reads in capability\nmode, shared equally across items; ``fields`` keeps only the named top-level item fields.",
+            "properties": {
+              "fields": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "itemLimit": {
+                "default": 10,
+                "maximum": 1000,
+                "minimum": 1,
+                "title": "Itemlimit",
+                "type": "integer"
+              },
+              "maxChargeUsd": {
+                "anyOf": [
+                  {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 0.25,
+                "title": "Maxchargeusd"
+              },
+              "maxItems": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": 10,
+                "title": "Maxitems"
+              },
+              "resultChars": {
+                "default": 6000,
+                "maximum": 200000,
+                "minimum": 200,
+                "title": "Resultchars",
+                "type": "integer"
+              },
+              "timeoutSeconds": {
+                "default": 120,
+                "maximum": 3600,
+                "minimum": 1,
+                "title": "Timeoutseconds",
+                "type": "integer"
+              }
+            },
+            "title": "CrawlerLimits",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "``crawler`` activity node config \u2014 run a hosted crawler/scraper (``provider``'s ``actor``)\nand return its dataset items.\n\n``connection`` is the id of the connection whose secret is the provider's API token; the token\nis resolved server-side at step time and never appears in the IR. ``input`` is the actor input\nthe builder fixes \u2014 proxy settings, result counts, paid add-ons stay here, out of the model's\nreach. In step mode a value that is exactly a ``$in`` reference resolves from the node's\nin-ports.\n\nTwo wirings, like ``tool`` and ``rag``. As a STEP (``data`` edges) the dataset items, bounded by\n``limits.item_limit``, go out on the success handle. As a CAPABILITY (a ``tool`` edge into an\nllm's ``tools`` port) the model fills only the ``expose``d fields: ``parameter_schema`` is the\nfunction schema generated from the actor's input schema when the node was configured, stored\nhere so what the model sees is hashed with the agent and a run needs no schema fetch.\n``scalar`` names list fields the model fills as one string, wrapped into a one-item list \u2014\nlocal models write list arguments unreliably. ``description`` is the \"use this when\u2026\" hint the\nmodel reads; the model gets the items back as text within ``limits.result_chars``.",
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?:[/~][A-Za-z0-9][A-Za-z0-9._-]*)?$",
+            "title": "Actor",
+            "type": "string"
+          },
+          "connection": {
+            "minLength": 1,
+            "title": "Connection",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Description"
+          },
+          "expose": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expose",
+            "type": "array"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "limits": {
+            "$ref": "#/$defs/CrawlerLimits"
+          },
+          "parameterSchema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Parameterschema"
+          },
+          "provider": {
+            "const": "apify",
+            "default": "apify",
+            "title": "Provider",
+            "type": "string"
+          },
+          "scalar": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Scalar",
+            "type": "array"
+          }
+        },
+        "required": [
+          "actor",
+          "connection"
+        ],
+        "title": "CrawlerConfig",
+        "type": "object"
+      },
+      "defaultConfig": {
+        "actor": "",
+        "connection": "",
+        "description": null,
+        "expose": [],
+        "input": {},
+        "limits": null,
+        "parameterSchema": null,
+        "provider": "apify",
+        "scalar": []
+      },
+      "kind": "activity",
+      "ports": {
+        "in": [
+          {
+            "id": "in",
+            "required": false,
+            "type": "any"
+          }
+        ],
+        "out": [
+          {
+            "id": "out",
+            "type": "any"
+          },
+          {
+            "id": "err",
+            "type": "error"
+          },
+          {
+            "id": "use",
+            "role": "tool",
+            "type": "any"
+          }
+        ]
+      },
+      "type": "crawler"
+    },
     "guardrail": {
       "configSchema": {
         "$defs": {

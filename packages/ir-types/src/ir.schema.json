@@ -79,7 +79,7 @@
     },
     "HttpTool": {
       "additionalProperties": false,
-      "description": "An http/REST/GraphQL tool binding \u2014 the workhorse + the substrate for action tools\nand crawler tools. ``connection`` is the id of an ``http_auth`` connection whose secret the\nhandler injects SERVER-SIDE at step time \u2014 never inline in the IR. The optional ``template``\nnames a provider request shape (e.g. ``slack.chat.postMessage``) for the small built-in action\nset; everything else is the raw http tool config on the node.",
+      "description": "An http/REST/GraphQL tool binding \u2014 the workhorse + the substrate for action tools.\n``connection`` is the id of an ``http_auth`` connection whose secret the handler injects\nSERVER-SIDE at step time \u2014 never inline in the IR. The optional ``template`` names a provider\nrequest shape (e.g. ``slack.chat.postMessage``) for the small built-in action set; everything\nelse is the raw http tool config on the node.",
       "properties": {
         "bodyTemplate": {
           "default": null,

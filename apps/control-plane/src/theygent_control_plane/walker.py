@@ -46,6 +46,7 @@ import httpx
 from theygent_gateway_client import GatewayClient
 from theygent_ir import (
     BuiltinTool,
+    CrawlerConfig,
     Edge,
     GuardrailConfig,
     GuardrailRule,
@@ -65,6 +66,14 @@ from theygent_ir import (
     topological_order,
 )
 
+from theygent_control_plane.crawlers import CrawlerError, CrawlerLimitsIn
+from theygent_control_plane.crawlers.schema import (
+    budget,
+    build_run_input,
+    coerce_input,
+    model_parameters,
+    project,
+)
 from theygent_control_plane.mcp import (
     McpConnectionError,
     McpManager,
@@ -191,6 +200,9 @@ class WalkContext:
     # control-plane store). Injected; ``None`` when no graph retrieves — same discipline as
     # ``tool_auth``/``gates``: the walker calls it, the backend owns its sessions.
     rag: Any = None  # rag.RagRetriever
+    # The crawler backend a ``crawler`` node runs through (provider adapter, connection auth at call
+    # time, the platform spend ceiling). Injected; ``None`` when no graph crawls.
+    crawlers: Any = None  # crawlers.CrawlerBackend
     # How many characters of one tool result an llm's tool loop shows the model, for nodes that
     # set no ``maxToolResultChars`` of their own. The control-plane resolves the platform setting
     # (``tools.result_max_chars``) once per run.
@@ -789,6 +801,9 @@ class ActivityOutcome:
 
     ok: bool
     value: Any
+    # Scalars an activity reports about itself for its span (a crawler run's id, item count and
+    # charge) — never a payload, never bound to a handle. ``None`` for most activities.
+    meta: dict[str, Any] | None = None
 
 
 async def execute_tool(
@@ -841,6 +856,96 @@ async def execute_rag(
     except Exception as exc:  # retrieval failed: structured err, run continues.
         return ActivityOutcome(ok=False, value=str(exc))
     return ActivityOutcome(ok=True, value=value)
+
+
+# ── the crawler node (a hosted crawler actor, through the injected backend) ──────────────────────
+
+
+def crawler_limits(config: CrawlerConfig) -> CrawlerLimitsIn:
+    """The node's limits as the plain data the backend (and a durable step) takes."""
+    return CrawlerLimitsIn.from_wire(config.limits.model_dump(by_alias=True))
+
+
+def resolve_crawler_input(
+    config: CrawlerConfig, ports: _PortInputs, node_id: str
+) -> dict[str, Any]:
+    """The step-mode actor input: the fixed ``input`` with every value that is exactly a ``$in``
+    reference resolved from the in-ports (any other string stays literal — actor inputs carry
+    page functions and selectors full of ``$``), then the exposed fields reshaped for the actor.
+    An unresolvable reference raises (the caller binds ``err``). Shared by both runtimes."""
+    resolved = _resolve_template_value(config.input, ports, node_id)
+    return coerce_input(
+        resolved, parameter_schema=config.parameter_schema, scalar=list(config.scalar)
+    )
+
+
+def crawler_call_input(config: CrawlerConfig, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """The actor input for one model call: fixed input plus the model's exposed arguments."""
+    return build_run_input(
+        config.input,
+        dict(arguments),
+        parameter_schema=config.parameter_schema,
+        scalar=list(config.scalar),
+    )
+
+
+def crawler_result(config: CrawlerConfig, items: list[Any], *, as_text: bool) -> Any:
+    """What a crawler call returns: the budgeted text a model reads (capability), or the items
+    with only the chosen fields (step)."""
+    fields = list(config.limits.fields)
+    if as_text:
+        return budget(items, max_chars=config.limits.result_chars, fields=fields)
+    return project(items, fields)
+
+
+def crawler_span_attributes(
+    config: CrawlerConfig, meta: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    """Span scalars for one crawler call: provider, actor, the run's charge cap, and — when the
+    provider reported them — the run id, item count and the run's ``usageTotalUsd``. An
+    unreported cost is an absent attribute, never a zero."""
+    attrs: dict[str, Any] = {"crawler.provider": config.provider, "crawler.actor": config.actor}
+    meta = meta or {}
+    if meta.get("chargeCapUsd") is not None:
+        attrs["crawler.max_charge_usd"] = meta["chargeCapUsd"]
+    if meta.get("runId"):
+        attrs["crawler.run_id"] = meta["runId"]
+    if meta.get("items") is not None:
+        attrs["crawler.items"] = meta["items"]
+    if meta.get("usageTotalUsd") is not None:
+        attrs["crawler.usage_total_usd"] = meta["usageTotalUsd"]
+    return attrs
+
+
+async def execute_crawler(
+    backend: Any, config: CrawlerConfig, run_input: dict[str, Any], *, as_text: bool
+) -> ActivityOutcome:
+    """Run one crawler call synchronously through the injected backend (the interactive runtime;
+    the durable runtime splits the same call into start/poll/read steps). Same ok/err contract
+    as ``execute_tool``: no backend, a missing token, a refused input, a run past the synchronous
+    limit — each is a structured error with an actionable message, never a run failure."""
+    if backend is None:
+        return ActivityOutcome(
+            ok=False, value="crawler: no crawler backend is configured on this runtime"
+        )
+    try:
+        out = await backend.run_sync(
+            provider=config.provider,
+            actor=config.actor,
+            connection=config.connection,
+            run_input=run_input,
+            limits=crawler_limits(config),
+        )
+    except CrawlerError as exc:
+        return ActivityOutcome(ok=False, value=str(exc))
+    except Exception as exc:  # an unexpected adapter failure is still the tool contract
+        return ActivityOutcome(ok=False, value=f"crawler {config.actor!r} failed: {exc}")
+    items = list(out.get("items") or [])
+    return ActivityOutcome(
+        ok=True,
+        value=crawler_result(config, items, as_text=as_text),
+        meta={"chargeCapUsd": out.get("chargeCapUsd"), "items": len(items)},
+    )
 
 
 async def execute_mcp_tool(
@@ -1474,7 +1579,7 @@ async def build_tool_schemas(
 
 
 def _capability_tool_nodes(ir: IRDocument, llm_node_id: str) -> list[Node]:
-    """The tool/mcp_tool/rag nodes wired to this llm's ``tool``-role port (capability edges) — the
+    """The tool/mcp_tool/rag/crawler nodes wired to this llm's ``tool``-role port (capability edges)
     source of every inbound ``channel:"tool"`` edge. These are the tools the model may CALL; they
     are NOT run in topological order (a capability executes lazily inside the llm loop, args from
     the model). Deduped, source order preserved."""
@@ -1485,7 +1590,7 @@ def _capability_tool_nodes(ir: IRDocument, llm_node_id: str) -> list[Node]:
         if edge.channel != "tool" or edge.target != llm_node_id or edge.source in seen:
             continue
         src = by_id.get(edge.source)
-        if src is not None and src.type in ("tool", "mcp_tool", "rag"):
+        if src is not None and src.type in ("tool", "mcp_tool", "rag", "crawler"):
             nodes.append(src)
             seen.add(edge.source)
     return nodes
@@ -1579,6 +1684,17 @@ async def build_capability_schemas(
                     },
                 )
             )
+        elif node.type == "crawler":
+            # A crawler self-describes from its stored schema: only the exposed fields, generated
+            # from the actor's input schema when the node was configured.
+            ccfg = CrawlerConfig.model_validate(node.config)
+            schemas.append(
+                _fn_schema(
+                    node.id,
+                    ccfg.description or f"Run the {ccfg.actor} crawler and read its results.",
+                    model_parameters(ccfg.parameter_schema),
+                )
+            )
         else:  # a tool node — builtin or http
             tcfg = ToolConfig.model_validate(node.config)
             if tcfg.connection or tcfg.url_template:
@@ -1660,6 +1776,7 @@ async def execute_tool_call(
     node_id: str,
     idempotency_suffix: str = "",
     rag: Any = None,
+    crawlers: Any = None,
 ) -> ActivityOutcome:
     """Execute ONE model-emitted tool call by dispatching to the EXISTING executor for its binding —
     no new tool machinery. ``call.name`` is an ir.tools key (or a directly-registered builtin);
@@ -1681,6 +1798,14 @@ async def execute_tool_call(
             query=str(call.arguments.get("query") or ""),
             top_k=rag_top_k(rag_node.config, rcfg),
             min_similarity=rcfg.min_similarity,
+        )
+    # A crawler capability dispatches by NODE too: the actor, fixed input and limits live on the
+    # node; the model supplies only the exposed fields, and reads the budgeted text back.
+    crawler_node = next((n for n in ir.nodes if n.id == call.name and n.type == "crawler"), None)
+    if crawler_node is not None:
+        ccfg = CrawlerConfig.model_validate(crawler_node.config)
+        return await execute_crawler(
+            crawlers, ccfg, crawler_call_input(ccfg, call.arguments), as_text=True
         )
 
     # ``call.name`` is an ir.tools key. If it isn't, it may be a tool/mcp_tool NODE id wired as a
@@ -2118,6 +2243,8 @@ async def walk(
                     await _walk_imagine(node, ir, ctx, values, skipped, live_handles)
                 elif node.type == "rag":
                     await _walk_rag(node, ir, ctx, values, skipped, live_handles)
+                elif node.type == "crawler":
+                    await _walk_crawler(node, ir, ctx, values, skipped, live_handles, scope)
                 else:
                     # agent / retriever / memory / code — deferred.
                     raise NotImplementedError(
@@ -2502,6 +2629,7 @@ async def _walk_llm(
                         node_id=node.id,
                         idempotency_suffix=f"{node.id}-{iteration}-{call.id}",
                         rag=ctx.rag,
+                        crawlers=ctx.crawlers,
                     )
                     result_msg = tool_result_message(call, outcome, result_cap)
                     if tool_scope is not None:
@@ -2510,6 +2638,7 @@ async def _walk_llm(
                                 "tool.name": call.name,
                                 "tool.ok": outcome.ok,
                                 **tool_result_attributes(outcome, result_cap),
+                                **tool_call_attributes(ir, call.name, outcome),
                             }
                         )
                 tool_call_records.append(_tool_call_record(call, outcome, iteration, ci))
@@ -2659,6 +2788,51 @@ async def _walk_rag(
                 "run_id": ctx.run_id,
                 "node_id": node.id,
                 "source": config.source,
+                "error": outcome.value,
+            },
+        )
+
+
+def tool_call_attributes(ir: IRDocument, name: str, outcome: ActivityOutcome) -> dict[str, Any]:
+    """Extra span scalars for one autonomous tool call — today a crawler's run facts, so the
+    waterfall shows what each crawl cost. Empty for every other tool kind."""
+    node = next((n for n in ir.nodes if n.id == name and n.type == "crawler"), None)
+    if node is None:
+        return {}
+    return crawler_span_attributes(CrawlerConfig.model_validate(node.config), outcome.meta)
+
+
+async def _walk_crawler(
+    node: Node,
+    ir: IRDocument,
+    ctx: WalkContext,
+    values: dict[tuple[str, str], Any],
+    skipped: set[str],
+    live_handles: dict[str, set[str]],
+    scope: SpanScope | None = None,
+) -> None:
+    """Step-mode ``crawler`` node: resolve the fixed input's ``$in`` references, run the actor
+    synchronously, and bind its items (bounded by ``itemLimit``, projected to ``fields``) to the
+    ok handle(s). Every failure is a structured error bound to ``err``; the run continues."""
+
+    config = CrawlerConfig.model_validate(node.config)
+    ports = _collect_in_ports(node, ir.edges, values, skipped, live_handles)
+    try:
+        run_input = resolve_crawler_input(config, ports, node.id)
+    except Exception as exc:  # an unresolvable $in ref is a structured err, like a tool arg
+        outcome = ActivityOutcome(ok=False, value=str(exc))
+    else:
+        outcome = await execute_crawler(ctx.crawlers, config, run_input, as_text=False)
+    if scope is not None:
+        scope.set_attributes(crawler_span_attributes(config, outcome.meta))
+    _bind_outcome(node, outcome, values, live_handles)
+    if not outcome.ok:
+        logger.info(
+            "graph.crawler_error",
+            extra={
+                "run_id": ctx.run_id,
+                "node_id": node.id,
+                "actor": config.actor,
                 "error": outcome.value,
             },
         )
