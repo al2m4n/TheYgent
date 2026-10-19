@@ -675,6 +675,23 @@ background — check the source's status on the [RAG page](../rag/index.md) afte
 it failed (e.g. the embedding model wasn't reachable), upload the handbook document to the
 source again from there, or delete the source and reinstall the sample.
 
+### Web researcher — a crawler the model calls
+
+`sample-web-researcher` · *local model · creates the `sample-apify` connection · needs an Apify
+API token*
+
+A local model with a [crawler node](../building/nodes/crawler.md) wired in as its
+`web_search` tool. The model decides when a question needs fresh facts, calls the crawler with
+one search query, reads the top three pages as trimmed Markdown, and answers with the URLs it
+used. The result count, the output format and a $0.05 charge cap per search are fixed on the
+node, out of the model's reach.
+
+The installer creates the `sample-apify` connection **without a token** — samples never ship a
+secret. Before the first run, open the agent in the editor, select the `web_search` node, and
+use **Set token** on its connection (or rotate the connection's secret through the
+[connections API](../reference/api.md)). Until then, each search returns an error the model
+sees, and it says it couldn't search. Searches bill the Apify account that owns the token.
+
 ### Editorial loop — a self-correcting agent
 
 `sample-editorial-loop` · *local model · installs 2 agents · durable runtime only*
@@ -712,7 +729,7 @@ briefs. Like the agent itself, the trigger fires only on the durable runtime.
    if the list is empty. The special slots (*Vision*, *Speech-to-text*, *Text-to-speech*,
    *Image*, *Embedding*) filter your registry by the registered modality — a sample's Install
    button stays disabled until every slot it declares is filled.
-3. Click **Install** on a sample. The installer creates any MCP connections and RAG sources the
+3. Click **Install** on a sample. The installer creates any connections and RAG sources the
    sample needs (reusing them by name on reinstall), seeds demo data, stamps your chosen models
    into the graph, publishes the agent(s) through the normal registry gate — children first, so
    a composition sample's pins always resolve — and registers any shipped trigger **disabled**.
@@ -738,7 +755,7 @@ the rest of the batch still installs.
 - **Duplicate**: export the agent from the Agents page, change the `id`/`name` in the JSON, and
   import it (or paste it into a new agent in the editor's code view).
 - **Delete**: from the Agents page. The connections a sample created stay (other agents may use
-  them); remove them on the MCP page if you no longer want them.
+  them); remove MCP servers on the MCP page if you no longer want them.
 
 ## Related pages
 
@@ -1391,6 +1408,7 @@ TheYgent's promise is **everything runs where you point it, and you own every ho
 | Agents, runs, sessions, traces | Your Postgres, at `DATABASE_URL`. What each agent's runs capture — and for how long — is set by its [I/O policy](../running/observability.md). |
 | Retrieval documents | pgvector in the same Postgres, embedded by the model you bind to the source. Bind a local embedding model and the documents never leave the machine. See [RAG sources](../rag/index.md). |
 | Tool and MCP secrets | The control plane's secret store, encrypted with `THEYGENT_SECRET_KEY`. Agents carry references, never values. |
+| What a crawler collects | A [crawler node](../building/nodes/crawler.md) sends its input to the provider it names, which crawls on its own servers; the results come back into your run. The provider's token stays in the secret store. |
 | Audio and images | Local artifacts under `THEYGENT_ARTIFACT_DIR` on the control-plane host — never written into run history or exported with traces. |
 
 ## Every connection TheYgent makes
@@ -1402,7 +1420,8 @@ This is the complete list for a running install. Apart from the first row, nothi
 | A public model price list from GitHub | Each time the inference plane starts. The model client library it uses to call engines (LiteLLM) loads it. | None of your data. With no network, the library falls back to the copy bundled with it, and startup continues. |
 | Hugging Face | When you browse the model catalog, install a model, or start a model you registered by hand with `source: hf`. | Your catalog searches and the files you download. A [gated repository](../models/installing.md#install-from-the-catalog) also sends your Hugging Face token. Catalog installs register as local files, so they load from disk afterwards. |
 | MCP registries | When you open **Browse hubs** on the MCP page. | Your searches. Replace the public hubs with a registry you host by setting `THEYGENT_MCP_REGISTRIES` — see [MCP servers](../mcp/index.md#installing-from-a-hub). |
-| Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
+| The Apify Store | When you open the **Crawlers browser** in the editor. The control plane makes the request; your browser does not. | Your searches and the Actors you open. No token is sent. See [Crawler](../building/nodes/crawler.md#adding-a-crawler). |
+| Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a crawler node's provider (which receives the node's input), a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
 
 Installing TheYgent — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
 
@@ -1546,7 +1565,7 @@ The header shows the node's kind badge, its type, and its id, with a per-node **
 Several node types get purpose-built panels instead of the generic form — the `llm` model and message editors, the tool **Kind** picker, the guardrail **Check** picker, the pinned-body pickers for `subgraph`/`loop`/`map`, the transcribe/speak/imagine parameter forms, and the **input fields** builder on the `input` and `human` nodes. Each is documented on that node's [reference page](nodes/index.md).
 
 !!! tip "Everything the shipped samples use is buildable in the Wizard"
-    All twelve [sample agents](../samples/index.md) — every node, every config field, every named port and every edge — can be built from the forms and the canvas alone. The Code view is an escape hatch, not a requirement. The one exception is pinning a child agent by content hash rather than by version, which no sample uses.
+    All thirteen [sample agents](../samples/index.md) — every node, every config field, every named port and every edge — can be built from the forms and the canvas alone. The Code view is an escape hatch, not a requirement. The one exception is pinning a child agent by content hash rather than by version, which no sample uses.
 
 !!! warning "Durable-only nodes"
     Adding a `human`, `subgraph`, `loop`, or `map` node shows a banner: these run only on the durable runtime. Publish the agent, then use **Run durably** (which needs the server's durable mode) or deploy it behind a trigger. Neither the in-editor Test panel nor the plain interactive **Run** path can execute them. See [durable runs](../running/durable.md).
@@ -1851,6 +1870,7 @@ The palette derives its list directly from the set of runnable node types, so th
 | `tool` | Runs a built-in tool or an HTTP API — as a pipeline step or a model capability. | [Tools](tools.md) |
 | `mcp_tool` | Calls a tool exposed by a connected MCP server. | [MCP tools](mcp.md) |
 | `rag` | Retrieves the most relevant passages from a RAG source — as a step or a model capability. | [RAG](rag.md) |
+| `crawler` | Runs a hosted scraper or crawler (an Apify Actor) with fixed input and spend caps — as a step or a model capability. | [Crawler](crawler.md) |
 | `transcribe` | Speech-to-text: turns audio into text. | [Audio & images](media.md) |
 | `speak` | Text-to-speech: turns text into audio. | [Audio & images](media.md) |
 | `imagine` | Generates an image from a text prompt. | [Audio & images](media.md) |
@@ -2198,9 +2218,11 @@ Only the model's `content` accumulates into the run's output, and that answer is
 
 Wiring a tool node into the `tools` port turns it into a **capability**: the model may call it on its own, decide the arguments, read the result, and continue. This is autonomous tool-calling, and it is entirely visual.
 
-1. Drop a [tool](tools.md), [MCP tool](mcp.md), or [rag](rag.md) node onto the canvas and configure it.
+1. Drop a [tool](tools.md), [MCP tool](mcp.md), [rag](rag.md), or [crawler](crawler.md) node onto the canvas and configure it.
 2. Drag its violet **`use`** handle (on top of the tool node) into this llm node's violet **`tools`** port (on the bottom).
-3. The **Tools the model can call** panel now lists that tool, with a kind badge (builtin / http / mcp / rag).
+3. The **Tools the model can call** panel now lists that tool, with a kind badge (builtin / http / mcp / rag / crawler).
+
+The panel's **Add MCP tools** and **Add crawler** buttons do all three in one step: pick tools from an MCP server, or a crawler from the store, and they land configured and already wired into this port.
 
 A few things follow from wiring a capability:
 
@@ -2691,6 +2713,138 @@ Both runtimes execute the node identically; on a [durable run](../../running/dur
 - [RAG sources](../../rag/index.md) — creating and managing the collections this node searches
 - [LLM](llm.md) — the `tools` port and the tool-calling loop
 - [Referencing inputs](../input-references.md) — the `$in` grammar the `query` template uses
+
+---
+
+Source: https://docs.theygent.ai/latest/building/nodes/crawler/
+
+# Crawler
+
+A **crawler** node runs a hosted scraper or crawler — an [Apify](https://apify.com/store) **Actor** — and returns the results it collects: web search results with the pages as Markdown, places from a map, a site's pages, product listings. It is an **activity** node.
+
+Like a [tool node](tools.md) and a [rag node](rag.md), it has two lives: a **step** in the dataflow, or a **capability** the model calls on demand. The difference from giving a model an Actor through the [MCP hub](../../mcp/apify.md) is who decides what each call does. Here, the person building the agent chooses which fields the model fills, fixes everything else on the node, and caps what a call may cost and return.
+
+## Adding a crawler
+
+Crawlers come from the **Crawlers browser**:
+
+- On an llm node, press **Add crawler** under **Tools the model can call**. The installed node is wired into that llm's `tools` port.
+- Or drop a `crawler` node from the palette and press **Browse crawlers** in its inspector.
+
+The browser searches the Apify Store. Each card shows what the store reports about the Actor:
+
+| On the card | What it tells you |
+|---|---|
+| Success rate | The share of the Actor's public runs over the last 30 days that succeeded. An Actor that times out on most runs reads as such before you install it. |
+| Pricing | The pricing model and its headline price — for pay-per-event Actors, the price of the main billed event (a fetched page, a scraped place) on the free plan. |
+| Users | How many users ran it in the last 30 days. |
+| Category, author | Where it sits in the store, and who publishes it. |
+
+Open an Actor to see its input fields. The fields a model can usefully fill are listed with checkboxes; the suggested ones come pre-ticked — the required fields and the few the Actor can't do without. Result counts, paid add-ons and anything with a default stay unticked, because a model offered those sets the spend.
+
+The first time, the browser asks for your **Apify API token** and stores it as a connection — encrypted, and never shown again. Later installs reuse that connection. Press **Add crawler** and the configured node lands on the canvas.
+
+!!! note "The browser goes through TheYgent"
+    Store searches go from your control plane to Apify's public Store API, which needs no token, and are cached for a few minutes. Your browser never calls Apify directly.
+
+## Ports
+
+| Port | Direction | Required | Description |
+|---|---|---|---|
+| `in` | in | no | Step mode: the value the fixed input's `$in` references read. Left unfed in capability mode. |
+| `out` | out | — | Step mode: the dataset items on success. |
+| `err` | out | — | The error message when the crawl fails. Its port type is `error`. |
+| `use` | out | — | The violet capability handle. Wire it into an llm's `tools` port to let the model call the crawler. |
+
+## Configuration
+
+The inspector edits all of it; the Code view shows the stored config.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `provider` | string | `apify` | The crawler service. `apify` is the only one today. |
+| `actor` | string | *(required)* | The Actor's id, such as `apify/rag-web-browser`. **Change** in the inspector re-points the node at another Actor and keeps its id and wiring. |
+| `connection` | string | *(required)* | The connection whose secret is your Apify API token. The node stores the connection's id, never the token. A connection without a token shows a **Set token** field in the inspector. |
+| `input` | object | `{}` | The **fixed input**, sent on every call. The inspector renders it as a form generated from the Actor's own input schema — text, numbers, dropdowns, URL lists — with an **Advanced** section for proxy and other settings. An empty field uses the Actor's default. |
+| `expose` | list | `[]` | The fields the model fills when the node is a capability. |
+| `scalar` | list | `[]` | List fields the model fills as **one value per call**, wrapped into a one-item list for the Actor. On by default for exposed list fields — see [Local models](#local-models). |
+| `parameterSchema` | object | — | The function schema the model sees, generated from the Actor's input schema. Ticking a field regenerates it; you never edit it by hand. |
+| `description` | string | the Actor's description (from the browser) | The "use this when…" hint the model reads to decide when to call it. |
+| `limits` | object | see below | What one call may cost, take and return. |
+
+### Limits
+
+| Limit | Default | Description |
+|---|---|---|
+| `timeoutSeconds` | `120` | How long the Actor run may take. Interactive runs stop at 300 seconds whatever this says — see [Long crawls](#long-crawls). |
+| `maxChargeUsd` | `0.25` | The most one call may charge. Never above the platform ceiling, **Settings → Crawlers**. |
+| `maxItems` | `10` | The most results a pay-per-result Actor may bill. |
+| `itemLimit` | `10` (`5` from the browser) | How many dataset items are read back. |
+| `resultChars` | `6000` | Capability mode: how many characters of results the model reads, shared equally across the items. |
+| `fields` | all | Keep only these top-level item fields — for example `markdown` and `searchResult` for web search. |
+
+## As a capability (the model crawls)
+
+Wire the node's violet **`use`** handle into an llm's violet **`tools`** port (the browser does this for you when opened from an llm). The model sees a function named after the node's id, with only the exposed fields as arguments.
+
+When it calls:
+
+1. TheYgent builds the Actor input: the fixed input, plus the model's values for the exposed fields. A value for any other field is dropped, so a model can't raise a result count or switch on a paid add-on by inventing an argument.
+2. The Actor runs under the node's limits.
+3. The model gets the results back as text: only the chosen `fields`, each item given an equal share of `resultChars`, long items cut with a marker. A crawl can return megabytes; the model reads what fits.
+
+!!! tip "Name the node meaningfully"
+    The node **id is the function name** the model sees. The browser names it after the Actor (`rag_web_browser`); rename it to what it does for your agent — `web_search` is easier for a model to choose.
+
+## As a step (a fixed crawl)
+
+Wire the node inline with data edges: `input → crawler → llm → output`. The fixed input is the whole Actor input. A value that is exactly a [`$in` reference](../input-references.md) reads the node's `in` port — for example `{"query": "$in"}` searches for the run input, and `{"startUrls": "$in.in.urls"}` crawls a list of URLs from an object input. Any other string is sent as written, `$` included, so page functions and selectors are safe.
+
+The dataset items — at most `itemLimit`, projected to `fields` — bind to `out` as a list and flow downstream.
+
+## Spend
+
+Apify bills the account that owns the token. Three things bound what a crawler node can spend:
+
+- **The node's charge cap**, `limits.maxChargeUsd`, sent with every run. It is the cap that matters for pay-per-event Actors, which most popular Actors are.
+- **The platform ceiling**, **Settings → Crawlers** (`crawler.max_charge_usd`, default $1.00). Every run's cap is held under it, so no agent can raise its own. Lowering it applies to the next call. An administrator can cap it from the environment with `THEYGENT_CRAWLER_MAX_CHARGE_USD`.
+- **The fixed input**: result counts and add-ons the model can't touch.
+
+The [run waterfall](../../running/observability.md) shows what each crawl returned and cost: a crawler node's row (or, in capability mode, the tool call's row inside the llm) shows the number of items and the charge Apify reported. Only durable runs report the charge — the synchronous call an interactive run uses names no run to ask about.
+
+## Long crawls
+
+An interactive run — the editor's **Test** panel, chat, `POST /graphs/runs` — waits for the crawl in one request, which Apify holds for at most **300 seconds**. TheYgent caps the Actor's own timeout there too, so a run never keeps going after the agent has given up. A crawl that needs longer fails with a message saying so.
+
+A [durable run](../../running/durable.md) starts the crawl, checks on it about once a minute, and reads the results when it finishes, so a crawl can take as long as `timeoutSeconds` and survives a restart in between. A resumed run keeps polling the crawl it already started instead of starting (and paying for) another.
+
+## Local models
+
+Small local models are better at filling one or two simple fields than many. Two defaults help:
+
+- **Few exposed fields.** Each exposed field adds to every prompt; an Actor offered with every field can cost thousands of tokens per call.
+- **One value per call** (`scalar`). Local models write list arguments unreliably — and on MLX, a list written as a bare string can drop the request. A scalar field takes one search term or URL; TheYgent wraps it into the list the Actor wants, and unpacks a model's JSON-encoded list if it writes one anyway.
+
+## Failure modes
+
+The crawler follows the tool ok/err contract: a failure binds a clear message to `err` (or, in capability mode, goes back to the model as the tool result), and the run continues.
+
+- The connection is missing, disabled, or **has no token** — set it on the node's connection.
+- Apify **refuses the input** — the message is Apify's, naming the field.
+- Apify **refuses the token** — check it on the connection.
+- The crawl **exceeds 300 seconds** on an interactive run — run the agent durably, or lower the work per call.
+- A durable crawl **ends without succeeding**, or is still running after `timeoutSeconds` — the message names Apify's run id so you can look it up in the Apify console.
+
+## Privacy
+
+A crawler node sends its input — the fixed input and, in capability mode, the model's arguments — to the provider it names, and the crawled results come back into your run. Your token stays in the control plane's encrypted secret store and is sent only to the connection's API address. See [Privacy and data flow](../../concepts/privacy.md).
+
+## Related pages
+
+- [Apify through the MCP hub](../../mcp/apify.md) — every Actor field offered to the model, no node config
+- [LLM](llm.md) — the `tools` port and the tool-calling loop
+- [Tools](tools.md) — connections and the error contract
+- [Samples](../../samples/index.md) — the Web researcher sample agent
 
 ---
 
@@ -4729,6 +4883,7 @@ Drop a **Tool** node in the [editor](../building/editor.md), choose **MCP** in t
 ## Related pages
 
 - [Example agents](examples.md) — one runnable agent per server kind, plus capability mode
+- [Apify through the MCP hub](apify.md) — hosted scrapers and crawlers as tools, and when a crawler node fits better
 - [The mcp_tool node](../building/nodes/mcp.md) — ports, config, step vs capability
 - [Tool nodes](../building/nodes/tools.md) — connections and the tool error contract
 - [API reference](../reference/api.md) — the `/admin/mcp/*` and `/connections/{id}/mcp*` endpoints
@@ -4929,6 +5084,95 @@ supplies the arguments.
 - [MCP servers](index.md) — setting up every kind of server
 - [The mcp_tool node](../building/nodes/mcp.md) — ports, config, step vs capability
 - [Input references](../building/input-references.md) — the `$in` grammar used in `args`
+
+---
+
+Source: https://docs.theygent.ai/latest/mcp/apify/
+
+# Apify through the MCP hub
+
+[Apify](https://apify.com/store) runs a store of hosted scrapers, crawlers and automations, which it calls **Actors**: web search that returns pages as Markdown, Google Maps places, website crawls, social media profiles and thousands more. Apify publishes an MCP server, so you can give an agent Actors as tools today with the [MCP hub](index.md) alone.
+
+This page covers that path. For agents on smaller local models, or whenever you want to fix what each call may cost, the [crawler node](../building/nodes/crawler.md) is the better fit — see [When to use a crawler node instead](#when-to-use-a-crawler-node-instead).
+
+## What you need
+
+- An **Apify account** and its **API token** (Apify Console → Settings → API & Integrations). Actor runs are billed to the account that owns the token. Apify's free plan includes a monthly usage allowance.
+- A **model that calls tools reliably**. Actor tools carry every input field the Actor accepts, which is a lot to read: see [the costs](#what-it-costs-in-context-and-in-money).
+
+## Install the server
+
+The server is `com.apify/apify-mcp-server` in the Official MCP Registry. It is a remote server at `https://mcp.apify.com/`, reached over streamable HTTP.
+
+1. Open the **MCP** page and press **Browse hubs**.
+2. Pick **Official MCP Registry** and search for `apify`.
+3. Expand `com.apify/apify-mcp-server` and pick its **Remote server (streamable-http)** form.
+4. Authenticate in one of two ways:
+    - **Token.** Fill the `Authorization` field with `Bearer ` followed by your API token, for example `Bearer apify_api_…`. The value is stored encrypted and never shown again.
+    - **Sign in.** Check **Sign in with the provider instead**, install, then press **Connect** on the new row and approve access on Apify's page. See [Authorize with OAuth](index.md#authorize-with-oauth-sign-in).
+5. Give the connection a name, such as `apify`, and press **Install**.
+
+You can also add it by hand: **Add server** → **Remote**, URL `https://mcp.apify.com/`, auth **Bearer token** with your API token.
+
+## Choose which Actors become tools
+
+The server's URL takes a `tools` parameter: a comma-separated list of Actor names, tool categories, or single tool names. Each Actor you list becomes one tool.
+
+```text
+https://mcp.apify.com/?tools=apify/rag-web-browser,compass/crawler-google-places
+```
+
+To change the list, open the server's **Settings** on the MCP page and edit its **URL**, then **Close** the server so it reconnects with the new list.
+
+Without `tools`, the server serves its defaults. They include the generic `search-actors`, `fetch-actor-details` and `call-actor` tools, documentation search, and a couple of web-browsing Actors. Apify notes that the defaults may change, so list your tools explicitly for agents you depend on. `call-actor` lets the model run *any* Actor it finds — leave it out unless that is what you want.
+
+!!! note "Browsing works without a token"
+    With no token, the server answers only its discovery tools — `search-actors`, `fetch-actor-details` and the documentation tools — and only when `tools` lists nothing else. That is enough to explore the store from an agent. Running an Actor always needs a token.
+
+## Wire Actors into an agent
+
+Each Actor tool is an ordinary MCP tool:
+
+1. Select an llm node, and in **Tools the model can call** press **Add MCP tools**.
+2. Pick the Apify connection, tick the Actor tools, and press **Add**. Each lands as an `mcp_tool` node wired into the llm's `tools` port.
+3. Give the llm a prompt that says when to search, and run it.
+
+The model decides when to call an Actor and fills its arguments. The run's tool result is what Apify's server returns for the call. See the [mcp_tool node](../building/nodes/mcp.md) for ports, step mode and the error contract.
+
+## What it costs, in context and in money
+
+An Actor tool offers the model **every input field** the Actor declares — proxy settings, result counts, paid add-ons, tuning knobs. That has three consequences worth knowing before you rely on this path:
+
+- **It takes a lot of context.** Three popular Actors offered this way add about 13,500 tokens to every model call. A model with a small context window has little room left for the conversation, and the first call on a local engine is slow until the engine has cached the tool definitions.
+- **The model sets the spend.** Pay-per-event Actors charge per result and per add-on. A model offered every field can ask for 50 results, or switch on a paid add-on, where 5 results and none would have done. Apify bills the token's account for whatever the model asks for.
+- **Results come back whole.** A crawl can return far more text than a local model's context holds, and the tool result is passed to the model as it is.
+
+On Apple Silicon with MLX there is one more: some models write a list argument (a list of search terms or URLs) as a bare string, and the engine drops the request instead of answering. Actors with list inputs are the ones that trigger it.
+
+## When to use a crawler node instead
+
+A [crawler node](../building/nodes/crawler.md) runs the same Actors without the MCP server, and moves each of those decisions to whoever builds the agent:
+
+| | MCP hub | Crawler node |
+|---|---|---|
+| What the model sees | every input field | only the fields you expose, usually one or two |
+| Result counts, add-ons, proxies | the model chooses | fixed on the node |
+| Spend per call | whatever the model asks for | capped by the node and by a platform-wide ceiling |
+| Result size | whole | trimmed to a character budget you set |
+| List inputs on MLX | can drop the request | offered as a single value and wrapped for the Actor |
+| Long crawls | limited by the server's call timeout | any length on a [durable run](../running/durable.md) |
+
+Use the MCP hub when a capable model should explore the store and pick Actors on its own. Use a crawler node when you know which Actor the agent needs.
+
+## Privacy
+
+The model's tool arguments — search terms, URLs, place names — go to Apify, and the Actor's results come back into your run. Apify's servers do the crawling. Your token stays encrypted in the control plane's secret store and is sent only to the URL you configured. See [Privacy and data flow](../concepts/privacy.md).
+
+## Related pages
+
+- [MCP servers](index.md) — the hub, connections and OAuth sign-in
+- [The mcp_tool node](../building/nodes/mcp.md) — step and capability wiring
+- [The crawler node](../building/nodes/crawler.md) — Actors as nodes with fixed inputs and spend caps
 
 ---
 
@@ -5994,7 +6238,7 @@ Rows carry inline annotations where they help: the duration, a check or cross fo
 
 ## Inspecting a span
 
-Click any bar to open its inspector — a side pane when the window is wide, stacked below when it is narrow. It shows a compact stat line for that span: status, how long it `took`, the `model`, `ttft` (time to the first answer token), tokens in and out, the generation `rate`, the `finish` reason, the I/O byte sizes, and — when the work ran off the main process — which `worker` handled it.
+Click any bar to open its inspector — a side pane when the window is wide, stacked below when it is narrow. It shows a compact stat line for that span: status, how long it `took`, the `model`, `ttft` (time to the first answer token), tokens in and out, the generation `rate`, the `finish` reason, the I/O byte sizes, and — when the work ran off the main process — which `worker` handled it. A [crawler](../building/nodes/crawler.md) call adds the `items` it returned and, when the provider reported it, its `cost` in USD.
 
 Below the stats are up to four payload sections for the node: **Input**, **Reasoning**, **Tool calls**, and **Output**. These are fetched lazily when you open the row, and whether they show anything depends on the capture policy (below). Selecting the run-root row instead shows the whole-run token totals.
 
@@ -7257,7 +7501,7 @@ connections the sample needs. See [Sample agents](../samples/index.md).
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/samples` | The catalog: title, capabilities, model slots, connections, and per-sample `installed` state. Any signed-in role. |
-| POST | `/samples/install` | Install by catalog id. Body `{ids, models: {slot: {logical_id, binding}}}`. Editor role. Unfilled slots → `400 sample_models_required`, an illegal binding → `400 sample_model_invalid` (nothing written in either case); unknown id → `404 sample_not_found`. Beyond agents (children first for composition samples), an install creates the sample's MCP connections and RAG sources (reused by name on reinstall) and registers any shipped trigger **disabled**. The response `report` carries one entry per sample — `installed`, `already_installed`, or `error` (that sample rolled back and persisted nothing; the rest of the batch still ran) — with `connections`, `rag_sources`, and `warnings` (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces. |
+| POST | `/samples/install` | Install by catalog id. Body `{ids, models: {slot: {logical_id, binding}}}`. Editor role. Unfilled slots → `400 sample_models_required`, an illegal binding → `400 sample_model_invalid` (nothing written in either case); unknown id → `404 sample_not_found`. Beyond agents (children first for composition samples), an install creates the sample's connections (MCP servers, or a provider's token connection with no token yet) and RAG sources (reused by name on reinstall) and registers any shipped trigger **disabled**. The response `report` carries one entry per sample — `installed`, `already_installed`, or `error` (that sample rolled back and persisted nothing; the rest of the batch still ran) — with `connections`, `rag_sources`, and `warnings` (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces. |
 
 ### Drafts
 
@@ -7380,6 +7624,16 @@ Named tool/MCP credentials. The `secret` is write-only and never returned. See [
 | POST | `/connections` | Create. Body `{name, kind, config, secret?, enabled?}`. `kind` is `http_auth` or `mcp_server`. |
 | GET | `/connections` | List (responses expose `hasSecret` only; secret-ish config keys redacted). |
 | GET / PATCH / DELETE | `/connections/{id}` | Read / update (a non-empty `secret` rotates in place without changing any content hash) / delete. |
+
+### Crawlers
+
+The Crawlers browser's read path: the provider's public store, proxied and cached for five minutes, and an Actor's input schema converted into a `crawler` node config. Editor role. Nothing is created — installing is the editor dropping the returned config on the canvas. `provider` defaults to `apify`, the only one; another value is `400 crawler_provider_unknown`. See [Crawler](../building/nodes/crawler.md).
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/crawlers/catalog` | Search the store. Query `search?`, `category?`, `sort_by?` (`popularity` · `newest` · `relevance`), `limit?` (≤ 100), `offset?`. Returns `{entries, total, offset, limit}`; each entry carries `actor`, `title`, `author`, `categories`, `pricing {model, priceUsd, unit}`, `users30d`, `runs30d`, `successRate30d`. The store unreachable → `502 crawler_catalog_error`. |
+| GET | `/crawlers/catalog/actor?actor=…` | One Actor: its `entry`, `readmeSummary`, `defaultRunOptions`, its input `fields` (form-ready, each marked `exposable` when a model could fill it), and `suggested` — a complete node config plus `unfillable` required fields and a `suggestedId`. An id that isn't `username/actor-name` → `400 invalid_actor`; an unknown Actor → `404 crawler_not_found`; no input schema → `404 crawler_schema_unavailable`. |
+| POST | `/crawlers/catalog/convert` | Re-derive a node config for a choice of exposed fields. Body `{actor, provider?, expose?, scalar?, input?, description?, connection?, limits?}` (camelCase, like the config). Returns the same shape as `suggested`; `parameterSchema` always comes from the Actor's real input schema. |
 
 ### RAG sources
 
@@ -7727,6 +7981,7 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 | Variable | Default | Effect |
 |---|---|---|
 | `THEYGENT_MCP_CALL_TIMEOUT_S` | `120` | Timeout, in seconds, for a single MCP tool call before it errors. Raise it for slow tools. |
+| `THEYGENT_CRAWLER_MAX_CHARGE_USD` | *(unset)* | Caps the **Settings → Crawlers** spend ceiling: the most one crawler call may charge, in USD. The setting stays editable below this value. See [Crawler](../building/nodes/crawler.md#spend). |
 | `THEYGENT_MCP_REGISTRIES` | *(unset)* | Extra MCP hubs for the catalog browser: a JSON array of `{"id", "label", "url"}` objects. Any registry speaking the standard subregistry API works; a self-hosted one doubles as an allowlist for air-gapped setups. A malformed value is a loud error, never a silently dropped registry. See [MCP servers](../mcp/index.md). |
 | `THEYGENT_OAUTH_REDIRECT_URL` | `http://localhost:8080/mcp/oauth/callback` | Where an MCP OAuth sign-in redirects the browser back to. Change it only if the control plane is reached at a different address than the default. |
 

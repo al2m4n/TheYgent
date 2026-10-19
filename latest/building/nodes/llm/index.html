@@ -1281,6 +1281,8 @@
       
         
       
+        
+      
     
     
     
@@ -1661,6 +1663,34 @@
     
   
     RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../crawler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crawler
   
 
     
@@ -2295,6 +2325,8 @@
       
         
       
+        
+      
     
     
     
@@ -2364,6 +2396,34 @@
     
   
     Example agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../mcp/apify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apify through the MCP hub
   
 
     
@@ -3633,10 +3693,11 @@
 <h2 id="tools-the-model-can-call">Tools the model can call<a class="headerlink" href="#tools-the-model-can-call" title="Permanent link">&para;</a></h2>
 <p>Wiring a tool node into the <code>tools</code> port turns it into a <strong>capability</strong>: the model may call it on its own, decide the arguments, read the result, and continue. This is autonomous tool-calling, and it is entirely visual.</p>
 <ol>
-<li>Drop a <a href="../tools/">tool</a>, <a href="../mcp/">MCP tool</a>, or <a href="../rag/">rag</a> node onto the canvas and configure it.</li>
+<li>Drop a <a href="../tools/">tool</a>, <a href="../mcp/">MCP tool</a>, <a href="../rag/">rag</a>, or <a href="../crawler/">crawler</a> node onto the canvas and configure it.</li>
 <li>Drag its violet <strong><code>use</code></strong> handle (on top of the tool node) into this llm node's violet <strong><code>tools</code></strong> port (on the bottom).</li>
-<li>The <strong>Tools the model can call</strong> panel now lists that tool, with a kind badge (builtin / http / mcp / rag).</li>
+<li>The <strong>Tools the model can call</strong> panel now lists that tool, with a kind badge (builtin / http / mcp / rag / crawler).</li>
 </ol>
+<p>The panel's <strong>Add MCP tools</strong> and <strong>Add crawler</strong> buttons do all three in one step: pick tools from an MCP server, or a crawler from the store, and they land configured and already wired into this port.</p>
 <p>A few things follow from wiring a capability:</p>
 <ul>
 <li><strong>The tool node's id becomes the function name</strong> the model sees and calls. Name your tool nodes meaningfully.</li>

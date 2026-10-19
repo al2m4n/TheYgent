@@ -1279,6 +1279,8 @@
       
         
       
+        
+      
     
     
     
@@ -1460,6 +1462,34 @@
     
   
     RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../building/nodes/crawler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crawler
   
 
     
@@ -2094,6 +2124,8 @@
       
         
       
+        
+      
     
     
     
@@ -2163,6 +2195,34 @@
     
   
     Example agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../mcp/apify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apify through the MCP hub
   
 
     
@@ -3164,6 +3224,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#web-researcher-a-crawler-the-model-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Web researcher — a crawler the model calls
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#editorial-loop-a-self-correcting-agent" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3359,6 +3430,19 @@ to call</strong> — answers cite the handbook section they came from. Seeding e
 background — check the source's status on the <a href="../rag/">RAG page</a> after installing; if
 it failed (e.g. the embedding model wasn't reachable), upload the handbook document to the
 source again from there, or delete the source and reinstall the sample.</p>
+<h3 id="web-researcher-a-crawler-the-model-calls">Web researcher — a crawler the model calls<a class="headerlink" href="#web-researcher-a-crawler-the-model-calls" title="Permanent link">&para;</a></h3>
+<p><code>sample-web-researcher</code> · <em>local model · creates the <code>sample-apify</code> connection · needs an Apify
+API token</em></p>
+<p>A local model with a <a href="../building/nodes/crawler/">crawler node</a> wired in as its
+<code>web_search</code> tool. The model decides when a question needs fresh facts, calls the crawler with
+one search query, reads the top three pages as trimmed Markdown, and answers with the URLs it
+used. The result count, the output format and a $0.05 charge cap per search are fixed on the
+node, out of the model's reach.</p>
+<p>The installer creates the <code>sample-apify</code> connection <strong>without a token</strong> — samples never ship a
+secret. Before the first run, open the agent in the editor, select the <code>web_search</code> node, and
+use <strong>Set token</strong> on its connection (or rotate the connection's secret through the
+<a href="../reference/api/">connections API</a>). Until then, each search returns an error the model
+sees, and it says it couldn't search. Searches bill the Apify account that owns the token.</p>
 <h3 id="editorial-loop-a-self-correcting-agent">Editorial loop — a self-correcting agent<a class="headerlink" href="#editorial-loop-a-self-correcting-agent" title="Permanent link">&para;</a></h3>
 <p><code>sample-editorial-loop</code> · <em>local model · installs 2 agents · durable runtime only</em></p>
 <p>A bounded <a href="../building/nodes/orchestration/">loop</a> re-runs a writer-critic child agent —
@@ -3390,7 +3474,7 @@ briefs. Like the agent itself, the trigger fires only on the durable runtime.</p
    if the list is empty. The special slots (<em>Vision</em>, <em>Speech-to-text</em>, <em>Text-to-speech</em>,
    <em>Image</em>, <em>Embedding</em>) filter your registry by the registered modality — a sample's Install
    button stays disabled until every slot it declares is filled.</li>
-<li>Click <strong>Install</strong> on a sample. The installer creates any MCP connections and RAG sources the
+<li>Click <strong>Install</strong> on a sample. The installer creates any connections and RAG sources the
    sample needs (reusing them by name on reinstall), seeds demo data, stamps your chosen models
    into the graph, publishes the agent(s) through the normal registry gate — children first, so
    a composition sample's pins always resolve — and registers any shipped trigger <strong>disabled</strong>.</li>
@@ -3430,7 +3514,7 @@ the rest of the batch still installs.</p>
 <li><strong>Duplicate</strong>: export the agent from the Agents page, change the <code>id</code>/<code>name</code> in the JSON, and
   import it (or paste it into a new agent in the editor's code view).</li>
 <li><strong>Delete</strong>: from the Agents page. The connections a sample created stay (other agents may use
-  them); remove them on the MCP page if you no longer want them.</li>
+  them); remove MCP servers on the MCP page if you no longer want them.</li>
 </ul>
 <h2 id="related-pages">Related pages<a class="headerlink" href="#related-pages" title="Permanent link">&para;</a></h2>
 <ul>

@@ -1387,6 +1387,8 @@
       
         
       
+        
+      
     
     
     
@@ -1568,6 +1570,34 @@
     
   
     RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/nodes/crawler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crawler
   
 
     
@@ -2202,6 +2232,8 @@
       
         
       
+        
+      
     
     
     
@@ -2271,6 +2303,34 @@
     
   
     Example agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/apify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apify through the MCP hub
   
 
     
@@ -3266,6 +3326,10 @@
 <td>The control plane's secret store, encrypted with <code>THEYGENT_SECRET_KEY</code>. Agents carry references, never values.</td>
 </tr>
 <tr>
+<td>What a crawler collects</td>
+<td>A <a href="../../building/nodes/crawler/">crawler node</a> sends its input to the provider it names, which crawls on its own servers; the results come back into your run. The provider's token stays in the secret store.</td>
+</tr>
+<tr>
 <td>Audio and images</td>
 <td>Local artifacts under <code>THEYGENT_ARTIFACT_DIR</code> on the control-plane host — never written into run history or exported with traces.</td>
 </tr>
@@ -3298,9 +3362,14 @@
 <td>Your searches. Replace the public hubs with a registry you host by setting <code>THEYGENT_MCP_REGISTRIES</code> — see <a href="../../mcp/#installing-from-a-hub">MCP servers</a>.</td>
 </tr>
 <tr>
+<td>The Apify Store</td>
+<td>When you open the <strong>Crawlers browser</strong> in the editor. The control plane makes the request; your browser does not.</td>
+<td>Your searches and the Actors you open. No token is sent. See <a href="../../building/nodes/crawler/#adding-a-crawler">Crawler</a>.</td>
+</tr>
+<tr>
 <td>Things you configure</td>
 <td>When an agent or a setting uses them.</td>
-<td>Exactly what you wired: a <a href="../../models/remote/">hosted API</a> you registered, a remote MCP server, an HTTP tool, a site you crawl for retrieval, a sign-in provider, an <a href="../../running/observability/">OpenTelemetry collector</a>, or the Claude Code traffic you route through the <a href="../../ai-gateway/">AI Gateway</a>.</td>
+<td>Exactly what you wired: a <a href="../../models/remote/">hosted API</a> you registered, a remote MCP server, an HTTP tool, a crawler node's provider (which receives the node's input), a site you crawl for retrieval, a sign-in provider, an <a href="../../running/observability/">OpenTelemetry collector</a>, or the Claude Code traffic you route through the <a href="../../ai-gateway/">AI Gateway</a>.</td>
 </tr>
 </tbody>
 </table>

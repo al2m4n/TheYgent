@@ -1274,6 +1274,8 @@
       
         
       
+        
+      
     
     
     
@@ -1455,6 +1457,34 @@
     
   
     RAG
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../building/nodes/crawler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Crawler
   
 
     
@@ -2089,6 +2119,8 @@
       
         
       
+        
+      
     
     
     
@@ -2158,6 +2190,34 @@
     
   
     Example agents
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mcp/apify/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apify through the MCP hub
   
 
     
@@ -3046,6 +3106,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#crawlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crawlers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rag-sources" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3465,6 +3536,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#crawlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Crawlers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rag-sources" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3748,7 +3830,7 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
 <tr>
 <td>POST</td>
 <td><code>/samples/install</code></td>
-<td>Install by catalog id. Body <code>{ids, models: {slot: {logical_id, binding}}}</code>. Editor role. Unfilled slots → <code>400 sample_models_required</code>, an illegal binding → <code>400 sample_model_invalid</code> (nothing written in either case); unknown id → <code>404 sample_not_found</code>. Beyond agents (children first for composition samples), an install creates the sample's MCP connections and RAG sources (reused by name on reinstall) and registers any shipped trigger <strong>disabled</strong>. The response <code>report</code> carries one entry per sample — <code>installed</code>, <code>already_installed</code>, or <code>error</code> (that sample rolled back and persisted nothing; the rest of the batch still ran) — with <code>connections</code>, <code>rag_sources</code>, and <code>warnings</code> (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces.</td>
+<td>Install by catalog id. Body <code>{ids, models: {slot: {logical_id, binding}}}</code>. Editor role. Unfilled slots → <code>400 sample_models_required</code>, an illegal binding → <code>400 sample_model_invalid</code> (nothing written in either case); unknown id → <code>404 sample_not_found</code>. Beyond agents (children first for composition samples), an install creates the sample's connections (MCP servers, or a provider's token connection with no token yet) and RAG sources (reused by name on reinstall) and registers any shipped trigger <strong>disabled</strong>. The response <code>report</code> carries one entry per sample — <code>installed</code>, <code>already_installed</code>, or <code>error</code> (that sample rolled back and persisted nothing; the rest of the batch still ran) — with <code>connections</code>, <code>rag_sources</code>, and <code>warnings</code> (degraded-install notes, e.g. seed ingest could not start). Reinstalling after deleting only some of a sample's agents repairs the missing pieces.</td>
 </tr>
 </tbody>
 </table>
@@ -4000,6 +4082,34 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
 <td>GET / PATCH / DELETE</td>
 <td><code>/connections/{id}</code></td>
 <td>Read / update (a non-empty <code>secret</code> rotates in place without changing any content hash) / delete.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="crawlers">Crawlers<a class="headerlink" href="#crawlers" title="Permanent link">&para;</a></h3>
+<p>The Crawlers browser's read path: the provider's public store, proxied and cached for five minutes, and an Actor's input schema converted into a <code>crawler</code> node config. Editor role. Nothing is created — installing is the editor dropping the returned config on the canvas. <code>provider</code> defaults to <code>apify</code>, the only one; another value is <code>400 crawler_provider_unknown</code>. See <a href="../../building/nodes/crawler/">Crawler</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/crawlers/catalog</code></td>
+<td>Search the store. Query <code>search?</code>, <code>category?</code>, <code>sort_by?</code> (<code>popularity</code> · <code>newest</code> · <code>relevance</code>), <code>limit?</code> (≤ 100), <code>offset?</code>. Returns <code>{entries, total, offset, limit}</code>; each entry carries <code>actor</code>, <code>title</code>, <code>author</code>, <code>categories</code>, <code>pricing {model, priceUsd, unit}</code>, <code>users30d</code>, <code>runs30d</code>, <code>successRate30d</code>. The store unreachable → <code>502 crawler_catalog_error</code>.</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/crawlers/catalog/actor?actor=…</code></td>
+<td>One Actor: its <code>entry</code>, <code>readmeSummary</code>, <code>defaultRunOptions</code>, its input <code>fields</code> (form-ready, each marked <code>exposable</code> when a model could fill it), and <code>suggested</code> — a complete node config plus <code>unfillable</code> required fields and a <code>suggestedId</code>. An id that isn't <code>username/actor-name</code> → <code>400 invalid_actor</code>; an unknown Actor → <code>404 crawler_not_found</code>; no input schema → <code>404 crawler_schema_unavailable</code>.</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/crawlers/catalog/convert</code></td>
+<td>Re-derive a node config for a choice of exposed fields. Body <code>{actor, provider?, expose?, scalar?, input?, description?, connection?, limits?}</code> (camelCase, like the config). Returns the same shape as <code>suggested</code>; <code>parameterSchema</code> always comes from the Actor's real input schema.</td>
 </tr>
 </tbody>
 </table>

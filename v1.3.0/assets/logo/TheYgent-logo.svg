@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="28 36 326 356" role="img" aria-label="TheYgent logo">
+  <defs>
+    <linearGradient id="ty-grad" gradientUnits="userSpaceOnUse" x1="191" y1="46" x2="191" y2="380">
+      <stop offset="0" stop-color="#05081f"></stop>
+      <stop offset="0.15" stop-color="#04072e"></stop>
+      <stop offset="0.45" stop-color="#000c5a"></stop>
+      <stop offset="0.72" stop-color="#0019ad"></stop>
+      <stop offset="1" stop-color="#0b32fb"></stop>
+    </linearGradient>
+  </defs>
+  <g fill="url(#ty-grad)">
+    <polygon points="38,46 63,46 63,71 38,71"></polygon>
+    <polygon points="87,67 106,68 105,87 87,87"></polygon>
+    <polygon points="56,94 81,94 82,120 56,120"></polygon>
+    <polygon points="115,85 310,85 341,120 115,120"></polygon>
+    <polygon points="66,141 87,141 199,159 199,343 159,380 158,189 105,184"></polygon>
+    <polygon points="323,141 341,142 303,184 265,189 265,286 225,322 225,159"></polygon>
+  </g>
+</svg>

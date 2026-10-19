@@ -41,6 +41,10 @@
          <lastmod>2026-10-19</lastmod>
     </url>
     <url>
+         <loc>https://docs.theygent.ai/latest/building/nodes/crawler/</loc>
+         <lastmod>2026-10-19</lastmod>
+    </url>
+    <url>
          <loc>https://docs.theygent.ai/latest/building/nodes/guardrail/</loc>
          <lastmod>2026-10-19</lastmod>
     </url>
@@ -162,6 +166,10 @@
     </url>
     <url>
          <loc>https://docs.theygent.ai/latest/mcp/</loc>
+         <lastmod>2026-10-19</lastmod>
+    </url>
+    <url>
+         <loc>https://docs.theygent.ai/latest/mcp/apify/</loc>
          <lastmod>2026-10-19</lastmod>
     </url>
     <url>
