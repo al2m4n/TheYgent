@@ -1,0 +1,54 @@
+{
+  "name": "anthropic-tool",
+  "description": "A tool call: the finish_reason is tool_calls.",
+  "server": "Anthropic's OpenAI-compatible API (https://api.anthropic.com/v1)",
+  "recorded": "2026-10-19",
+  "note": "Ids and timestamps anonymized; every other byte of each event as the server sent it.",
+  "request": {
+    "model": "claude-haiku-5-5",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the weather in Paris? Use the tool."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "Current weather for a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "max_tokens": 200
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/event-stream",
+    "transferEncoding": "chunked",
+    "httpVersion": "HTTP/1.1"
+  },
+  "events": [
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"}\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\": \"call_rec\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"              }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"\"}}]}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"         }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"{\\\"city\\\"\"}}]}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"    }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\": \\\"Pari\"}}]}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"           }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"type\":\"function\",\"function\":{\"arguments\":\"s\\\"}\"}}]}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"           }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"         }\n\n",
+    "data: [DONE]\n\n"
+  ]
+}
