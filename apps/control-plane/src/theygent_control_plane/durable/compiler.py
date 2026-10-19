@@ -26,7 +26,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -66,6 +66,7 @@ from theygent_control_plane.tools import DEFAULT_REGISTRY
 from theygent_control_plane.walker import (
     _NODE_REASONING_KEY,
     _NODE_TOOL_CALLS_KEY,
+    DEFAULT_TOOL_RESULT_MAX_CHARS,
     ActivityOutcome,
     EngineNameNotAllowed,
     RouterError,
@@ -120,6 +121,8 @@ from theygent_control_plane.walker import (
     resolve_model,
     resolve_model_key,
     resolve_rag_query,
+    tool_result_attributes,
+    tool_result_max_chars,
     tool_result_message,
     usage_attributes,
 )
@@ -213,6 +216,10 @@ class DurableResources:
     # The retrieval backend rag nodes/capabilities query — the SAME one the interactive
     # walker uses, so retrieval behaves identically on both runtimes. May be None.
     rag: Any = None  # rag.RagRetriever
+    # A zero-arg accessor for the platform's ``tools.result_max_chars`` setting: how much of one
+    # tool result an llm's tool loop shows the model when the node sets no cap of its own. None
+    # applies the built-in default.
+    tool_result_max_chars: Callable[[], int] | None = None
 
 
 _RES: DurableResources | None = None
@@ -977,6 +984,13 @@ async def _durable_walk(
                     has_tools = bool(schemas)
                     tool_schemas = schemas if has_tools else None
                     tool_choice = _to_openai_tool_choice(config.tool_choice) if has_tools else None
+                    # The cap shapes only what later turns are sent, never which steps run, so
+                    # reading the live setting here keeps replay on the journaled step sequence.
+                    cap_setting = _res().tool_result_max_chars
+                    result_cap = tool_result_max_chars(
+                        config,
+                        cap_setting() if cap_setting is not None else DEFAULT_TOOL_RESULT_MAX_CHARS,
+                    )
                     # Each journaled turn is a `model.generate` phase span (child of the node span).
                     # Carries the GenAI-semconv model/finish scalars.
                     gen_cm = (
@@ -1040,14 +1054,19 @@ async def _durable_walk(
                                     outcome = await _durable_tool_call(
                                         ir, call, run_id, node.id, iteration
                                     )
+                                    result_msg = tool_result_message(call, outcome, result_cap)
                                     if tool_scope is not None:
                                         tool_scope.set_attributes(
-                                            {"tool.name": call.name, "tool.ok": outcome.ok}
+                                            {
+                                                "tool.name": call.name,
+                                                "tool.ok": outcome.ok,
+                                                **tool_result_attributes(outcome, result_cap),
+                                            }
                                         )
                                 tool_call_records.append(
                                     _tool_call_record(call, outcome, iteration, ci)
                                 )
-                                messages.append(tool_result_message(call, outcome))
+                                messages.append(result_msg)
                             # A FORCED tool_choice ("required" / a named function) applies to the
                             # FIRST turn only — re-sending it would force a tool call on every
                             # turn, so the model could never produce a final answer and a write

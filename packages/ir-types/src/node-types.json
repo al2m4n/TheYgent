@@ -482,6 +482,18 @@
             "title": "Maxtooliterations",
             "type": "integer"
           },
+          "maxToolResultChars": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Maxtoolresultchars"
+          },
           "messages": {
             "items": {
               "$ref": "#/$defs/_Message"
@@ -527,6 +539,7 @@
       },
       "defaultConfig": {
         "maxToolIterations": 8,
+        "maxToolResultChars": null,
         "messages": [],
         "model": "",
         "toolChoice": "auto",

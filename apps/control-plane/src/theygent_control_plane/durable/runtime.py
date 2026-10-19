@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from dbos import DBOS, Queue
@@ -97,6 +98,7 @@ class DurableRuntime:
         gates: Any = None,
         artifacts: Any = None,
         rag: Any = None,
+        tool_result_max_chars: Callable[[], int] | None = None,
         executor_id: str | None = None,
     ) -> None:
         self._database_url = database_url
@@ -132,6 +134,8 @@ class DurableRuntime:
                 gates=gates,  # durable gate steps use the same backend
                 artifacts=artifacts,  # durable audio steps use the same store
                 rag=rag,  # durable rag steps retrieve through the same backend
+                # The platform's tool-result cap, read when an llm node's tool loop starts.
+                tool_result_max_chars=tool_result_max_chars,
             )
         )
         self._launched = False

@@ -205,8 +205,9 @@ function NodePanel({
             <p className="text-xs text-slate-600">This node type has no editable config.</p>
           ) : (
             Object.entries(properties).map(([key, schema]) => {
-              // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations via the dedicated
-              // Tools panel, rendered ONCE (for the `tools` key); the other two are edited inside it.
+              // Autonomous tool-calling: surface tools / toolChoice / maxToolIterations /
+              // maxToolResultChars via the dedicated Tools panel, rendered ONCE (for the `tools`
+              // key); the others are edited inside it.
               if (node.type === "llm" && key === "tools") {
                 return (
                   <LlmToolsPanel
@@ -217,7 +218,12 @@ function NodePanel({
                   />
                 );
               }
-              if (node.type === "llm" && (key === "toolChoice" || key === "maxToolIterations")) {
+              if (
+                node.type === "llm" &&
+                (key === "toolChoice" ||
+                  key === "maxToolIterations" ||
+                  key === "maxToolResultChars")
+              ) {
                 return null;
               }
               // Specialized pickers for reference fields — populated from the live registries instead
@@ -1535,6 +1541,9 @@ function LlmToolsPanel({
     namedChoice !== undefined ? "function" : typeof rawChoice === "string" ? rawChoice : "auto";
   const maxIter =
     typeof config.maxToolIterations === "number" ? (config.maxToolIterations as number) : 8;
+  // Absent means the platform's tools.result_max_chars setting applies.
+  const resultCap =
+    typeof config.maxToolResultChars === "number" ? (config.maxToolResultChars as number) : null;
   const wired = llmCapabilityTools(ir, nodeId);
   const legacy = Array.isArray(config.tools) ? (config.tools as string[]) : [];
   const hasTools = wired.length > 0 || legacy.length > 0;
@@ -1645,6 +1654,29 @@ function LlmToolsPanel({
               value={maxIter}
               onChange={(e) => set({ maxToolIterations: Math.max(1, Number(e.target.value) || 1) })}
             />
+          </label>
+          <label className="block space-y-1">
+            <span className="block text-[11px] font-medium uppercase tracking-wide text-slate-500">
+              max tool result characters
+            </span>
+            <Input
+              type="number"
+              min={1}
+              placeholder="platform default"
+              value={resultCap ?? ""}
+              onChange={(e) => {
+                const n = Math.floor(Number(e.target.value));
+                if (e.target.value.trim() === "" || !Number.isFinite(n) || n < 1) {
+                  // Cleared: drop the key so the platform setting applies (absent, not null).
+                  const { maxToolResultChars: _drop, ...rest } = config;
+                  onChange(updateNodeConfig(ir, nodeId, rest));
+                } else set({ maxToolResultChars: n });
+              }}
+            />
+            <span className="block text-[11px] leading-relaxed text-muted-foreground">
+              The model sees at most this much of each tool result; the rest is cut with a note
+              saying how much was left out. Empty uses the platform setting (Settings → Tools).
+            </span>
           </label>
         </div>
       )}

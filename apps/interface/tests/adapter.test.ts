@@ -220,6 +220,17 @@ describe("canvas edits produce valid IR", () => {
     expect(view.nodes?.[added?.id ?? ""]?.position).toEqual({ x: 200, y: 300 });
   });
 
+  it("a dropped llm carries no tool-loop defaults, so it hashes like a hand-authored one", () => {
+    const next = addNode(sampleGraph(), "llm", { x: 0, y: 0 });
+    const added = next.nodes?.find((n) => n.type === "llm" && n.id !== "n_llm");
+    const config = (added?.config ?? {}) as Record<string, unknown>;
+    // The registry default carries `maxToolResultChars: null`; absent and null both mean the
+    // platform setting, but only absent keeps the node byte-identical to {model, messages}.
+    for (const key of ["tools", "toolChoice", "maxToolIterations", "maxToolResultChars"]) {
+      expect(config).not.toHaveProperty(key);
+    }
+  });
+
   it("defaultAddPosition cascades off the last node so click-added nodes never stack", () => {
     // Click-to-add has no drop point — the position is derived from the IR alone.
     const ir = sampleGraph();

@@ -30,6 +30,7 @@ These are the keys on the node itself (camelCase, as the editor and IR store the
 | `messages` | list | — (required) | The chat turns. Each is `{ "role": ..., "content": ... }`. A new node is seeded with one user turn containing `$in`. |
 | `toolChoice` | enum / object | `"auto"` | Whether the model may call tools: `auto`, `none`, `required`, or a named-function object. Only meaningful when tools are wired. |
 | `maxToolIterations` | integer | `8` | The maximum number of model-then-tool rounds before the loop stops. Must be at least 1. |
+| `maxToolResultChars` | integer | unset | The most characters of one tool result the model is shown; the rest is cut, with a note saying how much was left out. Unset uses the platform's `tools.result_max_chars` setting (16,000 by default). Must be at least 1. |
 | `tools` | list of strings | `[]` | A legacy way to attach tools by key. Prefer wiring the `tools` port instead. |
 
 Generation parameters — temperature, max tokens, and so on — are **not** on the node. They live on the model binding and are shared by every llm node that uses it, described next.
@@ -146,8 +147,9 @@ Wiring a tool node into the `tools` port turns it into a **capability**: the mod
 A few things follow from wiring a capability:
 
 - **The tool node's id becomes the function name** the model sees and calls. Name your tool nodes meaningfully.
-- When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls) and **max tool iterations** (the round limit, default 8).
+- When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls), **max tool iterations** (the round limit, default 8) and **max tool result characters** (see below).
 - The model runs a **bounded loop**: it answers or calls a tool; each tool result is fed back; it calls again until it answers or hits the iteration limit.
+- **Each tool result is capped.** The model is shown at most 16,000 characters of one result by default, about 4,000 tokens. A longer result, such as a web page or a crawl, is cut, and a note at the end says how many characters were left out, so the model knows it saw only part of it. Set **max tool result characters** on the node to change the limit for its tools, or change the default for every agent under **Settings → Tools** ([`tools.result_max_chars`](../../reference/settings.md#tools)). The run inspector still shows each tool's whole result, and the tool's span in the waterfall records its full length (`tool.result_chars`) and whether it was cut (`tool.result_truncated`).
 - There is deliberately no compile-time capability check. A model that does not support tool-calling simply returns a plain answer and ignores the tools.
 - Local models that write tool calls as text work too: Llama-style calls and gpt-oss's own reply format on MLX are turned into real tool calls, and gpt-oss's reasoning is kept out of the answer (it arrives as the reasoning stream).
 
