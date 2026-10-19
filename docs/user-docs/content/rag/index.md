@@ -32,7 +32,7 @@ An **upload** source is a bucket you drop files into. Two ways in, same result:
 - the **Upload files** button (multi-select file picker), or
 - **drag & drop** files anywhere onto the source's row — it highlights while you hover.
 
-Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, and EPUB, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
+Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
 
 ### Crawl sources
 

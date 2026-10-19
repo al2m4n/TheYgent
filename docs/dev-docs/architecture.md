@@ -142,6 +142,11 @@ Notes on the topology:
   any other caller of `/v1/*`. The control plane holds its versioned config, developers' gateway
   keys and the reports. See [ai-gateway.md](./ai-gateway.md).
 
+- **The MCP server** runs on a developer's machine, launched by their coding tool (Claude
+  Code, Codex, OpenCode). It is a client of both planes like the interface: agents, runs and
+  retrieval go through the control plane with a personal API key, and model calls go straight
+  to the inference plane. It holds no state. See [mcp-server.md](./mcp-server.md).
+
 The same four process types run in every mode: `make up` on bare metal, Docker Compose,
 or Kubernetes. Only the inference target and the wiring change. See
 [deployment.md](./deployment.md).
@@ -186,6 +191,7 @@ the walk, [control-plane.md](./control-plane.md) for persistence and spans,
 | [apps/inference-plane](../../apps/inference-plane) | Engine manager + OpenAI-compatible gateway | Python, uv |
 | [apps/worker](../../apps/worker) | Durable-runtime host (separate deployable) | Python, uv |
 | [apps/ai-gateway](../../apps/ai-gateway) | Anthropic-Messages proxy for coding agents (observer and router) | Python, uv |
+| [apps/mcp-server](../../apps/mcp-server) | MCP server giving coding agents TheYgent's agents, models and retrieval as tools | Python, uv |
 | [apps/interface](../../apps/interface) | React SPA: visual builder + every operator surface | TS, pnpm, Vite |
 | [apps/web](../../apps/web) | Static marketing site (theygent.ai) | plain HTML/CSS/JS |
 | [packages/ir](../../packages/ir) | Pydantic IR models — the single source of truth | Python, uv |
@@ -237,6 +243,7 @@ justification:
 - [durable-execution.md](./durable-execution.md) — crash-safe runs and the worker
 - [inference-plane.md](./inference-plane.md) — engines, bindings, the gateway
 - [ai-gateway.md](./ai-gateway.md) — the coding agents' proxy: observer, policy, records
+- [mcp-server.md](./mcp-server.md) — TheYgent as tools for coding agents
 - [interface.md](./interface.md) — the SPA and the canvas
 - [ir-and-packages.md](./ir-and-packages.md) — the IR, codegen, gateway client
 - [deployment.md](./deployment.md) — run modes, CI, operations

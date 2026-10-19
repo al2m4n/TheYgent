@@ -38,7 +38,7 @@ endif
 # Python test suites run per-package: the apps share test-file basenames
 # (test_fast_suite.py, test_integration_mlx.py) with no package __init__, so a single
 # root pytest collides on import. Each entry is run with its own dir as rootdir.
-PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane apps/ai-gateway
+PY_TEST_DIRS := packages/ir apps/inference-plane apps/control-plane apps/ai-gateway apps/mcp-server
 
 # Each service is identified by the PORT it listens on — that is the authoritative "is it up and
 # which process is it", NOT a recorded pid. `start` records `$!`, but that is the `uv run`/`pnpm`
@@ -68,7 +68,7 @@ PG_VOLUME ?= theygent-pgdata
 # The sample observability stack (deploy/otel): OTel collector (:4318) → Tempo → Grafana (:3000).
 OTEL_COMPOSE := deploy/otel/docker-compose.yml
 
-.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy ai-gateway-prices gen-ir-types hooks lint docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-up k8s-forward k8s-forward-stop k8s-down k8s-delete
+.PHONY: help install engines migrate up start restart down down-apps status logs pg-up pg-down otel-up otel-down otel-logs test test-py test-web test-deploy ai-gateway-prices gen-ir-types hooks lint mcp-setup docs-serve docs-build web-up web-down docker-build docker-up docker-down docker-logs k8s-load k8s-apply k8s-up k8s-forward k8s-forward-stop k8s-down k8s-delete
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -409,6 +409,9 @@ k8s-delete: k8s-down ## Alias for k8s-down
 
 docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:8000)
 	uv run --project docs/user-docs mkdocs serve -f docs/user-docs/mkdocs.yml
+
+mcp-setup: ## Print how to connect Claude Code, Codex or OpenCode to TheYgent's MCP server
+	@uv run --package theygent-mcp theygent-mcp setup
 
 docs-build: ## Build the user docs site (strict — broken links fail the build)
 	uv run --project docs/user-docs mkdocs build --strict -f docs/user-docs/mkdocs.yml

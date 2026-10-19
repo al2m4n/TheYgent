@@ -141,6 +141,9 @@ nav:
   - MCP:
       - mcp/index.md
       - Example agents: mcp/examples.md
+  - Coding Agents:
+      - coding-agents/index.md
+      - Tools & Recipes: coding-agents/tools.md
   - Running Agents:
       - running/index.md
       - Durable Runs: running/durable.md

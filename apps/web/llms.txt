@@ -11,6 +11,7 @@ Key facts:
 - Privacy: no telemetry, usage analytics, crash reporting, update checks, or license activation, and no vendor account. Once installed, TheYgent runs fully offline or air-gapped. Its only automatic outbound request is a public model price list that the inference plane's model client library (LiteLLM) fetches at startup; it carries no user data and falls back to a bundled copy when offline. Hugging Face and MCP registries are contacted only when the user browses them.
 - Human-in-the-loop: a human approval node pauses a run until someone approves or rejects; approvals run on the durable runtime, so a pending approval survives restarts.
 - Tooling: built-in tools, HTTP tools, and any MCP (Model Context Protocol) server over stdio or HTTP, plus autonomous LLM tool-calling wired visually on the canvas.
+- Coding agents: TheYgent ships an MCP server, so Claude Code, Codex, OpenCode, or any MCP client can offload prompts and local files to the user's own models, run and build TheYgent agents, and index and search docs and code. Model calls go from the MCP server straight to the user's inference plane; agent runs and searches use a personal API key against the user's control plane.
 - Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
 - Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
 - Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
@@ -33,6 +34,8 @@ Key facts:
 - [Observability](https://docs.theygent.ai/latest/running/observability/): run waterfalls and OTLP export
 - [AI Gateway](https://docs.theygent.ai/latest/ai-gateway/): observe, route and cut what Claude Code costs; personal and team gateways
 - [AI Gateway: Local Models](https://docs.theygent.ai/latest/ai-gateway/local-models/): serving a share of Claude Code's requests with models you run, measured by trials first
+- [Use TheYgent from Coding Agents](https://docs.theygent.ai/latest/coding-agents/): the MCP server — connect Claude Code, Codex, or OpenCode to offload work to local models, run and build agents, and search docs and code
+- [Coding Agents: Tools & Recipes](https://docs.theygent.ai/latest/coding-agents/tools/): every MCP tool, prompts that work well, and a project-instructions snippet
 - [API Reference](https://docs.theygent.ai/latest/reference/api/): control-plane and inference-plane HTTP APIs
 - [Troubleshooting](https://docs.theygent.ai/latest/reference/troubleshooting/): common issues and fixes
 
@@ -51,6 +54,7 @@ Each walkthrough has a page with the video, its chapters, and a written summary.
 
 - [Private & offline AI agents](https://theygent.ai/private-ai/): local models only — where data lives, every network touchpoint and when it happens, and running offline or air-gapped
 - [Local AI agents on Apple Silicon](https://theygent.ai/apple-silicon/): MLX for chat, vision, and text-to-speech; llama.cpp and whisper.cpp for embeddings and speech-to-text; setting up on a Mac
+- [TheYgent's MCP server for Claude Code, Codex & OpenCode](https://theygent.ai/coding-agents/): what a coding agent can hand off — local-model calls that read files itself, running and building agents, indexing and searching docs and code — setup, and what goes where
 - [Reduce Claude Code cost with the AI Gateway](https://theygent.ai/ai-gateway/): what Claude Code costs per session, subagent, and developer; routing subagents and cold-cache turns to a cheaper Claude model; serving a measured share with local models; personal and team gateways, and what leaves them
 
 ## Comparisons
@@ -83,6 +87,7 @@ Twelve ready-to-run agents ship with TheYgent (install from Settings → Samples
 
 ## Blog
 
+- [Give Your Coding Agent Your Local Models: TheYgent as an MCP Server](https://theygent.ai/blog/coding-agents-local-models-mcp/): the MCP server for Claude Code, Codex, and OpenCode — files a local model reads so the coding agent doesn't, building and running agents through tools, indexing a codebase, measured end to end, and what goes where
 - [Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory](https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/): expert streaming on MLX — a mixture-of-experts model’s experts read from the SSD per token with a GPU cache, identical answers, measured speed and memory, and the limits
 - [Building a Local-First Agent Platform Where the Vendor Is Never in the Middle](https://theygent.ai/blog/local-first-agent-platform-architecture/): the architecture — two planes and one seam, logical model IDs, the engine manager, content-addressed agents, durable runs, and checkable privacy
 

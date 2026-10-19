@@ -17,6 +17,7 @@ members = [
     "theygent-gateway-client",
     "theygent-inference-plane",
     "theygent-ir",
+    "theygent-mcp",
     "theygent-worker",
 ]
 
@@ -3757,6 +3758,41 @@ requires-dist = [{ name = "pydantic", specifier = ">=2.6" }]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=8" },
+    { name = "pytest-xdist", specifier = ">=3" },
+    { name = "ruff", specifier = ">=0.5" },
+    { name = "ty", specifier = ">=0.0.1a1" },
+]
+
+[[package]]
+name = "theygent-mcp"
+version = "1.0.0"
+source = { editable = "apps/mcp-server" }
+dependencies = [
+    { name = "fastmcp" },
+    { name = "httpx" },
+    { name = "theygent-ir" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastmcp", specifier = ">=3.4.4" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "theygent-ir", editable = "packages/ir" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-xdist", specifier = ">=3" },
     { name = "ruff", specifier = ">=0.5" },
     { name = "ty", specifier = ">=0.0.1a1" },

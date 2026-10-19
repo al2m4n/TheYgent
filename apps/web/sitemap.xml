@@ -17,6 +17,10 @@
     <lastmod>2026-10-15</lastmod>
   </url>
   <url>
+    <loc>https://theygent.ai/coding-agents/</loc>
+    <lastmod>2026-10-19</lastmod>
+  </url>
+  <url>
     <loc>https://theygent.ai/compare/</loc>
     <lastmod>2026-10-12</lastmod>
   </url>
@@ -114,7 +118,7 @@
   </url>
   <url>
     <loc>https://theygent.ai/blog/</loc>
-    <lastmod>2026-10-12</lastmod>
+    <lastmod>2026-10-19</lastmod>
   </url>
   <url>
     <loc>https://theygent.ai/blog/local-first-agent-platform-architecture/</loc>
@@ -123,5 +127,9 @@
   <url>
     <loc>https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/</loc>
     <lastmod>2026-10-18</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/blog/coding-agents-local-models-mcp/</loc>
+    <lastmod>2026-10-19</lastmod>
   </url>
 </urlset>

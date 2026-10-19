@@ -27,6 +27,7 @@ COPY pyproject.toml uv.lock ./
 COPY apps/ai-gateway/pyproject.toml apps/ai-gateway/
 COPY apps/control-plane/pyproject.toml apps/control-plane/
 COPY apps/inference-plane/pyproject.toml apps/inference-plane/
+COPY apps/mcp-server/pyproject.toml apps/mcp-server/
 COPY apps/worker/pyproject.toml apps/worker/
 COPY packages/ir/pyproject.toml packages/ir/
 COPY packages/gateway-client/pyproject.toml packages/gateway-client/

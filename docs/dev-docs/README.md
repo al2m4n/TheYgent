@@ -15,6 +15,7 @@ the load-bearing boundaries. Then go component by component:
 | [durable-execution.md](./durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [inference-plane.md](./inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
 | [ai-gateway.md](./ai-gateway.md) | The coding agents' Anthropic-Messages proxy: pass-through, identity, the policy, router mode, local models and trials, shadow runs, prices, records and export, the admin surface |
+| [mcp-server.md](./mcp-server.md) | TheYgent as tools for coding agents: the twenty tools, auth with personal API keys, local-file indexing, the plane boundary |
 | [interface.md](./interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [ir-and-packages.md](./ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [deployment.md](./deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |
