@@ -29,10 +29,11 @@ Every Python app imports it; the frontend gets it through generated types.
 |------|--------------|
 | [`src/theygent_ir/graph.py`](src/theygent_ir/graph.py) | The IR: `IRDocument`, `Node`, `Edge`, `Port`/`Ports`, `ModelBinding`, tool bindings (`BuiltinTool`, `HttpTool`, `McpTool`), one config model per node type (`_CONFIG_MODELS`), `NODE_TYPE_KIND` (type → `boundary`/`activity`/`orchestration`), `EXECUTABLE_TYPES`, `_CAPABILITY_TYPES` (what may feed an llm's `tools` port), `_PINNED_BODY_TYPES` (subgraph/loop/map pin exactly one version or hash), `parse_document`, `validate_graph`, `topological_order` |
 | [`src/theygent_ir/contenthash.py`](src/theygent_ir/contenthash.py) | `content_hash`: `sha256:` over the validated, default-filled model dumped as canonical key-sorted JSON, with `view` and `contentHash` excluded |
-| [`src/theygent_ir/registration.py`](src/theygent_ir/registration.py) | The inference plane's registration payload (camelCase on the wire): `ManagedBinding` (with `modality`), `ReachableBinding`, `Lifecycle`, `Capabilities`, `MODALITIES`, `BINDING_NAMES`, `parse_registration` |
+| [`src/theygent_ir/registration.py`](src/theygent_ir/registration.py) | The inference plane's registration payload (camelCase on the wire): `ManagedBinding` (with `modality`), `ReachableBinding` (with `requireFinishReason`), `Lifecycle`, `Capabilities`, `MODALITIES`, `BINDING_NAMES`, `parse_registration` |
 | [`src/theygent_ir/gateway.py`](src/theygent_ir/gateway.py) | AI gateway ↔ control plane types (snake_case): `GatewayRequestRecord`, `GatewayEventBatch`/`Ack`, `GatewayTotals`, `GatewayConfig`/`PolicyConfig`, local routing, `GatewayKeySet`, heartbeat, fingerprints, `TARGET_CAPABILITIES`; every free-form string is a constrained `Token` |
 | [`src/theygent_ir/__init__.py`](src/theygent_ir/__init__.py) | Re-exports the graph and registration API (`theygent_ir.gateway` is imported from the submodule) |
 | [`tests/test_graph.py`](tests/test_graph.py), [`tests/test_registration.py`](tests/test_registration.py), [`tests/test_gateway.py`](tests/test_gateway.py) | Validation, the pinned hash, kind/type integrity, registration rules, the no-free-text scan of the gateway types |
+| [`tests/test_require_finish_reason.py`](tests/test_require_finish_reason.py) | `requireFinishReason`: off by default, camelCase round trip, reachable-only (rejected on `ManagedBinding`), boolean only |
 
 ## Adding a node type (the full path)
 

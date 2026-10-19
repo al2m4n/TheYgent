@@ -1,0 +1,31 @@
+{
+  "name": "anthropic-length",
+  "description": "A reply cut by max_tokens: the finish_reason is length.",
+  "server": "Anthropic's OpenAI-compatible API (https://api.anthropic.com/v1)",
+  "recorded": "2026-10-19",
+  "note": "Ids and timestamps anonymized; every other byte of each event as the server sent it.",
+  "request": {
+    "model": "claude-haiku-5-5",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Count from 1 to 100, one number per line."
+      }
+    ],
+    "max_tokens": 8
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/event-stream",
+    "transferEncoding": "chunked",
+    "httpVersion": "HTTP/1.1"
+  },
+  "events": [
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"               }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"1\\n2\\n3\\n4\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"         }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"          }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"               }\n\n",
+    "data: [DONE]\n\n"
+  ]
+}

@@ -730,3 +730,68 @@ describe("Mixture-of-experts and expert streaming", () => {
     expect(screen.queryByRole("checkbox", { name: "Stream experts from disk" })).toBeNull();
   });
 });
+
+describe("A reachable model's cut-off streams", () => {
+  function reachableMock(initial: Record<string, unknown>) {
+    const puts: Record<string, unknown>[] = [];
+    let binding = initial;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const path = pathOf(url);
+        if (path === "/admin/models")
+          return jsonResponse({ models: [{ logicalId: "hosted", binding }] });
+        if (path === "/admin/models/hosted" && init?.method === "PUT") {
+          binding = JSON.parse(init.body as string);
+          puts.push(binding);
+          return jsonResponse({ logicalId: "hosted", binding });
+        }
+        if (path === "/admin/credentials") return jsonResponse({ credentials: [] });
+        if (path === "/admin/engines") return jsonResponse({ maxResident: 2, resident: [] });
+        return jsonResponse({ downloads: [] });
+      }),
+    );
+    return puts;
+  }
+
+  const HOSTED = {
+    binding: "openai-compatible",
+    baseUrl: "https://api.example.com/v1",
+    model: "provider-model",
+    modality: "chat",
+    params: {},
+  };
+
+  it("settings turn reporting on, and other edits leave the key alone", async () => {
+    const puts = reachableMock(HOSTED);
+    renderRegistries();
+    fireEvent.click(await screen.findByRole("button", { name: "hosted" }));
+    const report = await screen.findByRole("checkbox", {
+      name: "Report a reply cut off mid-stream",
+    });
+    expect(report).not.toBeChecked();
+
+    // Saving an unrelated edit never sends the key (a plane that predates it would refuse it).
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).not.toHaveProperty("requireFinishReason");
+
+    fireEvent.click(await screen.findByRole("button", { name: "hosted" }));
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "Report a reply cut off mid-stream" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1].requireFinishReason).toBe(true);
+  });
+
+  it("is not offered for a non-chat reachable model", async () => {
+    reachableMock({ ...HOSTED, modality: "embeddings" });
+    renderRegistries();
+    fireEvent.click(await screen.findByRole("button", { name: "hosted" }));
+    await screen.findByText(/Renaming isn't an edit/);
+    expect(
+      screen.queryByRole("checkbox", { name: "Report a reply cut off mid-stream" }),
+    ).toBeNull();
+  });
+});

@@ -942,6 +942,13 @@ function RegistrationSettingsModal({
     typeof storedParams.expertCacheGb === "number" ? String(storedParams.expertCacheGb) : "",
   );
   const streamable = binding.binding === "mlx" && (modality === "" || modality === "chat");
+
+  // A reachable chat server that ends every streamed reply with a finish reason can have a reply
+  // cut off mid-stream reported as an error (`requireFinishReason`). Off unless the user turns it
+  // on: a server that never sends one would fail every stream.
+  const originalRequireFinish = binding.requireFinishReason === true;
+  const [requireFinish, setRequireFinish] = useState(originalRequireFinish);
+  const chatStreams = modality === "" || modality === "chat" || modality === "vision";
   const cacheGbValue = Number(expertCacheGb);
   const cacheGbError =
     streamable && streamExperts && expertCacheGb.trim() && !(cacheGbValue > 0)
@@ -981,6 +988,8 @@ function RegistrationSettingsModal({
         next.baseUrl = baseUrl.trim();
         next.credentialRef = credentialRef || null;
         next.params = parseParams();
+        // Sent only when changed, so saving other edits never adds a key the plane may not know.
+        if (requireFinish !== originalRequireFinish) next.requireFinishReason = requireFinish;
       } else {
         next.source = source;
         if (streamable) {
@@ -1107,6 +1116,28 @@ function RegistrationSettingsModal({
                 Keep warm (never auto-evict)
               </label>
             </>
+          )}
+          {reachable && chatStreams && (
+            <div className="col-span-2 rounded-md border border-border p-3">
+              <label className="flex items-start gap-2 text-sm text-foreground">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={requireFinish}
+                  onCheckedChange={(v) => setRequireFinish(v === true)}
+                  aria-label="Report a reply cut off mid-stream"
+                />
+                <span>
+                  Report a reply cut off mid-stream
+                  <span className="block text-[11px] leading-relaxed text-muted-foreground">
+                    For a server that ends every streamed reply with a finish reason, as
+                    OpenAI-compatible servers normally do. A stream that stops without one then
+                    fails with <span className="mono">engine_dropped_request</span> instead of
+                    reading as a finished, shorter answer. A server that never sends one would fail
+                    every stream, so leave this off if you're not sure.
+                  </span>
+                </span>
+              </label>
+            </div>
           )}
           {streamable && (
             <div className="col-span-2 space-y-2 rounded-md border border-border p-3">

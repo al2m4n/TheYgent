@@ -165,7 +165,9 @@ launcher or modality needs both a fast-suite test and a gated real-path test.
 
 Fixtures: `tests/conftest.py` and `tests/_fake_upstream.py` (`FakeUpstreamLauncher`: a real
 OpenAI-compatible server standing in for every engine), `tests/_dropping_upstream.py` (an engine
-that drops requests like `mlx_lm.server`), `tests/_payloads.py` (camelCase registration builders).
+that drops requests like `mlx_lm.server`, and replays recorded hosted streams whole or cut before
+their finish), `tests/_hosted_streams.py` (loads those recordings from
+`tests/fixtures/hosted-streams/`), `tests/_payloads.py` (camelCase registration builders).
 Tests are named by area: `test_fast_suite.py` (both surfaces end to end), `test_engines.py`,
 `test_eviction.py`, `test_modality_dispatch.py`, `test_catalog*.py`, `test_transfer.py`,
 `test_tool_parse.py`, `test_harmony.py`, `test_mlx_*`, `test_image_*`, and `test_integration_*.py`

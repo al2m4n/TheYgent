@@ -95,6 +95,13 @@ class ReachableBinding(_Wire):
     platform has for routing UI — a transcription server gets the voice composer, a speech
     server gets text-in/audio-out — and for the capabilities a UI reads. Defaults to
     ``"chat"`` so a registration that omits it is a chat registration.
+
+    ``require_finish_reason`` declares that the upstream ends every chat stream with a chunk
+    carrying a ``finish_reason``, so a stream that ends without one was cut off and is reported
+    as ``engine_dropped_request`` instead of being passed on as a finished, shorter answer.
+    Managed engines are always checked this way. A reachable upstream is not by default: its
+    stream shape is a property of whatever server sits behind the URL, and one that never sends
+    a ``finish_reason`` would have every stream fail.
     """
 
     binding: ReachableBindingName
@@ -103,6 +110,7 @@ class ReachableBinding(_Wire):
     modality: Modality = "chat"
     credential_ref: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
+    require_finish_reason: bool = False
 
 
 RegistrationPayload = Annotated[

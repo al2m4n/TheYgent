@@ -215,13 +215,15 @@ class Gateway:
     async def _sse_lines(
         self, resp: Any, upstream: Upstream, params: dict[str, Any]
     ) -> AsyncIterator[str]:
-        # A local engine's stream that ends without the engine's own finish_reason was cut off
-        # (see ``Upstream.local_engine``). The dispatch layer's closing chunk then carries a
-        # made-up "stop", so it is checked before it is relayed: a caller must never read a
-        # cut-off reply as a finished one.
+        # When the upstream ends every stream with a finish_reason (see
+        # ``Upstream.require_finish_reason``), a stream that ends without one was cut off. The
+        # dispatch layer's closing chunk then carries a made-up "stop", so it is checked before it
+        # is relayed: a caller must never read a cut-off reply as a finished one.
         def cut_off(chunk: dict[str, Any]) -> bool:
             return (
-                upstream.local_engine and _has_finish_reason(chunk) and not _stream_finished(resp)
+                upstream.require_finish_reason
+                and _has_finish_reason(chunk)
+                and not _stream_finished(resp)
             )
 
         try:
@@ -242,7 +244,7 @@ class Gateway:
             if is_dropped_connection(exc):
                 raise _dropped(params, mid_stream=True) from exc
             raise
-        if upstream.local_engine and not _stream_finished(resp):
+        if upstream.require_finish_reason and not _stream_finished(resp):
             raise _dropped(params, mid_stream=True)
         yield "data: [DONE]\n\n"
 
