@@ -3253,7 +3253,7 @@
 <li>the <strong>Upload files</strong> button (multi-select file picker), or</li>
 <li><strong>drag &amp; drop</strong> files anywhere onto the source's row — it highlights while you hover.</li>
 </ul>
-<p>Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.</p>
+<p>Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. An admin can raise that limit to 1 GiB under <strong>Settings → RAG</strong>. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.</p>
 <h3 id="crawl-sources">Crawl sources<a class="headerlink" href="#crawl-sources" title="Permanent link">&para;</a></h3>
 <p>A <strong>crawl</strong> source ingests a website — point it at a docs root and TheYgent walks the pages:</p>
 <table>
@@ -3308,6 +3308,7 @@
 <h2 id="managing-sources">Managing sources<a class="headerlink" href="#managing-sources" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The list has the same <strong>search box and filter chips</strong> (kind, status) as the MCP page.</li>
+<li>Click a source's name to see its documents, oldest first, with each one's status, chunk count, and any error. A large source loads 100 at a time; <strong>Load more</strong> fetches the next ones.</li>
 <li><strong>Rename</strong> and crawl-config changes are a <code>PATCH</code> away (the API) — the id, and therefore every agent reference, is unaffected.</li>
 <li><strong>Delete</strong> removes the source with all its documents and vectors (a confirmation dialog stands in the way). Agents that still reference it will refuse to run with a clear <code>rag_source_not_found</code> error.</li>
 </ul>

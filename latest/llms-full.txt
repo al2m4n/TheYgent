@@ -4713,7 +4713,7 @@ An **upload** source is a bucket you drop files into. Two ways in, same result:
 - the **Upload files** button (multi-select file picker), or
 - **drag & drop** files anywhere onto the source's row — it highlights while you hover.
 
-Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
+Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. An admin can raise that limit to 1 GiB under **Settings → RAG**. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
 
 ### Crawl sources
 
@@ -4765,6 +4765,7 @@ Agents reference a source by its stable id, so re-crawling or uploading more doc
 ## Managing sources
 
 - The list has the same **search box and filter chips** (kind, status) as the MCP page.
+- Click a source's name to see its documents, oldest first, with each one's status, chunk count, and any error. A large source loads 100 at a time; **Load more** fetches the next ones.
 - **Rename** and crawl-config changes are a `PATCH` away (the API) — the id, and therefore every agent reference, is unaffected.
 - **Delete** removes the source with all its documents and vectors (a confirmation dialog stands in the way). Agents that still reference it will refuse to run with a clear `rag_source_not_found` error.
 
@@ -5393,7 +5394,7 @@ Agents the coding agent builds are ordinary TheYgent agents. They follow
 |---|---|
 | `list_rag_sources` | Your [retrieval sources](../rag/index.md) and their status. |
 | `create_rag_source` | Creates an `upload` source, or a `crawl` source for a website. Needs an embeddings model from `list_models`. |
-| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. |
+| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over TheYgent's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
 | `add_rag_text` | Adds a document from text, such as notes, a generated summary, or an API response. |
 | `ingest_rag_source` | Starts or re-runs a crawl source's crawl. |
 | `get_rag_source` | Ingest progress and each document's status. |
@@ -7666,8 +7667,8 @@ Retrieval collections agents search through the rag node. See [RAG sources](../r
 | POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. Creating a `crawl` source does not start the crawl — call `:ingest`. |
 | GET | `/rag/sources` | List (keyset pagination via `limit` + `before`). |
 | GET / PATCH / DELETE | `/rag/sources/{id}` | Read (status + live ingest `progress`) / rename or edit crawl config / delete with all documents and vectors. |
-| GET | `/rag/sources/{id}/documents` | The source's documents with per-document status, chunk counts, and errors. |
-| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime; 50 MiB cap). Returns `202`; poll the source for progress. |
+| GET | `/rag/sources/{id}/documents` | The source's documents, oldest first, with per-document status, chunk counts, and errors. Paged: `limit` (1–500, default 500) and `after`. The response is `{documents, next_after}`; pass `next_after` as `after` for the next page, and `next_after: null` marks the last page. An `after` that names no document of the source is a `400 invalid_rag_cursor`. |
+| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime). The size cap is the `rag.max_upload_bytes` setting, 50 MiB by default; a larger body is a `413 document_too_large`, refused from its `Content-Length` before the body is read. Returns `202`; poll the source for progress. |
 | POST | `/rag/sources/{id}:ingest` | Start (or re-run) the crawl. `202`; unchanged pages are hash-skipped. `409` while an ingest is already running. |
 | POST | `/rag/sources/{id}:cancel` | Cancel the in-flight ingest (a no-op on a settled source). |
 | POST | `/rag/sources/{id}/query` | Run the same hybrid retrieval a rag node runs. Body `{query, top_k?, min_similarity?}`; returns the match list. |

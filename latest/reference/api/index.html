@@ -4142,12 +4142,12 @@ connections the sample needs. See <a href="../../samples/">Sample agents</a>.</p
 <tr>
 <td>GET</td>
 <td><code>/rag/sources/{id}/documents</code></td>
-<td>The source's documents with per-document status, chunk counts, and errors.</td>
+<td>The source's documents, oldest first, with per-document status, chunk counts, and errors. Paged: <code>limit</code> (1–500, default 500) and <code>after</code>. The response is <code>{documents, next_after}</code>; pass <code>next_after</code> as <code>after</code> for the next page, and <code>next_after: null</code> marks the last page. An <code>after</code> that names no document of the source is a <code>400 invalid_rag_cursor</code>.</td>
 </tr>
 <tr>
 <td>POST</td>
 <td><code>/rag/sources/{id}/documents?filename=…</code></td>
-<td>Upload one document as a raw body (the <code>Content-Type</code> header is the file's mime; 50 MiB cap). Returns <code>202</code>; poll the source for progress.</td>
+<td>Upload one document as a raw body (the <code>Content-Type</code> header is the file's mime). The size cap is the <code>rag.max_upload_bytes</code> setting, 50 MiB by default; a larger body is a <code>413 document_too_large</code>, refused from its <code>Content-Length</code> before the body is read. Returns <code>202</code>; poll the source for progress.</td>
 </tr>
 <tr>
 <td>POST</td>

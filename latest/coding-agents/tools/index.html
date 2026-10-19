@@ -3429,7 +3429,7 @@ the interface or the API instead.
 </tr>
 <tr>
 <td><code>add_rag_files</code></td>
-<td>Indexes local files, whole directories, or glob patterns such as <code>docs/**/*.md</code>. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two <code>index.ts</code> files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files.</td>
+<td>Indexes local files, whole directories, or glob patterns such as <code>docs/**/*.md</code>. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two <code>index.ts</code> files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over TheYgent's upload limit (50 MiB by default, raised under <strong>Settings → RAG</strong>) is skipped with the limit in its result.</td>
 </tr>
 <tr>
 <td><code>add_rag_text</code></td>
