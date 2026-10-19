@@ -32,7 +32,7 @@ An **upload** source is a bucket you drop files into. Two ways in, same result:
 - the **Upload files** button (multi-select file picker), or
 - **drag & drop** files anywhere onto the source's row — it highlights while you hover.
 
-Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
+Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. An admin can raise that limit to 1 GiB under **Settings → RAG**. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
 
 ### Crawl sources
 
@@ -84,6 +84,7 @@ Agents reference a source by its stable id, so re-crawling or uploading more doc
 ## Managing sources
 
 - The list has the same **search box and filter chips** (kind, status) as the MCP page.
+- Click a source's name to see its documents, oldest first, with each one's status, chunk count, and any error. A large source loads 100 at a time; **Load more** fetches the next ones.
 - **Rename** and crawl-config changes are a `PATCH` away (the API) — the id, and therefore every agent reference, is unaffected.
 - **Delete** removes the source with all its documents and vectors (a confirmation dialog stands in the way). Agents that still reference it will refuse to run with a clear `rag_source_not_found` error.
 

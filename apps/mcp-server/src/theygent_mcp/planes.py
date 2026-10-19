@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -30,7 +31,7 @@ class Planes:
         *,
         json: Any = None,
         params: dict[str, Any] | None = None,
-        content: bytes | None = None,
+        content: bytes | AsyncIterator[bytes] | None = None,
         headers: dict[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> Any:

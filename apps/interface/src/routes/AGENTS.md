@@ -20,7 +20,7 @@ the "Route map" of [interface.md](../../../../docs/dev-docs/interface.md).
 | `/editor` | [`Editor.tsx`](Editor.tsx) | editor | The canvas editor over one `IRDocument` (undo/redo reducer; palette · canvas · inspector; Visual ⇄ Code; validation; Test panel; Publish). `?agent&version` opens a version, `?draft` a draft (draft wins). The only full-bleed page |
 | `/registries` | [`Registries.tsx`](Registries.tsx) | editor | Installed models and the Hugging Face catalog on the inference plane's `/admin/*`: register, warm, evict, delete, capability badges, fit badges, downloads, the per-model bench |
 | `/mcp` | [`Mcp.tsx`](Mcp.tsx) | editor | Every MCP server (name-keyed registrations and `mcp_server` connections): hub installs, OpenAPI/GraphQL-generated servers, OAuth, settings, per-tool runner |
-| `/rag` | [`Rag.tsx`](Rag.tsx) | editor | Retrieval sources: upload or crawl, ingest progress, documents, query tester |
+| `/rag` | [`Rag.tsx`](Rag.tsx) | editor | Retrieval sources: upload or crawl, ingest progress, documents (paged, Load more), query tester |
 | `/gateway` | [`Gateway.tsx`](Gateway.tsx) | any (admin tabs check role) | The AI Gateway page; tabs live in `components/gateway/` |
 | `/settings` | [`Settings.tsx`](Settings.tsx) | admin | Platform settings; tabs live in `components/settings/` |
 
@@ -36,5 +36,5 @@ in `apps/interface/tests/`, and a user docs page.
 ## Tests
 
 `tests/dashboard.test.tsx`, `home-drafts.test.tsx`, `agents-actions.test.tsx`,
-`editor.test.tsx`, `registries.test.tsx`, `mcp-page.test.tsx`, `settings-page.test.tsx`,
-`session-continue.test.tsx`, `infinite.test.tsx`, `gateway-*.test.tsx`.
+`editor.test.tsx`, `registries.test.tsx`, `mcp-page.test.tsx`, `rag-page.test.tsx`,
+`settings-page.test.tsx`, `session-continue.test.tsx`, `infinite.test.tsx`, `gateway-*.test.tsx`.

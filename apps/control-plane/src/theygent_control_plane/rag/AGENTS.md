@@ -8,10 +8,10 @@ of [control-plane.md](../../../../../docs/dev-docs/control-plane.md).
 
 ## Where it sits
 
-- **Called by:** the `/rag/sources*` routes in [app.py](../app.py) (CRUD, `/documents` upload,
-  `:ingest`, `:cancel`, `/query`); the walker's `execute_rag` (a `rag` step, or a capability
-  on an `llm` node's `tools` port) and the durable `_rag_step`; the sample installer seeds the
-  handbook source; [transfer.py](../transfer.py) exports source definitions.
+- **Called by:** the `/rag/sources*` routes in [app.py](../app.py) (CRUD, `/documents` paged
+  listing and upload, `:ingest`, `:cancel`, `/query`); the walker's `execute_rag` (a `rag` step,
+  or a capability on an `llm` node's `tools` port) and the durable `_rag_step`; the sample
+  installer seeds the handbook source; [transfer.py](../transfer.py) exports source definitions.
 - **Calls:** the inference plane's `/v1/embeddings` through the app's gateway client, using the
   source's pinned *logical* embedding model id. It never imports an embedding library.
 - **Tables:** `rag_source`, `rag_document`, `rag_chunk` (migration `0015_rag`; ORM rows in
@@ -28,7 +28,7 @@ of [control-plane.md](../../../../../docs/dev-docs/control-plane.md).
 | [`chunking.py`](chunking.py) | Pure. Heading-aware markdown chunking: never crosses a heading, packs blocks to a token budget, blind-splits only an oversized block (with overlap). The embedded text is prefixed with the heading path; the stored text is the raw chunk. Tokens are estimated, never tokenized. |
 | [`parse.py`](parse.py) | Uploaded bytes → markdown-ish text through markitdown (plain text and markdown skip it). Runs in a worker thread. No OCR. |
 | [`crawl.py`](crawl.py) | `crawl_site`: crawlee for the walk (static HTTP by default, Playwright when the source sets `render_js`), trafilatura for the text. Same origin and under the root URL's path prefix only. A missing browser raises `BrowserNotInstalled` with an install hint. |
-| [`store.py`](store.py) | Domain models (`RagSource`, `RagDocument`, `RagMatch`) and `RagStore`: rows ↔ domain, the startup sweep that marks interrupted ingests `failed`, and the one-statement hybrid search that filters on `dim` and casts `embedding::vector(<dim>)` to hit the per-dimension partial HNSW index. |
+| [`store.py`](store.py) | Domain models (`RagSource`, `RagDocument`, `RagMatch`) and `RagStore`: rows ↔ domain, the keyset-paged document listing (an unknown cursor raises `UnknownDocumentCursor`), the startup sweep that marks interrupted ingests `failed`, and the one-statement hybrid search that filters on `dim` and casts `embedding::vector(<dim>)` to hit the per-dimension partial HNSW index. |
 | [`ingest.py`](ingest.py) | `IngestService`: one asyncio task per ingest, grouped per source. Uploads may overlap; a crawl is exclusive for its source. Chunks are embedded before any row is replaced, so a failure leaves the old documents intact. Progress lives on the `rag_source` row; `IngestBusy` refuses a conflicting job. |
 | [`retrieve.py`](retrieve.py) | `RagRetriever`: the injected backend the walker calls. Embeds the query, runs the store's search, owns its own DB sessions (the walker never opens one). |
 

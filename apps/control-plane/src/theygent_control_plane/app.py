@@ -145,7 +145,7 @@ from theygent_control_plane.rag import IngestService, RagRetriever, RagStore
 from theygent_control_plane.rag.ingest import IngestBusy
 from theygent_control_plane.rag.parse import supported_extension
 from theygent_control_plane.rag.retrieve import RetrievalError
-from theygent_control_plane.rag.store import RagSourceKind
+from theygent_control_plane.rag.store import RagSourceKind, UnknownDocumentCursor
 from theygent_control_plane.reasoning import ThinkSplitter, split_think
 from theygent_control_plane.retention import DEFAULT_INTERVAL_S as DEFAULT_RETENTION_INTERVAL_S
 from theygent_control_plane.retention import RetentionSweeper
@@ -4021,15 +4021,29 @@ def create_app(
 
     @app.get("/rag/sources/{source_id}/documents", dependencies=[Depends(require_editor)])
     async def list_rag_documents(
-        source_id: str, session: AsyncSession = Depends(get_session)
+        source_id: str,
+        limit: int = Query(default=500, ge=1, le=500),
+        after: str | None = Query(default=None),
+        session: AsyncSession = Depends(get_session),
     ) -> Any:
+        # Oldest first. ``next_after`` is the ``after`` of the next page; ``null`` on the last.
         source = await rag_store.get_source(session, source_id)
         if source is None:
             return _error(
                 f"unknown rag source {source_id!r}", status=404, code="rag_source_not_found"
             )
-        docs = await rag_store.list_documents(session, source_id)
-        return {"documents": [d.public_dump() for d in docs]}
+        try:
+            docs, next_after = await rag_store.list_documents(
+                session, source_id, limit=limit, after=after
+            )
+        except UnknownDocumentCursor:
+            return _error(
+                f"'after' names no document of source {source_id!r}: pass the previous "
+                "page's next_after",
+                status=400,
+                code="invalid_rag_cursor",
+            )
+        return {"documents": [d.public_dump() for d in docs], "next_after": next_after}
 
     @app.patch("/rag/sources/{source_id}", dependencies=[Depends(require_editor)])
     async def patch_rag_source(source_id: str, req: UpdateRagSourceRequest) -> Any:

@@ -6,9 +6,10 @@ import asyncio
 import glob
 import mimetypes
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, BinaryIO, Literal
 from urllib.parse import quote
 
 import httpx
@@ -36,8 +37,9 @@ agents built from those models, and retrieval sources over their documents. Use 
 Model ids are TheYgent logical ids from `list_models`, never engine names.
 """
 
-#: The largest document the control plane accepts in one upload.
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+#: Uploads stream from disk in pieces this size, so a large file never sits in memory here. The
+#: size limit is the control plane's live `rag.max_upload_bytes`, enforced on its side.
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
 #: How many files one `add_rag_files` call indexes; a bigger tree is indexed in several calls.
 MAX_FILES_PER_CALL = 500
 #: Per-file results are listed in full up to this many files; past it only the misses are.
@@ -487,13 +489,17 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
             },
         )
 
-    async def _upload(source_id: str, filename: str, data: bytes, mime: str) -> Any:
+    async def _upload(
+        source_id: str, filename: str, content: bytes | AsyncIterator[bytes], size: int, mime: str
+    ) -> Any:
+        # The declared length lets the control plane refuse an over-limit file (413) before
+        # reading its body.
         return await planes.control(
             "POST",
             f"/rag/sources/{quote(source_id, safe='')}/documents",
             params={"filename": filename},
-            content=data,
-            headers={"Content-Type": mime},
+            content=content,
+            headers={"Content-Type": mime, "Content-Length": str(size)},
             timeout_s=300,
         )
 
@@ -516,29 +522,39 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         indexes as plain text), PDFs and office documents. TheYgent chunks and embeds them in
         the background (`get_rag_source` shows progress), after which `search_rag` and the
         user's agents can search them. Re-adding a file replaces its earlier copy. Files whose
-        type TheYgent can't read are skipped."""
+        type TheYgent can't read, and files over its upload limit, are skipped."""
         source_id = await _source_id(source_id)
         files, misses = await asyncio.to_thread(_expand_paths, paths)
         results: list[dict[str, Any]] = list(misses)
         uploaded = skipped = 0
         for path, name in files:
-            read = await asyncio.to_thread(_read_local_file, str(path))
-            if isinstance(read, str):
-                results.append({"path": name, "skipped": read})
+            stat = await asyncio.to_thread(_stat_local_file, str(path))
+            if isinstance(stat, str):
+                results.append({"path": name, "skipped": stat})
                 skipped += 1
                 continue
-            _, data, mime = read
+            local, size, mime = stat
             try:
-                await _upload(source_id, name, data, mime)
+                await _upload(source_id, name, _file_chunks(local, size), size, mime)
             except ToolError as exc:
                 if "unsupported_document" in str(exc):
                     results.append({"path": name, "skipped": "TheYgent can't read this type"})
+                    skipped += 1
+                elif "document_too_large" in str(exc):
+                    limit = str(exc).partition("document_too_large: ")[2] or "over the limit"
+                    results.append(
+                        {
+                            "path": name,
+                            "skipped": f"{size} bytes: {limit}. An admin can raise the limit "
+                            "in TheYgent under Settings → RAG.",
+                        }
+                    )
                     skipped += 1
                 else:
                     results.append({"path": name, "error": str(exc)})
                 continue
             uploaded += 1
-            results.append({"path": name, "uploaded": True, "bytes": len(data)})
+            results.append({"path": name, "uploaded": True, "bytes": size})
         failed = sum(1 for r in results if "error" in r)
         out: dict[str, Any] = {"uploaded": uploaded, "skipped": skipped, "failed": failed}
         if len(results) > _LISTED_RESULTS:
@@ -563,8 +579,9 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         # The control plane picks the parser from the extension; a bare name is Markdown.
         if not Path(filename).suffix:
             filename += ".md"
-        await _upload(source_id, filename, text.encode(), "text/markdown")
-        return {"uploaded": True, "filename": filename, "bytes": len(text.encode())}
+        data = text.encode()
+        await _upload(source_id, filename, data, len(data), "text/markdown")
+        return {"uploaded": True, "filename": filename, "bytes": len(data)}
 
     @mcp.tool
     async def ingest_rag_source(source_id: SourceRef) -> dict[str, Any]:
@@ -653,17 +670,35 @@ def _inline_files(paths: list[str]) -> str:
     return "".join(blocks)
 
 
-def _read_local_file(raw: str) -> tuple[str, bytes, str] | str:
-    """A local file's name, bytes and mime type, or why it can't be uploaded."""
+def _stat_local_file(raw: str) -> tuple[Path, int, str] | str:
+    """A local file's path, size and mime type, or why it can't be uploaded."""
     path = Path(os.path.expanduser(raw)).resolve()
     if not path.is_file():
         return "not a file"
     size = path.stat().st_size
-    if size > MAX_UPLOAD_BYTES:
-        return f"{size} bytes is over the 50 MiB limit"
     if size == 0:
         return "empty file"
-    return path.name, path.read_bytes(), mimetypes.guess_type(path.name)[0] or "text/plain"
+    return path, size, mimetypes.guess_type(path.name)[0] or "text/plain"
+
+
+def _open_binary(path: Path) -> BinaryIO:
+    return path.open("rb")
+
+
+async def _file_chunks(path: Path, size: int) -> AsyncIterator[bytes]:
+    """The file's first ``size`` bytes, read off the event loop. Stopping at ``size`` keeps the
+    body equal to the declared Content-Length even if the file grows mid-upload."""
+    fh = await asyncio.to_thread(_open_binary, path)
+    try:
+        left = size
+        while left > 0:
+            chunk = await asyncio.to_thread(fh.read, min(_UPLOAD_CHUNK_BYTES, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+            yield chunk
+    finally:
+        await asyncio.to_thread(fh.close)
 
 
 def _run_result(result: Any) -> dict[str, Any]:

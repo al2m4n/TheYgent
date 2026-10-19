@@ -193,8 +193,8 @@ Retrieval collections agents search through the rag node. See [RAG sources](../r
 | POST | `/rag/sources` | Create. Body `{name, kind, embedding_model, config}`. `kind` is `upload` or `crawl`; for `crawl`, `config` carries `root_url` (required), `max_pages?`, `render_js?`. `embedding_model` is a logical id, never an engine name. Creating a `crawl` source does not start the crawl — call `:ingest`. |
 | GET | `/rag/sources` | List (keyset pagination via `limit` + `before`). |
 | GET / PATCH / DELETE | `/rag/sources/{id}` | Read (status + live ingest `progress`) / rename or edit crawl config / delete with all documents and vectors. |
-| GET | `/rag/sources/{id}/documents` | The source's documents with per-document status, chunk counts, and errors. |
-| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime; 50 MiB cap). Returns `202`; poll the source for progress. |
+| GET | `/rag/sources/{id}/documents` | The source's documents, oldest first, with per-document status, chunk counts, and errors. Paged: `limit` (1–500, default 500) and `after`. The response is `{documents, next_after}`; pass `next_after` as `after` for the next page, and `next_after: null` marks the last page. An `after` that names no document of the source is a `400 invalid_rag_cursor`. |
+| POST | `/rag/sources/{id}/documents?filename=…` | Upload one document as a raw body (the `Content-Type` header is the file's mime). The size cap is the `rag.max_upload_bytes` setting, 50 MiB by default; a larger body is a `413 document_too_large`, refused from its `Content-Length` before the body is read. Returns `202`; poll the source for progress. |
 | POST | `/rag/sources/{id}:ingest` | Start (or re-run) the crawl. `202`; unchanged pages are hash-skipped. `409` while an ingest is already running. |
 | POST | `/rag/sources/{id}:cancel` | Cancel the in-flight ingest (a no-op on a settled source). |
 | POST | `/rag/sources/{id}/query` | Run the same hybrid retrieval a rag node runs. Body `{query, top_k?, min_similarity?}`; returns the match list. |

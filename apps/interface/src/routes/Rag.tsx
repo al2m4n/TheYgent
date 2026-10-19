@@ -6,7 +6,7 @@
 // global notification center, which polls the source until it settles. Each row also carries an
 // inline query tester — the same retrieval call a `rag` node makes at run time.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Database, Plus } from "lucide-react";
 import { type DragEvent, useMemo, useRef, useState } from "react";
 import { FilterBar } from "../components/Filters";
@@ -41,6 +41,7 @@ import {
 } from "../components/ui/item";
 import { Switch } from "../components/ui/switch";
 import {
+  type RagDocument,
   type RagQueryMatch,
   type RagSource,
   type RagSourceKind,
@@ -423,7 +424,7 @@ function SourceRow({
       )}
       {showDocs && (
         <ItemFooter className="flex-col items-stretch justify-start gap-1 border-t pt-2">
-          <DocumentList sourceId={source.id} />
+          <DocumentList sourceId={source.id} total={source.documents} />
         </ItemFooter>
       )}
       {showQuery && (
@@ -435,21 +436,53 @@ function SourceRow({
   );
 }
 
-// The per-source documents, lazy-loaded only once the row is expanded.
-function DocumentList({ sourceId }: { sourceId: string }) {
-  const docs = useQuery({
+// Documents per page of the expanded list; Load more follows the server's cursor.
+const DOC_PAGE = 100;
+
+// The per-source documents, oldest first, lazy-loaded only once the row is expanded. `total` is
+// the source row's document count, so a partly loaded list says how much is left.
+function DocumentList({ sourceId, total }: { sourceId: string; total: number }) {
+  const docs = useInfiniteQuery({
     queryKey: ["ragDocuments", sourceId],
-    queryFn: () => api.listRagDocuments(sourceId),
+    queryFn: ({ pageParam }) =>
+      api.listRagDocuments(sourceId, { limit: DOC_PAGE, after: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next_after ?? undefined,
     retry: false,
   });
   if (docs.isLoading) return <Spinner label="Loading documents…" />;
-  if (docs.error) return <ErrorBanner error={docs.error} />;
-  if (!docs.data || docs.data.length === 0) {
+  if (!docs.data) return <ErrorBanner error={docs.error} />;
+  const rows = docs.data.pages.flatMap((p) => p.documents);
+  if (rows.length === 0) {
     return <p className="text-xs text-muted-foreground">No documents yet.</p>;
   }
   return (
+    <>
+      <DocumentRows rows={rows} />
+      {docs.hasNextPage && (
+        <div className="flex items-center gap-2 pt-1 text-xs text-muted-foreground">
+          <span>
+            Showing {rows.length} of {Math.max(total, rows.length)} documents
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void docs.fetchNextPage()}
+            disabled={docs.isFetchingNextPage}
+          >
+            {docs.isFetchingNextPage ? "Loading…" : "Load more"}
+          </Button>
+        </div>
+      )}
+      <ErrorBanner error={docs.error} />
+    </>
+  );
+}
+
+function DocumentRows({ rows }: { rows: RagDocument[] }) {
+  return (
     <ul className="space-y-1">
-      {docs.data.map((d) => (
+      {rows.map((d) => (
         <li key={d.id} className="flex flex-wrap items-center gap-2 text-xs">
           <Badge tone={d.status === "embedded" ? "green" : d.status === "failed" ? "red" : "slate"}>
             {d.status}
