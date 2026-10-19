@@ -119,6 +119,7 @@ nav:
           - Tools: building/nodes/tools.md
           - MCP Tools: building/nodes/mcp.md
           - RAG: building/nodes/rag.md
+          - Crawler: building/nodes/crawler.md
           - Router: building/nodes/router.md
           - Transform: building/nodes/transform.md
           - Guardrail: building/nodes/guardrail.md
@@ -141,6 +142,7 @@ nav:
   - MCP:
       - mcp/index.md
       - Example agents: mcp/examples.md
+      - Apify through the MCP hub: mcp/apify.md
   - Coding Agents:
       - coding-agents/index.md
       - Tools & Recipes: coding-agents/tools.md

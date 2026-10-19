@@ -144,6 +144,23 @@ background — check the source's status on the [RAG page](../rag/index.md) afte
 it failed (e.g. the embedding model wasn't reachable), upload the handbook document to the
 source again from there, or delete the source and reinstall the sample.
 
+### Web researcher — a crawler the model calls
+
+`sample-web-researcher` · *local model · creates the `sample-apify` connection · needs an Apify
+API token*
+
+A local model with a [crawler node](../building/nodes/crawler.md) wired in as its
+`web_search` tool. The model decides when a question needs fresh facts, calls the crawler with
+one search query, reads the top three pages as trimmed Markdown, and answers with the URLs it
+used. The result count, the output format and a $0.05 charge cap per search are fixed on the
+node, out of the model's reach.
+
+The installer creates the `sample-apify` connection **without a token** — samples never ship a
+secret. Before the first run, open the agent in the editor, select the `web_search` node, and
+use **Set token** on its connection (or rotate the connection's secret through the
+[connections API](../reference/api.md)). Until then, each search returns an error the model
+sees, and it says it couldn't search. Searches bill the Apify account that owns the token.
+
 ### Editorial loop — a self-correcting agent
 
 `sample-editorial-loop` · *local model · installs 2 agents · durable runtime only*
@@ -181,7 +198,7 @@ briefs. Like the agent itself, the trigger fires only on the durable runtime.
    if the list is empty. The special slots (*Vision*, *Speech-to-text*, *Text-to-speech*,
    *Image*, *Embedding*) filter your registry by the registered modality — a sample's Install
    button stays disabled until every slot it declares is filled.
-3. Click **Install** on a sample. The installer creates any MCP connections and RAG sources the
+3. Click **Install** on a sample. The installer creates any connections and RAG sources the
    sample needs (reusing them by name on reinstall), seeds demo data, stamps your chosen models
    into the graph, publishes the agent(s) through the normal registry gate — children first, so
    a composition sample's pins always resolve — and registers any shipped trigger **disabled**.
@@ -207,7 +224,7 @@ the rest of the batch still installs.
 - **Duplicate**: export the agent from the Agents page, change the `id`/`name` in the JSON, and
   import it (or paste it into a new agent in the editor's code view).
 - **Delete**: from the Agents page. The connections a sample created stay (other agents may use
-  them); remove them on the MCP page if you no longer want them.
+  them); remove MCP servers on the MCP page if you no longer want them.
 
 ## Related pages
 

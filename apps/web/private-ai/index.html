@@ -45,7 +45,7 @@
             "name": "Private AI Agents on Local Models — Offline, No Telemetry | TheYgent",
             "description": "Build no-code AI agents that run on local models only: built-in llama.cpp, MLX, and vLLM engines, no telemetry, offline and air-gapped operation — with every network touchpoint listed.",
             "inLanguage": "en",
-            "dateModified": "2026-10-12",
+            "dateModified": "2026-10-19",
             "isPartOf": {
               "@id": "https://theygent.ai/#website"
             },
@@ -297,10 +297,16 @@
                     <td>Your searches. Point it at a registry you host instead with <code>THEYGENT_MCP_REGISTRIES</code>.</td>
                   </tr>
                   <tr>
+                    <th scope="row">The Apify Store</th>
+                    <td>When you open the Crawlers browser in the editor — the control plane makes the request, not your browser</td>
+                    <td>Your searches and the actors you open. No token is sent.</td>
+                  </tr>
+                  <tr>
                     <th scope="row">Things you configure</th>
                     <td>When an agent or setting uses them</td>
                     <td>
-                      A hosted API you register, a remote MCP server, an HTTP tool, a site you crawl for retrieval, a
+                      A hosted API you register, a remote MCP server, an HTTP tool, a crawler node&rsquo;s provider (which
+                      receives the node&rsquo;s input), a site you crawl for retrieval, a
                       sign-in provider, an OpenTelemetry collector, Claude Code traffic you route through the AI Gateway
                       — each sends exactly what you wired it to send.
                     </td>
@@ -466,6 +472,7 @@
             <a href="/apple-silicon/">Apple Silicon (MLX)</a>
             <a href="/ai-gateway/">AI Gateway for Claude Code</a>
             <a href="/coding-agents/">MCP Server for Coding Agents</a>
+            <a href="/crawlers/">Crawler Nodes</a>
             <a href="/videos/">Video Walkthroughs</a>
             <a href="/templates/">Agent Templates</a>
             <a href="/blog/">Blog</a>

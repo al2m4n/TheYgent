@@ -21,6 +21,10 @@
     <lastmod>2026-10-19</lastmod>
   </url>
   <url>
+    <loc>https://theygent.ai/crawlers/</loc>
+    <lastmod>2026-10-19</lastmod>
+  </url>
+  <url>
     <loc>https://theygent.ai/compare/</loc>
     <lastmod>2026-10-12</lastmod>
   </url>
@@ -109,6 +113,10 @@
     <lastmod>2026-10-12</lastmod>
   </url>
   <url>
+    <loc>https://theygent.ai/templates/web-researcher/</loc>
+    <lastmod>2026-10-19</lastmod>
+  </url>
+  <url>
     <loc>https://theygent.ai/templates/editorial-loop/</loc>
     <lastmod>2026-10-12</lastmod>
   </url>
@@ -130,6 +138,10 @@
   </url>
   <url>
     <loc>https://theygent.ai/blog/coding-agents-local-models-mcp/</loc>
+    <lastmod>2026-10-19</lastmod>
+  </url>
+  <url>
+    <loc>https://theygent.ai/blog/local-models-web-search-crawler-nodes/</loc>
     <lastmod>2026-10-19</lastmod>
   </url>
 </urlset>

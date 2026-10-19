@@ -212,7 +212,9 @@ export function SamplesTab() {
                     ))}
                     {sample.connections.map((c) => (
                       <Badge key={c.key} tone="slate">
-                        creates {c.name} ({c.transport})
+                        {c.kind === "http_auth"
+                          ? `creates ${c.name} (set its API token after installing)`
+                          : `creates ${c.name} (${c.transport})`}
                       </Badge>
                     ))}
                     {sample.rag_sources.map((r) => (

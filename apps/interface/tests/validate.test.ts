@@ -134,6 +134,25 @@ describe("validateGraph (mirror of the backend's validate_graph)", () => {
       issues.some((i) => i.nodeId === "n_echo" && /capability .* or a step/.test(i.message)),
     ).toBe(true);
   });
+
+  it("flags a crawler node wired as BOTH a capability and a step", () => {
+    const ir = capabilityGraph();
+    const echo = ir.nodes?.find((n) => n.id === "n_echo");
+    if (echo) echo.type = "crawler";
+    ir.edges?.push({
+      id: "e_mixed",
+      source: "n_echo",
+      sourceHandle: "out",
+      target: "n_out",
+      targetHandle: "in",
+      channel: "data",
+      condition: null,
+    });
+    const issues = validateGraph(ir);
+    expect(
+      issues.some((i) => i.nodeId === "n_echo" && /capability .* or a step/.test(i.message)),
+    ).toBe(true);
+  });
 });
 
 describe("validateGraph — durable-only + boundary-node hints", () => {

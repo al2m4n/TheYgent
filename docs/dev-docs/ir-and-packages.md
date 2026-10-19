@@ -75,12 +75,12 @@ Every node carries both a `type` and a `kind`:
 | `kind` | Meaning | Types |
 |---|---|---|
 | `boundary` | Graph entry/exit, human wait, sub-graph call | `input`, `output`, `human`, `subgraph` |
-| `activity` | Non-deterministic side effects (model / tool / retrieval / I/O) | `agent`, `llm`, `tool`, `mcp_tool`, `rag`, `retriever`, `memory`, `code`, `transcribe`, `speak`, `imagine`, `ratelimit`, `quota` |
+| `activity` | Non-deterministic side effects (model / tool / retrieval / I/O) | `agent`, `llm`, `tool`, `mcp_tool`, `rag`, `crawler`, `retriever`, `memory`, `code`, `transcribe`, `speak`, `imagine`, `ratelimit`, `quota` |
 | `orchestration` | Deterministic control flow | `router`, `condition`, `loop`, `iterator`, `map`, `transform` |
 
 `NODE_TYPE_KIND` is the authoritative table. `guardrail` is the one **per-instance** kind: its expected kind is derived from the instance's `check.type` (`rule` ⇒ `orchestration`, `model` ⇒ `activity`), with `orchestration` as the table default; `validate_graph` enforces the derived value.
 
-`EXECUTABLE_TYPES` (18 types) is the subset the runtimes actually execute. `human`, `subgraph`, `loop`, and `map` run only on the durable runtime (see [durable-execution.md](./durable-execution.md)). Known-but-unimplemented types (`agent`, `retriever`, `memory`, `code`, `condition`, `iterator`) are valid IR shapes whose dispatcher branch raises `NotImplementedError` — implementing one later is an additive handler, not a refactor. Adding an executable type means: a config model in `_CONFIG_MODELS`, an entry in `NODE_TYPE_KIND`, membership in `EXECUTABLE_TYPES`, a runtime handler, and a regenerated `ir-types` (default ports come from the generator's port tables, or fall back to plain `in`/`out`).
+`EXECUTABLE_TYPES` (19 types) is the subset the runtimes actually execute. `human`, `subgraph`, `loop`, and `map` run only on the durable runtime (see [durable-execution.md](./durable-execution.md)). Known-but-unimplemented types (`agent`, `retriever`, `memory`, `code`, `condition`, `iterator`) are valid IR shapes whose dispatcher branch raises `NotImplementedError` — implementing one later is an additive handler, not a refactor. Adding an executable type means: a config model in `_CONFIG_MODELS`, an entry in `NODE_TYPE_KIND`, membership in `EXECUTABLE_TYPES`, a runtime handler, and a regenerated `ir-types` (default ports come from the generator's port tables, or fall back to plain `in`/`out`).
 
 ## `validate_graph`
 
@@ -93,11 +93,12 @@ Every node carries both a `type` and a `kind`:
 5. every edge references existing nodes *and* declared port handles;
 6. no in-port is fed by more than one `data` edge (an ambiguous multi-input binding: which upstream value would `$in.<port>` mean?);
 7. every *required* in-port is fed by a `data` edge — per-port, not per-node (capability tool nodes and `input` are exempt);
-8. tool-channel edges connect only a `tool` / `mcp_tool` / `rag` node to an LLM's tool-role port — a capability wire means the model *may* call the node; the node is a capability **or** a step, never both;
+8. tool-channel edges connect only a `tool` / `mcp_tool` / `rag` / `crawler` node to an LLM's tool-role port — a capability wire means the model *may* call the node; the node is a capability **or** a step, never both;
 9. `subgraph` / `loop` / `map` pin exactly one of `version` / `contentHash`, with `maxDepth >= 1`; `loop` requires `maxIterations >= 1` (no unbounded loops);
 10. an `llm` node's declared tools exist and are deduplicated, and a named `toolChoice` must be among them;
 11. a model-callable HTTP tool must self-describe: `description` + `parameterSchema`, with its `$in` slots equivalent to the schema's properties;
-12. no cycle among `data` edges (`loop` / `map` provide iteration, and only on the durable runtime).
+12. a `crawler`'s `expose` equals its `parameterSchema`'s properties (an exposed field without a property is unfillable, a property that isn't exposed is dead), `scalar ⊆ expose`, and a capability crawler's fixed `input` holds no `$in` reference;
+13. no cycle among `data` edges (`loop` / `map` provide iteration, and only on the durable runtime).
 
 `topological_order` (Kahn's algorithm over data and control edges, tool-channel edges excluded) gives the runtimes their execution order.
 

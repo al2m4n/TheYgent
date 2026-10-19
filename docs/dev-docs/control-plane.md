@@ -105,6 +105,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 | `tools/`, `tool_resolve.py`, `gates.py` | Built-in tool registry, server-side connection/auth resolution, rate-limit/quota backends |
 | `mcp/` | MCP hosting: transports, connection manager, generated OpenAPI/GraphQL servers, OAuth, hub registry client |
 | `rag/` | Retrieval: chunking, document parsing, site crawling, pgvector store, ingest service, retriever |
+| `crawlers/` | The `crawler` node's provider seam: the Apify adapter (`apify.py`), pure schema → node-config conversion, coercion and result budgeting (`schema.py`), the injected `CrawlerBackend` both runtimes call (`runtime.py`: connection auth, the spend ceiling), and the cached public-store catalog (`catalog.py`) |
 | `ai_gateway/` | The AI gateway's records: ingest (dedupe by record id, per-day aggregates, fingerprint catalog), keys, configs and instances (`store.py`); reports, sessions and timelines (`reports.py`, totals in SQL checked against `GatewayTotals`); the fingerprint catalog (`catalog.py`). Config writes read, check and save under one transaction lock |
 | `samples/` | The shipped example-agent catalog: per-sample JSON specs (metadata + model slots + connections + complete IR), placeholder substitution, and the deterministic demo-SQLite seeder behind `GET /samples` / `POST /samples/install` |
 | `observability/` | The span pipeline: capture wrapper, span/node-I/O stores, live SSE bus, optional OTLP export |
@@ -114,7 +115,7 @@ All paths relative to `apps/control-plane/src/theygent_control_plane/`:
 
 Wire naming is snake_case (the inference plane is camelCase — never mix them), with three
 deliberate camelCase pockets: SSE frames and run-result bodies (`runId`, `toolCall`),
-connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
+connection `hasSecret`, and the MCP hub and crawler catalog models. Lists use keyset pagination
 (`?limit&before`); action sub-resources use a `:verb` suffix.
 
 | Group | Endpoints |
@@ -130,6 +131,7 @@ connection `hasSecret`, and the MCP hub models. Lists use keyset pagination
 | Connections | `POST/GET /connections` · `GET/PATCH/DELETE /connections/{id}` · connection-backed MCP ops (`/connections/{id}/mcp/tools`, `:warm`, `:close`, `mcp-oauth:start`, `mcp-oauth`) |
 | MCP admin | `PUT/GET/DELETE /admin/mcp/servers/{name}` · `GET .../tools` · `:warm`/`:close` · hub browse/install (`/admin/mcp/registries`, `/admin/mcp/catalog`, `/admin/mcp/catalog/install`, `/admin/mcp/generated:preview`) · `GET /mcp/oauth/callback` |
 | RAG | `POST/GET /rag/sources` · `GET/PATCH/DELETE /rag/sources/{id}` · `:ingest`/`:cancel` · document upload · `POST /rag/sources/{id}/query` |
+| Crawlers | `GET /crawlers/catalog` (the provider's public store, proxied + TTL-cached, normalized into cards with pricing and 30-day success rate) · `GET /crawlers/catalog/actor` (fields + suggested node config) · `POST /crawlers/catalog/convert` (re-derive a node config for chosen fields). Read-only, camelCase like the MCP hub models; installing is the interface dropping the config on the canvas |
 | Observability | `GET /runs/{id}/trace` · `GET /runs/{id}/trace/stream` (SSE) · `GET /runs/{id}/nodes/{node_id}/io` |
 | Bench | `POST/GET /bench/suites` · `POST/GET /bench/runs` · `GET /bench/compare` · `POST/GET/DELETE /bench/presets` |
 | Settings, artifacts, health | `GET/PATCH /settings` · `POST /settings/otlp:test` · `POST /artifacts` · `GET /artifacts/{ref}` · `PUT /artifacts/{ref}` (preserve-ref restore for imports) · `GET /healthz` · `GET /readyz` (distinguishes db-down from inference-down) |
@@ -350,7 +352,8 @@ artifacts restore under their original refs via `PUT /artifacts/{ref}`. Both rou
 A second family pins or caps platform settings rather than configuring the process
 directly — `OTEL_EXPORTER_OTLP_ENDPOINT`, `THEYGENT_IO_CAPTURE`,
 `THEYGENT_IO_CAPTURE_MAX_BYTES`, `THEYGENT_MCP_CALL_TIMEOUT_S`,
-`THEYGENT_MCP_REGISTRIES`, `THEYGENT_OAUTH_REDIRECT_URL`, `THEYGENT_OTEL_REDACT_ATTRS`.
+`THEYGENT_MCP_REGISTRIES`, `THEYGENT_OAUTH_REDIRECT_URL`, `THEYGENT_OTEL_REDACT_ATTRS`,
+`THEYGENT_CRAWLER_MAX_CHARGE_USD` (caps `crawler.max_charge_usd`).
 Everything else (MCP timeouts, RAG chunking and crawl knobs, telemetry capture) is a typed
 platform setting: a code-defined catalog, resolved as env pin/cap > stored > default, with
 live apply and unknown keys rejected. Entry points: `uvicorn theygent_control_plane.asgi:app`,
@@ -378,6 +381,8 @@ uv run --package theygent-control-plane pytest apps/control-plane/tests -m integ
 Coverage worth knowing about: `test_migrations.py` (the chain itself), `test_mcp*.py`
 (transports, generated servers, hub — against fixtures captured from live registries),
 `test_rag.py` (chunker, hybrid query, hash-skip, a real local-site crawl, both runtimes),
+`test_crawler.py` (schema conversion, both wirings in both runtimes against `_fake_apify.py` — a
+local server speaking the Apify run API's shapes — the spend ceiling, and the catalog endpoints),
 `test_observability_*.py` (capture in both runtimes plus the API), `test_settings.py`
 (sink swap, kill switch, probe), `test_auth.py` (setup lockout, the role-floor matrix,
 API-key narrowing, last-admin guards, and the OIDC flow against a fake IdP), and

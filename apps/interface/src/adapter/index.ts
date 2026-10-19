@@ -856,3 +856,73 @@ export function addMcpToolNodes(
   // Keep the derived ir.tools registry in step (idempotent — save re-derives the same).
   return { ir: withDerivedTools(next), newIds };
 }
+
+// ── install a crawler (one gesture: a configured node, wired to an llm when opened from one) ──────
+
+/** Drop a configured `crawler` node — the config the Crawlers browser converted from the actor's
+ * input schema — and, with `attachTo` (an llm node id), wire its capability handle into that llm's
+ * tool-role in-port so the model can call it at once. The node id is the function name the model
+ * sees, so it comes from the actor (`rag_web_browser`), suffixed on a collision. With `replace`
+ * (an existing crawler node id) the node is re-pointed at the new actor in place — its id, edges
+ * and position are kept. The new node sits below its anchor; positions are `view`-only. */
+export function addCrawlerNode(
+  ir: IRDocument,
+  opts: {
+    config: Record<string, unknown>;
+    suggestedId: string;
+    label?: string;
+    attachTo?: string;
+    replace?: string;
+  },
+): { ir: IRDocument; id: string } {
+  const spec = NODE_TYPES.crawler;
+  if (!spec) return { ir, id: "" };
+  const nodes = ir.nodes ?? [];
+  if (opts.replace && nodes.some((n) => n.id === opts.replace)) {
+    const id = opts.replace;
+    const next = {
+      ...ir,
+      nodes: nodes.map((n) =>
+        n.id === id
+          ? { ...n, label: opts.label ?? n.label, config: structuredClone(opts.config) }
+          : n,
+      ),
+    };
+    return { ir: withDerivedTools(next), id };
+  }
+  const taken = new Set(nodes.map((n) => n.id));
+  const id = toolNodeId(opts.suggestedId || "crawler", taken);
+  const node: IRNode = {
+    id,
+    type: "crawler",
+    kind: spec.kind,
+    label: opts.label ?? id,
+    config: structuredClone(opts.config),
+    // Fill the `required` default the registry spec omits, so the dropped node is byte-identical
+    // to what a canvas load→save re-emits.
+    ports: {
+      in: (spec.ports.in ?? []).map((p) => ({ ...p, required: p.required ?? true })),
+      out: (spec.ports.out ?? []).map((p) => ({ ...p, required: p.required ?? true })),
+    },
+  };
+  const target = opts.attachTo ? nodes.find((n) => n.id === opts.attachTo) : undefined;
+  const toolsPort = (target?.ports?.in ?? []).find((p) => p.role === "tool");
+  const useHandle = (spec.ports.out ?? []).find((p) => p.role === "tool")?.id ?? "use";
+  const edges = [...(ir.edges ?? [])];
+  if (target && toolsPort) {
+    edges.push({
+      id: freshId("e", new Set(edges.map((e) => e.id))),
+      source: id,
+      sourceHandle: useHandle,
+      target: target.id,
+      targetHandle: toolsPort.id,
+      channel: "tool",
+      condition: null,
+    });
+  }
+  let next: IRDocument = { ...ir, nodes: [...nodes, node], edges };
+  const positions = resolvePositions(nodes, ir.edges ?? [], (ir.view ?? {}) as ViewBlock);
+  const anchor = (opts.attachTo ? positions[opts.attachTo] : undefined) ?? defaultAddPosition(ir);
+  next = setNodePositions(next, { [id]: { x: anchor.x, y: anchor.y + BULK_GRID_Y * 2 } });
+  return { ir: withDerivedTools(next), id };
+}

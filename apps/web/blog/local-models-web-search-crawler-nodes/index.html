@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Letting a Local Model Search the Web Without Letting It Set the Bill | TheYgent Blog</title>
+    <meta name="description" content="TheYgent 1.3 adds crawler nodes: hosted Apify actors as tools a local model calls. We measured what a model sees, what it spends, and what breaks when it gets every field — and built the node around the answers." />
+    <link rel="canonical" href="https://theygent.ai/blog/local-models-web-search-crawler-nodes/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/blog/local-models-web-search-crawler-nodes/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Letting a Local Model Search the Web Without Letting It Set the Bill | TheYgent Blog" />
+    <meta property="og:description" content="TheYgent 1.3 adds crawler nodes: hosted Apify actors as tools a local model calls. We measured what a model sees, what it spends, and what breaks when it gets every field — and built the node around the answers." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:published_time" content="2026-10-19" />
+    <meta property="article:author" content="Arman Bahlakeh" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Letting a Local Model Search the Web Without Letting It Set the Bill | TheYgent Blog" />
+    <meta name="twitter:description" content="TheYgent 1.3 adds crawler nodes: hosted Apify actors as tools a local model calls. We measured what a model sees, what it spends, and what breaks when it gets every field — and built the node around the answers." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BlogPosting",
+            "@id": "https://theygent.ai/blog/local-models-web-search-crawler-nodes/#article",
+            "headline": "Letting a Local Model Search the Web Without Letting It Set the Bill",
+            "description": "TheYgent 1.3 adds crawler nodes: hosted Apify actors as tools a local model calls. We measured what a model sees, what it spends, and what breaks when it gets every field — and built the node around the answers.",
+            "datePublished": "2026-10-19",
+            "dateModified": "2026-10-19",
+            "inLanguage": "en",
+            "wordCount": 929,
+            "author": {
+              "@type": "Person",
+              "name": "Arman Bahlakeh"
+            },
+            "publisher": {
+              "@id": "https://theygent.ai/#organization"
+            },
+            "image": "https://theygent.ai/assets/og-image.png",
+            "mainEntityOfPage": "https://theygent.ai/blog/local-models-web-search-crawler-nodes/",
+            "isPartOf": {
+              "@id": "https://theygent.ai/blog/#blog"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/blog/local-models-web-search-crawler-nodes/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Blog",
+                "item": "https://theygent.ai/blog/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "Letting a Local Model Search the Web Without Letting It Set the Bill",
+                "item": "https://theygent.ai/blog/local-models-web-search-crawler-nodes/"
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <article aria-labelledby="page-h">
+        <header class="page-hero">
+          <div class="wrap">
+            <nav class="crumbs mono" aria-label="Breadcrumb">
+              <ol>
+                <li><a href="/">TheYgent</a></li>
+                <li><a href="/blog/">Blog</a></li>
+                <li><span aria-current="page">Crawler Nodes</span></li>
+              </ol>
+            </nav>
+            <p class="eyebrow mono"><i class="dia"></i>Engineering · <time datetime="2026-10-19">October 19, 2026</time> · 4 min read</p>
+            <h1 id="page-h">Letting a Local Model Search the Web Without Letting It Set the Bill</h1>
+            <p class="lede">TheYgent 1.3 adds crawler nodes: hosted Apify actors as tools a local model calls. We measured what a model sees, what it spends, and what breaks when it gets every field — and built the node around the answers.</p>
+            <p class="checked mono">By Arman Bahlakeh</p>
+          </div>
+        </header>
+
+        <div class="band page-section">
+          <div class="wrap prose post-body">
+<p>A local model that can search the web is far more useful than one that can't. The hosted scrapers in the Apify Store — web search that returns pages as Markdown, map places, site crawls — are an obvious way to give it that. The question we wanted answered before building anything: what is the right shape for that tool when the model is a local one, and someone else's account pays for every call?</p>
+<p>TheYgent 1.3 ships the answer as the <strong>crawler node</strong>. This post is the measurements behind it.</p>
+<h2 id="every-field">What a model sees when it gets every field</h2>
+<p>An actor's input schema is written for a form. Across the store's 100 most popular actors, the median actor has 10.5 input fields and the largest has 65 — proxy settings, CSS selectors, result counts, paid add-ons, hidden tuning knobs. A generic actor-as-tool bridge offers the model all of them. For three popular actors (a web browser, a map scraper, a site crawler), that came to <strong>more than 51,000 characters of tool schema, about 13,500 prompt tokens on every call</strong>.</p>
+<p>A crawler node offers only the fields the person building the agent ticks — one or two per actor — and fixes the rest. The same three actors as nodes: <strong>2,207 characters, about 780 tokens</strong>.</p>
+<h2 id="accuracy">Does the smaller tool cost accuracy?</h2>
+<p>We asked six questions, five of which need a specific crawler and one of which needs none. The facts in the canned results were invented, so an answer that states one proves the model read the tool result. On a 36&nbsp;GB Apple Silicon Mac, on MLX:</p>
+<ul>
+<li><strong>Qwen3.6-35B-A3B (4-bit, thinking off):</strong> 6 of 6 right tools and 6 of 6 facts in the answer, both ways. The first call took about 1.1&nbsp;s with node tools and 2.0&nbsp;s with every field — 30&nbsp;s before the engine had the long tool prefix cached.</li>
+<li><strong>Qwen3-0.6B (4-bit, thinking on):</strong> 4 of 6 with node tools, 3 of 6 with every field, and a first call of 1.7&nbsp;s against 13.3&nbsp;s. With thinking off it called no tool at all, either way.</li>
+</ul>
+<p>A capable model copes with either shape. A small one does better with less, and both are much faster with less.</p>
+<h2 id="spend">Who sets the spend</h2>
+<p>Most popular actors bill per event: per page fetched, per place scraped, per review. Offered every field of the map scraper, the 35B model asked for <strong>50 places per search and switched on the paid reviews add-on</strong>. The node keeps both fixed: 5 places, no reviews. With pay-per-event pricing, that is the difference between cents and dollars per question, chosen by a model.</p>
+<p>So the node takes those choices away from the model and gives them to the builder. The model fills the exposed fields; any other argument it invents is dropped. Every run also carries a charge cap — the node's own, $0.25 by default — held under a platform ceiling that no agent can raise.</p>
+<h2 id="what-broke">What broke along the way</h2>
+<ul>
+<li><strong>List arguments crash the request on MLX.</strong> In mlx-lm 0.31.3, the Qwen3 tool parser hands a list-typed argument that isn't valid JSON to a Python literal parser. The 35B model wrote <code>ramen restaurant</code> for a list of search terms, the parse raised, and the server closed the connection without answering. A crawler node offers list fields as one value per call by default and wraps it into the list the actor wants.</li>
+<li><strong>Models put JSON lists into string fields.</strong> Offered one URL, the model sometimes wrote a JSON-encoded list of one URL. The node unpacks it rather than crawling a URL made of brackets and quotes.</li>
+<li><strong>Results arrive whole.</strong> Through a plain HTTP tool, three documentation pages came back as one 50,175-character tool result, about 12,500 tokens. A crawler node keeps the item fields you choose and shares a character budget, 6,000 by default, equally across the results.</li>
+<li><strong>Synchronous runs stop at 300 seconds.</strong> Past that, Apify answers with a timeout while the run carries on. Interactive runs cap the actor's own timeout there; durable runs start the crawl, check on it, and read the results, so a long crawl survives a restart.</li>
+</ul>
+<h2 id="store">How much of the store works</h2>
+<p>Of the 100 most popular actors, <strong>97 converted into a usable node with no configuration</strong>. The other three need a login cookie, which belongs in a secret, not in a model's arguments. 45 needed URL lists reshaped into the objects the actor expects, which the node does. The median 30-day run success rate was 99.2%, but seven actors were below 90% and one web-search actor had timed out on 36 of its 47 runs — which is why the Crawlers browser puts the success rate on every card.</p>
+<h2 id="limits">The limits</h2>
+<p>Apify is a hosted service. A crawler node sends its input to Apify, which crawls from its own servers, and every run bills the Apify account behind your token. Per Apify's pricing page (checked October 19, 2026), its free plan includes $5 of usage a month. The runs above went to a local stand-in for Apify's run API with the documented response shapes, so real actor latencies and output sizes weren't part of this measurement. And unlike the rest of TheYgent, a crawler node needs the network.</p>
+<p>If you'd rather give a capable model the whole store, Apify's own MCP server installs from TheYgent's MCP hub, and the docs cover it.</p>
+<h2 id="try-it">Try it</h2>
+<ul>
+<li><strong>Template:</strong> <a href="/templates/web-researcher/">Web researcher</a> — a local model with a web-search crawler, $0.05 per search</li>
+<li><strong>Overview:</strong> <a href="/crawlers/">crawler nodes</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.theygent.ai/latest/building/nodes/crawler/">the crawler node</a> and <a href="https://docs.theygent.ai/latest/mcp/apify/">Apify through the MCP hub</a></li>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/TheYgent">github.com/al2m4n/TheYgent</a></li>
+</ul>
+          </div>
+        </div>
+      </article>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/coding-agents/">MCP Server for Coding Agents</a>
+            <a href="/crawlers/">Crawler Nodes</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

@@ -37,6 +37,8 @@ import { api } from "../lib/api";
 import { DURABLE_ONLY } from "../lib/durable";
 import { NodeIcon, defaultIconFor } from "../lib/icons";
 import { AddMcpToolsDialog } from "./AddMcpToolsDialog";
+import { CrawlerNodePanel } from "./CrawlerNodePanel";
+import { CrawlersDialog } from "./CrawlersDialog";
 import { ModelParamsSection } from "./ModelParamsPanel";
 import { NodeCodeEditor } from "./NodeCodeEditor";
 import { SearchableSelect } from "./SearchableSelect";
@@ -197,6 +199,10 @@ function NodePanel({
             // A rag node references a saved retrieval source by id — a picker over the live list
             // plus the retrieval knobs, instead of the generic schema form.
             <RagNodePanel ir={ir} node={node} onChange={onChange} />
+          ) : node.type === "crawler" ? (
+            // A crawler runs a provider's actor: the actor picker (the Crawlers browser), its
+            // connection, the exposed fields, a fixed-input form from the actor's schema, limits.
+            <CrawlerNodePanel ir={ir} node={node} onChange={onChange} />
           ) : node.type === "guardrail" ? (
             // A guardrail is a check picker: rule (inline) or model (an LLM judge). The choice sets the
             // node's kind, so it's edited through a dedicated panel rather than raw JSON.
@@ -1498,8 +1504,8 @@ function llmCapabilityTools(
     if (!n) continue;
     const cfg = (n.config ?? {}) as Record<string, unknown>;
     const kind =
-      n.type === "rag"
-        ? "rag"
+      n.type === "rag" || n.type === "crawler"
+        ? n.type
         : n.type === "mcp_tool"
           ? "mcp"
           : cfg.connection || cfg.urlTemplate
@@ -1525,6 +1531,7 @@ function LlmToolsPanel({
   onChange: (ir: IRDocument) => void;
 }) {
   const [bulkAdd, setBulkAdd] = useState(false);
+  const [addCrawler, setAddCrawler] = useState(false);
   const node = (ir.nodes ?? []).find((n) => n.id === nodeId);
   const config = (node?.config ?? {}) as Record<string, unknown>;
   // tool_choice is EITHER an OpenAI string (auto/required/none) OR a named-function object
@@ -1570,7 +1577,7 @@ function LlmToolsPanel({
       </span>
       {!hasTools ? (
         <p className="text-[11px] leading-relaxed text-slate-600">
-          None yet — add a batch from an MCP server below, or drop a{" "}
+          None yet — add a batch from an MCP server or a crawler below, or drop a{" "}
           <span className="mono">tool</span> node and drag its violet capability handle into this
           node's <span className="mono">tools</span> port (the violet handle on the bottom). The
           model decides when to call it.
@@ -1596,15 +1603,28 @@ function LlmToolsPanel({
           ))}
         </div>
       )}
-      <Button className="h-7 text-xs" onClick={() => setBulkAdd(true)}>
-        <Plus size={12} aria-hidden /> Add MCP tools
-      </Button>
+      <div className="flex flex-wrap gap-1.5">
+        <Button className="h-7 text-xs" onClick={() => setBulkAdd(true)}>
+          <Plus size={12} aria-hidden /> Add MCP tools
+        </Button>
+        <Button className="h-7 text-xs" onClick={() => setAddCrawler(true)}>
+          <Plus size={12} aria-hidden /> Add crawler
+        </Button>
+      </div>
       {bulkAdd && (
         <AddMcpToolsDialog
           ir={ir}
           attachTo={nodeId}
           onChange={onChange}
           onClose={() => setBulkAdd(false)}
+        />
+      )}
+      {addCrawler && (
+        <CrawlersDialog
+          ir={ir}
+          attachTo={nodeId}
+          onChange={onChange}
+          onClose={() => setAddCrawler(false)}
         />
       )}
       {hasTools && (

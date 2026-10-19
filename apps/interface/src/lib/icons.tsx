@@ -124,6 +124,7 @@ export const DEFAULT_NODE_ICONS: Record<string, string> = {
   quota: "chart-column",
   transform: "replace",
   rag: "database",
+  crawler: "globe",
 };
 
 /** Shown for any node `type` without a dedicated default (e.g. a future node type not yet registered). */

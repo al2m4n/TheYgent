@@ -173,6 +173,10 @@ export function SpanDetail({
   const finish = attrStr(span, "gen_ai.response.finish_reason");
   const rate = isGenerate ? tokensPerSec(span, dur) : null;
   const executor = span.executor_id ?? nodeSpan?.executor_id;
+  // A crawler call's run facts: what the provider charged (when it reported it) and how many
+  // dataset items came back.
+  const crawlCost = attrNum(span, "crawler.usage_total_usd");
+  const crawlItems = attrNum(span, "crawler.items");
 
   const data = io.data;
   // The reserved reasoning entry is presentation, not a dataflow port — pull it out of the
@@ -251,6 +255,8 @@ export function SpanDetail({
         )}
         {rate && <Stat label="rate" value={rate} />}
         {finish && <Stat label="finish" value={finish} />}
+        {crawlCost != null && <Stat label="cost" value={`$${crawlCost.toFixed(4)}`} />}
+        {crawlItems != null && <Stat label="items" value={String(crawlItems)} />}
         {data && <Stat label="io" value={`${bytes(data.bytes_in)}→${bytes(data.bytes_out)}`} />}
         {executor && executor !== "inproc" && <Stat label="worker" value={executor} />}
       </div>

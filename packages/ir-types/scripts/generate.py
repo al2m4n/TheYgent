@@ -53,6 +53,8 @@ _DEFAULT_PORTS: dict[str, dict[str, list[str]]] = {
     "mcp_tool": {"in": ["in"], "out": ["out", "err", "use"]},
     # rag follows the tool shape: step-mode out/err plus the `use` capability connector.
     "rag": {"in": ["in"], "out": ["out", "err", "use"]},
+    # crawler follows the same shape: step-mode out/err plus the `use` capability connector.
+    "crawler": {"in": ["in"], "out": ["out", "err", "use"]},
     "router": {"in": ["in"], "out": ["out"]},
     "human": {"in": ["in"], "out": ["out"]},
     # A failed subgraph child binds its error to the node's error-typed out-port (the tool ok/err
@@ -83,6 +85,10 @@ _PORT_OVERRIDES: dict[tuple[str, str], dict[str, Any]] = {
     # A rag node's `in` port is optional: step-mode may template `query` from config alone,
     # and capability-mode receives the query from the model.
     ("rag", "in"): {"required": False},
+    ("crawler", "use"): {"role": "tool"},
+    # A crawler's `in` port is optional: step-mode may run on its fixed input alone, and
+    # capability-mode receives its arguments from the model.
+    ("crawler", "in"): {"required": False},
 }
 
 
