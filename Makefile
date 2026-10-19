@@ -123,7 +123,7 @@ hooks: ## Install the git pre-commit hooks (.pre-commit-config.yaml — mirrors 
 	@echo "==> uvx pre-commit install"
 	uvx pre-commit install
 
-lint: ## Run all pre-commit hooks against every file (ruff · ty · biome · tsc · ir-types drift)
+lint: ## Run all pre-commit hooks against every file (ruff · ty · biome · tsc · ir-types drift · agent docs)
 	@echo "==> uvx pre-commit run --all-files"
 	uvx pre-commit run --all-files
 

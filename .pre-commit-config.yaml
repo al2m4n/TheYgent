@@ -83,6 +83,17 @@ repos:
         pass_filenames: false
         require_serial: true
 
+      # ── The AGENTS.md context files: stubs, root links, relative links, and full coverage of
+      # every directory a map declares — mirrors the CI fast job's first step. Runs on every
+      # commit, whatever it touches: a new or renamed file anywhere can leave a map behind. ──
+      - id: agent-docs
+        name: context files (AGENTS.md) in step with the tree
+        entry: python3 .github/scripts/check_agent_docs.py
+        language: system
+        always_run: true
+        pass_filenames: false
+        require_serial: true
+
       # ── IR type-drift guard — mirrors the CI frontend job: a packages/ir change must ship the
       # regenerated @theygent/ir-types in the same commit (FE/BE IR lockstep). Also fires on
       # packages/ir-types changes (the generator + pipeline live there, and a hand-edit to a

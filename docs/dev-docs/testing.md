@@ -265,6 +265,7 @@ the corresponding assertion in the same change — that is the point of the suit
 | TS lint + format (interface) | `biome check` | Yes |
 | TS type check | `tsc --noEmit` (Biome is not a type checker) | Yes |
 | IR type lockstep | ir-types drift guard: regenerate, `git diff --exit-code -- packages/ir-types/src`, plus an untracked-file check | Yes |
+| Context files | `.github/scripts/check_agent_docs.py`: `CLAUDE.md` stubs, root links, relative links and anchors, every file in each `agents-map: covers=` directory named in its `AGENTS.md` | Yes |
 
 The pre-commit hooks (`.pre-commit-config.yaml`) mirror these gates one-for-one and are
 all *local* hooks run via `uv run --frozen` / `pnpm` on purpose: they use the exact
@@ -274,7 +275,7 @@ with `make hooks` (`uvx pre-commit install`); run everything locally with `make 
 because it regenerates the TypeScript types from the Pydantic IR; on failure it leaves the
 regenerated files in the working tree ready to commit.
 
-In CI (`.github/workflows/ci.yml`), the `fast` job is the PR gate: Ruff, `ty`
+In CI (`.github/workflows/ci.yml`), the `fast` job is the PR gate: the context-file check, Ruff, `ty`
 (non-blocking), the four fast pytest suites (IR, inference plane, control plane, AI gateway),
 and the deploy guards. The `frontend` job
 runs the drift guard, Biome, `tsc` + build, and Vitest. The `integration` job is the
