@@ -12,6 +12,9 @@ import copy
 
 import pytest
 from theygent_ir import (
+    EXECUTABLE_TYPES,
+    NODE_TYPE_KIND,
+    CrawlerConfig,
     GraphValidationError,
     content_hash,
     parse_document,
@@ -1071,3 +1074,150 @@ def test_tool_wiring_data_edge_into_tools_port_rejected() -> None:
     )
     with pytest.raises(GraphValidationError, match=r"cannot target the .tool.-role port"):
         validate_graph(parse_document(doc))
+
+
+# ── the crawler node (a hosted crawler actor as a step or an llm capability) ──────
+
+_QUERY_SCHEMA = {
+    "type": "object",
+    "properties": {"query": {"type": "string", "description": "What to search for."}},
+    "required": ["query"],
+}
+
+
+def _crawler_node(node_id: str = "web_search", **over: object) -> dict:
+    cfg: dict = {
+        "provider": "apify",
+        "actor": "apify/rag-web-browser",
+        "connection": "con_apify",
+        "input": {"maxResults": 3},
+        "expose": ["query"],
+        "parameterSchema": _QUERY_SCHEMA,
+        "description": "Search the web and read the top pages.",
+    }
+    cfg.update(over)
+    return {
+        "id": node_id,
+        "type": "crawler",
+        "kind": "activity",
+        "config": cfg,
+        "ports": {
+            "in": [{"id": "in", "type": "any", "required": False}],
+            "out": [
+                {"id": "out", "type": "any"},
+                {"id": "err", "type": "error"},
+                {"id": "use", "type": "any", "role": "tool"},
+            ],
+        },
+    }
+
+
+def _crawler_capability_graph(node: dict) -> dict:
+    doc = _capability_graph(node)
+    doc["edges"][-1]["sourceHandle"] = "use"
+    return doc
+
+
+def test_crawler_is_an_executable_activity() -> None:
+    assert NODE_TYPE_KIND["crawler"] == "activity"
+    assert "crawler" in EXECUTABLE_TYPES
+
+
+def test_crawler_capability_validates_and_fills_limit_defaults() -> None:
+    validate_graph(parse_document(_crawler_capability_graph(_crawler_node())))
+    cfg = CrawlerConfig.model_validate(_crawler_node()["config"])
+    assert cfg.limits.timeout_seconds == 120
+    assert cfg.limits.max_charge_usd == 0.25
+    assert cfg.limits.result_chars == 6000
+
+
+def test_crawler_needs_a_connection_and_an_actor() -> None:
+    for bad in ({"connection": ""}, {"actor": ""}, {"actor": "../../v2/users/me"}):
+        with pytest.raises(GraphValidationError, match="invalid config"):
+            validate_graph(parse_document(_crawler_capability_graph(_crawler_node(**bad))))
+
+
+def test_crawler_provider_is_a_closed_vocabulary() -> None:
+    with pytest.raises(GraphValidationError, match="invalid config"):
+        validate_graph(parse_document(_crawler_capability_graph(_crawler_node(provider="other"))))
+
+
+def test_crawler_exposed_field_without_a_schema_property_is_unfillable() -> None:
+    node = _crawler_node(expose=["query", "maxResults"])
+    with pytest.raises(GraphValidationError, match="unfillable"):
+        validate_graph(parse_document(_crawler_capability_graph(node)))
+    with pytest.raises(GraphValidationError, match="unfillable"):
+        validate_graph(
+            parse_document(_crawler_capability_graph(_crawler_node(parameterSchema=None)))
+        )
+
+
+def test_crawler_schema_property_that_is_not_exposed_is_dead() -> None:
+    node = _crawler_node(expose=[])
+    with pytest.raises(GraphValidationError, match="dead"):
+        validate_graph(parse_document(_crawler_capability_graph(node)))
+
+
+def test_crawler_scalar_must_be_exposed_and_expose_unique() -> None:
+    with pytest.raises(GraphValidationError, match="not in `expose`"):
+        validate_graph(parse_document(_crawler_capability_graph(_crawler_node(scalar=["urls"]))))
+    with pytest.raises(GraphValidationError, match="duplicate"):
+        node = _crawler_node(expose=["query", "query"])
+        validate_graph(parse_document(_crawler_capability_graph(node)))
+
+
+def test_crawler_limits_are_bounded() -> None:
+    for limits in ({"timeoutSeconds": 0}, {"maxChargeUsd": 0}, {"itemLimit": 0}, {"bogus": 1}):
+        node = _crawler_node(limits=limits)
+        with pytest.raises(GraphValidationError, match="invalid config"):
+            validate_graph(parse_document(_crawler_capability_graph(node)))
+
+
+def test_crawler_capability_cannot_reference_in() -> None:
+    node = _crawler_node(input={"maxResults": "$in.in.count"})
+    with pytest.raises(GraphValidationError, match="cannot reference `\\$in`"):
+        validate_graph(parse_document(_crawler_capability_graph(node)))
+
+
+def test_crawler_step_may_reference_in_and_run_on_fixed_input() -> None:
+    doc = _trivial()
+    crawler = _crawler_node(
+        input={"query": "$in", "maxResults": 3}, expose=[], parameterSchema=None
+    )
+    doc["nodes"].append(crawler)
+    doc["edges"].append(
+        {
+            "id": "e_crawl",
+            "source": "n_in",
+            "sourceHandle": "out",
+            "target": "web_search",
+            "targetHandle": "in",
+            "channel": "data",
+        }
+    )
+    validate_graph(parse_document(doc))
+
+
+def test_crawler_is_a_capability_or_a_step_not_both() -> None:
+    doc = _crawler_capability_graph(_crawler_node())
+    doc["nodes"][2]["ports"]["in"].append({"id": "extra", "type": "any", "required": False})
+    doc["edges"].append(
+        {
+            "id": "e_step",
+            "source": "web_search",
+            "sourceHandle": "out",
+            "target": "n_out",
+            "targetHandle": "extra",
+            "channel": "data",
+        }
+    )
+    with pytest.raises(GraphValidationError, match=r"capability .* or a step"):
+        validate_graph(parse_document(doc))
+
+
+def test_crawler_node_leaves_the_pinned_hash_alone() -> None:
+    # Adding the crawler type is additive: the trivial graph's hash is untouched (the pin above),
+    # and a crawler node is hashed as authored content like any other node.
+    assert content_hash(parse_document(_trivial())) == content_hash(parse_document(_trivial()))
+    with_crawler = content_hash(parse_document(_crawler_capability_graph(_crawler_node())))
+    assert with_crawler != content_hash(parse_document(_trivial()))

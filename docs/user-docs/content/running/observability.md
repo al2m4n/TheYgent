@@ -58,7 +58,7 @@ Rows carry inline annotations where they help: the duration, a check or cross fo
 
 ## Inspecting a span
 
-Click any bar to open its inspector — a side pane when the window is wide, stacked below when it is narrow. It shows a compact stat line for that span: status, how long it `took`, the `model`, `ttft` (time to the first answer token), tokens in and out, the generation `rate`, the `finish` reason, the I/O byte sizes, and — when the work ran off the main process — which `worker` handled it.
+Click any bar to open its inspector — a side pane when the window is wide, stacked below when it is narrow. It shows a compact stat line for that span: status, how long it `took`, the `model`, `ttft` (time to the first answer token), tokens in and out, the generation `rate`, the `finish` reason, the I/O byte sizes, and — when the work ran off the main process — which `worker` handled it. A [crawler](../building/nodes/crawler.md) call adds the `items` it returned and, when the provider reported it, its `cost` in USD.
 
 Below the stats are up to four payload sections for the node: **Input**, **Reasoning**, **Tool calls**, and **Output**. These are fetched lazily when you open the row, and whether they show anything depends on the capture policy (below). Selecting the run-root row instead shows the whole-run token totals.
 

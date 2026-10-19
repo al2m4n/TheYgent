@@ -33,6 +33,7 @@ The palette derives its list directly from the set of runnable node types, so th
 | `tool` | Runs a built-in tool or an HTTP API — as a pipeline step or a model capability. | [Tools](tools.md) |
 | `mcp_tool` | Calls a tool exposed by a connected MCP server. | [MCP tools](mcp.md) |
 | `rag` | Retrieves the most relevant passages from a RAG source — as a step or a model capability. | [RAG](rag.md) |
+| `crawler` | Runs a hosted scraper or crawler (an Apify Actor) with fixed input and spend caps — as a step or a model capability. | [Crawler](crawler.md) |
 | `transcribe` | Speech-to-text: turns audio into text. | [Audio & images](media.md) |
 | `speak` | Text-to-speech: turns text into audio. | [Audio & images](media.md) |
 | `imagine` | Generates an image from a text prompt. | [Audio & images](media.md) |

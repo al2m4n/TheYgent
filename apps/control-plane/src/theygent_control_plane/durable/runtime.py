@@ -97,6 +97,7 @@ class DurableRuntime:
         gates: Any = None,
         artifacts: Any = None,
         rag: Any = None,
+        crawlers: Any = None,
         executor_id: str | None = None,
     ) -> None:
         self._database_url = database_url
@@ -132,6 +133,7 @@ class DurableRuntime:
                 gates=gates,  # durable gate steps use the same backend
                 artifacts=artifacts,  # durable audio steps use the same store
                 rag=rag,  # durable rag steps retrieve through the same backend
+                crawlers=crawlers,  # durable crawler steps run through the same backend
             )
         )
         self._launched = False

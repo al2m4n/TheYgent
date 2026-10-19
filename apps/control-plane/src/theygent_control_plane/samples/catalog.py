@@ -43,6 +43,7 @@ _SAMPLE_FILES = (
     "voice_desk.json",
     "art_department.json",
     "handbook_qa.json",
+    "web_researcher.json",
     "editorial_loop.json",
     "batch_briefing.json",
 )
@@ -76,6 +77,9 @@ class SampleConnection:
     name: str
     config: dict[str, Any]
     seed: str | None
+    #: ``mcp_server`` (the default) or ``http_auth`` — e.g. a provider API whose token the user
+    #: sets on the connection after installing (samples never ship a secret).
+    kind: str = "mcp_server"
 
 
 @dataclass(frozen=True)
@@ -152,6 +156,7 @@ def load_catalog() -> tuple[SampleSpec, ...]:
                         name=c["name"],
                         config=c["config"],
                         seed=c.get("seed"),
+                        kind=c.get("kind", "mcp_server"),
                     )
                     for c in raw["connections"]
                 ),

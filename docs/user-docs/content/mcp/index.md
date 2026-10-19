@@ -125,6 +125,7 @@ Drop a **Tool** node in the [editor](../building/editor.md), choose **MCP** in t
 ## Related pages
 
 - [Example agents](examples.md) — one runnable agent per server kind, plus capability mode
+- [Apify through the MCP hub](apify.md) — hosted scrapers and crawlers as tools, and when a crawler node fits better
 - [The mcp_tool node](../building/nodes/mcp.md) — ports, config, step vs capability
 - [Tool nodes](../building/nodes/tools.md) — connections and the tool error contract
 - [API reference](../reference/api.md) — the `/admin/mcp/*` and `/connections/{id}/mcp*` endpoints

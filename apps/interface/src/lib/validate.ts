@@ -44,6 +44,9 @@ const SINGLE_IN_CONSUMERS = new Set(["output", "router"]);
 // subgraph/loop/map compose a SAVED, PINNED agent body — exactly one of version/contentHash.
 const PINNED_BODY_TYPES = new Set(["subgraph", "loop", "map"]);
 
+// The node types that may be wired into an llm's tools port (graph.py `_CAPABILITY_TYPES`).
+const CAPABILITY_TYPES = new Set(["tool", "mcp_tool", "rag", "crawler"]);
+
 export function validateGraph(ir: IRDocument): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const nodes = ir.nodes ?? [];
@@ -301,10 +304,10 @@ export function validateGraph(ir: IRDocument): ValidationIssue[] {
     }
   }
 
-  // A tool/mcp_tool node is a CAPABILITY (wired to an llm via `tool` edges) OR a STEP
+  // A tool/mcp_tool/rag/crawler node is a CAPABILITY (wired to an llm via `tool` edges) OR a STEP
   // (data/control edges) — not both (mirrors graph.py, so the editor flags it before a 400).
   for (const n of nodes) {
-    if (n.type !== "tool" && n.type !== "mcp_tool") continue;
+    if (!CAPABILITY_TYPES.has(n.type)) continue;
     const chans = new Set(edges.filter((e) => e.source === n.id).map((e) => e.channel ?? "data"));
     if (chans.has("tool") && [...chans].some((c) => c !== "tool")) {
       issues.push({

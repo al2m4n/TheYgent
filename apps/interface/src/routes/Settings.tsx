@@ -3,11 +3,12 @@
 // modal): what lives here concerns how this installation behaves, not who is using it.
 //
 // One dirty-state form (the control-plane settings catalog) lives HERE and is shared by the
-// Telemetry / RAG / MCP tabs, so staged edits survive tab switches; each tab saves only its own
+// Telemetry / RAG / MCP / Crawlers tabs, so staged edits survive tab switches; each tab saves only its own
 // group. The Inference tab talks to the inference plane's own settings/diagnostics resources —
 // a separate trust domain the browser reaches directly.
 
 import { LocalCredentials } from "../components/LocalCredentials";
+import { CrawlersTab } from "../components/settings/CrawlersTab";
 import { ImportExportTab } from "../components/settings/ImportExportTab";
 import { InferenceTab } from "../components/settings/InferenceTab";
 import { McpTab } from "../components/settings/McpTab";
@@ -31,6 +32,7 @@ const TABS = [
   { value: "telemetry", label: "Telemetry" },
   { value: "rag", label: "RAG" },
   { value: "mcp", label: "MCP" },
+  { value: "crawlers", label: "Crawlers" },
   { value: "credentials", label: "Credentials" },
   { value: "transfer", label: "Import / Export" },
 ] as const;
@@ -49,7 +51,7 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="overview">
-        {/* Ten tabs outgrow a phone: the list scrolls within itself, never the page. */}
+        {/* Eleven tabs outgrow a phone: the list scrolls within itself, never the page. */}
         <TabsList className="max-w-full justify-start overflow-x-auto">
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
@@ -81,6 +83,9 @@ export function Settings() {
         </TabsContent>
         <TabsContent value="mcp">
           <McpTab form={form} />
+        </TabsContent>
+        <TabsContent value="crawlers">
+          <CrawlersTab form={form} />
         </TabsContent>
         <TabsContent value="credentials">
           <Card>

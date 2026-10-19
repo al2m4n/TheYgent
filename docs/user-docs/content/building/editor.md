@@ -112,7 +112,7 @@ The header shows the node's kind badge, its type, and its id, with a per-node **
 Several node types get purpose-built panels instead of the generic form — the `llm` model and message editors, the tool **Kind** picker, the guardrail **Check** picker, the pinned-body pickers for `subgraph`/`loop`/`map`, the transcribe/speak/imagine parameter forms, and the **input fields** builder on the `input` and `human` nodes. Each is documented on that node's [reference page](nodes/index.md).
 
 !!! tip "Everything the shipped samples use is buildable in the Wizard"
-    All twelve [sample agents](../samples/index.md) — every node, every config field, every named port and every edge — can be built from the forms and the canvas alone. The Code view is an escape hatch, not a requirement. The one exception is pinning a child agent by content hash rather than by version, which no sample uses.
+    All thirteen [sample agents](../samples/index.md) — every node, every config field, every named port and every edge — can be built from the forms and the canvas alone. The Code view is an escape hatch, not a requirement. The one exception is pinning a child agent by content hash rather than by version, which no sample uses.
 
 !!! warning "Durable-only nodes"
     Adding a `human`, `subgraph`, `loop`, or `map` node shows a banner: these run only on the durable runtime. Publish the agent, then use **Run durably** (which needs the server's durable mode) or deploy it behind a trigger. Neither the in-editor Test panel nor the plain interactive **Run** path can execute them. See [durable runs](../running/durable.md).

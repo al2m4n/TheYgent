@@ -362,6 +362,85 @@ export interface McpCatalogDetail {
   candidates: McpInstallCandidate[];
 }
 
+// ── the Crawlers browser: the provider's public store, proxied + cached by the control plane ──
+// The browser never calls the provider. A card carries what the store reports: pricing (the
+// headline price is the primary billed event, or a unit price), users and runs over 30 days, and
+// the 30-day run success rate. Installing drops the converted `crawler` node config on the canvas.
+
+export interface CrawlerPricing {
+  /** `PAY_PER_EVENT` / `PRICE_PER_DATASET_ITEM` / `FLAT_PRICE_PER_MONTH` / `FREE` / … */
+  model: string;
+  priceUsd: number | null;
+  /** What the headline price is per — an event title ("Fetched page") or a unit. */
+  unit: string | null;
+}
+
+export interface CrawlerCard {
+  provider: string;
+  /** `username/actor-name` — the node's `actor`. */
+  actor: string;
+  title: string;
+  description: string;
+  author: string;
+  categories: string[];
+  pictureUrl: string | null;
+  url: string | null;
+  pricing: CrawlerPricing;
+  users30d: number | null;
+  runs30d: number;
+  /** 0–1, or null when the actor has no public runs in the window. */
+  successRate30d: number | null;
+  rating: number | null;
+  reviews: number | null;
+}
+
+export interface CrawlerCatalogPage {
+  entries: CrawlerCard[];
+  total: number | null;
+  offset: number;
+  limit: number;
+}
+
+/** One actor input field, as the fixed-input form renders it. `exposable` = a model could fill
+ * it (the field can be offered to the model); everything else is fixed on the node. */
+export interface CrawlerField {
+  name: string;
+  title?: string;
+  type?: string;
+  editor?: string;
+  description: string;
+  default?: unknown;
+  prefill?: unknown;
+  example?: unknown;
+  enum?: unknown[];
+  enumTitles?: string[];
+  minimum?: number;
+  maximum?: number;
+  unit?: string;
+  sectionCaption?: string;
+  isSecret?: boolean;
+  itemType?: string;
+  required: boolean;
+  exposable: boolean;
+}
+
+/** A complete `crawler` node config (camelCase, as the IR stores it) plus what the builder should
+ * know: required fields nobody can fill, and the suggested node id (the function name). */
+export interface CrawlerConversion {
+  config: Record<string, unknown>;
+  unfillable: string[];
+  totalFields: number;
+  suggestedId: string;
+}
+
+export interface CrawlerDetail {
+  entry: CrawlerCard;
+  readmeSummary: string | null;
+  defaultRunOptions: Record<string, unknown>;
+  fields: CrawlerField[];
+  suggested: CrawlerConversion;
+}
+
 // The tools a generated (openapi/graphql) server WOULD expose — nothing is created by a preview.
 // `url` is the upstream base the server derived (e.g. from the spec's servers list).
 export interface GeneratedPreview {
@@ -804,7 +883,7 @@ export type SettingType =
   | "list[registry]"
   | "secret";
 export type SettingSource = "env" | "stored" | "default";
-export type SettingGroup = "telemetry" | "mcp" | "rag" | "auth" | "ai_gateway";
+export type SettingGroup = "telemetry" | "mcp" | "rag" | "crawler" | "auth" | "ai_gateway";
 
 /** The read shape of a `secret` value: presence + non-secret names only. */
 export interface SensitiveValue {
@@ -887,7 +966,9 @@ export interface SampleView {
   installed: boolean;
   /** `modality` narrows the picker (vision, audio, image-gen, embeddings); null = chat. */
   model_slots: Record<string, { label: string; description: string; modality: string | null }>;
-  connections: { key: string; name: string; transport: string }[];
+  /** `transport` is an MCP server's; an `http_auth` connection (a provider token the user sets
+   * after installing) has none. */
+  connections: { key: string; name: string; kind: string; transport: string | null }[];
   rag_sources: { key: string; name: string }[];
   /** A trigger the install creates (shipped disabled — arming it is the user's click). */
   trigger: { kind: string; enabled: boolean } | null;
@@ -1973,6 +2054,40 @@ export const api = {
     useOauth?: boolean;
   }) =>
     request<ConnectionRecord>(controlPlaneUrl(), "/admin/mcp/catalog/install", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  // ── control plane: the Crawlers browser (proxied store + schema → node config) ──────────
+  browseCrawlers: (
+    params: { search?: string; category?: string; offset?: number; limit?: number } = {},
+  ) => {
+    const q = new URLSearchParams({ provider: "apify" });
+    if (params.search) q.set("search", params.search);
+    if (params.category) q.set("category", params.category);
+    if (params.offset) q.set("offset", String(params.offset));
+    if (params.limit) q.set("limit", String(params.limit));
+    return request<CrawlerCatalogPage>(controlPlaneUrl(), `/crawlers/catalog?${q}`);
+  },
+
+  getCrawler: (actor: string, provider = "apify") => {
+    const q = new URLSearchParams({ provider, actor });
+    return request<CrawlerDetail>(controlPlaneUrl(), `/crawlers/catalog/actor?${q}`);
+  },
+
+  // Re-derive a node config for a choice of exposed fields — the stored `parameterSchema` always
+  // comes from the actor's real input schema, never from the browser.
+  convertCrawler: (body: {
+    actor: string;
+    provider?: string;
+    expose?: string[] | null;
+    scalar?: string[] | null;
+    input?: Record<string, unknown> | null;
+    description?: string | null;
+    connection?: string | null;
+    limits?: Record<string, unknown> | null;
+  }) =>
+    request<CrawlerConversion>(controlPlaneUrl(), "/crawlers/catalog/convert", {
       method: "POST",
       body: JSON.stringify(body),
     }),

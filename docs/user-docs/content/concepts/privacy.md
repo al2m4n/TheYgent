@@ -12,6 +12,7 @@ TheYgent's promise is **everything runs where you point it, and you own every ho
 | Agents, runs, sessions, traces | Your Postgres, at `DATABASE_URL`. What each agent's runs capture — and for how long — is set by its [I/O policy](../running/observability.md). |
 | Retrieval documents | pgvector in the same Postgres, embedded by the model you bind to the source. Bind a local embedding model and the documents never leave the machine. See [RAG sources](../rag/index.md). |
 | Tool and MCP secrets | The control plane's secret store, encrypted with `THEYGENT_SECRET_KEY`. Agents carry references, never values. |
+| What a crawler collects | A [crawler node](../building/nodes/crawler.md) sends its input to the provider it names, which crawls on its own servers; the results come back into your run. The provider's token stays in the secret store. |
 | Audio and images | Local artifacts under `THEYGENT_ARTIFACT_DIR` on the control-plane host — never written into run history or exported with traces. |
 
 ## Every connection TheYgent makes
@@ -23,7 +24,8 @@ This is the complete list for a running install. Apart from the first row, nothi
 | A public model price list from GitHub | Each time the inference plane starts. The model client library it uses to call engines (LiteLLM) loads it. | None of your data. With no network, the library falls back to the copy bundled with it, and startup continues. |
 | Hugging Face | When you browse the model catalog, install a model, or start a model you registered by hand with `source: hf`. | Your catalog searches and the files you download. A [gated repository](../models/installing.md#install-from-the-catalog) also sends your Hugging Face token. Catalog installs register as local files, so they load from disk afterwards. |
 | MCP registries | When you open **Browse hubs** on the MCP page. | Your searches. Replace the public hubs with a registry you host by setting `THEYGENT_MCP_REGISTRIES` — see [MCP servers](../mcp/index.md#installing-from-a-hub). |
-| Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
+| The Apify Store | When you open the **Crawlers browser** in the editor. The control plane makes the request; your browser does not. | Your searches and the Actors you open. No token is sent. See [Crawler](../building/nodes/crawler.md#adding-a-crawler). |
+| Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a crawler node's provider (which receives the node's input), a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
 
 Installing TheYgent — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
 

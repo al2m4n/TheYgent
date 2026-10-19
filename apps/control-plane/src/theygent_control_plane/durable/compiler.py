@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -35,6 +36,7 @@ from dbos import DBOS, Queue, SetWorkflowID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from theygent_ir import (
     BuiltinTool,
+    CrawlerConfig,
     GuardrailConfig,
     HttpTool,
     HumanConfig,
@@ -60,6 +62,8 @@ from theygent_ir import (
     topological_order,
 )
 
+from theygent_control_plane.crawlers import CrawlerError, CrawlerLimitsIn
+from theygent_control_plane.crawlers.apify import MAX_WAIT_S
 from theygent_control_plane.mcp import McpManager
 from theygent_control_plane.store import AgentStore, RunStore, TriggerStore
 from theygent_control_plane.tools import DEFAULT_REGISTRY
@@ -95,6 +99,10 @@ from theygent_control_plane.walker import (
     build_capability_schemas,
     build_http_call,
     build_tool_schemas,
+    crawler_call_input,
+    crawler_limits,
+    crawler_result,
+    crawler_span_attributes,
     evaluate_guardrail_rule,
     execute_guardrail_model,
     execute_http_tool,
@@ -116,10 +124,12 @@ from theygent_control_plane.walker import (
     mcp_config_from_connection,
     merge_usage,
     rag_top_k,
+    resolve_crawler_input,
     resolve_gate_key,
     resolve_model,
     resolve_model_key,
     resolve_rag_query,
+    tool_call_attributes,
     tool_result_message,
     usage_attributes,
 )
@@ -213,6 +223,9 @@ class DurableResources:
     # The retrieval backend rag nodes/capabilities query — the SAME one the interactive
     # walker uses, so retrieval behaves identically on both runtimes. May be None.
     rag: Any = None  # rag.RagRetriever
+    # The crawler backend crawler nodes/capabilities run through — the SAME one the interactive
+    # walker uses (connection auth + the platform spend ceiling). May be None.
+    crawlers: Any = None  # crawlers.CrawlerBackend
 
 
 _RES: DurableResources | None = None
@@ -378,6 +391,179 @@ async def _rag_step(
     return {"ok": out.ok, "value": out.value}
 
 
+# ── crawler steps: start → poll → read ────────────────────────────────────────────
+# A crawl of any length survives a restart because each request is its own journaled step: a
+# completed start replays (no second run), a resumed workflow keeps polling the same provider run.
+# Starting a run is the one write-shaped crawler activity — a retry after a lost answer could start,
+# and bill, a second run — so the start step does not retry; polls and reads are safe to repeat and
+# retry a provider outage inside the step before reporting it.
+
+_NO_CRAWLER_BACKEND = "crawler: no crawler backend is configured on this runtime"
+_CRAWLER_READ_ATTEMPTS = 3
+
+
+async def _crawler_read(call: Any) -> dict[str, Any]:
+    """Run one read-shaped crawler request with a short retry on a transient provider error, as
+    the ok/err dict a step journals."""
+    for attempt in range(_CRAWLER_READ_ATTEMPTS):
+        try:
+            return {"ok": True, **(await call())}
+        except CrawlerError as exc:
+            if not exc.transient or attempt == _CRAWLER_READ_ATTEMPTS - 1:
+                return {"ok": False, "value": str(exc)}
+            await asyncio.sleep(1.0 * 2**attempt)
+        except Exception as exc:  # an unexpected adapter failure is still the tool contract
+            return {"ok": False, "value": f"crawler failed: {exc}"}
+    return {"ok": False, "value": "crawler failed"}  # pragma: no cover - the loop always returns
+
+
+@DBOS.step(retries_allowed=False)
+async def _crawler_start_step(
+    run_id: str,
+    node_id: str,
+    provider: str,
+    actor: str,
+    connection: str,
+    run_input: dict[str, Any],
+    limits: dict[str, Any],
+) -> dict[str, Any]:
+    """Start the provider run. The journaled result is the provider's run id, so a resumed
+    workflow polls the run it already started."""
+    backend = _res().crawlers
+    if backend is None:
+        return {"ok": False, "value": _NO_CRAWLER_BACKEND}
+    try:
+        out = await backend.start(
+            provider=provider,
+            actor=actor,
+            connection=connection,
+            run_input=run_input,
+            limits=CrawlerLimitsIn(**limits),
+        )
+    except CrawlerError as exc:
+        return {"ok": False, "value": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "value": f"crawler {actor!r} failed: {exc}"}
+    return {"ok": True, **out}
+
+
+@DBOS.step(**_RETRY)
+async def _crawler_poll_step(
+    run_id: str, node_id: str, provider: str, actor: str, connection: str, provider_run_id: str
+) -> dict[str, Any]:
+    """One poll window: wait (the provider holds each request up to a minute) until the run is
+    terminal or about a minute has passed, whichever is first. A window always spans that minute
+    unless the run finished, so the workflow's poll budget bounds wall-clock time."""
+    backend = _res().crawlers
+    if backend is None:
+        return {"ok": False, "value": _NO_CRAWLER_BACKEND}
+    deadline = time.monotonic() + MAX_WAIT_S
+    while True:
+        remaining = max(1, int(deadline - time.monotonic()))
+        out = await _crawler_read(
+            lambda w=remaining: backend.poll(
+                provider=provider,
+                actor=actor,
+                connection=connection,
+                run_id=provider_run_id,
+                wait_s=w,
+            )
+        )
+        if not out["ok"] or out["terminal"] or time.monotonic() >= deadline - 1:
+            return out
+        await asyncio.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+
+
+@DBOS.step(**_RETRY)
+async def _crawler_items_step(
+    run_id: str,
+    node_id: str,
+    provider: str,
+    actor: str,
+    connection: str,
+    dataset_id: str,
+    limits: dict[str, Any],
+) -> dict[str, Any]:
+    backend = _res().crawlers
+    if backend is None:
+        return {"ok": False, "value": _NO_CRAWLER_BACKEND}
+
+    async def _read() -> dict[str, Any]:
+        items = await backend.items(
+            provider=provider,
+            actor=actor,
+            connection=connection,
+            dataset_id=dataset_id,
+            limits=CrawlerLimitsIn(**limits),
+        )
+        return {"items": items}
+
+    return await _crawler_read(_read)
+
+
+async def _durable_crawler(
+    config: CrawlerConfig,
+    run_input: dict[str, Any],
+    run_id: str,
+    node_id: str,
+    *,
+    as_text: bool,
+) -> ActivityOutcome:
+    """One crawler call as journaled steps (start → poll windows → read the dataset). The poll
+    budget is derived from the node's ``timeoutSeconds`` — deterministic, so a replay re-derives
+    the same loop from the journal. A run that is still going when the budget is spent, or that
+    ended without results, binds ``err`` naming the provider's run id."""
+    limits = crawler_limits(config)
+    limits_wire = {
+        "timeout_seconds": limits.timeout_seconds,
+        "max_charge_usd": limits.max_charge_usd,
+        "max_items": limits.max_items,
+        "item_limit": limits.item_limit,
+        "fields": limits.fields,
+    }
+    ident = (config.provider, config.actor, config.connection)
+    started = await _crawler_start_step(run_id, node_id, *ident, run_input, limits_wire)
+    if not started["ok"]:
+        return ActivityOutcome(ok=False, value=started["value"])
+    provider_run = started["runId"]
+    meta: dict[str, Any] = {"runId": provider_run, "chargeCapUsd": started.get("chargeCapUsd")}
+    polled: dict[str, Any] = {}
+    for _ in range(limits.timeout_seconds // MAX_WAIT_S + 3):
+        polled = await _crawler_poll_step(run_id, node_id, *ident, provider_run)
+        if not polled["ok"] or polled["terminal"]:
+            break
+    if not polled.get("ok"):
+        return ActivityOutcome(ok=False, value=polled.get("value"), meta=meta)
+    meta["usageTotalUsd"] = polled.get("usageTotalUsd")
+    status = polled.get("status")
+    if not polled["terminal"]:
+        return ActivityOutcome(
+            ok=False,
+            value=f"crawler {config.actor!r}: run {provider_run} was still {status} after "
+            f"timeoutSeconds ({limits.timeout_seconds}s)",
+            meta=meta,
+        )
+    dataset = polled.get("datasetId") or started.get("datasetId")
+    if not dataset or status not in ("SUCCEEDED", "TIMED-OUT"):
+        return ActivityOutcome(
+            ok=False,
+            value=f"crawler {config.actor!r}: run {provider_run} ended {status}",
+            meta=meta,
+        )
+    read = await _crawler_items_step(run_id, node_id, *ident, dataset, limits_wire)
+    if not read["ok"]:
+        return ActivityOutcome(ok=False, value=read["value"], meta=meta)
+    items = list(read.get("items") or [])
+    if status == "TIMED-OUT" and not items:
+        return ActivityOutcome(
+            ok=False,
+            value=f"crawler {config.actor!r}: run {provider_run} timed out with no results",
+            meta=meta,
+        )
+    meta["items"] = len(items)
+    return ActivityOutcome(ok=True, value=crawler_result(config, items, as_text=as_text), meta=meta)
+
+
 @DBOS.step(**_RETRY)
 async def _http_step(
     run_id: str,
@@ -435,6 +621,14 @@ async def _durable_tool_call(
             rcfg.min_similarity,
         )
         return ActivityOutcome(ok=o["ok"], value=o["value"])
+    # A crawler capability dispatches by NODE too — the same start/poll/read steps as step mode,
+    # with the model's exposed arguments and the budgeted text back.
+    crawler_node = next((n for n in ir.nodes if n.id == call.name and n.type == "crawler"), None)
+    if crawler_node is not None:
+        ccfg = CrawlerConfig.model_validate(crawler_node.config)
+        return await _durable_crawler(
+            ccfg, crawler_call_input(ccfg, call.arguments), run_id, node_id, as_text=True
+        )
 
     # Dispatch: an ir.tools key OR a tool/mcp_tool NODE id wired as a capability (binding from the
     # node's inline config). Same dispatch below either way; legacy keys tried first.
@@ -1042,7 +1236,11 @@ async def _durable_walk(
                                     )
                                     if tool_scope is not None:
                                         tool_scope.set_attributes(
-                                            {"tool.name": call.name, "tool.ok": outcome.ok}
+                                            {
+                                                "tool.name": call.name,
+                                                "tool.ok": outcome.ok,
+                                                **tool_call_attributes(ir, call.name, outcome),
+                                            }
                                         )
                                 tool_call_records.append(
                                     _tool_call_record(call, outcome, iteration, ci)
@@ -1276,6 +1474,22 @@ async def _durable_walk(
                         )
                         rag_outcome = ActivityOutcome(ok=step_out["ok"], value=step_out["value"])
                     _bind_outcome(node, rag_outcome, values, live_handles)
+                elif node.type == "crawler":  # a hosted crawler run — start/poll/read steps
+                    ccfg = CrawlerConfig.model_validate(node.config)
+                    # The actor input resolves deterministically in the workflow body (replay-
+                    # stable step args); an unresolvable $in ref is a structured err, mirroring
+                    # _walk_crawler.
+                    try:
+                        crawl_input = resolve_crawler_input(ccfg, ports, node.id)
+                    except Exception as exc:
+                        crawl_outcome = ActivityOutcome(ok=False, value=str(exc))
+                    else:
+                        crawl_outcome = await _durable_crawler(
+                            ccfg, crawl_input, run_id, node.id, as_text=False
+                        )
+                    if scope is not None:
+                        scope.set_attributes(crawler_span_attributes(ccfg, crawl_outcome.meta))
+                    _bind_outcome(node, crawl_outcome, values, live_handles)
                 else:  # agent / retriever / memory / code — deferred
                     raise NotImplementedError(
                         f"activity node {node.id!r} (type {node.type!r}) is not implemented yet"

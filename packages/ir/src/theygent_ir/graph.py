@@ -49,6 +49,7 @@ NODE_TYPE_KIND: dict[str, NodeKind] = {
     "tool": "activity",
     "mcp_tool": "activity",
     "rag": "activity",
+    "crawler": "activity",  # a hosted crawler/scraper run (a provider's actor)
     "retriever": "activity",
     "memory": "activity",
     "code": "activity",
@@ -105,6 +106,8 @@ EXECUTABLE_TYPES: frozenset[str] = frozenset(
         "transform",
         # retrieval over a saved control-plane source (step-mode or llm capability)
         "rag",
+        # a hosted crawler/scraper actor (step-mode or llm capability)
+        "crawler",
     }
 )
 
@@ -156,11 +159,11 @@ class BuiltinTool(_Wire):
 
 
 class HttpTool(_Wire):
-    """An http/REST/GraphQL tool binding — the workhorse + the substrate for action tools
-    and crawler tools. ``connection`` is the id of an ``http_auth`` connection whose secret the
-    handler injects SERVER-SIDE at step time — never inline in the IR. The optional ``template``
-    names a provider request shape (e.g. ``slack.chat.postMessage``) for the small built-in action
-    set; everything else is the raw http tool config on the node."""
+    """An http/REST/GraphQL tool binding — the workhorse + the substrate for action tools.
+    ``connection`` is the id of an ``http_auth`` connection whose secret the handler injects
+    SERVER-SIDE at step time — never inline in the IR. The optional ``template`` names a provider
+    request shape (e.g. ``slack.chat.postMessage``) for the small built-in action set; everything
+    else is the raw http tool config on the node."""
 
     kind: Literal["http"]
     connection: str
@@ -595,9 +598,9 @@ class MapConfig(_Wire):
 # ``config`` schema; no envelope/edge/``kind`` shape changes. ``transcribe``/``speak`` are the
 # MODEL-call types (the two OpenAI audio endpoints); ``guardrail`` is the first type whose ``kind``
 # is per-instance (rule⇒orchestration, model⇒activity); ``ratelimit``/``quota`` are the lean gate
-# seam; ``transform`` is a deterministic reshape, NOT a code sandbox. The http/action/crawler tools
-# reuse the existing ``tool`` type (its additive fields above), and ``switch`` is the existing
-# ``router`` — no new types for those.
+# seam; ``transform`` is a deterministic reshape, NOT a code sandbox. The http/action tools reuse
+# the existing ``tool`` type (its additive fields above), and ``switch`` is the existing ``router``
+# — no new types for those.
 
 
 class TranscribeConfig(_Wire):
@@ -654,6 +657,65 @@ class RagConfig(_Wire):
     top_k: int = Field(default=5, ge=1, le=50)
     min_similarity: float | None = Field(default=None, ge=-1.0, le=1.0)
     description: str | None = None
+
+
+#: The crawler providers a ``crawler`` node can run. A closed vocabulary: each provider needs an
+#: adapter in the control plane, so adding one is a deliberate, named extension of the IR.
+CrawlerProvider = Literal["apify"]
+
+#: A provider's actor id: ``username/actor-name`` (or the API's ``username~actor-name``), or a bare
+#: actor id. Path-safe by construction — it is interpolated into the provider's API path.
+_ACTOR_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:[/~][A-Za-z0-9][A-Za-z0-9._-]*)?$"
+
+
+class CrawlerLimits(_Wire):
+    """What one crawler call may cost, take, and return.
+
+    ``timeout_seconds`` bounds the run on the provider's side. The interactive runtime runs one
+    synchronous request, which the provider holds for at most 300 s, so it caps the run there; the
+    durable runtime starts the run and polls, so a crawl of any length survives a restart.
+    ``max_charge_usd`` caps the run's total charge — the cap that matters for pay-per-event actors
+    — and is itself capped by the platform's per-call ceiling (``None`` = the ceiling).
+    ``max_items`` caps how many results a pay-per-result actor bills. ``item_limit`` bounds the
+    dataset items read back; ``result_chars`` is the character budget a model reads in capability
+    mode, shared equally across items; ``fields`` keeps only the named top-level item fields."""
+
+    timeout_seconds: int = Field(default=120, ge=1, le=3600)
+    max_charge_usd: float | None = Field(default=0.25, gt=0)
+    max_items: int | None = Field(default=10, ge=1)
+    item_limit: int = Field(default=10, ge=1, le=1000)
+    result_chars: int = Field(default=6000, ge=200, le=200_000)
+    fields: list[str] = Field(default_factory=list)
+
+
+class CrawlerConfig(_Wire):
+    """``crawler`` activity node config — run a hosted crawler/scraper (``provider``'s ``actor``)
+    and return its dataset items.
+
+    ``connection`` is the id of the connection whose secret is the provider's API token; the token
+    is resolved server-side at step time and never appears in the IR. ``input`` is the actor input
+    the builder fixes — proxy settings, result counts, paid add-ons stay here, out of the model's
+    reach. In step mode a value that is exactly a ``$in`` reference resolves from the node's
+    in-ports.
+
+    Two wirings, like ``tool`` and ``rag``. As a STEP (``data`` edges) the dataset items, bounded by
+    ``limits.item_limit``, go out on the success handle. As a CAPABILITY (a ``tool`` edge into an
+    llm's ``tools`` port) the model fills only the ``expose``d fields: ``parameter_schema`` is the
+    function schema generated from the actor's input schema when the node was configured, stored
+    here so what the model sees is hashed with the agent and a run needs no schema fetch.
+    ``scalar`` names list fields the model fills as one string, wrapped into a one-item list —
+    local models write list arguments unreliably. ``description`` is the "use this when…" hint the
+    model reads; the model gets the items back as text within ``limits.result_chars``."""
+
+    provider: CrawlerProvider = "apify"
+    actor: str = Field(min_length=1, pattern=_ACTOR_PATTERN)
+    connection: str = Field(min_length=1)
+    input: dict[str, Any] = Field(default_factory=dict)
+    expose: list[str] = Field(default_factory=list)
+    scalar: list[str] = Field(default_factory=list)
+    parameter_schema: dict[str, Any] | None = None
+    description: str | None = None
+    limits: CrawlerLimits = Field(default_factory=CrawlerLimits)
 
 
 class GuardrailRule(_Wire):
@@ -747,6 +809,7 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
     "speak": SpeakConfig,
     "imagine": ImagineConfig,
     "rag": RagConfig,
+    "crawler": CrawlerConfig,
     "guardrail": GuardrailConfig,
     "ratelimit": RateLimitConfig,
     "quota": QuotaConfig,
@@ -757,6 +820,10 @@ _CONFIG_MODELS: dict[str, type[_Wire]] = {
 #: ``content_hash`` — an unbounded "latest" body would let composition silently drift (the same
 #: immutability discipline as trigger agents). Validated in ``validate_graph``.
 _PINNED_BODY_TYPES: frozenset[str] = frozenset({"subgraph", "loop", "map"})
+
+#: Node types that may be wired into an llm's ``tools`` port as a CAPABILITY (the source of a
+#: ``tool``-channel edge) — each is otherwise an ordinary step with ok/err out-ports.
+_CAPABILITY_TYPES: frozenset[str] = frozenset({"tool", "mcp_tool", "rag", "crawler"})
 
 _IR_ADAPTER: TypeAdapter[IRDocument] = TypeAdapter(IRDocument)
 
@@ -828,6 +895,33 @@ def _model_refs(cfg: _Wire | None) -> list[str]:
     if isinstance(cfg, GuardrailConfig) and cfg.check.type == "model" and cfg.check.model:
         return [cfg.check.model.model]
     return []
+
+
+def _validate_crawler(node: Node, cfg: CrawlerConfig) -> None:
+    """A crawler's exposed fields must match its stored ``parameterSchema``: an exposed field with
+    no schema property can't be offered to the model (unfillable), and a property that isn't
+    exposed would be offered and then dropped at call time (dead). ``scalar`` narrows exposed
+    fields only."""
+    if len(set(cfg.expose)) != len(cfg.expose):
+        raise GraphValidationError(f"node {node.id!r}: duplicate field in crawler `expose`")
+    stray = sorted(set(cfg.scalar) - set(cfg.expose))
+    if stray:
+        raise GraphValidationError(
+            f"node {node.id!r}: crawler `scalar` names field(s) {stray} that are not in `expose`"
+        )
+    props = set(((cfg.parameter_schema or {}).get("properties") or {}).keys())
+    unfillable = sorted(set(cfg.expose) - props)
+    if unfillable:
+        raise GraphValidationError(
+            f"node {node.id!r}: crawler exposes field(s) {unfillable} with no matching "
+            "`parameterSchema` property (unfillable) — regenerate the schema from the actor"
+        )
+    dead = sorted(props - set(cfg.expose))
+    if dead:
+        raise GraphValidationError(
+            f"node {node.id!r}: crawler `parameterSchema` declares propert(ies) {dead} that are "
+            "not in `expose` (dead)"
+        )
 
 
 def validate_graph(ir: IRDocument) -> None:
@@ -924,6 +1018,8 @@ def validate_graph(ir: IRDocument) -> None:
                     )
             # A loop is bounded — max_iterations is required (Pydantic) AND must be ≥ 1 (no
             # unbounded/zero-iteration loop). This is the termination + determinism guarantee.
+            if isinstance(cfg, CrawlerConfig):
+                _validate_crawler(node, cfg)
             if isinstance(cfg, LoopConfig) and cfg.max_iterations < 1:
                 raise GraphValidationError(
                     f"node {node.id!r}: loop `maxIterations` must be >= 1 "
@@ -1022,20 +1118,20 @@ def validate_graph(ir: IRDocument) -> None:
 
     # 4c: a ``tool``-channel edge wires a configured tool node to an llm as a CAPABILITY (the model
     # may call it), distinct from a ``data`` edge (the tool runs as a step, output flows). It must
-    # source a tool/mcp_tool node and target an ``llm``'s ``tool``-role in-port. A tool node is a
-    # capability OR a step, never both (mixed out-channels are ambiguous). An http capability node
-    # must self-describe (description + parameterSchema + slot↔property equivalence), read from
-    # the node's own config.
+    # source a tool/mcp_tool/rag/crawler node and target an ``llm``'s ``tool``-role in-port. A tool
+    # node is a capability OR a step, never both (mixed out-channels are ambiguous). An http
+    # capability node must self-describe (description + parameterSchema + slot↔property
+    # equivalence), read from the node's own config.
     role_by_in_port = {(n.id, p.id): p.role for n in ir.nodes for p in n.ports.in_}
     for edge in ir.edges:
         if edge.channel != "tool":
             continue
         src = node_by_id[edge.source]
         tgt = node_by_id[edge.target]
-        if src.type not in {"tool", "mcp_tool", "rag"}:
+        if src.type not in _CAPABILITY_TYPES:
             raise GraphValidationError(
-                f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool/rag node, "
-                f"not {src.type!r}"
+                f"edge {edge.id!r}: a `tool` edge must come from a tool/mcp_tool/rag/crawler "
+                f"node, not {src.type!r}"
             )
         if tgt.type != "llm":
             raise GraphValidationError(
@@ -1061,7 +1157,7 @@ def validate_graph(ir: IRDocument) -> None:
             )
 
     for node in ir.nodes:
-        if node.type not in {"tool", "mcp_tool", "rag"}:
+        if node.type not in _CAPABILITY_TYPES:
             continue
         out_channels = {e.channel for e in ir.edges if e.source == node.id}
         is_capability = "tool" in out_channels
@@ -1070,6 +1166,17 @@ def validate_graph(ir: IRDocument) -> None:
                 f"node {node.id!r}: a tool node is either a capability (`tool` edges to an llm) "
                 f"or a step (`data`/`control` edges), not both"
             )
+        # A capability crawler is called by the model, so its node has no fed in-ports: a `$in`
+        # reference in its fixed input could never resolve.
+        if is_capability and node.type == "crawler":
+            crawler = CrawlerConfig.model_validate(node.config)
+            named, saw_whole = _in_slots(crawler.input)
+            if named or saw_whole:
+                raise GraphValidationError(
+                    f"node {node.id!r}: a crawler wired as a capability cannot reference `$in` in "
+                    "its fixed `input` (the model fills the exposed fields; nothing feeds its "
+                    "in-ports)"
+                )
         # NOTE: a capability node's id IS its `ir.tools` key — the editor derives the global tool
         # registry from the wired nodes (keyed by node id), so ``ir.tools[node.id]`` mirrors the
         # node config (like ir.models). Dispatch resolves the node id via either source, so the

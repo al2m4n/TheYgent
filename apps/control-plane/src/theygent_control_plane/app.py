@@ -111,6 +111,7 @@ from theygent_control_plane.auth import (
     role_at_least,
     validate_provider_config,
 )
+from theygent_control_plane.crawlers import CrawlerBackend, CrawlerCatalog, CrawlerCatalogError
 from theygent_control_plane.dispatcher import ScheduleDispatcher, cron_is_valid
 from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.governance import Principal, authorize
@@ -513,6 +514,25 @@ class UpdateConnectionRequest(BaseModel):
     enabled: bool | None = None
 
 
+# ── crawler catalog request model (camelCase, like the node config it returns) ─────────────────
+
+
+class CrawlerConvertRequest(BaseModel):
+    # Derive a ``crawler`` node config from an actor's input schema for the builder's choice of
+    # exposed fields. camelCase, like the node config it returns. ``expose``/``scalar`` omitted =
+    # the converter's suggestion.
+    model_config = ConfigDict(populate_by_name=True)
+
+    provider: str = "apify"
+    actor: str
+    expose: list[str] | None = None
+    scalar: list[str] | None = None
+    input: dict[str, Any] | None = None
+    description: str | None = None
+    connection: str | None = None
+    limits: dict[str, Any] | None = None
+
+
 # ── MCP hub request models (camelCase aliases — these ride the /admin/mcp surface) ───────────────
 
 
@@ -780,6 +800,11 @@ def _validation_summary(exc: ValidationError, *, limit: int = 5) -> str:
     return "; ".join(parts) + more
 
 
+#: A provider actor id as the catalog accepts it — the same path-safe shape the IR's
+#: ``CrawlerConfig.actor`` pattern enforces, checked before the id reaches a provider URL.
+_ACTOR_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:[/~][A-Za-z0-9][A-Za-z0-9._-]*)?")
+
+
 def _error(message: str, *, status: int, code: str, run_id: str | None = None) -> JSONResponse:
     error: dict[str, Any] = {"message": message, "code": code}
     body: dict[str, Any] = {"error": error}
@@ -894,6 +919,8 @@ def create_app(
     database_url: str | None = None,
     mcp_manager: McpManager | None = None,
     mcp_registry_client: McpRegistryClient | None = None,
+    crawler_catalog: CrawlerCatalog | None = None,
+    crawler_transport: httpx.AsyncBaseTransport | None = None,
     cors_origins: list[str] | None = None,
     invoke_token: str | None = None,
     secret_key: list[str] | None = None,
@@ -983,6 +1010,10 @@ def create_app(
     # client is never touched by the extra-registries settings hook below.
     mcp_registry = mcp_registry_client or McpRegistryClient()
     mcp_registry_injected = mcp_registry_client is not None
+    # Crawler browsing: the provider's public store, proxied and TTL-cached so the interface never
+    # calls the provider. Injectable so the fast suite serves a fixture store without network;
+    # ``crawler_transport`` likewise routes crawler RUNS through a test transport.
+    crawlers_catalog = crawler_catalog or CrawlerCatalog()
     # Resolved at startup, not import, so importing the factory has no side effects and a
     # missing DATABASE_URL fails loudly in the lifespan rather than silently.
     db_url = database_url or os.environ.get("DATABASE_URL")
@@ -1078,6 +1109,16 @@ def create_app(
             settings=settings_service,  # chunking + crawl knobs, read per ingest run
         )
         app.state.rag_ingest = rag_ingest
+        # The crawler backend a ``crawler`` node runs through: the provider adapter, connection
+        # auth resolved at call time through the same resolver, and the platform's per-call spend
+        # ceiling as a live accessor (a lowered ceiling applies to the next call). Injected into
+        # both runtimes.
+        crawler_backend = CrawlerBackend(
+            tool_resolver,
+            max_charge_usd=_live_accessor("crawler.max_charge_usd"),
+            transport=crawler_transport,
+        )
+        app.state.crawlers = crawler_backend
         # Sweep runs left non-terminal by a crash to `failed` before serving, so a
         # zombie can never lie about being `streaming` forever. Cheap honest mitigation, not resume.
         async with app.state.sessionmaker() as session, session.begin():
@@ -1122,6 +1163,7 @@ def create_app(
                 gates=gate_backend,  # durable gate steps use the same backend
                 artifacts=artifact_store,  # durable audio steps use the same store
                 rag=rag_retriever,  # durable rag steps retrieve through the same backend
+                crawlers=crawler_backend,  # durable crawler steps run through the same backend
                 # A distinct executor identity per process role: launch-time recovery then claims
                 # only workflows a crashed API process left pending — never ones a healthy
                 # standalone worker is mid-step on (and vice versa).
@@ -2442,6 +2484,7 @@ def create_app(
             gates=app.state.gates,  # ratelimit/quota backend
             artifacts=app.state.artifacts,  # transcribe/speak audio reference store
             rag=app.state.rag,  # retrieval backend for rag nodes/capabilities
+            crawlers=app.state.crawlers,  # provider backend for crawler nodes/capabilities
         )
         if stream:
             return await _stream_graph(ir, run, input_value, ctx)
@@ -2873,7 +2916,15 @@ def create_app(
                 for slot, s in spec.model_slots.items()
             },
             "connections": [
-                {"key": c.key, "name": c.name, "transport": c.config.get("transport", "stdio")}
+                {
+                    "key": c.key,
+                    "name": c.name,
+                    "kind": c.kind,
+                    # A transport is an MCP server's; an http_auth connection has none.
+                    "transport": (
+                        c.config.get("transport", "stdio") if c.kind == "mcp_server" else None
+                    ),
+                }
                 for c in spec.connections
             ],
             "rag_sources": [{"key": r.key, "name": r.name} for r in spec.rag_sources],
@@ -2969,10 +3020,11 @@ def create_app(
                         "warnings": [],
                     }
                 # Connections: find-or-create by name so a reinstall (after deleting the agent)
-                # reuses the existing server instead of minting duplicates. Sample connections
-                # carry no secret — they target public demo APIs and a local seeded file. The
-                # demo file is (re)seeded even on reuse: it lives under the artifact dir (a
-                # tempdir by default), so it can vanish while the connection row persists.
+                # reuses the existing one instead of minting duplicates. Sample connections carry
+                # no secret — they target public demo APIs, a local seeded file, or a provider
+                # whose token the user sets afterwards. The demo file is (re)seeded even on reuse:
+                # it lives under the artifact dir (a tempdir by default), so it can vanish while
+                # the connection row persists.
                 connection_ids: dict[str, str] = {}
                 for c in spec.connections:
                     seed_paths: dict[str, str] = {}
@@ -2980,9 +3032,8 @@ def create_app(
                         seed_paths[c.seed] = await asyncio.to_thread(
                             seed_demo_file, c.seed, app.state.artifacts.base_dir
                         )
-                    existing = await connections.find_by_name(
-                        session, kind="mcp_server", name=c.name
-                    )
+                    kind = cast(ConnectionKind, c.kind)
+                    existing = await connections.find_by_name(session, kind=kind, name=c.name)
                     if existing is not None:
                         connection_ids[c.key] = existing.id
                         conn_report.append(
@@ -2990,7 +3041,7 @@ def create_app(
                         )
                         continue
                     config = render_connection_config(c, seed_paths)
-                    invalid = _validate_connection("mcp_server", config)
+                    invalid = _validate_connection(kind, config)
                     if invalid is not None:  # a shipped config failing validation is a catalog bug
                         raise _SampleInstallProblem(
                             "sample_invalid",
@@ -2999,7 +3050,7 @@ def create_app(
                     conn = await connections.create(
                         session,
                         name=c.name,
-                        kind="mcp_server",
+                        kind=kind,
                         config=config,
                         secret_ref=None,
                         enabled=True,
@@ -4741,6 +4792,73 @@ def create_app(
             extra={"connection_id": conn.id, "registry": req.registry, "server": req.name},
         )
         return JSONResponse(conn.public_dump(), status_code=201)
+
+    # ── the Crawlers browser: /crawlers/catalog* ──
+    # The provider's public store, proxied + cached so the browser never calls the provider, and
+    # an actor's input schema converted into a ready ``crawler`` node config. Read-only: installing
+    # is the interface dropping the returned config on the canvas — no table, no token involved.
+
+    def _crawler_error(exc: CrawlerCatalogError) -> JSONResponse:
+        return _error(str(exc), status=exc.status, code=exc.code)
+
+    def _bad_actor(actor: str) -> JSONResponse | None:
+        if _ACTOR_RE.fullmatch(actor):
+            return None
+        return _error(
+            f"{actor!r} is not an actor id (username/actor-name)",
+            status=400,
+            code="invalid_actor",
+        )
+
+    @app.get("/crawlers/catalog", dependencies=[Depends(require_editor)])
+    async def browse_crawlers(
+        provider: str = Query(default="apify"),
+        search: str = Query(default=""),
+        category: str | None = Query(default=None),
+        sort_by: str = Query(default="popularity", pattern="^(popularity|newest|relevance)$"),
+        limit: int = Query(default=24, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=10_000),
+    ) -> Any:
+        try:
+            return await crawlers_catalog.search(
+                provider,
+                search=search.strip(),
+                category=category or None,
+                sort_by=sort_by,
+                limit=limit,
+                offset=offset,
+            )
+        except CrawlerCatalogError as exc:
+            return _crawler_error(exc)
+
+    @app.get("/crawlers/catalog/actor", dependencies=[Depends(require_editor)])
+    async def get_crawler(provider: str = Query(default="apify"), actor: str = Query()) -> Any:
+        bad = _bad_actor(actor)
+        if bad is not None:
+            return bad
+        try:
+            return await crawlers_catalog.detail(provider, actor)
+        except CrawlerCatalogError as exc:
+            return _crawler_error(exc)
+
+    @app.post("/crawlers/catalog/convert", dependencies=[Depends(require_editor)])
+    async def convert_crawler(req: CrawlerConvertRequest) -> Any:
+        bad = _bad_actor(req.actor)
+        if bad is not None:
+            return bad
+        try:
+            return await crawlers_catalog.convert(
+                req.provider,
+                req.actor,
+                expose=req.expose,
+                scalar=req.scalar,
+                fixed=req.input,
+                description=req.description,
+                connection=req.connection,
+                limits=req.limits,
+            )
+        except CrawlerCatalogError as exc:
+            return _crawler_error(exc)
 
     # ── generated-server preview: tools from a spec/endpoint, nothing created ──
 

@@ -20,6 +20,7 @@ import os
 from sqlalchemy.ext.asyncio import AsyncEngine
 from theygent_control_plane import db
 from theygent_control_plane.artifacts import LocalArtifactStore
+from theygent_control_plane.crawlers import CrawlerBackend
 from theygent_control_plane.durable import DurableRuntime
 from theygent_control_plane.gates import GateBackend
 from theygent_control_plane.mcp import McpManager
@@ -129,6 +130,11 @@ async def build_runtime(
         # platform default for nodes that don't set top_k explicitly.
         rag=RagRetriever(
             sessionmaker, gateway, default_top_k=settings.accessor("rag.default_top_k")
+        ),
+        # Crawler runs resolve their provider token through the same connection resolver and
+        # stay under the same platform spend ceiling as the API process.
+        crawlers=CrawlerBackend(
+            tool_resolver, max_charge_usd=settings.accessor("crawler.max_charge_usd")
         ),
         fast_polling=fast_polling,
         # A distinct, stable executor identity per process role: launch-time recovery then claims
