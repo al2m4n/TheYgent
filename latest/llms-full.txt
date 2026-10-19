@@ -70,6 +70,8 @@ graph LR
 
 - The **AI gateway** sits between your team's Claude Code and its models to cut what it costs: it records what each exchange cost and what routing would save, then — when you choose — routes work to cheaper Claude models, and to models you run yourself in the shares you set. See [AI Gateway](ai-gateway/index.md).
 
+- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — TheYgent as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use TheYgent from coding agents](coding-agents/index.md).
+
 The [architecture page](concepts/index.md) explains the split and exactly where each kind of data lives.
 
 ## Where to next
@@ -81,6 +83,7 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 | Build, test, and publish your first agent | [First agent](getting-started/first-agent.md) |
 | Understand agents, graphs, runs, and versioning | [Concepts](concepts/index.md) |
 | Look up what every node does | [Node reference](building/nodes/index.md) |
+| Use TheYgent from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |
 
 ---
 
@@ -2109,13 +2112,16 @@ The **Model parameters** section edits the generation params stored on the bindi
 | Stop | comma-separated | Sequences that end generation immediately. |
 | Presence penalty | −2–2 | Nudges the model toward new topics. |
 | Frequency penalty | −2–2 | Reduces word-for-word repetition. |
-| Seed | integer | Best-effort determinism for reproducible runs. |
+| Seed | integer | Best-effort determinism for reproducible runs. On MLX, see the note below. |
 | Reasoning | on / off | Turns the model's hidden thinking phase on or off. Leave unset for the model's default. |
 | Reasoning effort | low / medium / high | How much a reasoning model thinks before answering. |
 | Tool choice | auto / none / required | Shown only if the model advertises tool-calling. |
 | JSON / structured output | text / json_object | Shown only if the model advertises structured output. `json_object` asks for valid JSON. |
 
 Each field has a **?** help tooltip. The last two are **capability-gated** — the editor hides them unless the model reports it supports them, so you never set a switch the model will ignore.
+
+!!! note "Seed and prompt reuse on MLX"
+    A local MLX model reuses an agent's earlier prompt from one step to the next, so each step processes only what's new. A request with a **Seed** is handled on its own path, which on hybrid models such as Qwen3.5 and Qwen3.6 turns that reuse off: every step reprocesses its whole prompt. Measured on Qwen3.6-35B-A3B, a tool step's wait for the first token went from about 0.9 seconds to 2.5–3 seconds. Leave **Seed** unset for agents on these models unless you need reproducible runs.
 
 The stored keys are the OpenAI-style names (`temperature`, `top_p`, `max_tokens`, `presence_penalty`, `frequency_penalty`, `seed`, `stop`, `tool_choice`, `response_format`). The **Reasoning** switch is stored as `chat_template_kwargs` (`{ "enable_thinking": true }` or `false`) and **Reasoning effort** as `reasoning_effort`. A local model (llama.cpp, MLX) also receives the effort as the chat-template variable `chat_template_kwargs.reasoning_effort`, which is where templates such as gpt-oss read it; a model reached by URL receives only the `reasoning_effort` field.
 
@@ -4341,6 +4347,16 @@ Under the `mlx` binding, the modalities map to distinct server programs:
 
 MLX does **not** serve embeddings or speech-to-text — use llama.cpp (embeddings) and whisper.cpp (transcription) for those, on the same machine.
 
+### MLX launch settings
+
+`mlx_lm.server` keeps the processed state of recent prompts and reuses the one whose start matches a new request, so an agent's next step processes only what's new since its last call. On a 35B model that's the difference between about 0.9 seconds and 2–3 seconds before the first token of each step.
+
+| Setting (`params` key) | Default | Effect |
+|---|---|---|
+| `promptCacheSize` | `10` | How many prompt states the engine keeps for reuse. Raise it when one model serves several agents or concurrent runs; each state takes memory (about 0.1 GB for a 1,500-token prompt on a 35B model). |
+
+Like the other launch settings it applies when the engine starts, is never sent with a request, and is refused at registration (`422 invalid_binding`) unless it's a positive integer on an MLX chat model.
+
 ### MoE models bigger than memory (expert streaming)
 
 A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
@@ -4517,7 +4533,7 @@ An **upload** source is a bucket you drop files into. Two ways in, same result:
 - the **Upload files** button (multi-select file picker), or
 - **drag & drop** files anywhere onto the source's row — it highlights while you hover.
 
-Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, and EPUB, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
+Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON, XML, and EPUB, plus source code and config files (Python, TypeScript/JavaScript, Go, Rust, Java, Swift, C/C++, shell, SQL, YAML, TOML, and more), which index as plain text, up to 50 MiB per file. Unsupported files are skipped with a notice, and one bad file never stops the rest of a batch. Text-based PDFs extract well; scanned/image-only PDFs are not OCR'd yet.
 
 ### Crawl sources
 
@@ -4909,6 +4925,272 @@ supplies the arguments.
 - [MCP servers](index.md) — setting up every kind of server
 - [The mcp_tool node](../building/nodes/mcp.md) — ports, config, step vs capability
 - [Input references](../building/input-references.md) — the `$in` grammar used in `args`
+
+---
+
+Source: https://docs.theygent.ai/latest/coding-agents/
+
+# Use TheYgent from Coding Agents
+
+TheYgent ships an **MCP server** that hands your coding agent the platform as tools. Add it to
+Claude Code, Codex, OpenCode or any other MCP client, and the coding agent can:
+
+- **Offload work to your local models.** Summarize a long file, draft a commit message or
+  release notes, classify or extract data, or get a second opinion. The work runs on the model
+  you pick. With a local MLX or llama.cpp model, the content stays on your machine and costs
+  nothing per token.
+- **Run your TheYgent agents.** Anything you have built and published, such as a triage
+  router, a PII firewall or a review loop, becomes one tool call away.
+- **Build new agents for you.** Describe a repeatable job and the coding agent writes the agent,
+  checks it, test-runs it, and publishes it. It then appears on your **Agents** page like
+  any agent you built in the editor.
+- **Search your documents and code.** The coding agent can index a project's docs, specs or
+  source into a [retrieval source](../rag/index.md), then search it with the same hybrid
+  retrieval your agents use.
+
+!!! note "Two directions of MCP"
+    The [MCP](../mcp/index.md) section is about TheYgent *using* MCP servers inside agents. This
+    page is the other direction: **TheYgent as an MCP server** that other tools use.
+
+## Before you start
+
+- **TheYgent is running.** Use `make up` or Docker Compose (see [Running TheYgent](../getting-started/running.md)).
+  The MCP server talks to the control plane on `:8080` and the inference plane on `:8081`.
+- **At least one chat model is registered** (see [Installing local models](../models/installing.md)). Add an
+  embeddings model too if you want the coding agent to index and search documents.
+- **`uv` is on your `PATH`.** The coding tool starts the MCP server from your TheYgent checkout
+  with `uv run`.
+- **A personal API key.** In TheYgent, open the profile menu at the bottom of the sidebar and
+  choose **API keys → Create**. Copy the `tyk_…` key; it is shown only once. The key acts with your
+  role, and creating agents needs **editor** or above (see [Users, roles & sign-in](../running/users.md#personal-api-keys)).
+
+## Print your setup commands
+
+From your TheYgent checkout:
+
+```bash
+make mcp-setup
+```
+
+It prints a ready-to-paste setup for each tool below, with your checkout's path already filled in.
+Replace `<your TheYgent API key>` with your key.
+
+## Claude Code
+
+```bash
+claude mcp add theygent --scope user \
+  -e 'THEYGENT_API_KEY=tyk_…your key' \
+  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp
+```
+
+`--scope user` makes TheYgent available in every project. Leave it out to add it only to the
+current project. Check the connection with `claude mcp list`, or run `/mcp` inside a session.
+Then ask in plain words, for example *"use TheYgent's local model to summarize this log"*. Claude
+picks the tools itself.
+
+Agent runs on a local model can take a few minutes. If a long run is cut off, raise Claude Code's
+MCP tool timeout, for example `export MCP_TOOL_TIMEOUT=600000` (milliseconds) before starting `claude`.
+
+## Codex
+
+```bash
+codex mcp add theygent --env 'THEYGENT_API_KEY=tyk_…your key' \
+  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp
+```
+
+Codex stops a tool call after 60 seconds by default, which is too short for agent runs on a
+local model. Give it room in `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.theygent]
+command = "uv"
+args = ["run", "--project", "/path/to/TheYgent", "--package", "theygent-mcp", "theygent-mcp"]
+tool_timeout_sec = 600
+env = { THEYGENT_API_KEY = "tyk_…your key" }
+```
+
+## OpenCode
+
+Add TheYgent to `opencode.json`, either in the project or in `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "theygent": {
+      "type": "local",
+      "command": ["uv", "run", "--project", "/path/to/TheYgent", "--package", "theygent-mcp", "theygent-mcp"],
+      "enabled": true,
+      "environment": { "THEYGENT_API_KEY": "tyk_…your key" }
+    }
+  }
+}
+```
+
+Check it with `opencode mcp list`. It should show `theygent` as connected.
+
+## Other MCP clients
+
+Any client that can launch a stdio MCP server works with the same command and environment.
+For a client that only speaks HTTP, serve streamable HTTP instead:
+
+```bash
+THEYGENT_API_KEY='tyk_…your key' \
+  uv run --package theygent-mcp theygent-mcp --http --port 8083
+```
+
+Then point the client at `http://127.0.0.1:8083/mcp`. The HTTP mode binds to `127.0.0.1` by
+default. Anyone who can reach that port acts with your API key, so don't expose it beyond your
+machine.
+
+## Settings
+
+The MCP server reads its settings from the environment the coding tool starts it with:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `THEYGENT_API_KEY` | — | Your personal API key. Required by every agent, run, sample and retrieval tool. The model tools work without it. |
+| `THEYGENT_CONTROL_PLANE_URL` | `http://127.0.0.1:8080` | Where the control plane is. |
+| `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | The inference plane's OpenAI-compatible root, ending in `/v1`. |
+| `THEYGENT_MCP_DEFAULT_MODEL` | first chat model | The model `ask_model` uses when the coding agent doesn't name one. |
+| `THEYGENT_MCP_RUN_TIMEOUT_S` | `600` | How long agent runs and model calls may take, in seconds. |
+
+Pass extra variables the same way as the key: `-e` for Claude Code, `--env` for Codex, or
+`environment` for OpenCode.
+
+## What stays where
+
+Model calls (`ask_model`) go straight from the MCP server to the inference plane on your machine.
+Prompts never pass through the control plane. Files given to `ask_model` as `files` are read by
+the MCP server and sent only to the model you chose. The coding agent and its provider see the
+answer, not the file. Agent runs and retrieval searches go through the
+control plane, as they do from the interface, and show up on the **Runs** page with their full trace.
+The coding tool sees only what the tools return. See [Privacy & data flow](../concepts/privacy.md).
+
+## Next
+
+- [Tools & recipes](tools.md) lists every tool, gives prompts that work well, and has a snippet that
+  teaches your coding agent when to reach for TheYgent.
+
+---
+
+Source: https://docs.theygent.ai/latest/coding-agents/tools/
+
+# Tools & Recipes
+
+Once [TheYgent is connected](index.md), your coding agent sees the tools below. You rarely name
+them. Ask for the outcome and the agent picks the tools itself. Wherever a tool takes an agent or
+a retrieval source, it accepts the id or the exact name you gave it.
+
+## Models
+
+| Tool | What it does |
+|---|---|
+| `list_models` | The models registered in TheYgent: logical id, engine, modality (chat, vision, embeddings…), and which chat model `ask_model` uses by default. |
+| `ask_model` | Sends one prompt to a model and returns its answer. `files` attaches local text files: the MCP server reads them and sends them only to the model, so a long log or file never passes through the coding agent's own context or its provider. Only the answer comes back. Up to 256 KiB of files per call. `think: false` turns a reasoning model's thinking off for a faster answer. |
+
+## Agents and runs
+
+| Tool | What it does |
+|---|---|
+| `list_agents` | Your published agents, newest first. |
+| `get_agent` | One agent's versions and full agent document. |
+| `run_agent` | Runs a published agent, waits for the result, and returns its output and run id. Pin a `version`, or continue a chat `session_id`. |
+| `run_graph` | Runs an agent document **without publishing it**. This is how the coding agent tests an agent it is building. |
+
+`run_agent` and `run_graph` start ordinary runs, not [durable runs](../running/durable.md). An
+agent that needs a human approval, a subgraph, a loop or a map runs durably, so start it from
+the interface or the API instead.
+| `get_run` | A run's status, output or error, by run id, including runs started elsewhere. |
+
+## Building agents
+
+| Tool | What it does |
+|---|---|
+| `agent_authoring_guide` | How to write an agent: the document format, how values flow, patterns, a full example, and every node type with its ports and defaults. Pass `node_types` to get the full config schema of specific types. |
+| `validate_agent` | Checks a document against the same rules publishing applies, without running it, and names each problem. |
+| `create_agent` | Publishes a new agent. It appears on your **Agents** page and can be opened in the editor. |
+| `publish_agent_version` | Publishes a new version of an existing agent. Earlier versions stay runnable. |
+| `list_samples` / `install_samples` | The ready-made [sample agents](../samples/index.md), and installing them with your models in their slots. |
+
+Agents the coding agent builds are ordinary TheYgent agents. They follow
+[versioning](../concepts/versioning.md), show up in the editor, can get
+[triggers](../running/triggers.md), and their runs are traced on the **Runs** page.
+
+## Retrieval
+
+| Tool | What it does |
+|---|---|
+| `list_rag_sources` | Your [retrieval sources](../rag/index.md) and their status. |
+| `create_rag_source` | Creates an `upload` source, or a `crawl` source for a website. Needs an embeddings model from `list_models`. |
+| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. |
+| `add_rag_text` | Adds a document from text, such as notes, a generated summary, or an API response. |
+| `ingest_rag_source` | Starts or re-runs a crawl source's crawl. |
+| `get_rag_source` | Ingest progress and each document's status. |
+| `search_rag` | Hybrid semantic and keyword search over a source. Returns the best passages with their documents and scores. |
+
+Source code and config files index as plain text, next to the document formats listed on the
+[RAG page](../rag/index.md#upload-sources).
+
+## Recipes
+
+Prompts that work well with Claude Code, Codex or OpenCode once TheYgent is connected:
+
+**Offload a summary to a local model**
+
+> Have TheYgent's local model read `logs/build.log` and summarize the failures in five bullets.
+> Pass the log as a file, don't read it yourself. Use think=false.
+
+**Draft with a private model**
+
+> Write the release notes for the commits since the last tag. Draft them with TheYgent's local
+> model, then tidy the draft yourself.
+
+**Index the docs, then answer from them**
+
+> Create a TheYgent retrieval source called `project-docs` with the `local-embed` model and add
+> `docs/` and `README.md` to it. When it's ready, search it for how authentication is configured.
+
+**Build a reusable agent**
+
+> Build me a TheYgent agent called `commit-titler` that turns a change description into a
+> conventional-commit title using my local model. Test it on two examples, then publish it.
+
+**Use an agent you already have**
+
+> Run my TheYgent agent `pii-firewall` on `fixtures/customers.csv` before you paste any of it here.
+
+## Teach your coding agent when to use TheYgent
+
+The MCP server tells the coding agent what it offers. A line in your project instructions turns
+that into a habit. Add something like this to `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex,
+OpenCode):
+
+```markdown
+## TheYgent
+
+TheYgent's MCP tools are available. For summaries, first drafts and extraction over large or
+private files, call `ask_model` with the paths in `files` (think=false for quick tasks) instead of
+reading the files yourself. Search the `project-docs` retrieval source before guessing how something works here.
+Check `list_agents` for an existing agent before writing a one-off script for a repeatable task.
+```
+
+## When something goes wrong
+
+Every tool error says what to do next:
+
+| Message says | Fix |
+|---|---|
+| `THEYGENT_API_KEY is not set` | Add your key to the server's environment, then restart the coding tool. |
+| `rejected the API key (401)` | The key was revoked or mistyped. Create a new one under **API keys**. |
+| `refused this action (403)` | Your role can't do this. Publishing agents needs **editor** or above. |
+| `is not reachable at …` | TheYgent isn't running, or isn't at that address. Start it with `make up`, or set the plane URL variables. |
+| `No chat model is registered` | Install a model from **Registries → Add model**. |
+| `did not answer in time` | A run took longer than `THEYGENT_MCP_RUN_TIMEOUT_S`. Raise it, and the coding tool's own tool timeout. |
+
+Errors from TheYgent itself pass through with their code, for example `agent_exists` when
+publishing an id that is taken (use `publish_agent_version`), or `unsupported_document` for a
+file type retrieval can't read.
 
 ---
 
@@ -7412,6 +7694,19 @@ Claude Code *at* the gateway.
 | `THEYGENT_AI_GATEWAY_HEARTBEAT_SECONDS` | `30` | How often the gateway reports itself and checks for a new configuration (1–3600). |
 | `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | Where the gateway reaches [local models](../ai-gateway/local-models.md): the requests a local dial sends there, trials and local shadow runs — the same variable and default as the control plane's. **Must include the `/v1` suffix.** When nothing answers there, those requests go to the Anthropic API. |
 | `THEYGENT_AI_GATEWAY_ADMIN_ORIGINS` | `http://localhost:5174,http://127.0.0.1:5174` | Comma-separated browser origins allowed to call the gateway's admin surface — the interface's Settings tab. Add the interface's origin if you serve it elsewhere. |
+
+## MCP server (coding agents)
+
+The [MCP server](../coding-agents/index.md) that coding agents start reads these from the
+environment the coding tool launches it with.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `THEYGENT_API_KEY` | unset | A personal API key (`tyk_…`, from the profile menu → **API keys**). Required by the agent, run, sample and retrieval tools; the model tools work without it. |
+| `THEYGENT_CONTROL_PLANE_URL` | `http://127.0.0.1:8080` | The control plane the agent, run and retrieval tools call. |
+| `THEYGENT_INFERENCE_PLANE_URL` | `http://127.0.0.1:8081/v1` | The inference plane the model tools call directly. **Must include the `/v1` suffix.** |
+| `THEYGENT_MCP_DEFAULT_MODEL` | the first chat model | The logical model id `ask_model` uses when the coding agent names none. |
+| `THEYGENT_MCP_RUN_TIMEOUT_S` | `600` | Seconds an agent run or a model call may take before the tool reports a timeout. |
 
 ## Interface (build-time)
 
