@@ -82,6 +82,13 @@ Design rules for the tools:
 `add_rag_files` reads files on the MCP server's machine and uploads each one through the
 regular raw-body upload (`POST /rag/sources/{id}/documents?filename=…`).
 
+- **How files are sent.** Each file streams from disk in 1 MiB pieces with its size as
+  `Content-Length`, so a large file never sits in the MCP server's memory. The size limit is
+  the control plane's live `rag.max_upload_bytes` setting: the server checks no size itself,
+  and the control plane refuses an over-limit file from its declared length (`413
+  document_too_large`) before reading the body. That file is reported as skipped, with the
+  limit, and the batch continues.
+
 - **What gets uploaded.** Paths may be files, directories or glob patterns. Directory walks skip
   hidden entries and dependency, build and cache directories (`node_modules`, `__pycache__`,
   `dist`, `build`, `target`, …). Empty files are skipped locally. Each call stops at 500 files.

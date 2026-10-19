@@ -49,7 +49,7 @@ Agents the coding agent builds are ordinary TheYgent agents. They follow
 |---|---|
 | `list_rag_sources` | Your [retrieval sources](../rag/index.md) and their status. |
 | `create_rag_source` | Creates an `upload` source, or a `crawl` source for a website. Needs an embeddings model from `list_models`. |
-| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. |
+| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over TheYgent's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
 | `add_rag_text` | Adds a document from text, such as notes, a generated summary, or an API response. |
 | `ingest_rag_source` | Starts or re-runs a crawl source's crawl. |
 | `get_rag_source` | Ingest progress and each document's status. |

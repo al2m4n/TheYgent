@@ -64,6 +64,10 @@ def _any_terms_query(query_text: str) -> str:
     return " | ".join(terms)
 
 
+class UnknownDocumentCursor(LookupError):
+    """A document page's ``after`` names no document of that source."""
+
+
 def new_rag_source_id() -> str:
     """``rag_<ulid>`` — the stable reference a ``rag`` node's config carries. Hashed content,
     like a connection id: re-ingesting the source never bumps an agent's contentHash."""
@@ -423,23 +427,37 @@ class RagStore:
         return row.id
 
     async def list_documents(
-        self, session: AsyncSession, source_id: str, *, limit: int = 500
-    ) -> list[RagDocument]:
+        self, session: AsyncSession, source_id: str, *, limit: int = 500, after: str | None = None
+    ) -> tuple[list[RagDocument], str | None]:
+        """One page of a source's documents, oldest first — keyset pagination on
+        ``(created_at, id)`` ASC from just past the document ``after`` names — and the cursor
+        for the next page (``None`` on the last). Documents are deleted only with their source,
+        so a cursor stays valid while the source exists; an ``after`` that names no document of
+        this source raises ``UnknownDocumentCursor`` rather than restarting the listing."""
         chunks_sq = (
             select(func.count())
             .select_from(RagChunkRow)
             .where(RagChunkRow.document_id == RagDocumentRow.id)
             .scalar_subquery()
         )
-        rows = (
-            await session.execute(
-                select(RagDocumentRow, chunks_sq)
-                .where(RagDocumentRow.source_id == source_id)
-                .order_by(RagDocumentRow.created_at.asc(), RagDocumentRow.id.asc())
-                .limit(limit)
+        stmt = (
+            select(RagDocumentRow, chunks_sq)
+            .where(RagDocumentRow.source_id == source_id)
+            .order_by(RagDocumentRow.created_at.asc(), RagDocumentRow.id.asc())
+        )
+        if after:
+            anchor = await session.get(RagDocumentRow, after)
+            if anchor is None or anchor.source_id != source_id:
+                raise UnknownDocumentCursor(after)
+            stmt = stmt.where(
+                tuple_(RagDocumentRow.created_at, RagDocumentRow.id)
+                > (anchor.created_at, anchor.id)
             )
-        ).all()
-        return [
+        # One row past the page says whether another page exists.
+        rows = (await session.execute(stmt.limit(limit + 1))).all()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        docs = [
             RagDocument(
                 id=r.id,
                 source_id=r.source_id,
@@ -454,6 +472,7 @@ class RagStore:
             )
             for r, c in rows
         ]
+        return docs, (docs[-1].id if more else None)
 
     async def reconcile_orphaned_sources(self, session: AsyncSession) -> int:
         """Startup honesty sweep, mirroring the run sweep: an ingest interrupted by a restart

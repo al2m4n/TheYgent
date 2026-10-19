@@ -443,6 +443,48 @@ async def test_add_rag_files_uploads_local_files_and_reports_bad_paths(
     assert sent.content == doc.read_bytes()
 
 
+async def test_add_rag_files_leaves_the_size_limit_to_the_control_plane(
+    planes: FakePlanes, tmp_path: Path
+) -> None:
+    # The upload limit is the control plane's live setting, raisable past its 50 MiB default: a
+    # bigger file streams up with its declared length, and only a 413 from the control plane
+    # skips it.
+    big = tmp_path / "manual.pdf"
+    with big.open("wb") as fh:
+        fh.truncate(60 * 1024 * 1024)  # sparse: no disk is written
+    huge = tmp_path / "archive.pdf"
+    with huge.open("wb") as fh:
+        fh.truncate(70 * 1024 * 1024)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if int(request.headers["content-length"]) > 64 * 1024 * 1024:
+            return httpx.Response(
+                413,
+                json={
+                    "error": {
+                        "message": "document exceeds the 64 MiB upload limit",
+                        "code": "document_too_large",
+                    }
+                },
+            )
+        return planes.handler(request)
+
+    client = Client(build_server(Config(api_key=API_KEY), transport=httpx.MockTransport(handler)))
+    async with client:
+        out = await _call(client, "add_rag_files", source_id="rag_1", paths=[str(big), str(huge)])
+    assert (out["uploaded"], out["skipped"], out["failed"]) == (1, 1, 0)
+    by_path = {r["path"]: r for r in out["results"]}
+    assert by_path["manual.pdf"]["bytes"] == 60 * 1024 * 1024
+    assert by_path["archive.pdf"]["skipped"] == (
+        f"{70 * 1024 * 1024} bytes: document exceeds the 64 MiB upload limit. An admin "
+        "can raise the limit in TheYgent under Settings → RAG."
+    )
+    sent = planes.last("POST", "/rag/sources/rag_1/documents")
+    assert sent.url.params["filename"] == "manual.pdf"
+    assert sent.headers["content-length"] == str(60 * 1024 * 1024)
+    assert len(sent.content) == 60 * 1024 * 1024
+
+
 async def test_add_rag_files_walks_a_project_tree(
     planes: FakePlanes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

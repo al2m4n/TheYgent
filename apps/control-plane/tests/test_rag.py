@@ -251,6 +251,55 @@ def test_upload_ingest_and_hybrid_query(client: TestClient, fake_inference: Fake
     assert matches[0]["score"] > 0
 
 
+def test_documents_page_oldest_first_and_say_when_more_remain(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    # A source past one page lists every document across pages, each exactly once, and the
+    # last page says so — the listing never silently stops at the page size.
+    source = _create_source(client)
+    sid = source["id"]
+    names = [f"note-{i}.md" for i in range(5)]
+    for i, name in enumerate(names):
+        _upload(client, sid, name, f"# Note {i}\n\nLlama fact number {i}.")
+        _wait_settled(client, sid)
+
+    seen: list[str] = []
+    pages: list[int] = []
+    after: str | None = None
+    while True:
+        query = f"?limit=2&after={after}" if after else "?limit=2"
+        body = client.get(f"/rag/sources/{sid}/documents{query}").json()
+        seen += [d["uri"] for d in body["documents"]]
+        pages.append(len(body["documents"]))
+        after = body["next_after"]
+        if after is None:
+            break
+        assert after == body["documents"][-1]["id"]
+    assert pages == [2, 2, 1]
+    assert seen == names  # oldest first, no row repeated or skipped
+
+    whole = client.get(f"/rag/sources/{sid}/documents").json()
+    assert [d["uri"] for d in whole["documents"]] == names
+    assert whole["next_after"] is None
+
+    assert client.get(f"/rag/sources/{sid}/documents?limit=501").status_code == 422
+
+
+def test_a_document_cursor_must_name_a_document_of_that_source(
+    client: TestClient, fake_inference: FakeInference
+) -> None:
+    first = _create_source(client)["id"]
+    other = _create_source(client)["id"]
+    _upload(client, first, "handbook.md", _DOC)
+    _wait_settled(client, first)
+    doc_id = client.get(f"/rag/sources/{first}/documents").json()["documents"][0]["id"]
+
+    for sid, after in ((first, "doc_missing"), (other, doc_id)):
+        resp = client.get(f"/rag/sources/{sid}/documents?after={after}")
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "invalid_rag_cursor"
+
+
 def test_reupload_unchanged_document_skips_reembedding(
     client: TestClient, fake_inference: FakeInference
 ) -> None:

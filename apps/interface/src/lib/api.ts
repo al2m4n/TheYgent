@@ -546,6 +546,11 @@ export interface RagDocument {
   updated_at: string;
 }
 
+export interface RagDocumentPage {
+  documents: RagDocument[];
+  next_after: string | null;
+}
+
 export interface RagQueryMatch {
   chunk_id: string;
   document_id: string;
@@ -1911,11 +1916,18 @@ export const api = {
       method: "DELETE",
     }),
 
-  listRagDocuments: (id: string) =>
-    request<{ documents: RagDocument[] }>(
+  // One page of a source's documents, oldest first. Pass the previous page's `next_after` as
+  // `after` for the next page; `next_after: null` marks the last page.
+  listRagDocuments: (id: string, params: { limit?: number; after?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.limit) q.set("limit", String(params.limit));
+    if (params.after) q.set("after", params.after);
+    const qs = q.toString();
+    return request<RagDocumentPage>(
       controlPlaneUrl(),
-      `/rag/sources/${encodeURIComponent(id)}/documents`,
-    ).then((r) => r.documents),
+      `/rag/sources/${encodeURIComponent(id)}/documents${qs ? `?${qs}` : ""}`,
+    );
+  },
 
   // Start (or re-run) a crawl. Returns the source already flipped to "ingesting" — hand it to
   // `trackIngest` so the global center polls it to completion.

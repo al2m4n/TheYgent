@@ -43,6 +43,18 @@ describe("rag api fetchers", () => {
     expect(sources).toEqual([SOURCE]);
   });
 
+  it("listRagDocuments passes the page size and cursor and returns the page envelope", async () => {
+    const page = { documents: [], next_after: null };
+    const calls: { url: string; init?: RequestInit }[] = [];
+    vi.stubGlobal("fetch", fakeFetch(calls, page));
+    expect(await api.listRagDocuments("rag_01")).toEqual(page);
+    await api.listRagDocuments("rag_01", { limit: 100, after: "doc_b" });
+    expect(calls.map((c) => c.url)).toEqual([
+      `${CONTROL_PLANE_URL}/rag/sources/rag_01/documents`,
+      `${CONTROL_PLANE_URL}/rag/sources/rag_01/documents?limit=100&after=doc_b`,
+    ]);
+  });
+
   it("ingest/cancel POST the action-suffix routes", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     vi.stubGlobal("fetch", fakeFetch(calls, SOURCE));
