@@ -883,7 +883,14 @@ export type SettingType =
   | "list[registry]"
   | "secret";
 export type SettingSource = "env" | "stored" | "default";
-export type SettingGroup = "telemetry" | "mcp" | "rag" | "crawler" | "auth" | "ai_gateway";
+export type SettingGroup =
+  | "telemetry"
+  | "tools"
+  | "mcp"
+  | "rag"
+  | "crawler"
+  | "auth"
+  | "ai_gateway";
 
 /** The read shape of a `secret` value: presence + non-secret names only. */
 export interface SensitiveValue {

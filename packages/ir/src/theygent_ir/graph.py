@@ -411,6 +411,11 @@ class LlmConfig(_Wire):
     tools: list[str] = Field(default_factory=list)
     tool_choice: ToolChoice = "auto"
     max_tool_iterations: int = 8
+    # The most characters of one tool result the model is shown; the rest is cut and a marker
+    # says how much was left out. ``None`` (the default, and absent) applies the platform's
+    # ``tools.result_max_chars`` setting. Like the tool fields above, a graph that omits it hashes
+    # unchanged.
+    max_tool_result_chars: int | None = None
 
 
 # The I/O modality vocabulary (DISTINCT from the model ``Modality`` in registration.py —
@@ -1024,6 +1029,17 @@ def validate_graph(ir: IRDocument) -> None:
                 raise GraphValidationError(
                     f"node {node.id!r}: loop `maxIterations` must be >= 1 "
                     f"(got {cfg.max_iterations}) — an unbounded or zero-iteration loop is rejected"
+                )
+            # A result cap applies to config tools and wired capabilities alike, so it is checked
+            # whether or not `tools` is set: zero or negative would show the model nothing.
+            if (
+                isinstance(cfg, LlmConfig)
+                and cfg.max_tool_result_chars is not None
+                and cfg.max_tool_result_chars < 1
+            ):
+                raise GraphValidationError(
+                    f"node {node.id!r}: llm `maxToolResultChars` must be >= 1 "
+                    f"(got {cfg.max_tool_result_chars})"
                 )
             # An llm with autonomous tools (pure-IR checks only — runtime model-capability is NOT
             # gated here, the plane-split). Empty `tools` is the single-shot path.

@@ -163,6 +163,13 @@ class WalkResult:
     truncated_empty_nodes: list[str] = field(default_factory=list)
 
 
+#: How many characters of one tool result the model sees when neither the llm node
+#: (``maxToolResultChars``) nor the platform setting (``tools.result_max_chars``) says otherwise.
+#: About 4,000 tokens: a default retrieval (five 450-token chunks) fits whole, a set of crawled
+#: pages does not.
+DEFAULT_TOOL_RESULT_MAX_CHARS = 16_000
+
+
 @dataclass
 class WalkContext:
     """Everything the walker needs that it must not fetch itself. ``prior_messages`` is the
@@ -196,6 +203,10 @@ class WalkContext:
     # The crawler backend a ``crawler`` node runs through (provider adapter, connection auth at call
     # time, the platform spend ceiling). Injected; ``None`` when no graph crawls.
     crawlers: Any = None  # crawlers.CrawlerBackend
+    # How many characters of one tool result an llm's tool loop shows the model, for nodes that
+    # set no ``maxToolResultChars`` of their own. The control-plane resolves the platform setting
+    # (``tools.result_max_chars``) once per run.
+    tool_result_max_chars: int = DEFAULT_TOOL_RESULT_MAX_CHARS
     # The observability handle for this run (the control-plane opens it before walking). When set,
     # the walker wraps each node in a span and captures per-node I/O through it (the one-wrapper
     # seam); when ``None`` (telemetry not wired) the walk is purely additive — the walker still does
@@ -1695,11 +1706,46 @@ async def build_capability_schemas(
     return schemas
 
 
-def tool_result_message(call: ToolCall, outcome: ActivityOutcome) -> dict[str, Any]:
+def cap_tool_result(content: str, max_chars: int | None) -> str:
+    """``content`` cut to its first ``max_chars`` characters, followed by a marker that says how
+    much was left out, so the model knows the result is partial instead of taking a cut-off
+    result for the whole. ``None`` leaves the content whole."""
+    if max_chars is None or len(content) <= max_chars:
+        return content
+    omitted = len(content) - max_chars
+    return (
+        f"{content[:max_chars]}\n\n[tool result truncated: showing the first {max_chars:,} of "
+        f"{len(content):,} characters; {omitted:,} characters were left out]"
+    )
+
+
+def tool_result_max_chars(config: LlmConfig, platform_default: int) -> int:
+    """The result cap for one llm node's tool calls: the node's own ``maxToolResultChars`` when it
+    sets one, else the platform's ``tools.result_max_chars``."""
+    if config.max_tool_result_chars is not None:
+        return config.max_tool_result_chars
+    return platform_default
+
+
+def tool_result_attributes(outcome: ActivityOutcome, max_chars: int | None) -> dict[str, Any]:
+    """Span attributes for one tool call's result: its full length and whether the model was shown
+    only part of it, so the waterfall says when a cap cut a result."""
+    chars = len(_stringify(outcome.value))
+    return {
+        "tool.result_chars": chars,
+        "tool.result_truncated": max_chars is not None and chars > max_chars,
+    }
+
+
+def tool_result_message(
+    call: ToolCall, outcome: ActivityOutcome, max_chars: int | None = None
+) -> dict[str, Any]:
     """The ``{role: tool}`` message fed back to the model after a tool call: the tool's result on
     success, or its actionable error on failure (a failed tool is NOT a run failure; the model sees
-    the error and can recover)."""
-    return {"role": "tool", "tool_call_id": call.id, "content": _stringify(outcome.value)}
+    the error and can recover). The content is capped at ``max_chars`` (see
+    :func:`cap_tool_result`), so one large result can't fill the model's context."""
+    content = cap_tool_result(_stringify(outcome.value), max_chars)
+    return {"role": "tool", "tool_call_id": call.id, "content": content}
 
 
 def assistant_tool_calls_message(calls: list[ToolCall]) -> dict[str, Any]:
@@ -2023,8 +2069,9 @@ def _tool_call_record(
     call: ToolCall, outcome: ActivityOutcome, iteration: int, index: int
 ) -> dict[str, Any]:
     """One captured record of an autonomous tool call + its result, for the node's ``tool_calls``
-    observability entry. ``result`` is the raw ok/err value the tool returned (the same value fed
-    back to the model), rendered by the inspector; capping/truncation rides the node_io cap."""
+    observability entry. ``result`` is the raw ok/err value the tool returned — whole, even when
+    the model was shown only its first ``maxToolResultChars`` — rendered by the inspector; capping
+    the record itself rides the node_io cap."""
     return {
         "name": call.name,
         "arguments": call.arguments,
@@ -2474,6 +2521,7 @@ async def _walk_llm(
     has_tools = bool(schemas)
     tool_schemas: list[dict[str, Any]] | None = schemas if has_tools else None
     tool_choice: Any = _to_openai_tool_choice(config.tool_choice) if has_tools else None
+    result_cap = tool_result_max_chars(config, ctx.tool_result_max_chars)
 
     gen_cm = scope.child_phase("model.generate") if scope is not None else _null_acm()
     first_token_ns: int | None = None
@@ -2583,16 +2631,18 @@ async def _walk_llm(
                         rag=ctx.rag,
                         crawlers=ctx.crawlers,
                     )
+                    result_msg = tool_result_message(call, outcome, result_cap)
                     if tool_scope is not None:
                         tool_scope.set_attributes(
                             {
                                 "tool.name": call.name,
                                 "tool.ok": outcome.ok,
+                                **tool_result_attributes(outcome, result_cap),
                                 **tool_call_attributes(ir, call.name, outcome),
                             }
                         )
                 tool_call_records.append(_tool_call_record(call, outcome, iteration, ci))
-                messages.append(tool_result_message(call, outcome))
+                messages.append(result_msg)
             # A FORCED tool_choice ("required" / a named function) applies to the FIRST turn
             # only — re-sending it would force a tool call on every turn, so the model could
             # never produce a final answer and a write tool would re-execute until the cap.

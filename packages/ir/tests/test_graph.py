@@ -821,6 +821,31 @@ def test_llm_max_tool_iterations_must_be_positive() -> None:
         validate_graph(parse_document(_llm_tools_doc(max_iter=0)))
 
 
+def test_llm_max_tool_result_chars_must_be_positive() -> None:
+    doc = _llm_tools_doc()
+    doc["nodes"][1]["config"]["maxToolResultChars"] = 0
+    with pytest.raises(GraphValidationError, match="maxToolResultChars"):
+        validate_graph(parse_document(doc))
+
+
+def test_llm_max_tool_result_chars_is_checked_without_config_tools() -> None:
+    # The cap also applies to capabilities wired to the `tools` port, so it is validated on an
+    # llm whose own `tools` list is empty.
+    doc = _trivial()
+    doc["nodes"][1]["config"]["maxToolResultChars"] = -5
+    with pytest.raises(GraphValidationError, match="maxToolResultChars"):
+        validate_graph(parse_document(doc))
+
+
+def test_llm_max_tool_result_chars_validates_and_leaves_other_hashes_alone() -> None:
+    doc = _llm_tools_doc()
+    doc["nodes"][1]["config"]["maxToolResultChars"] = 4000
+    validate_graph(parse_document(doc))
+    # The field is part of the authored config: setting it is a content change, while a graph
+    # that omits it keeps its hash (the pinned trivial-graph guard covers the omitted case).
+    assert content_hash(parse_document(doc)) != content_hash(parse_document(_llm_tools_doc()))
+
+
 def test_llm_duplicate_tool_key_rejected() -> None:
     with pytest.raises(GraphValidationError, match="duplicate"):
         validate_graph(parse_document(_llm_tools_doc(tools=["search", "search"])))

@@ -86,6 +86,12 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 **Fix.** Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the `ctxSize` [launch setting](../models/engines.md#llamacpp-launch-settings), pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's **Logs** button).
 
+### `engine_dropped_request` (502, or an error at the end of a stream)
+
+**Cause.** The engine closed the connection before it finished answering, so that request was lost. The engine itself keeps running and serves the next request. On MLX, a known cause is mlx-lm's tool-call parser: when a model fills a **list or object parameter** of a tool with plain text instead of JSON (for example `ramen restaurant` where the tool expects `["ramen restaurant"]`), mlx-lm 0.31.3 fails to parse the call and drops the request. A streamed reply that stops this way ends with this error, not with a finished but empty answer.
+
+**Fix.** Open the model's **Logs**: the engine's traceback names the cause. For the MLX tool-call case, give the tool a single `string` parameter in place of the list, or describe the expected JSON in the parameter's description. A model writes a single value reliably. A retry can succeed if the model writes the argument differently, but at temperature 0 it usually repeats the same call. The inference plane doesn't retry a request to a local engine, because one that failed this way usually fails the same way again.
+
 ### `modality_not_supported` (404)
 
 **Cause.** The engine answered the endpoint with a 404 — usually you called a modality the model can't do (embeddings against a chat-only model), or, for a remote `openai-compatible` model, the `baseUrl` is missing its `/v1` suffix.

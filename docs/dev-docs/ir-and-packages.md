@@ -49,7 +49,7 @@ An IR document is:
 - **What is stripped:** the top-level `view` block (layout), and `contentHash` itself (hashing it would be circular).
 - **Canonicalization:** `json.dumps(..., sort_keys=True, separators=(",", ":"), ensure_ascii=False)` encoded as UTF-8 — key order and whitespace never affect identity.
 
-The hash runs over the hydrated model, *not* source bytes, so formatting differences never fork identity. The flip side is that adding a defaulted field to any hashed model shifts every existing `contentHash`. The **pinned-hash guard test** in `packages/ir/tests/test_graph.py` asserts the exact hash of a trivial representative graph (`sha256:7e8f9d83…`); any change that moves it fails the suite, forcing hash-moving changes to be deliberate, named decisions. Past additive fields (port roles, LLM tool declarations, the multimodal message-content union) were engineered so existing hashes stayed unmoved without a `schemaVersion` bump.
+The hash runs over the hydrated model, *not* source bytes, so formatting differences never fork identity. The flip side is that adding a defaulted field to any hashed model shifts every existing `contentHash`. The **pinned-hash guard test** in `packages/ir/tests/test_graph.py` asserts the exact hash of a trivial representative graph (`sha256:7e8f9d83…`); any change that moves it fails the suite, forcing hash-moving changes to be deliberate, named decisions. Past additive fields (port roles, LLM tool declarations, the multimodal message-content union, the llm `maxToolResultChars` cap) were engineered so existing hashes stayed unmoved without a `schemaVersion` bump.
 
 End to end, the pipeline and its two callers:
 

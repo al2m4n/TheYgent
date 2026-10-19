@@ -1164,6 +1164,8 @@ def create_app(
                 artifacts=artifact_store,  # durable audio steps use the same store
                 rag=rag_retriever,  # durable rag steps retrieve through the same backend
                 crawlers=crawler_backend,  # durable crawler steps run through the same backend
+                # The platform's tool-result cap, as a live accessor (read per llm node).
+                tool_result_max_chars=_live_accessor("tools.result_max_chars"),
                 # A distinct executor identity per process role: launch-time recovery then claims
                 # only workflows a crashed API process left pending — never ones a healthy
                 # standalone worker is mid-step on (and vice versa).
@@ -2485,6 +2487,8 @@ def create_app(
             artifacts=app.state.artifacts,  # transcribe/speak audio reference store
             rag=app.state.rag,  # retrieval backend for rag nodes/capabilities
             crawlers=app.state.crawlers,  # provider backend for crawler nodes/capabilities
+            # How much of one tool result an llm's tool loop shows the model (platform default).
+            tool_result_max_chars=await app.state.settings.get("tools.result_max_chars"),
         )
         if stream:
             return await _stream_graph(ir, run, input_value, ctx)

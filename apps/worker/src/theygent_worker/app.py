@@ -136,6 +136,8 @@ async def build_runtime(
         crawlers=CrawlerBackend(
             tool_resolver, max_charge_usd=settings.accessor("crawler.max_charge_usd")
         ),
+        # The platform's tool-result cap for llm tool loops, live like the API process's.
+        tool_result_max_chars=settings.accessor("tools.result_max_chars"),
         fast_polling=fast_polling,
         # A distinct, stable executor identity per process role: launch-time recovery then claims
         # only workflows THIS role's crashed process left pending, never ones the (healthy) API

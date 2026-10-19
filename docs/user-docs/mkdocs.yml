@@ -165,5 +165,6 @@ nav:
   - Reference:
       - API Reference: reference/api.md
       - Environment Variables: reference/environment.md
+      - Platform Settings: reference/settings.md
       - Glossary: reference/glossary.md
       - Troubleshooting: reference/troubleshooting.md

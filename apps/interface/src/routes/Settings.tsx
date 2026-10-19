@@ -3,7 +3,7 @@
 // modal): what lives here concerns how this installation behaves, not who is using it.
 //
 // One dirty-state form (the control-plane settings catalog) lives HERE and is shared by the
-// Telemetry / RAG / MCP / Crawlers tabs, so staged edits survive tab switches; each tab saves only its own
+// Telemetry / Tools / RAG / MCP / Crawlers tabs, so staged edits survive tab switches; each tab saves only its own
 // group. The Inference tab talks to the inference plane's own settings/diagnostics resources —
 // a separate trust domain the browser reaches directly.
 
@@ -17,6 +17,7 @@ import { RagTab } from "../components/settings/RagTab";
 import { SamplesTab } from "../components/settings/SamplesTab";
 import { SignInTab } from "../components/settings/SignInTab";
 import { TelemetryTab } from "../components/settings/TelemetryTab";
+import { ToolsTab } from "../components/settings/ToolsTab";
 import { UsersTab } from "../components/settings/UsersTab";
 import { usePlatformSettingsForm } from "../components/settings/useSettingsForm";
 import { Page } from "../components/ui";
@@ -30,6 +31,7 @@ const TABS = [
   { value: "signin", label: "Sign-in" },
   { value: "inference", label: "Inference" },
   { value: "telemetry", label: "Telemetry" },
+  { value: "tools", label: "Tools" },
   { value: "rag", label: "RAG" },
   { value: "mcp", label: "MCP" },
   { value: "crawlers", label: "Crawlers" },
@@ -51,7 +53,7 @@ export function Settings() {
       </div>
 
       <Tabs defaultValue="overview">
-        {/* Eleven tabs outgrow a phone: the list scrolls within itself, never the page. */}
+        {/* Twelve tabs outgrow a phone: the list scrolls within itself, never the page. */}
         <TabsList className="max-w-full justify-start overflow-x-auto">
           {TABS.map((t) => (
             <TabsTrigger key={t.value} value={t.value}>
@@ -77,6 +79,9 @@ export function Settings() {
         </TabsContent>
         <TabsContent value="telemetry">
           <TelemetryTab form={form} />
+        </TabsContent>
+        <TabsContent value="tools">
+          <ToolsTab form={form} />
         </TabsContent>
         <TabsContent value="rag">
           <RagTab form={form} />
