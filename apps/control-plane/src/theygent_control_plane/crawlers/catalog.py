@@ -92,7 +92,9 @@ def current_pricing(pricing_infos: list[dict[str, Any]] | None) -> dict[str, Any
     started = [
         p for p in pricing_infos or [] if isinstance(p, dict) and str(p.get("startedAt", "")) <= now
     ]
-    return max(started, key=lambda p: str(p.get("startedAt", "")), default=None)
+    if not started:
+        return None
+    return max(started, key=lambda p: str(p.get("startedAt", "")))
 
 
 def card(provider: str, item: dict[str, Any]) -> dict[str, Any]:

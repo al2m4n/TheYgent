@@ -23,7 +23,7 @@ import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 #: Trimmed input schemas in the actors' real shape (field names, types, editors, sections).
@@ -277,7 +277,9 @@ def _project(items: list[dict[str, Any]], query: dict[str, str]) -> list[dict[st
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server: _Server
+    @property
+    def fake(self) -> _Server:
+        return cast(_Server, self.server)
 
     def log_message(self, format: str, *args: Any) -> None:  # quiet
         pass
@@ -313,7 +315,7 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._error(400, "invalid-input", "Input is not valid JSON")
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
-        self.server.calls.append(
+        self.fake.calls.append(
             {
                 "actor": actor,
                 "mode": mode,
@@ -322,8 +324,8 @@ class _Handler(BaseHTTPRequestHandler):
                 "authorization": self.headers.get("Authorization"),
             }
         )
-        if self.server.sync_status is not None and mode == "run-sync-get-dataset-items":
-            status, kind = self.server.sync_status
+        if self.fake.sync_status is not None and mode == "run-sync-get-dataset-items":
+            status, kind = self.fake.sync_status
             return self._error(status, kind, "scripted failure")
         problem = check_input(actor, run_input)
         if problem:
@@ -331,8 +333,8 @@ class _Handler(BaseHTTPRequestHandler):
         items = _matching(actor, run_input)
         if mode == "run-sync-get-dataset-items":
             return self._send(201, _project(items, query))
-        run_id = f"run{len(self.server.calls)}"
-        self.server.runs[run_id] = {"items": items, "polls": 0}
+        run_id = f"run{len(self.fake.calls)}"
+        self.fake.runs[run_id] = {"items": items, "polls": 0}
         return self._send(
             201, {"data": {"id": run_id, "status": "RUNNING", "defaultDatasetId": f"ds-{run_id}"}}
         )
@@ -342,7 +344,7 @@ class _Handler(BaseHTTPRequestHandler):
         query = {k: v[0] for k, v in parse_qs(url.query).items()}
         # The public browse API — no token.
         if url.path == "/v2/store":
-            self.server.store_hits += 1
+            self.fake.store_hits += 1
             search = (query.get("search") or "").lower()
             items = [i for i in STORE_ITEMS if not search or search in json.dumps(i).lower()]
             offset, limit = int(query.get("offset") or 0), int(query.get("limit") or 24)
@@ -387,11 +389,11 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._authorized():
             return None
         m = re.fullmatch(r"/v2/actor-runs/([^/]+)", url.path)
-        if m and m.group(1) in self.server.runs:
+        if m and m.group(1) in self.fake.runs:
             run_id = m.group(1)
-            run = self.server.runs[run_id]
+            run = self.fake.runs[run_id]
             run["polls"] += 1
-            done = run["polls"] > self.server.running_polls
+            done = run["polls"] > self.fake.running_polls
             return self._send(
                 200,
                 {
@@ -404,8 +406,8 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
         m = re.fullmatch(r"/v2/datasets/ds-([^/]+)/items", url.path)
-        if m and m.group(1) in self.server.runs:
-            return self._send(200, _project(self.server.runs[m.group(1)]["items"], query))
+        if m and m.group(1) in self.fake.runs:
+            return self._send(200, _project(self.fake.runs[m.group(1)]["items"], query))
         return self._error(404, "record-not-found", url.path)
 
 

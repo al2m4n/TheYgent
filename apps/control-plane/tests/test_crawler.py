@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from _fake_apify import SCHEMAS, FakeApify
@@ -271,6 +271,11 @@ def _apify_connection(client: TestClient, base: str, *, token: str | None = "tok
     return resp.json()["id"]
 
 
+def _messages(inference: FakeInference) -> list[dict[str, Any]]:
+    """The messages of the model's last request, as the fake recorded them."""
+    return cast(list[dict[str, Any]], inference.captured["messages"])
+
+
 def _run(client: TestClient, ir: dict[str, Any], input_value: Any) -> dict[str, Any]:
     resp = client.post("/graphs/runs", json={"ir": ir, "input": input_value, "stream": False})
     assert resp.status_code == 200, resp.text
@@ -375,14 +380,14 @@ def test_the_model_calls_the_crawler_and_reads_a_budgeted_result(pg_url: str) ->
             assert body["status"] == "completed", body
             assert body["output"] == "Quiet hours start on 3 March 2027."
             # The model was offered only the exposed field, with the node's description.
-            tool = inference.captured["tools"][0]["function"]
+            tool = cast(list[dict[str, Any]], inference.captured["tools"])[0]["function"]
             assert tool["name"] == "web_search"
             assert tool["description"] == "Search the web and read the top pages."
             assert list(tool["parameters"]["properties"]) == ["query"]
             # The invented maxResults never reached the actor: the node's fixed value did.
             assert fake.calls[-1]["input"] == {"maxResults": 2, "query": "quiet hours bylaw"}
             # The tool result is the budgeted text of the chosen fields.
-            tool_msg = next(m for m in inference.captured["messages"] if m["role"] == "tool")
+            tool_msg = next(m for m in _messages(inference) if m["role"] == "tool")
             assert "80 crowns" in tool_msg["content"] and "searchResult" not in tool_msg["content"]
             spans = client.get(f"/runs/{body['runId']}/trace").json()["spans"]
             call = next(s for s in spans if (s["phase"] or "").startswith("tool.web_search"))
@@ -574,5 +579,5 @@ async def test_durable_capability_crawler_matches_the_walker(pg_url: str) -> Non
         assert durable["status"] == "completed", durable
         assert durable["output"] == "From 22:00."
         assert [c["mode"] for c in fake.calls] == ["runs"]
-        tool_msg = next(m for m in inference.captured["messages"] if m["role"] == "tool")
+        tool_msg = next(m for m in _messages(inference) if m["role"] == "tool")
         assert "80 crowns" in tool_msg["content"]

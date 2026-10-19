@@ -81,13 +81,17 @@ class CrawlerBackend:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._resolver = resolver
-        self._ceiling = max_charge_usd
+        if isinstance(max_charge_usd, (int, float)):
+            fixed = float(max_charge_usd)
+            self._ceiling: Callable[[], Any] = lambda: fixed
+        else:
+            self._ceiling = max_charge_usd
         self._transport = transport
 
     # ── spend ──────────────────────────────────────────────────────────────────────
 
     def ceiling_usd(self) -> float:
-        raw = self._ceiling() if callable(self._ceiling) else self._ceiling
+        raw = self._ceiling()
         try:
             value = float(raw)
         except (TypeError, ValueError):
