@@ -3012,6 +3012,8 @@
       
         
       
+        
+      
     
     
     
@@ -3100,6 +3102,34 @@
     
   
     Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Settings
   
 
     
@@ -3628,6 +3658,7 @@
 <p><strong>Manual control.</strong> From a model's row in <a href="../">Registries</a>, <strong>Warm</strong> preloads an engine (so the next call skips the cold start) and <strong>Evict</strong> frees it now. Both are safe no-ops for reachable endpoints and models that aren't loaded.</p>
 <p><strong>Missing binaries fail cleanly.</strong> If a model's engine binary isn't installed on the machine, the call returns <code>engine_unavailable</code> — a clear, up-front error — never a mysterious crash on first inference.</p>
 <p><strong>A failed engine is replaced.</strong> If an engine reports that it can no longer compute (llama.cpp's <code>Compute error</code>, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with <code>engine_failed</code> (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in <a href="../">Registries</a> shows a red <strong>failed</strong> badge, with the reason on hover, until the replacement starts.</p>
+<p><strong>A dropped request is named.</strong> If an engine closes the connection before it finishes an answer, the call fails with <code>engine_dropped_request</code>, and the engine keeps serving other requests. This covers a reply cut off partway through a stream, which would otherwise read as a finished, shorter answer. The inference plane doesn't retry a request to a local engine; the caller's own retry policy decides. See <a href="../../reference/troubleshooting/#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream">troubleshooting</a> for the known MLX tool-call cause.</p>
 <p><strong>Engine logs.</strong> Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (<code>~/.theygent/inference/logs/</code> by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the <strong>Logs</strong> button on the model's row, or with <code>GET /admin/models/{id}/logs</code>.</p>
 <pre class="mermaid"><code>stateDiagram-v2
   [*] --&gt; Cold

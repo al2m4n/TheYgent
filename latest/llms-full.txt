@@ -2088,6 +2088,7 @@ These are the keys on the node itself (camelCase, as the editor and IR store the
 | `messages` | list | — (required) | The chat turns. Each is `{ "role": ..., "content": ... }`. A new node is seeded with one user turn containing `$in`. |
 | `toolChoice` | enum / object | `"auto"` | Whether the model may call tools: `auto`, `none`, `required`, or a named-function object. Only meaningful when tools are wired. |
 | `maxToolIterations` | integer | `8` | The maximum number of model-then-tool rounds before the loop stops. Must be at least 1. |
+| `maxToolResultChars` | integer | unset | The most characters of one tool result the model is shown; the rest is cut, with a note saying how much was left out. Unset uses the platform's `tools.result_max_chars` setting (16,000 by default). Must be at least 1. |
 | `tools` | list of strings | `[]` | A legacy way to attach tools by key. Prefer wiring the `tools` port instead. |
 
 Generation parameters — temperature, max tokens, and so on — are **not** on the node. They live on the model binding and are shared by every llm node that uses it, described next.
@@ -2204,8 +2205,9 @@ Wiring a tool node into the `tools` port turns it into a **capability**: the mod
 A few things follow from wiring a capability:
 
 - **The tool node's id becomes the function name** the model sees and calls. Name your tool nodes meaningfully.
-- When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls) and **max tool iterations** (the round limit, default 8).
+- When at least one tool is wired, the panel exposes **tool choice** (auto — the model decides / required — it must call a tool / none — it never calls), **max tool iterations** (the round limit, default 8) and **max tool result characters** (see below).
 - The model runs a **bounded loop**: it answers or calls a tool; each tool result is fed back; it calls again until it answers or hits the iteration limit.
+- **Each tool result is capped.** The model is shown at most 16,000 characters of one result by default, about 4,000 tokens. A longer result, such as a web page or a crawl, is cut, and a note at the end says how many characters were left out, so the model knows it saw only part of it. Set **max tool result characters** on the node to change the limit for its tools, or change the default for every agent under **Settings → Tools** ([`tools.result_max_chars`](../../reference/settings.md#tools)). The run inspector still shows each tool's whole result, and the tool's span in the waterfall records its full length (`tool.result_chars`) and whether it was cut (`tool.result_truncated`).
 - There is deliberately no compile-time capability check. A model that does not support tool-calling simply returns a plain answer and ignores the tools.
 - Local models that write tool calls as text work too: Llama-style calls and gpt-oss's own reply format on MLX are turned into real tool calls, and gpt-oss's reasoning is kept out of the answer (it arrives as the reasoning stream).
 
@@ -4443,6 +4445,8 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 **Missing binaries fail cleanly.** If a model's engine binary isn't installed on the machine, the call returns `engine_unavailable` — a clear, up-front error — never a mysterious crash on first inference.
 
 **A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
+
+**A dropped request is named.** If an engine closes the connection before it finishes an answer, the call fails with `engine_dropped_request`, and the engine keeps serving other requests. This covers a reply cut off partway through a stream, which would otherwise read as a finished, shorter answer. The inference plane doesn't retry a request to a local engine; the caller's own retry policy decides. See [troubleshooting](../reference/troubleshooting.md#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream) for the known MLX tool-call cause.
 
 **Engine logs.** Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (`~/.theygent/inference/logs/` by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the **Logs** button on the model's row, or with `GET /admin/models/{id}/logs`.
 
@@ -7737,6 +7741,102 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 
 ---
 
+Source: https://docs.theygent.ai/latest/reference/settings/
+
+# Platform settings
+
+Platform settings configure how this installation behaves: what the run waterfall captures, how long tool calls may take, how much of a tool's result a model is shown, how documents are chunked. An admin edits them on the **Settings** page, one tab per group, or over the API. Each tab saves only its own group.
+
+## How a setting gets its value
+
+Each setting resolves in this order:
+
+1. **An environment variable**, if the setting has one and it is set to a non-empty value. Some variables **pin** the setting: the environment wins and the field is locked in the UI. Others **cap** it: you can still edit the setting, but only up to the environment's value.
+2. **The stored value**, if an admin saved one.
+3. **The default** listed below.
+
+Changes apply without a restart, in every control-plane process and the worker, within about 15 seconds. Some apply at a later point, which the UI names next to the field: at the next run, connection, ingest, crawl or sign-in. A stored value that no longer passes validation (for example, after an upgrade narrowed its range) is ignored in favor of the default, and the field says so.
+
+## Tools
+
+Applies to every tool an `llm` node calls: builtin, REST, MCP and retrieval, in both interactive and durable runs.
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| `tools.result_max_chars` | `16000` | 1,000–1,000,000 | The most characters of one tool result the model is shown. A longer result is cut, and a note at the end tells the model how many characters were left out. Applies from the next run. An `llm` node's own `maxToolResultChars` overrides it; see [Tools the model can call](../building/nodes/llm.md#tools-the-model-can-call). |
+
+The default is about 4,000 tokens: a default retrieval (five 450-token chunks) reaches the model whole, while a set of crawled pages is cut. The run inspector still shows every tool's whole result, and the tool's span in the waterfall records the result's full length and whether it was cut.
+
+## Telemetry
+
+| Setting | Default | Environment | What it does |
+|---|---|---|---|
+| `telemetry.io_capture` | `full` | `THEYGENT_IO_CAPTURE` (cap) | The deployment-wide ceiling on node input/output capture: `off`, `metadata` or `full`. Each agent's own policy applies under it. |
+| `telemetry.io_capture_max_bytes` | `262144` | `THEYGENT_IO_CAPTURE_MAX_BYTES` (cap) | The size cap for one captured payload. A larger payload is stored truncated, with its true size. |
+| `telemetry.io_retention_days` | `0` | — | Delete captured run inputs and outputs after this many days, for agents that set no retention of their own. `0` keeps them. |
+| `telemetry.otlp_enabled` | on only when an endpoint is set in the environment | — | Export spans to an OTLP collector. Storing `false` stops export even when the environment sets an endpoint. |
+| `telemetry.otlp_endpoint` | unset | `OTEL_EXPORTER_OTLP_ENDPOINT` (pin) | The OTLP/HTTP collector endpoint. |
+| `telemetry.otlp_headers` | unset | — | Headers sent with every export, such as collector auth. Write-only: reads return the header names, never the values. |
+| `telemetry.otlp_redact_attrs` | none | `THEYGENT_OTEL_REDACT_ATTRS` (pin) | Span attribute names replaced with `[redacted]` before export. The local span store keeps them. |
+
+See [Observability](../running/observability.md).
+
+## RAG
+
+| Setting | Default | Range | What it does |
+|---|---|---|---|
+| `rag.chunk_max_tokens` | `450` | 50–4,000 | Token budget per chunk, at ingest. |
+| `rag.chunk_overlap_tokens` | `60` | 0–1,000 | Overlap between chunks, at ingest. |
+| `rag.crawl_desired_concurrency` | `2` | 1–16 | Concurrent page fetches a crawl aims for. |
+| `rag.crawl_max_concurrency` | `4` | 1–32 | The most concurrent page fetches during a crawl. |
+| `rag.max_upload_bytes` | 50 MiB | 1 MiB–1 GiB | The largest document you can upload. |
+| `rag.default_top_k` | `5` | 1–50 | How many passages a retrieval returns when the query or node sets no `topK`. |
+| `rag.default_embedding_model` | unset | — | The embedding model the new-source form suggests. Each source keeps the model it was created with. |
+
+See [RAG sources](../rag/index.md).
+
+## MCP
+
+| Setting | Default | Environment | What it does |
+|---|---|---|---|
+| `mcp.call_timeout_s` | `120` | `THEYGENT_MCP_CALL_TIMEOUT_S` (pin) | Seconds one MCP tool call may take. Applies to new and reconnected server connections. |
+| `mcp.connect_timeout_s` | `30` | — | Seconds starting and connecting to one MCP server may take. |
+| `mcp.extra_registries` | none | `THEYGENT_MCP_REGISTRIES` (pin) | Self-hosted MCP registries to browse alongside the public ones. |
+| `mcp.oauth_redirect_url` | `http://localhost:8080/mcp/oauth/callback` | `THEYGENT_OAUTH_REDIRECT_URL` (pin) | Where an authorization server sends the browser back after consent. Change it behind a reverse proxy. |
+
+See [MCP servers](../mcp/index.md).
+
+## Sign-in
+
+| Setting | Default | Environment | What it does |
+|---|---|---|---|
+| `auth.session_ttl_hours` | `168` | — | How long an interactive sign-in stays valid. Applies to sign-ins after the change. |
+| `auth.oidc_redirect_url` | `http://localhost:8080/auth/oidc/callback` | `THEYGENT_OIDC_REDIRECT_URL` (pin) | The redirect URI to register with each sign-in provider. |
+
+See [Users, roles & sign-in](../running/users.md).
+
+## AI gateway
+
+| Setting | Default | What it does |
+|---|---|---|
+| `ai_gateway.request_retention_days` | `90` | Days each AI gateway request is kept in detail. Older days move to a compressed archive, and reports read them from daily totals. `0` keeps every request in detail. It is edited under **AI Gateway → Settings → Request records**. |
+
+## Over the API
+
+Reading settings needs an admin, as does changing them.
+
+```bash
+curl -s http://localhost:8080/settings -H "Authorization: Bearer $TOKEN"
+```
+
+```bash
+curl -s -X PATCH http://localhost:8080/settings -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"tools.result_max_chars": 8000}'
+```
+
+A `PATCH` body maps keys to values; `null` resets a key to its default. The patch is all or nothing: if any key is unknown or out of range, the response is `422 invalid_setting` and nothing is stored.
+
+---
+
 Source: https://docs.theygent.ai/latest/reference/glossary/
 
 # Glossary
@@ -8039,6 +8139,12 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 **Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.
 
 **Fix.** Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the `ctxSize` [launch setting](../models/engines.md#llamacpp-launch-settings), pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's **Logs** button).
+
+### `engine_dropped_request` (502, or an error at the end of a stream)
+
+**Cause.** The engine closed the connection before it finished answering, so that request was lost. The engine itself keeps running and serves the next request. On MLX, a known cause is mlx-lm's tool-call parser: when a model fills a **list or object parameter** of a tool with plain text instead of JSON (for example `ramen restaurant` where the tool expects `["ramen restaurant"]`), mlx-lm 0.31.3 fails to parse the call and drops the request. A streamed reply that stops this way ends with this error, not with a finished but empty answer.
+
+**Fix.** Open the model's **Logs**: the engine's traceback names the cause. For the MLX tool-call case, give the tool a single `string` parameter in place of the list, or describe the expected JSON in the parameter's description. A model writes a single value reliably. A retry can succeed if the model writes the argument differently, but at temperature 0 it usually repeats the same call. The inference plane doesn't retry a request to a local engine, because one that failed this way usually fails the same way again.
 
 ### `modality_not_supported` (404)
 

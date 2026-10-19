@@ -2816,6 +2816,8 @@
       
         
       
+        
+      
     
     
     
@@ -2907,6 +2909,34 @@
     
   
     Environment Variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Platform Settings
   
 
     
@@ -3164,6 +3194,17 @@
     <span class="md-ellipsis">
       
         engine_failed (503)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        engine_dropped_request (502, or an error at the end of a stream)
       
     </span>
   </a>
@@ -3911,6 +3952,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        engine_dropped_request (502, or an error at the end of a stream)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#modality_not_supported-404" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4520,6 +4572,9 @@
 <h3 id="engine_failed-503"><code>engine_failed</code> (503)<a class="headerlink" href="#engine_failed-503" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> The model's engine stopped being able to compute — llama.cpp answers <code>Compute error</code> once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.</p>
 <p><strong>Fix.</strong> Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the <code>ctxSize</code> <a href="../../models/engines/#llamacpp-launch-settings">launch setting</a>, pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's <strong>Logs</strong> button).</p>
+<h3 id="engine_dropped_request-502-or-an-error-at-the-end-of-a-stream"><code>engine_dropped_request</code> (502, or an error at the end of a stream)<a class="headerlink" href="#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream" title="Permanent link">&para;</a></h3>
+<p><strong>Cause.</strong> The engine closed the connection before it finished answering, so that request was lost. The engine itself keeps running and serves the next request. On MLX, a known cause is mlx-lm's tool-call parser: when a model fills a <strong>list or object parameter</strong> of a tool with plain text instead of JSON (for example <code>ramen restaurant</code> where the tool expects <code>["ramen restaurant"]</code>), mlx-lm 0.31.3 fails to parse the call and drops the request. A streamed reply that stops this way ends with this error, not with a finished but empty answer.</p>
+<p><strong>Fix.</strong> Open the model's <strong>Logs</strong>: the engine's traceback names the cause. For the MLX tool-call case, give the tool a single <code>string</code> parameter in place of the list, or describe the expected JSON in the parameter's description. A model writes a single value reliably. A retry can succeed if the model writes the argument differently, but at temperature 0 it usually repeats the same call. The inference plane doesn't retry a request to a local engine, because one that failed this way usually fails the same way again.</p>
 <h3 id="modality_not_supported-404"><code>modality_not_supported</code> (404)<a class="headerlink" href="#modality_not_supported-404" title="Permanent link">&para;</a></h3>
 <p><strong>Cause.</strong> The engine answered the endpoint with a 404 — usually you called a modality the model can't do (embeddings against a chat-only model), or, for a remote <code>openai-compatible</code> model, the <code>baseUrl</code> is missing its <code>/v1</code> suffix.</p>
 <p><strong>Fix.</strong> Use a model registered for the right modality, or fix the base URL. Hosted APIs usually need a trailing <code>/v1</code>. See <a href="../../models/remote/">Remote models</a>.</p>
