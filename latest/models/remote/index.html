@@ -2100,6 +2100,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-reply-cut-off-mid-stream-can-read-as-finished" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A reply cut off mid-stream can read as finished
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#remote-models-have-no-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3299,6 +3310,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#a-reply-cut-off-mid-stream-can-read-as-finished" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A reply cut off mid-stream can read as finished
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#remote-models-have-no-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3402,6 +3424,21 @@
 <p>The base URL is the <strong>root the endpoint's <code>/chat/completions</code>, <code>/embeddings</code>, etc. hang off</strong> — for hosted OpenAI-compatible APIs that almost always ends in <code>/v1</code>. If you drop the prefix, calls fail with a <code>modality_not_supported</code> error whose message says the path looks wrong. When in doubt, use the same base URL the provider documents for its OpenAI-compatible endpoint, trailing <code>/v1</code> included.</p>
 <h3 id="some-hosts-reject-parameters-others-accept">Some hosts reject parameters others accept<a class="headerlink" href="#some-hosts-reject-parameters-others-accept" title="Permanent link">&para;</a></h3>
 <p>Hosted models don't all take the same parameters — one may reject <code>temperature</code>, another may not support a particular sampling knob. TheYgent doesn't second-guess this: it relays the request as you built it, and if the provider rejects a parameter, <strong>the provider's own error message and status come straight back to you</strong>, before the answer starts streaming. If a call fails with an "unexpected parameter" style error, remove that parameter from the model's or node's params. A failure that happens partway through a stream ends the stream with a structured error rather than a torn connection.</p>
+<h3 id="a-reply-cut-off-mid-stream-can-read-as-finished">A reply cut off mid-stream can read as finished<a class="headerlink" href="#a-reply-cut-off-mid-stream-can-read-as-finished" title="Permanent link">&para;</a></h3>
+<p>If a remote server stops partway through a streamed reply, its stream just ends. The layer TheYgent dispatches through then closes the stream as though the reply had finished. Your agent gets a shorter answer with nothing to say it was cut off. Local models are always checked for this, because every engine TheYgent manages ends a finished reply with a <strong>finish reason</strong>. A remote server is checked only when you say it sends one too: a server that never does would have every reply fail.</p>
+<p>To turn the check on, click the model in <strong>Registries</strong> and tick <strong>Report a reply cut off mid-stream</strong> (shown for chat models), then save. Over the management API, it's <code>"requireFinishReason": true</code> on the registration:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>http://localhost:8081/admin/models/writer<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">&#39;Content-Type: application/json&#39;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="s1">    &quot;binding&quot;: &quot;openai-compatible&quot;,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="s1">    &quot;baseUrl&quot;: &quot;https://api.your-provider.example/v1&quot;,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="s1">    &quot;model&quot;: &quot;provider-model-id&quot;,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="s1">    &quot;credentialRef&quot;: &quot;secret://OPENAI_API_KEY&quot;,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="s1">    &quot;requireFinishReason&quot;: true</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="s1">  }&#39;</span>
+</code></pre></div>
+<p>With it on, a streamed reply that stops before the server's finish reason ends with an <a href="../../reference/troubleshooting/#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream"><code>engine_dropped_request</code></a> error. What arrived before the cut is still relayed, so nothing reads as a finished answer. Streams that end normally are unchanged.</p>
+<p>Turn it on for a server you know sends a finish reason at the end of every streamed reply. OpenAI-compatible servers normally do, and <strong>Anthropic's OpenAI-compatible API</strong> was checked: plain replies, tool calls, and replies stopped by a token limit all end with one. If you're not sure about a server, leave it off. If every streamed reply from the model then fails with <code>engine_dropped_request</code> right after the full answer, the server doesn't send one, so turn it off again. A request the server drops before it starts replying is named either way.</p>
 <h3 id="remote-models-have-no-lifecycle">Remote models have no lifecycle<a class="headerlink" href="#remote-models-have-no-lifecycle" title="Permanent link">&para;</a></h3>
 <p>There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its <strong>State</strong> stays effectively cold, and <strong>Warm</strong> / <strong>Evict</strong> are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (<code>llama-server</code>), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked <strong>approx</strong> because TheYgent didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (<strong>approx</strong>), not as unsupported.</p>
 <h2 id="mixing-local-and-remote-in-one-agent">Mixing local and remote in one agent<a class="headerlink" href="#mixing-local-and-remote-in-one-agent" title="Permanent link">&para;</a></h2>
