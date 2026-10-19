@@ -130,6 +130,8 @@ async def build_runtime(
         rag=RagRetriever(
             sessionmaker, gateway, default_top_k=settings.accessor("rag.default_top_k")
         ),
+        # The platform's tool-result cap for llm tool loops, live like the API process's.
+        tool_result_max_chars=settings.accessor("tools.result_max_chars"),
         fast_polling=fast_polling,
         # A distinct, stable executor identity per process role: launch-time recovery then claims
         # only workflows THIS role's crashed process left pending, never ones the (healthy) API

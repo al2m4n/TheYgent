@@ -51,6 +51,7 @@ from theygent_control_plane.models import PlatformSettingRow
 from theygent_control_plane.observability.spans import min_capture
 from theygent_control_plane.run import now
 from theygent_control_plane.secrets import SecretStore
+from theygent_control_plane.walker import DEFAULT_TOOL_RESULT_MAX_CHARS
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -236,6 +237,19 @@ CATALOG: tuple[SettingSpec, ...] = (
             "when the API runs behind a reverse proxy or a non-default bind."
         ),
         group="mcp",
+    ),
+    SettingSpec(
+        key="tools.result_max_chars",
+        type="int",
+        default=DEFAULT_TOOL_RESULT_MAX_CHARS,
+        apply="live (next run)",
+        constraints={"min": 1000, "max": 1_000_000},
+        description=(
+            "The most characters of one tool result an llm's tool loop shows the model — for "
+            "every tool kind, in both runtimes. A longer result is cut, and a marker tells the "
+            "model how much was left out. An llm node's own maxToolResultChars overrides it."
+        ),
+        group="tools",
     ),
     SettingSpec(
         key="rag.chunk_max_tokens",

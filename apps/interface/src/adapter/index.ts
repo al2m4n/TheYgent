@@ -257,7 +257,8 @@ function builderDefaultConfig(
     // Tool-calling fields default to "no tools" — keep a freshly dropped llm node clean (and
     // hash-equivalent to a hand-authored {model, messages}); they're configured via the Tools
     // panel. The RawConfig/Code views still expose them.
-    for (const k of ["tools", "toolChoice", "maxToolIterations"]) delete config[k];
+    for (const k of ["tools", "toolChoice", "maxToolIterations", "maxToolResultChars"])
+      delete config[k];
   }
   return config;
 }

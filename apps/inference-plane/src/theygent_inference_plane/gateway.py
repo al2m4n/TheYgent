@@ -83,6 +83,71 @@ def _voice_hint(params: dict[str, Any]) -> str:
     return f"voice ({voice!r} was requested)" if voice else "voice (none was requested)"
 
 
+class EngineDroppedRequest(RuntimeError):
+    """The upstream closed the connection before finishing its response: without sending one
+    (a non-streaming call), or partway through a stream. Raised in place of the transport error,
+    or of the clean-looking end the dispatch layer makes of a stream cut off, so the endpoint can
+    name it."""
+
+    code = "engine_dropped_request"
+
+    def __init__(self, *, mid_stream: bool, tools_offered: bool) -> None:
+        self.mid_stream = mid_stream
+        self.tools_offered = tools_offered
+        where = "partway through its response" if mid_stream else "without sending a response"
+        super().__init__(f"the upstream closed the connection {where}")
+
+
+#: How a dropped connection reads at each layer under the dispatch call: aiohttp's
+#: ServerDisconnectedError ("Server disconnected") and ClientPayloadError ("Response payload is
+#: not completed"), and httpx's RemoteProtocolError ("Server disconnected without sending a
+#: response", "peer closed connection without sending complete message body (incomplete chunked
+#: read)"). The dispatch layer wraps them in its own "Connection error.", so the chain is searched.
+_DROPPED_TEXT = (
+    "server disconnected",
+    "response payload is not completed",
+    "peer closed connection",
+    "incomplete chunked read",
+)
+
+
+def is_dropped_connection(exc: BaseException) -> bool:
+    """Whether ``exc`` (or anything it was raised from) is the upstream closing the connection
+    before its response was complete."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if any(text in str(cur).lower() for text in _DROPPED_TEXT):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
+def _dropped(params: dict[str, Any], *, mid_stream: bool) -> EngineDroppedRequest:
+    return EngineDroppedRequest(mid_stream=mid_stream, tools_offered=bool(params.get("tools")))
+
+
+def _stream_finished(resp: Any) -> bool:
+    """Whether the upstream sent its own ``finish_reason``. The dispatch layer's stream wrapper
+    adds a final ``finish_reason: "stop"`` chunk when the upstream sent none, so the relayed
+    chunks can't tell; the wrapper records what the upstream itself sent. A wrapper without that
+    record can't tell either, and a drop that can't be seen is never reported."""
+    if not hasattr(resp, "received_finish_reason"):
+        return True
+    return bool(resp.received_finish_reason or getattr(resp, "intermittent_finish_reason", None))
+
+
+def _has_finish_reason(chunk: dict[str, Any]) -> bool:
+    return any(c.get("finish_reason") for c in chunk.get("choices") or [] if isinstance(c, dict))
+
+
+def _dispatch_options(upstream: Upstream) -> dict[str, Any]:
+    """Dispatch-layer options per upstream: a local engine's failed request is not retried (see
+    ``Upstream.local_engine``)."""
+    return {"max_retries": 0} if upstream.local_engine else {}
+
+
 class UpstreamHttpError(RuntimeError):
     """An upstream HTTP error from a direct (non-dispatch-layer) call. Carries ``status_code`` +
     ``message`` in the same duck-typed shape the endpoint error mapping already reads, so a direct
@@ -100,13 +165,18 @@ class Gateway:
     async def complete(
         self, upstream: Upstream, messages: list[dict[str, Any]], params: dict[str, Any]
     ) -> dict[str, Any]:
-        resp = await litellm.acompletion(
-            model=f"openai/{upstream.model}",
-            api_base=upstream.api_base,
-            api_key=upstream.api_key,
-            messages=messages,
-            **_chat_params(upstream, params),
-        )
+        try:
+            resp = await litellm.acompletion(
+                model=f"openai/{upstream.model}",
+                api_base=upstream.api_base,
+                api_key=upstream.api_key,
+                messages=messages,
+                **_chat_params(upstream, params) | _dispatch_options(upstream),
+            )
+        except Exception as exc:
+            if is_dropped_connection(exc):
+                raise _dropped(params, mid_stream=False) from exc
+            raise
         result = _to_dict(resp)
         # MLX-chat normalization: mlx_lm.server passes a model's own text formats through as
         # content — a harmony reply (gpt-oss reasoning, answer and tool calls) or Llama's text
@@ -127,29 +197,53 @@ class Gateway:
         # unknown upstream model) could only surface as a torn stream with the real cause
         # lost. Raising from this await lets the endpoint map the error to the same
         # structured JSON as the non-stream path.
-        resp = await litellm.acompletion(
-            model=f"openai/{upstream.model}",
-            api_base=upstream.api_base,
-            api_key=upstream.api_key,
-            messages=messages,
-            stream=True,
-            **_chat_params(upstream, params),
-        )
+        try:
+            resp = await litellm.acompletion(
+                model=f"openai/{upstream.model}",
+                api_base=upstream.api_base,
+                api_key=upstream.api_key,
+                messages=messages,
+                stream=True,
+                **_chat_params(upstream, params) | _dispatch_options(upstream),
+            )
+        except Exception as exc:
+            if is_dropped_connection(exc):
+                raise _dropped(params, mid_stream=False) from exc
+            raise
         return self._sse_lines(resp, upstream, params)
 
     async def _sse_lines(
         self, resp: Any, upstream: Upstream, params: dict[str, Any]
     ) -> AsyncIterator[str]:
-        if upstream.needs_tool_parse:
-            # Rewrite a harmony reply or an MLX text tool call into OpenAI chunks; a normal
-            # answer still streams (the rewriters hold only what may still be one of those).
-            names = tool_parse.offered_tool_names(params)
-            async for chunk in tool_parse.normalize_mlx_stream(resp, names, _to_dict):
+        # A local engine's stream that ends without the engine's own finish_reason was cut off
+        # (see ``Upstream.local_engine``). The dispatch layer's closing chunk then carries a
+        # made-up "stop", so it is checked before it is relayed: a caller must never read a
+        # cut-off reply as a finished one.
+        def cut_off(chunk: dict[str, Any]) -> bool:
+            return (
+                upstream.local_engine and _has_finish_reason(chunk) and not _stream_finished(resp)
+            )
+
+        try:
+            if upstream.needs_tool_parse:
+                # Rewrite a harmony reply or an MLX text tool call into OpenAI chunks; a normal
+                # answer still streams (the rewriters hold only what may still be one of those).
+                names = tool_parse.offered_tool_names(params)
+                chunks = tool_parse.normalize_mlx_stream(resp, names, _to_dict)
+            else:
+                chunks = (_to_dict(chunk) async for chunk in resp)
+            async for chunk in chunks:
+                if cut_off(chunk):
+                    raise _dropped(params, mid_stream=True)
                 yield f"data: {json.dumps(chunk)}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-        async for chunk in resp:
-            yield f"data: {json.dumps(_to_dict(chunk))}\n\n"
+        except EngineDroppedRequest:
+            raise
+        except Exception as exc:
+            if is_dropped_connection(exc):
+                raise _dropped(params, mid_stream=True) from exc
+            raise
+        if upstream.local_engine and not _stream_finished(resp):
+            raise _dropped(params, mid_stream=True)
         yield "data: [DONE]\n\n"
 
     # ── Embeddings + audio (same engine-agnostic dispatch as chat) ──────────
@@ -165,7 +259,7 @@ class Gateway:
             api_base=upstream.api_base,
             api_key=upstream.api_key,
             input=inputs,
-            **params,
+            **params | _dispatch_options(upstream),
         )
         return _to_dict(resp)
 
@@ -179,7 +273,7 @@ class Gateway:
             api_base=upstream.api_base,
             api_key=upstream.api_key,
             file=file,
-            **params,
+            **params | _dispatch_options(upstream),
         )
         return _to_dict(resp)
 
