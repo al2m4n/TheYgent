@@ -4,15 +4,16 @@
 
 Key facts:
 
-- The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
+- The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, crawler, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
 - Models are addressed by a logical ID (for example `triage-fast`); the engine underneath — `mlx`, `vllm`, `llamacpp`, or `openai-compatible` — can be swapped without touching the graph. One graph can mix local and hosted models side by side.
 - TheYgent is never an involuntary middleman between users and their models: prompts, payloads, and model weights are not proxied through the vendor's servers. Hosted APIs can be registered at any time; when data crosses the wire, it does so because the user sent it there.
 - Local inference is built in: the inference plane installs models from an in-app Hugging Face catalog (each variant shows whether it fits the machine's RAM) and starts, warms, and unloads its own engines — llama.cpp on any machine, MLX on Apple Silicon, vLLM (experimental) on NVIDIA GPUs. There is no separate model server to install or run. Modalities: chat, vision, embeddings, speech-to-text, text-to-speech, and image generation.
-- Privacy: no telemetry, usage analytics, crash reporting, update checks, or license activation, and no vendor account. Once installed, TheYgent runs fully offline or air-gapped. Its only automatic outbound request is a public model price list that the inference plane's model client library (LiteLLM) fetches at startup; it carries no user data and falls back to a bundled copy when offline. Hugging Face and MCP registries are contacted only when the user browses them.
+- Privacy: no telemetry, usage analytics, crash reporting, update checks, or license activation, and no vendor account. Once installed, TheYgent runs fully offline or air-gapped. Its only automatic outbound request is a public model price list that the inference plane's model client library (LiteLLM) fetches at startup; it carries no user data and falls back to a bundled copy when offline. Hugging Face, MCP registries, and the Apify Store are contacted only when the user browses them.
 - Human-in-the-loop: a human approval node pauses a run until someone approves or rejects; approvals run on the durable runtime, so a pending approval survives restarts.
 - Tooling: built-in tools, HTTP tools, and any MCP (Model Context Protocol) server over stdio or HTTP, plus autonomous LLM tool-calling wired visually on the canvas.
 - Coding agents: TheYgent ships an MCP server, so Claude Code, Codex, OpenCode, or any MCP client can offload prompts and local files to the user's own models, run and build TheYgent agents, and index and search docs and code. Model calls go from the MCP server straight to the user's inference plane; agent runs and searches use a personal API key against the user's control plane.
 - Retrieval: crawl a site or upload documents, embed them locally into pgvector, and wire RAG retrieval into any graph.
+- Crawler nodes (new in 1.3): browse the Apify Store from the editor and install a hosted scraper or crawler as a node, run as a step or as a tool a model calls. The builder chooses which fields the model fills; everything else is fixed on the node. Every run carries a charge cap held under a platform ceiling, and the model reads a trimmed result. Apify runs the actors on its own servers and bills the user's Apify account.
 - Automation: deploy a saved agent behind a token-authenticated endpoint, an HMAC-signed webhook (`X-TheYgent-Signature`), or a cron schedule.
 - Production discipline: durable runs checkpoint every step and resume after a crash (including loops, subgraphs, and human approvals); every run yields a span waterfall with per-node inputs, outputs, timing, and token usage; opt-in OTLP export to any OpenTelemetry collector; agents are immutable, content-addressed versions; runs, sessions, and traces persist in the user's own Postgres.
 - AI Gateway (new in 1.0): an optional service the user runs between Claude Code and the Anthropic API to cut what Claude Code costs. Observer mode records every exchange (its cost, its kind of request: main conversation, subagent, compaction or side request, and what routing would have saved) without changing it. Router mode moves subagents and cold-cache turns to a cheaper Claude model, and a share the user chooses to models on their own inference plane, each measured on the user's own traffic first. It runs on the user's machine or cluster, personal (loopback, no keys) or team (per-developer gateway keys); the control plane receives metadata only, never prompt or response text.
@@ -26,8 +27,10 @@ Key facts:
 - [Your First Agent](https://docs.theygent.ai/latest/getting-started/first-agent/): build and run an agent on the canvas
 - [Concepts: Agents & Graphs](https://docs.theygent.ai/latest/concepts/agents-and-graphs/): how a graph becomes an agent
 - [Concepts: Models & Engines](https://docs.theygent.ai/latest/concepts/models-and-engines/): logical model IDs and the engine bindings (mlx, vllm, llamacpp, openai-compatible)
-- [Node Reference](https://docs.theygent.ai/latest/building/nodes/): every node type — LLM, tools, MCP, RAG, router, transform, guardrail, rate limit and quota, human approval, subgraph/loop/map, audio and images
+- [Node Reference](https://docs.theygent.ai/latest/building/nodes/): every node type — LLM, tools, MCP, RAG, crawler, router, transform, guardrail, rate limit and quota, human approval, subgraph/loop/map, audio and images
 - [MCP](https://docs.theygent.ai/latest/mcp/): using Model Context Protocol tools and servers
+- [The Crawler Node](https://docs.theygent.ai/latest/building/nodes/crawler/): hosted Apify actors as steps or model tools — the Crawlers browser, exposed fields, fixed input, spend caps, result budgets, and long crawls on durable runs
+- [Apify Through the MCP Hub](https://docs.theygent.ai/latest/mcp/apify/): Apify's MCP server installed from the hub, choosing actors with `?tools=`, and when a crawler node fits better
 - [RAG](https://docs.theygent.ai/latest/rag/): retrieval sources, crawling, and document upload
 - [Durable Runs](https://docs.theygent.ai/latest/running/durable/): crash-resumable execution
 - [Triggers & Webhooks](https://docs.theygent.ai/latest/running/triggers/): token endpoints, HMAC-signed webhooks, cron schedules
@@ -55,6 +58,7 @@ Each walkthrough has a page with the video, its chapters, and a written summary.
 - [Private & offline AI agents](https://theygent.ai/private-ai/): local models only — where data lives, every network touchpoint and when it happens, and running offline or air-gapped
 - [Local AI agents on Apple Silicon](https://theygent.ai/apple-silicon/): MLX for chat, vision, and text-to-speech; llama.cpp and whisper.cpp for embeddings and speech-to-text; setting up on a Mac
 - [TheYgent's MCP server for Claude Code, Codex & OpenCode](https://theygent.ai/coding-agents/): what a coding agent can hand off — local-model calls that read files itself, running and building agents, indexing and searching docs and code — setup, and what goes where
+- [Crawler nodes: web search and scraping for local AI agents](https://theygent.ai/crawlers/): Apify Store actors as agent steps or model tools — browsing with 30-day success rates, choosing the fields a model fills, spend caps, result budgets, measured prompt sizes on a local model, and the MCP-server alternative
 - [Reduce Claude Code cost with the AI Gateway](https://theygent.ai/ai-gateway/): what Claude Code costs per session, subagent, and developer; routing subagents and cold-cache turns to a cheaper Claude model; serving a measured share with local models; personal and team gateways, and what leaves them
 
 ## Comparisons
@@ -69,7 +73,7 @@ Checked against each project's own source and documentation on October 12, 2026,
 
 ## Templates
 
-Twelve ready-to-run agents ship with TheYgent (install from Settings → Samples). Each page explains the pattern, the models it needs, and its full graph.
+Thirteen ready-to-run agents ship with TheYgent (install from Settings → Samples). Each page explains the pattern, the models it needs, and its full graph.
 
 - [All agent templates](https://theygent.ai/templates/): the gallery
 - [Hybrid reasoner](https://theygent.ai/templates/hybrid-reasoner/): Two models in one run: a local triage model classifies every request and a router sends easy ones to your local model and hard ones (coding, analysis, long-form) to an API model.
@@ -82,11 +86,13 @@ Twelve ready-to-run agents ship with TheYgent (install from Settings → Samples
 - [Voice desk](https://theygent.ai/templates/voice-desk/): Voice in, voice out: speech-to-text transcribes the audio, a model answers in spoken prose, text-to-speech reads it back.
 - [Art department](https://theygent.ai/templates/art-department/): Local image generation in a pipeline: a local model turns your rough brief into one vivid, concrete image prompt, and a local diffusion model paints it.
 - [Handbook Q&A](https://theygent.ai/templates/handbook-qa/): Retrieval as a model capability, fully local: the installer creates a retrieval source in your own Postgres (pgvector), seeds it with a fictional TheYgent company handbook, and wires it to a local model as a search tool the model decides to call — answers cite the handbook section they came from.
+- [Web researcher](https://theygent.ai/templates/web-researcher/): A local model with a crawler node wired in as its web-search tool: it searches when a question needs current facts, reads the top three pages as trimmed Markdown, and answers with the URLs it used — the result count and a $0.05 charge cap per search are fixed on the node. Needs an Apify API token.
 - [Editorial loop](https://theygent.ai/templates/editorial-loop/): A self-correcting agent: a bounded LOOP re-runs a writer-critic child agent — draft, harsh self-critique, rewrite — until the child approves its own draft or three rounds are up.
 - [Batch briefing](https://theygent.ai/templates/batch-briefing/): Durable parallel fan-out with a cost ceiling: a MAP node fans one child agent out per topic (two at a time), collecting a brief for each — a crashed worker resumes only the unfinished branches.
 
 ## Blog
 
+- [Letting a Local Model Search the Web Without Letting It Set the Bill](https://theygent.ai/blog/local-models-web-search-crawler-nodes/): crawler nodes measured — every actor field versus the fields a builder exposes (about 13,500 versus 780 prompt tokens on a local model, same accuracy), a model choosing 50 places and a paid add-on, the MLX list-argument crash, result budgets, and how much of the Apify Store converts
 - [Give Your Coding Agent Your Local Models: TheYgent as an MCP Server](https://theygent.ai/blog/coding-agents-local-models-mcp/): the MCP server for Claude Code, Codex, and OpenCode — files a local model reads so the coding agent doesn't, building and running agents through tools, indexing a codebase, measured end to end, and what goes where
 - [Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory](https://theygent.ai/blog/run-moe-models-bigger-than-memory-on-a-mac/): expert streaming on MLX — a mixture-of-experts model’s experts read from the SSD per token with a GPU cache, identical answers, measured speed and memory, and the limits
 - [Building a Local-First Agent Platform Where the Vendor Is Never in the Middle](https://theygent.ai/blog/local-first-agent-platform-architecture/): the architecture — two planes and one seam, logical model IDs, the engine manager, content-addressed agents, durable runs, and checkable privacy

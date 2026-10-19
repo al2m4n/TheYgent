@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crawler Nodes: Web Search and Scraping for Local AI Agents | TheYgent</title>
+    <meta name="description" content="Give your agents the web on your terms: browse the Apify Store, install a hosted scraper as a node, and choose which fields the model fills, what a call may cost, and how much it reads." />
+    <link rel="canonical" href="https://theygent.ai/crawlers/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://theygent.ai/crawlers/" />
+    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:title" content="Give Your Agents the Web, on Your Terms" />
+    <meta property="og:description" content="Give your agents the web on your terms: browse the Apify Store, install a hosted scraper as a node, and choose which fields the model fills, what a call may cost, and how much it reads." />
+    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Give Your Agents the Web, on Your Terms" />
+    <meta name="twitter:description" content="Give your agents the web on your terms: browse the Apify Store, install a hosted scraper as a node, and choose which fields the model fills, what a call may cost, and how much it reads." />
+    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <!-- Structured data. FAQPage answers stay verbatim-identical to the visible FAQ below
+         (.github/scripts/check_web_pages.py enforces it). -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebPage",
+            "@id": "https://theygent.ai/crawlers/#webpage",
+            "url": "https://theygent.ai/crawlers/",
+            "name": "Crawler Nodes: Web Search and Scraping for Local AI Agents | TheYgent",
+            "description": "Give your agents the web on your terms: browse the Apify Store, install a hosted scraper as a node, and choose which fields the model fills, what a call may cost, and how much it reads.",
+            "inLanguage": "en",
+            "dateModified": "2026-10-19",
+            "isPartOf": {
+              "@id": "https://theygent.ai/#website"
+            },
+            "about": {
+              "@id": "https://theygent.ai/#software"
+            },
+            "breadcrumb": {
+              "@id": "https://theygent.ai/crawlers/#breadcrumb"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://theygent.ai/crawlers/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "TheYgent",
+                "item": "https://theygent.ai/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Crawler Nodes",
+                "item": "https://theygent.ai/crawlers/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://theygent.ai/crawlers/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "What is a crawler node in TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "A node that runs a hosted scraper or crawler — an actor from the Apify Store — and returns what it collects: search results with the pages as Markdown, places from a map, a site's pages. Wire it into a model's tools and the model calls it when a question needs fresh facts; wire it inline and it runs as a fixed step. You pick the actor in the Crawlers browser, and TheYgent turns its input schema into the node."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Which crawlers can I use?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Actors from the Apify Store. The Crawlers browser searches the store and shows each actor's pricing, its users, and the share of its public runs that succeeded over the last 30 days. Of the store's 100 most popular actors, 97 converted into a usable node with no configuration; the other three need a login cookie, which belongs in a secret."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How do I stop a model from running up a bill?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The model fills only the fields you expose, usually one or two; result counts, paid add-ons, and proxy settings stay fixed on the node, and any other argument the model invents is dropped. Every run also carries a charge cap: the node's own, $0.25 by default, held under a platform ceiling in Settings → Crawlers, $1 by default, that no agent can raise."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Does a crawler node work with small local models?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, and it is built for them. Offered as crawler nodes, three actors took about 780 prompt tokens per call on Qwen3.6-35B-A3B; offered with every field, as an MCP server presents them, about 13,500 — with the same accuracy. List fields are offered as one value per call by default, which local models write more reliably than lists, and the model reads a trimmed result instead of a whole crawl."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need an Apify account?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Apify runs the actors on its own servers and bills the account behind the API token you store in TheYgent, which keeps it encrypted and sends it only to Apify. Per Apify's pricing page (checked October 19, 2026), its free plan includes $5 of usage a month and needs no credit card. Browsing the store needs no account."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Should I use a crawler node or Apify's MCP server?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Both work. Apify's MCP server, installed from TheYgent's MCP hub, hands a model every actor field and can let it pick actors on its own — a good fit for a capable model exploring the store. A crawler node fits when you know which actor the agent needs: you fix what each call may do and cost, and the prompt stays small."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="TheYgent home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="page-hero" aria-labelledby="page-h">
+        <div class="wrap">
+          <nav class="crumbs mono" aria-label="Breadcrumb">
+            <ol>
+              <li><a href="/">TheYgent</a></li>
+              <li><span aria-current="page">Crawler Nodes</span></li>
+            </ol>
+          </nav>
+          <p class="eyebrow mono"><i class="dia"></i>Crawler Nodes · Apify Store · New in 1.3</p>
+          <h1 id="page-h">Give Your Agents the Web, <span class="ramp-text">on Your Terms.</span></h1>
+          <p class="lede">
+            TheYgent 1.3 adds crawler nodes. Browse the Apify Store, install a hosted scraper or crawler as a node,
+            and wire it into a model as a tool — or run it as a fixed step. You choose which fields the model fills;
+            everything else, including what a call may cost and how much the model reads back, is fixed on the node.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="#try">Try the Web Researcher&nbsp;↓</a>
+            <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/building/nodes/crawler/" rel="noopener">Read the Docs&nbsp;→</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="what-h">
+        <div class="wrap prose">
+          <h2 id="what-h">One Node, Thousands of Crawlers</h2>
+          <p>
+            A crawler node runs an <strong>actor</strong> from the Apify Store: web search that returns the top pages
+            as Markdown, places and reviews from a map, a whole site&rsquo;s pages, product listings, job posts.
+            TheYgent reads the actor&rsquo;s input schema and turns it into the node — no code, no request templates.
+          </p>
+          <p>
+            It wires two ways, like every tool in TheYgent. Drag its <code>use</code> handle into a model&rsquo;s
+            <code>tools</code> port and the model calls it when a question needs fresh facts. Wire it inline and it runs
+            as a fixed step, its results flowing to the next node. Failures follow the usual tool contract: a clear
+            message on the node&rsquo;s <code>err</code> port, and the run carries on.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="browse-h">
+        <div class="wrap prose">
+          <h2 id="browse-h">Browse the Store, See Which Actors Work</h2>
+          <p>
+            The Crawlers browser searches the store from inside the editor. Each card shows the pricing model and
+            headline price, how many people ran the actor in the last 30 days, and the share of its public runs that
+            <strong>succeeded</strong> over those 30 days. That last number matters: one popular web-search actor had
+            timed out on 36 of its 47 runs in a month. Open an actor and its input fields are listed, with the ones a
+            model can usefully fill already ticked.
+          </p>
+          <p>
+            Of the store&rsquo;s 100 most popular actors, <strong>97 converted into a usable node with no
+            configuration</strong>; the other three need a login cookie, which belongs in a secret. Store searches go
+            from your control plane to Apify&rsquo;s public API and are cached for a few minutes. Your browser never
+            calls Apify, and browsing needs no account.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="fields-h">
+        <div class="wrap">
+          <h2 id="fields-h" class="prose">You Choose What the Model Fills</h2>
+          <p class="prose section-lede">
+            An actor&rsquo;s input is written for a form: dozens of fields, proxies, result counts, paid add-ons. A
+            crawler node offers the model only the fields you tick — usually one or two — and fixes the rest.
+          </p>
+          <div class="cmp-wrap cut-card">
+            <div class="cmp-scroll" tabindex="0" role="region" aria-labelledby="fields-h">
+              <table class="cmp-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Three actors as tools, measured</th>
+                    <th scope="col">Every field offered</th>
+                    <th scope="col">As crawler nodes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <th scope="row">Prompt tokens per call</th>
+                    <td>about 13,500</td>
+                    <td>about 780</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Right tool, fact in the answer</th>
+                    <td>6 of 6</td>
+                    <td>6 of 6</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Places per map search</th>
+                    <td>50, chosen by the model</td>
+                    <td>5, fixed on the node</td>
+                  </tr>
+                  <tr>
+                    <th scope="row">Paid reviews add-on</th>
+                    <td>switched on by the model</td>
+                    <td>off, fixed on the node</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <p class="prose note">
+            Qwen3.6-35B-A3B (4-bit, MLX) on a 36&nbsp;GB Apple Silicon Mac, six questions, October 19, 2026. Actor runs
+            went to a local stand-in for Apify&rsquo;s run API with invented facts, so a correct answer proves the model
+            read the tool result.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="spend-h">
+        <div class="wrap prose">
+          <h2 id="spend-h">Spend Caps and Result Budgets</h2>
+          <p>
+            <strong>Every run is capped.</strong> A crawler node sends its own charge cap with every run — $0.25 by
+            default — and TheYgent holds it under a platform ceiling in Settings → Crawlers ($1 by default), so no
+            agent can raise its own spend. Most popular actors bill per event, per page or per place, and the cap is
+            what bounds them.
+          </p>
+          <p>
+            <strong>The model reads what fits.</strong> A crawl easily returns megabytes: through a plain HTTP tool,
+            three documentation pages came back as a 50,175-character tool result. A crawler node keeps only the item
+            fields you choose and shares a character budget — 6,000 by default — equally across the results, so every
+            result is seen and a small model&rsquo;s context isn&rsquo;t flooded.
+          </p>
+          <p>
+            <strong>Small models get small arguments.</strong> Local models write list arguments unreliably — on MLX, a
+            malformed list can drop the request — so list fields such as search terms and URLs are offered as one value
+            per call by default, and TheYgent wraps it into the list the actor wants.
+          </p>
+          <p>
+            Interactive runs wait for the crawl in one request, up to five minutes. On a durable run, TheYgent starts
+            the crawl, checks on it, and reads the results when it finishes, so a long crawl survives a restart — and
+            the run waterfall shows what each crawl returned and what Apify charged for it.
+          </p>
+        </div>
+      </section>
+
+      <section class="band page-section" id="try" aria-labelledby="try-h">
+        <div class="wrap prose">
+          <h2 id="try-h">Try the Web Researcher</h2>
+          <p>
+            The <a href="/templates/web-researcher/">Web researcher</a> template is a local model with a
+            <code>web_search</code> crawler: it searches when a question needs current facts, reads the top three pages
+            as trimmed Markdown, and answers with the URLs it used, for at most $0.05 a search.
+          </p>
+          <ol>
+            <li>Open <strong>Settings → Samples</strong>, pick a local model with tool calling, and install <em>Web researcher</em>.</li>
+            <li>Open the agent, select <code>web_search</code>, and use <strong>Set token</strong> to store your Apify API token.</li>
+            <li>Ask it something that happened this week.</li>
+          </ol>
+          <p>
+            Or start from any agent: select a model node, press <strong>Add crawler</strong>, search the store, tick the
+            fields, and the configured node lands on the canvas already wired in.
+          </p>
+        </div>
+      </section>
+
+      <section class="page-section" aria-labelledby="mcp-h">
+        <div class="wrap prose">
+          <h2 id="mcp-h">Or Use Apify&rsquo;s MCP Server</h2>
+          <p>
+            Apify also publishes an MCP server, and TheYgent&rsquo;s MCP hub installs it in a few clicks. It hands the
+            model every field of every actor you list, and can let it search the store and pick actors itself. That
+            suits a capable hosted model exploring the store. For an agent that should do one job at a known cost on a
+            local model, use a crawler node.
+          </p>
+          <p class="honesty">
+            Apify is a hosted service. A crawler node sends its input — the fixed input and the model&rsquo;s arguments —
+            to Apify, which crawls from its own servers, and each run bills the Apify account behind your token. You
+            need an Apify account and API token to run actors; per Apify&rsquo;s pricing page (checked October 19, 2026),
+            its free plan includes $5 of usage a month and needs no credit card. Unlike the rest of TheYgent, a crawler
+            node needs the network. Apify is the only provider today.
+          </p>
+        </div>
+      </section>
+
+      <section class="section faq" id="faq" aria-labelledby="faq-h">
+        <div class="wrap">
+          <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+          <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+          <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>What is a crawler node in TheYgent?</h3></summary>
+              <p>
+                A node that runs a hosted scraper or crawler — an actor from the Apify Store — and returns what it collects: search results with the pages as Markdown, places from a map, a site&rsquo;s pages. Wire it into a model&rsquo;s tools and the model calls it when a question needs fresh facts; wire it inline and it runs as a fixed step. You pick the actor in the Crawlers browser, and TheYgent turns its input schema into the node.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Which crawlers can I use?</h3></summary>
+              <p>
+                Actors from the Apify Store. The Crawlers browser searches the store and shows each actor&rsquo;s pricing, its users, and the share of its public runs that succeeded over the last 30 days. Of the store&rsquo;s 100 most popular actors, 97 converted into a usable node with no configuration; the other three need a login cookie, which belongs in a secret.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>How do I stop a model from running up a bill?</h3></summary>
+              <p>
+                The model fills only the fields you expose, usually one or two; result counts, paid add-ons, and proxy settings stay fixed on the node, and any other argument the model invents is dropped. Every run also carries a charge cap: the node&rsquo;s own, $0.25 by default, held under a platform ceiling in Settings → Crawlers, $1 by default, that no agent can raise.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Does a crawler node work with small local models?</h3></summary>
+              <p>
+                Yes, and it is built for them. Offered as crawler nodes, three actors took about 780 prompt tokens per call on Qwen3.6-35B-A3B; offered with every field, as an MCP server presents them, about 13,500 — with the same accuracy. List fields are offered as one value per call by default, which local models write more reliably than lists, and the model reads a trimmed result instead of a whole crawl.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Do I need an Apify account?</h3></summary>
+              <p>
+                Yes. Apify runs the actors on its own servers and bills the account behind the API token you store in TheYgent, which keeps it encrypted and sends it only to Apify. Per Apify&rsquo;s pricing page (checked October 19, 2026), its free plan includes $5 of usage a month and needs no credit card. Browsing the store needs no account.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Should I use a crawler node or Apify&rsquo;s MCP server?</h3></summary>
+              <p>
+                Both work. Apify&rsquo;s MCP server, installed from TheYgent&rsquo;s MCP hub, hands a model every actor field and can let it pick actors on its own — a good fit for a capable model exploring the store. A crawler node fits when you know which actor the agent needs: you fix what each call may do and cost, and the prompt stays small.
+              </p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="band page-section" aria-labelledby="next-h">
+        <div class="wrap">
+          <h2 id="next-h" class="prose">Keep Reading</h2>
+          <div class="card-grid">
+            <a class="cap cut-card" href="https://docs.theygent.ai/latest/building/nodes/crawler/" rel="noopener">
+              <span class="cap-kicker mono"><i class="dia dia-accent"></i>docs</span>
+              <h3>The Crawler Node</h3>
+              <p>Every field and limit, step and capability wiring, spend, long crawls, and the failure modes.</p>
+              <span class="cap-more mono">Open the docs →</span>
+            </a>
+            <a class="cap cut-card" href="https://docs.theygent.ai/latest/mcp/apify/" rel="noopener">
+              <span class="cap-kicker mono"><i class="dia dia-amber"></i>docs</span>
+              <h3>Apify Through the MCP Hub</h3>
+              <p>Install Apify&rsquo;s MCP server, pick actors with <code>?tools=</code>, and what every-field tools cost.</p>
+              <span class="cap-more mono">Open the docs →</span>
+            </a>
+            <a class="cap cut-card" href="/templates/web-researcher/">
+              <span class="cap-kicker mono"><i class="dia dia-green"></i>template</span>
+              <h3>Web Researcher</h3>
+              <p>A local model with a web-search crawler, a $0.05 cap per search, and a trimmed result.</p>
+              <span class="cap-more mono">See the template →</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="TheYgent home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/coding-agents/">MCP Server for Coding Agents</a>
+            <a href="/crawlers/">Crawler Nodes</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">TheYgent vs Dify</a>
+            <a href="/compare/n8n/">TheYgent vs n8n</a>
+            <a href="/compare/langflow/">TheYgent vs Langflow</a>
+            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
