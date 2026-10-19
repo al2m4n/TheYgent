@@ -43,7 +43,7 @@ from theygent_inference_plane.credentials import (
 )
 from theygent_inference_plane.downloader import Downloader, _sanitize
 from theygent_inference_plane.eviction import EvictionPolicy, ResourceProbe
-from theygent_inference_plane.gateway import Gateway, merge_params
+from theygent_inference_plane.gateway import EngineDroppedRequest, Gateway, merge_params
 from theygent_inference_plane.installs import InstallStore
 from theygent_inference_plane.launcher import (
     EngineLauncher,
@@ -229,11 +229,12 @@ async def _guarded_sse(lines: Any, model: str, close: Any = None, on_error: Any 
             if isinstance(status, int) and 400 <= status < 500
             else "server_error"
         )
+        code = exc.code if isinstance(exc, EngineDroppedRequest) else "upstream_error"
         frame = {
             "error": {
                 "message": f"the stream for {model!r} aborted upstream: {message}",
                 "type": kind,
-                "code": "upstream_error",
+                "code": code,
             }
         }
         yield f"data: {json.dumps(frame)}\n\n"
@@ -1067,7 +1068,7 @@ def create_app(
                     lines,
                     req.model,
                     close=stack.aclose,
-                    on_error=lambda exc: _note_engine_failure(exc, req.model),
+                    on_error=lambda exc: _stream_failure(exc, req.model),
                 ),
                 media_type="text/event-stream",
                 background=BackgroundTask(stack.aclose),
@@ -1097,7 +1098,10 @@ def create_app(
             # request (an unsupported param, a bad key) raises to the endpoint's error
             # mapping with its real message instead of tearing an already-started stream.
             lines = await gateway.stream(upstream, req.messages, params)
-            return StreamingResponse(_guarded_sse(lines, req.model), media_type="text/event-stream")
+            return StreamingResponse(
+                _guarded_sse(lines, req.model, on_error=lambda exc: _explain_drop(exc, req.model)),
+                media_type="text/event-stream",
+            )
         result = await _unless_client_disconnects(
             request, gateway.complete(upstream, req.messages, params)
         )
@@ -1167,6 +1171,43 @@ def create_app(
             f"{log}"
         )
 
+    def _engine_dropped_message(exc: EngineDroppedRequest, model: str) -> str:
+        where = "partway through its response" if exc.mid_stream else "without sending a response"
+        binding = registry.get(model)
+        if not isinstance(binding, ManagedBinding):
+            return (
+                f"the server behind {model!r} closed the connection {where}, so the request was "
+                "lost. That server's own log has the reason."
+            )
+        path = engine_logs.path_for(binding)
+        log = f" The engine log has the reason: {path}." if path is not None else ""
+        hint = ""
+        if binding.binding == "mlx" and exc.tools_offered:
+            # mlx-lm's Qwen3 tool parser (qwen3_coder) raises on a list or object argument
+            # that isn't JSON and its server drops the request; the engine keeps serving.
+            hint = (
+                " With tools on MLX, a known cause is mlx-lm's tool-call parser failing on an "
+                "argument the model wrote, such as plain text for a list or object parameter; "
+                "the engine keeps serving other requests. Offering that parameter as a single "
+                "string avoids it."
+            )
+        return (
+            f"the engine serving {model!r} closed the connection {where}, so the request was "
+            f"lost.{log}{hint}"
+        )
+
+    async def _explain_drop(exc: Exception, model: str) -> str | None:
+        """The message for a dropped request, or ``None`` for any other stream failure."""
+        if isinstance(exc, EngineDroppedRequest):
+            return _engine_dropped_message(exc, model)
+        return None
+
+    async def _stream_failure(exc: Exception, model: str) -> str | None:
+        """A managed stream's failure, explained: a dropped request, or an engine that failed."""
+        if isinstance(exc, EngineDroppedRequest):
+            return _engine_dropped_message(exc, model)
+        return await _note_engine_failure(exc, model)
+
     async def _note_engine_failure(exc: Exception, model: str) -> str | None:
         """When ``exc`` says the managed engine itself is unusable, retire it (the next request
         launches a replacement) and return the message to report; ``None`` otherwise."""
@@ -1200,6 +1241,13 @@ def create_app(
         if isinstance(exc, CredentialResolutionError):
             return _openai_error(
                 str(exc), status=502, type_="server_error", code="credential_error"
+            )
+        if isinstance(exc, EngineDroppedRequest):
+            return _openai_error(
+                _engine_dropped_message(exc, model),
+                status=502,
+                type_="server_error",
+                code=exc.code,
             )
         # Fall through to the provider/engine HTTP-error mapper (litellm) — no opaque 500.
         return _upstream_error(exc, model)

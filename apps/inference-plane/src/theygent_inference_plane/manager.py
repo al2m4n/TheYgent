@@ -65,6 +65,14 @@ class Upstream:
     # OpenAI field alone never reaches them. Set for managed chat engines; a reachable upstream
     # (often a hosted API that rejects unknown fields) gets the OpenAI field only.
     effort_in_template: bool = False
+    # A lifecycle-managed engine on this host. Two behaviours follow:
+    # - Its chat streams always end with a chunk carrying a ``finish_reason`` (mlx_lm.server,
+    #   mlx-vlm and llama-server all send one), so a stream that ends without one was cut off.
+    #   The dispatch layer reads a connection closed mid-stream as a clean end, chunked or not,
+    #   and adds a ``finish_reason: "stop"`` of its own, so the gateway checks.
+    # - A failed request is not retried by the dispatch layer: warm() already found the engine
+    #   healthy, so the failure repeats, and each retry would rerun the whole generation.
+    local_engine: bool = False
 
 
 @dataclass
@@ -414,4 +422,5 @@ class EngineManager:
             api_key="sk-noauth",
             needs_tool_parse=needs_tool_parse,
             effort_in_template=eng.binding.modality in ("chat", "vision"),
+            local_engine=True,
         )

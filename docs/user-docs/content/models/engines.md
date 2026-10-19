@@ -154,6 +154,8 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 
 **A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
 
+**A dropped request is named.** If an engine closes the connection before it finishes an answer, the call fails with `engine_dropped_request`, and the engine keeps serving other requests. This covers a reply cut off partway through a stream, which would otherwise read as a finished, shorter answer. The inference plane doesn't retry a request to a local engine; the caller's own retry policy decides. See [troubleshooting](../reference/troubleshooting.md#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream) for the known MLX tool-call cause.
+
 **Engine logs.** Each managed engine writes its own output — model loading, warnings, errors — to a log file under the inference plane's state directory (`~/.theygent/inference/logs/` by default), one file per model and modality, kept across restarts and rotated at 8 MB. Open it from the **Logs** button on the model's row, or with `GET /admin/models/{id}/logs`.
 
 ```mermaid
