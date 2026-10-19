@@ -12,6 +12,10 @@ real sockets closing. The last user message picks the behaviour:
 * ``DROP`` — close without finishing (no response / mid-stream, as above);
 * ``DROP_CHUNKED`` — a chunked HTTP/1.1 stream cut off before its last chunk, the shape of a
   framed engine (llama.cpp, uvicorn-based servers) dying mid-reply;
+* ``REPLAY + name`` — a stream recorded from a real hosted server (``HOSTED_STREAMS``), sent
+  whole with the chunked framing hosted APIs use; ``REPLAY_CUT + name`` sends it only up to its
+  first chunk with a ``finish_reason`` and then cuts the body, the shape of that server failing
+  mid-reply;
 * anything else — a normal reply, streamed close-delimited like mlx_lm.server.
 """
 
@@ -23,11 +27,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 import httpx
+from _hosted_streams import HOSTED_STREAMS
 from theygent_inference_plane.launcher import EngineHandle
 from theygent_ir import Capabilities, ManagedBinding
 
 DROP = "__drop__"
 DROP_CHUNKED = "__drop_chunked__"
+REPLAY = "__replay__:"
+REPLAY_CUT = "__replay_cut__:"
 REPLY = ["hello", " world"]
 
 
@@ -40,6 +47,17 @@ def _chunk(delta: dict[str, Any], finish: str | None = None) -> bytes:
         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
     }
     return f"data: {json.dumps(body)}\n\n".encode()
+
+
+def _first_finish(events: list[bytes]) -> int:
+    """The index of the first event carrying a ``finish_reason``."""
+    for i, event in enumerate(events):
+        if not event.startswith(b"data: {"):
+            continue
+        body = json.loads(event[len(b"data: ") :])
+        if any(c.get("finish_reason") for c in body.get("choices") or []):
+            return i
+    raise ValueError("the recorded stream has no finish_reason")
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -88,18 +106,31 @@ class _Handler(BaseHTTPRequestHandler):
                 },
             )
 
-    def _stream(self, prompt: str) -> None:
-        if prompt == DROP_CHUNKED:
-            self.protocol_version = "HTTP/1.1"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Transfer-Encoding", "chunked")
-            self.end_headers()
-            data = _chunk({"role": "assistant", "content": REPLY[0]})
+    def _chunked(self, events: list[bytes], *, complete: bool) -> None:
+        self.protocol_version = "HTTP/1.1"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Transfer-Encoding", "chunked")
+        self.end_headers()
+        for data in events:
             self.wfile.write(f"{len(data):x}\r\n".encode() + data + b"\r\n")
-            self.wfile.flush()
-            # No terminating zero-length chunk, and the connection closes: the engine died.
-            self.close_connection = True
+        if complete:
+            self.wfile.write(b"0\r\n\r\n")
+        # Otherwise there is no terminating zero-length chunk, and the connection closes: the
+        # server died.
+        self.wfile.flush()
+        self.close_connection = True
+
+    def _stream(self, prompt: str) -> None:
+        if prompt.startswith(REPLAY):
+            self._chunked(HOSTED_STREAMS[prompt[len(REPLAY) :]], complete=True)
+            return
+        if prompt.startswith(REPLAY_CUT):
+            events = HOSTED_STREAMS[prompt[len(REPLAY_CUT) :]]
+            self._chunked(events[: _first_finish(events)], complete=False)
+            return
+        if prompt == DROP_CHUNKED:
+            self._chunked([_chunk({"role": "assistant", "content": REPLY[0]})], complete=False)
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

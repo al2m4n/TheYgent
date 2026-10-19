@@ -57,6 +57,28 @@ The base URL is the **root the endpoint's `/chat/completions`, `/embeddings`, et
 
 Hosted models don't all take the same parameters — one may reject `temperature`, another may not support a particular sampling knob. TheYgent doesn't second-guess this: it relays the request as you built it, and if the provider rejects a parameter, **the provider's own error message and status come straight back to you**, before the answer starts streaming. If a call fails with an "unexpected parameter" style error, remove that parameter from the model's or node's params. A failure that happens partway through a stream ends the stream with a structured error rather than a torn connection.
 
+### A reply cut off mid-stream can read as finished
+
+If a remote server stops partway through a streamed reply, its stream just ends. The layer TheYgent dispatches through then closes the stream as though the reply had finished. Your agent gets a shorter answer with nothing to say it was cut off. Local models are always checked for this, because every engine TheYgent manages ends a finished reply with a **finish reason**. A remote server is checked only when you say it sends one too: a server that never does would have every reply fail.
+
+To turn the check on, click the model in **Registries** and tick **Report a reply cut off mid-stream** (shown for chat models), then save. Over the management API, it's `"requireFinishReason": true` on the registration:
+
+```bash
+curl -X PUT http://localhost:8081/admin/models/writer \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "binding": "openai-compatible",
+    "baseUrl": "https://api.your-provider.example/v1",
+    "model": "provider-model-id",
+    "credentialRef": "secret://OPENAI_API_KEY",
+    "requireFinishReason": true
+  }'
+```
+
+With it on, a streamed reply that stops before the server's finish reason ends with an [`engine_dropped_request`](../reference/troubleshooting.md#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream) error. What arrived before the cut is still relayed, so nothing reads as a finished answer. Streams that end normally are unchanged.
+
+Turn it on for a server you know sends a finish reason at the end of every streamed reply. OpenAI-compatible servers normally do, and **Anthropic's OpenAI-compatible API** was checked: plain replies, tool calls, and replies stopped by a token limit all end with one. If you're not sure about a server, leave it off. If every streamed reply from the model then fails with `engine_dropped_request` right after the full answer, the server doesn't send one, so turn it off again. A request the server drops before it starts replying is named either way.
+
 ### Remote models have no lifecycle
 
 There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its **State** stays effectively cold, and **Warm** / **Evict** are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (`llama-server`), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked **approx** because TheYgent didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (**approx**), not as unsupported.

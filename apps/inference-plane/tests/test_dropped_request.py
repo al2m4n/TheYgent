@@ -8,11 +8,16 @@ close-delimited body just ended, and the dispatch layer turned that into a finis
 (a made-up ``finish_reason: "stop"`` and ``[DONE]``) — as it does with any stream cut off, chunked
 or not. Both are now ``engine_dropped_request``, with a message that names the engine log and,
 on MLX with tools, the known cause.
+
+A reachable server's stream is checked the same way when its registration declares
+``requireFinishReason``, and checked against streams recorded from a real hosted server so the
+check raises no false alarm on what such a server sends.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -22,10 +27,13 @@ import pytest
 from _dropping_upstream import (
     DROP,
     DROP_CHUNKED,
+    REPLAY,
+    REPLAY_CUT,
     REPLY,
     DroppingUpstreamHandle,
     DroppingUpstreamLauncher,
 )
+from _hosted_streams import HOSTED_REQUESTS, HOSTED_STREAMS
 from _payloads import managed_payload, reachable_payload
 from fastapi.testclient import TestClient
 from theygent_inference_plane.app import create_app
@@ -180,26 +188,148 @@ def test_a_framed_stream_cut_off_is_named_too(client: TestClient) -> None:
 
 
 # ── a reachable server ───────────────────────────────────────────────────────
+# The dropping server stands in for a hosted API or a server started by hand; the plane never
+# launches it. Its streams are checked only when the registration declares
+# ``requireFinishReason``: a reachable server's stream shape is whatever sits behind the URL.
 
 
-def test_a_reachable_server_dropping_a_request_is_named(tmp_path: Path) -> None:
-    # The dropping server stands in for a hosted API; it is never launched by the plane.
-    engine = DroppingUpstreamLauncher()
-    app = create_app(launcher=engine, clock=ManualClock(), enable_reaper=False)
-    with TestClient(app) as client:
-        handle = DroppingUpstreamHandle()
-        try:
-            client.put(
-                "/admin/models/m",
-                json=reachable_payload(base_url=f"{handle.base_url}/v1"),
-            )
-            r = client.post("/v1/chat/completions", json=_chat(DROP))
-        finally:
-            asyncio.run(handle.terminate())
+@contextlib.contextmanager
+def _reachable(tmp_path: Path, **registration: object) -> Iterator[TestClient]:
+    handle = DroppingUpstreamHandle()
+    app = create_app(
+        launcher=DroppingUpstreamLauncher(),
+        clock=ManualClock(),
+        enable_reaper=False,
+        state_path=tmp_path / "registry.json",
+    )
+    try:
+        with TestClient(app) as test_client:
+            payload = reachable_payload(base_url=f"{handle.base_url}/v1") | registration
+            assert test_client.put("/admin/models/m", json=payload).status_code == 200
+            yield test_client
+    finally:
+        asyncio.run(handle.terminate())
+
+
+@pytest.fixture
+def checked(tmp_path: Path) -> Iterator[TestClient]:
+    """A reachable server registered with ``requireFinishReason``."""
+    with _reachable(tmp_path, requireFinishReason=True) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def unchecked(tmp_path: Path) -> Iterator[TestClient]:
+    """A reachable server registered without it, the default."""
+    with _reachable(tmp_path) as test_client:
+        yield test_client
+
+
+def _assert_cut_off(frames: list[Any]) -> None:
+    """The stream ended with the named error: no finish of any kind, made up or relayed."""
+    assert "[DONE]" not in frames
+    assert _finish_reasons(frames) == []
+    error = frames[-1]
+    assert isinstance(error, dict)
+    assert error["error"]["code"] == "engine_dropped_request"
+    assert error["error"]["type"] == "server_error"
+    message = error["error"]["message"]
+    assert "the server behind 'm' closed the connection partway through its response" in message
+    assert "engine log" not in message  # a reachable server's log isn't the plane's
+
+
+def _finish_reasons(frames: list[Any]) -> list[str]:
+    return [
+        c["finish_reason"]
+        for f in frames
+        if isinstance(f, dict)
+        for c in f.get("choices", [])
+        if c.get("finish_reason")
+    ]
+
+
+def _content(frames: list[Any]) -> str:
+    return "".join(
+        c.get("delta", {}).get("content") or ""
+        for f in frames
+        if isinstance(f, dict)
+        for c in f.get("choices", [])
+    )
+
+
+def _replay(prompt: str, name: str) -> dict[str, Any]:
+    """The recorded request's params (tools, max_tokens, stream_options), with ``prompt``."""
+    recorded = {k: v for k, v in HOSTED_REQUESTS[name].items() if k not in ("model", "messages")}
+    return _chat(prompt + name, **recorded)
+
+
+def test_a_reachable_server_dropping_a_request_is_named(unchecked: TestClient) -> None:
+    # A non-streaming drop is a transport error, named for every upstream without the opt-in.
+    r = unchecked.post("/v1/chat/completions", json=_chat(DROP))
+
     assert r.status_code == 502, r.text
     error = r.json()["error"]
     assert error["code"] == "engine_dropped_request"
     assert "the server behind 'm' closed the connection" in error["message"]
+
+
+def test_the_opt_in_is_stored_on_the_registration(checked: TestClient) -> None:
+    binding = checked.get("/admin/models/m").json()["binding"]
+    assert binding["requireFinishReason"] is True
+
+
+def test_a_reachable_stream_cut_off_is_named(checked: TestClient) -> None:
+    # A close-delimited body (mlx_lm.server started by hand) that ends before its finish.
+    r = checked.post("/v1/chat/completions", json=_chat(DROP, stream=True))
+
+    assert r.status_code == 200
+    _assert_cut_off(_frames(r.text))
+
+
+def test_a_framed_reachable_stream_cut_off_keeps_what_arrived(checked: TestClient) -> None:
+    # A chunked body cut before its last chunk, the framing hosted APIs use. What arrived is
+    # relayed; the end is the named error, not a finished, shorter answer.
+    r = checked.post(
+        "/v1/chat/completions",
+        json=_chat(DROP_CHUNKED, stream=True, stream_options={"include_usage": True}),
+    )
+
+    frames = _frames(r.text)
+    _assert_cut_off(frames)
+    assert _content(frames) == REPLY[0]
+
+
+@pytest.mark.parametrize("name", sorted(HOSTED_STREAMS))
+def test_a_hosted_stream_passes_the_check_unchanged(checked: TestClient, name: str) -> None:
+    # The guard against false alarms, on streams a real hosted server sent: each one, finished,
+    # reaches the caller with the server's own finish_reason and [DONE].
+    recorded = [f for f in _frames(b"".join(HOSTED_STREAMS[name]).decode()) if f != "[DONE]"]
+
+    r = checked.post("/v1/chat/completions", json=_replay(REPLAY, name))
+
+    frames = _frames(r.text)
+    assert frames[-1] == "[DONE]"
+    assert not any(isinstance(f, dict) and "error" in f for f in frames)
+    assert _finish_reasons(frames)[-1] == _finish_reasons(recorded)[-1]
+    assert _content(frames) == _content(recorded)
+
+
+@pytest.mark.parametrize("name", sorted(HOSTED_STREAMS))
+def test_a_hosted_stream_cut_before_its_finish_is_named(checked: TestClient, name: str) -> None:
+    r = checked.post("/v1/chat/completions", json=_replay(REPLAY_CUT, name))
+
+    _assert_cut_off(_frames(r.text))
+
+
+def test_without_the_opt_in_a_reachable_stream_is_not_checked(unchecked: TestClient) -> None:
+    # The default stays off: a reachable server that never sends a finish_reason must not have
+    # every stream fail. A cut-off stream then still reads as finished; the dispatch layer's
+    # made-up "stop" is all the caller gets.
+    r = unchecked.post("/v1/chat/completions", json=_chat(DROP, stream=True))
+
+    frames = _frames(r.text)
+    assert frames[-1] == "[DONE]"
+    assert _finish_reasons(frames) == ["stop"]
 
 
 # ── recognising a drop ───────────────────────────────────────────────────────

@@ -65,14 +65,17 @@ class Upstream:
     # OpenAI field alone never reaches them. Set for managed chat engines; a reachable upstream
     # (often a hosted API that rejects unknown fields) gets the OpenAI field only.
     effort_in_template: bool = False
-    # A lifecycle-managed engine on this host. Two behaviours follow:
-    # - Its chat streams always end with a chunk carrying a ``finish_reason`` (mlx_lm.server,
-    #   mlx-vlm and llama-server all send one), so a stream that ends without one was cut off.
-    #   The dispatch layer reads a connection closed mid-stream as a clean end, chunked or not,
-    #   and adds a ``finish_reason: "stop"`` of its own, so the gateway checks.
-    # - A failed request is not retried by the dispatch layer: warm() already found the engine
-    #   healthy, so the failure repeats, and each retry would rerun the whole generation.
+    # A lifecycle-managed engine on this host. A failed request is not retried by the dispatch
+    # layer: warm() already found the engine healthy, so the failure repeats, and each retry
+    # would rerun the whole generation.
     local_engine: bool = False
+    # The upstream ends every chat stream with a chunk carrying a ``finish_reason``, so a stream
+    # that ends without one was cut off. The dispatch layer reads a connection closed mid-stream
+    # as a clean end, chunked or not, and adds a ``finish_reason: "stop"`` of its own, so the
+    # gateway checks. Set for every managed engine (mlx_lm.server, mlx-vlm and llama-server all
+    # send one); a reachable upstream sets it only when its registration declares
+    # ``requireFinishReason``, since its stream shape is whatever server sits behind the URL.
+    require_finish_reason: bool = False
 
 
 @dataclass
@@ -423,4 +426,5 @@ class EngineManager:
             needs_tool_parse=needs_tool_parse,
             effort_in_template=eng.binding.modality in ("chat", "vision"),
             local_engine=True,
+            require_finish_reason=True,
         )

@@ -1,0 +1,33 @@
+{
+  "name": "anthropic-usage",
+  "description": "A plain reply with stream_options.include_usage: the usage rides the finish chunk.",
+  "server": "Anthropic's OpenAI-compatible API (https://api.anthropic.com/v1)",
+  "recorded": "2026-10-19",
+  "note": "Ids and timestamps anonymized; every other byte of each event as the server sent it.",
+  "request": {
+    "model": "claude-haiku-5-5",
+    "stream": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Reply with exactly the word: hi"
+      }
+    ],
+    "max_tokens": 20,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "contentType": "text/event-stream",
+    "transferEncoding": "chunked",
+    "httpVersion": "HTTP/1.1"
+  },
+  "events": [
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\"          }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\" }\n\n",
+    "data: {\"id\": \"chatcmpl-rec\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"created\": 0,\"model\":\"claude-haiku-5-5\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":4,\"prompt_tokens\":20,\"total_tokens\":24}       }\n\n",
+    "data: [DONE]\n\n"
+  ]
+}

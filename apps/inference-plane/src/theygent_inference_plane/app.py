@@ -1092,7 +1092,12 @@ def create_app(
             return _openai_error(
                 str(exc), status=502, type_="server_error", code="credential_error"
             )
-        upstream = Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
+        upstream = Upstream(
+            api_base=binding.base_url,
+            model=binding.model,
+            api_key=api_key,
+            require_finish_reason=binding.require_finish_reason,
+        )
         if req.stream:
             # Awaited BEFORE the SSE response is committed — a hosted API rejecting the
             # request (an unsupported param, a bad key) raises to the endpoint's error
@@ -1131,7 +1136,15 @@ def create_app(
                 yield binding, upstream
         else:
             api_key = resolve_credential(binding.credential_ref, credential_store) or "sk-noauth"
-            yield binding, Upstream(api_base=binding.base_url, model=binding.model, api_key=api_key)
+            yield (
+                binding,
+                Upstream(
+                    api_base=binding.base_url,
+                    model=binding.model,
+                    api_key=api_key,
+                    require_finish_reason=binding.require_finish_reason,
+                ),
+            )
 
     def _upstream_error(exc: Exception, model: str) -> JSONResponse | None:
         """Map a provider/engine HTTP error (raised by litellm inside the gateway) to a CLEAN
@@ -1177,7 +1190,7 @@ def create_app(
         if not isinstance(binding, ManagedBinding):
             return (
                 f"the server behind {model!r} closed the connection {where}, so the request was "
-                "lost. That server's own log has the reason."
+                "lost. The server's own log, or a hosted provider's status page, has the reason."
             )
         path = engine_logs.path_for(binding)
         log = f" The engine log has the reason: {path}." if path is not None else ""
