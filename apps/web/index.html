@@ -102,6 +102,7 @@
             "featureList": [
               "Visual canvas builder — compose agents from nodes and edges, no code",
               "Local inference engines: llama.cpp, MLX, vLLM",
+              "MLX expert streaming: run mixture-of-experts models bigger than memory, experts read from the SSD, with identical answers",
               "Register any OpenAI-compatible API, chosen per agent and per call",
               "MCP (Model Context Protocol) tools and servers over stdio or HTTP",
               "RAG retrieval sources: crawl or upload, embedded locally into pgvector",
@@ -207,6 +208,14 @@
                 "acceptedAnswer": {
                   "@type": "Answer",
                   "text": "No. TheYgent runs local models on its own engines — llama.cpp, MLX, and vLLM (experimental). Install a model from the in-app Hugging Face catalog, where every variant shows whether it fits your RAM, and the inference plane starts the engine on the first call, keeps it warm, and unloads it when idle. There is no separate model server to install or keep running."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Can I run a model bigger than my Mac's memory?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes, if it is a mixture-of-experts model in MLX format. TheYgent's MLX engine can keep the model's shared part in memory and read each layer's chosen experts from the SSD as tokens need them, holding recently used experts in a memory cache. The answers are identical to the fully loaded model's, only slower: in one measurement on a 36 GB Mac, Qwen3.6-35B-A3B (20 GB) ran at 53 tokens per second fully loaded, 34 with every expert cached, and 4 to 9 tokens per second in 1.8 to 5.7 GB of memory from a cold SSD. Streaming is off by default and turned on per model."
                 }
               },
               {
@@ -409,8 +418,8 @@
           <div class="hero-copy">
             <div class="hero-tags">
               <p class="eyebrow mono"><i class="dia"></i>Local-First · Fair-Code · You Own Every Hop</p>
-              <a class="announce mono" href="/crawlers/"
-                ><span class="announce-tag">New in 1.3</span>Crawler nodes&nbsp;→</a
+              <a class="announce mono" href="#moe-streaming"
+                ><span class="announce-tag">On a Mac</span>MoE models bigger than memory&nbsp;→</a
               >
             </div>
             <h1 id="hero-h">
@@ -421,8 +430,9 @@
               A no-code, local-first studio for building and running AI agents. Inference runs on your machine —
               <span class="tok">llama.cpp</span>, <span class="tok">MLX</span>, or <span class="tok">vLLM</span> — or any
               OpenAI-compatible API you register, chosen per agent and per call by a logical ID like
-              <span class="pill mono">triage-fast</span>. TheYgent never routes your prompts, payloads, or weights through
-              anyone else&rsquo;s servers.
+              <span class="pill mono">triage-fast</span>. On a Mac it even runs mixture-of-experts models bigger than
+              memory, streaming their experts from the SSD. TheYgent never routes your prompts, payloads, or weights
+              through anyone else&rsquo;s servers.
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="https://github.com/al2m4n/TheYgent" rel="noopener">
@@ -806,6 +816,96 @@
               Local + remote in one graph — <span class="pill mono">triage-fast</span> answers on-device,
               <span class="pill mono">reason-remote</span> escalates to an API you registered
             </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────────────────── MOE ON A MAC (expert streaming) ─────────────────────
+           A plain section after the engines band. The panel is the measured trade for one model —
+           memory against speed, with the same answers in every row — over a sketch of where the
+           experts live: routed this token, cached in memory, or still on the SSD. -->
+      <section class="section moe" id="moe-streaming" aria-labelledby="moe-h">
+        <div class="wrap moe-grid">
+          <div class="moe-copy reveal">
+            <p class="eyebrow mono"><i class="dia"></i>Expert Streaming · MLX · Apple Silicon</p>
+            <h2 id="moe-h">Run Models Bigger Than Your Mac&rsquo;s Memory. <span class="ramp-text">Same Answers.</span></h2>
+            <p class="section-lede">
+              Mixture-of-experts models compute like small models but need memory like big ones: each token uses a few of
+              a layer&rsquo;s many experts, yet every expert has to be loaded. TheYgent&rsquo;s MLX engine keeps the
+              model&rsquo;s shared part in memory and reads each layer&rsquo;s chosen experts from the SSD as tokens need
+              them, holding recently used ones in a memory cache.
+            </p>
+            <ul class="pointset moe-points">
+              <li>
+                <span class="pt-k mono"><i class="dia dia-green"></i>Token-for-Token Identical</span>
+                <span class="pt-v">Streaming changes where the experts live, not what the model computes. The answers match the fully loaded model&rsquo;s exactly; only the speed changes.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-accent"></i>You Choose the Memory</span>
+                <span class="pt-v">Size the expert cache per model, from about 2 GB for a 20 GB model up to every expert, and trade memory for speed.</span>
+              </li>
+              <li>
+                <span class="pt-k mono"><i class="dia dia-violet"></i>Found Before You Download</span>
+                <span class="pt-v">The catalog marks mixture-of-experts models and filters to them. Installing one that won&rsquo;t fit offers streaming, already ticked.</span>
+              </li>
+            </ul>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="/blog/run-moe-models-bigger-than-memory-on-a-mac/">How It Works, Measured&nbsp;→</a>
+              <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/models/engines/#moe-models-bigger-than-memory-expert-streaming" rel="noopener">Turn It On&nbsp;→</a>
+            </div>
+          </div>
+
+          <div class="moe-visual reveal">
+            <div class="panel moe-panel cut-card" role="img" aria-label="Qwen3.6-35B-A3B in 4-bit, a 20 GB model, on a 36 GB Mac: fully loaded it uses 19.7 GB at 53 tokens per second; streaming with every expert cached, 20 GB at 34; streaming with a 4 GB cache from a cold SSD, 5.7 GB at 9; with the smallest cache, 1.8 GB at 4. The answers are identical in every case.">
+              <div class="panel-bar">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span class="panel-file mono">qwen3.6-35b-a3b · 4-bit · 20 GB</span>
+                <span class="run-pill mono"><span class="run-dot"></span>Streaming</span>
+              </div>
+              <div class="moe-body mono" aria-hidden="true">
+                <div class="moe-experts">
+                  <div class="moe-layer"><span class="moe-l">layer 1</span><span class="moe-cells"><i class="c"></i><i></i><i class="a"></i><i></i><i class="c"></i><i></i><i></i><i class="a"></i><i class="c"></i><i></i><i></i><i class="c"></i><i></i><i class="a"></i><i></i><i></i></span></div>
+                  <div class="moe-layer"><span class="moe-l">layer 2</span><span class="moe-cells"><i></i><i class="a"></i><i class="c"></i><i></i><i></i><i class="c"></i><i class="a"></i><i></i><i></i><i class="c"></i><i></i><i></i><i class="a"></i><i class="c"></i><i></i><i></i></span></div>
+                  <div class="moe-layer"><span class="moe-l">layer 3</span><span class="moe-cells"><i class="c"></i><i></i><i></i><i class="a"></i><i class="c"></i><i></i><i class="c"></i><i></i><i class="a"></i><i></i><i></i><i class="c"></i><i></i><i></i><i class="a"></i><i></i></span></div>
+                  <div class="moe-layer"><span class="moe-l">layer 40</span><span class="moe-cells"><i></i><i class="c"></i><i class="a"></i><i></i><i></i><i class="c"></i><i></i><i class="a"></i><i class="c"></i><i></i><i class="a"></i><i></i><i></i><i class="c"></i><i></i><i></i></span></div>
+                  <div class="moe-legend">
+                    <span><i class="a"></i>routed this token</span>
+                    <span><i class="c"></i>cached in memory</span>
+                    <span><i></i>on the SSD</span>
+                  </div>
+                </div>
+                <div class="moe-head">
+                  <span>how it runs</span>
+                  <span>memory</span>
+                  <span>speed</span>
+                </div>
+                <div class="moe-row">
+                  <span class="moe-how">fully loaded</span>
+                  <span class="moe-bar"><b style="--w: 98%"></b><em>19.7 GB</em></span>
+                  <span class="moe-bar moe-speed"><b style="--w: 100%"></b><em>53 tok/s</em></span>
+                </div>
+                <div class="moe-row">
+                  <span class="moe-how">streaming<small>every expert cached</small></span>
+                  <span class="moe-bar"><b style="--w: 100%"></b><em>20 GB</em></span>
+                  <span class="moe-bar moe-speed"><b style="--w: 64%"></b><em>34 tok/s</em></span>
+                </div>
+                <div class="moe-row">
+                  <span class="moe-how">streaming<small>4 GB cache, cold SSD</small></span>
+                  <span class="moe-bar moe-low"><b style="--w: 29%"></b><em>5.7 GB</em></span>
+                  <span class="moe-bar moe-speed"><b style="--w: 17%"></b><em>9 tok/s</em></span>
+                </div>
+                <div class="moe-row">
+                  <span class="moe-how">streaming<small>smallest cache, cold SSD</small></span>
+                  <span class="moe-bar moe-low"><b style="--w: 9%"></b><em>1.8 GB</em></span>
+                  <span class="moe-bar moe-speed"><b style="--w: 8%"></b><em>4 tok/s</em></span>
+                </div>
+              </div>
+              <div class="panel-foot mono">
+                <span>36 GB Mac · MLX</span>
+                <span class="hash">same tokens in every row</span>
+                <span class="dur"><i class="dia dia-green"></i>Off by default · per model</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -1300,6 +1400,12 @@
                 in-app Hugging Face catalog, where every variant shows whether it fits your RAM, and the inference plane
                 starts the engine on the first call, keeps it warm, and unloads it when idle. There is no separate model
                 server to install or keep running.
+              </p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Can I run a model bigger than my Mac&rsquo;s memory?</h3></summary>
+              <p>
+                Yes, if it is a mixture-of-experts model in MLX format. TheYgent&rsquo;s <span class="tok">MLX</span> engine can keep the model&rsquo;s shared part in memory and read each layer&rsquo;s chosen experts from the SSD as tokens need them, holding recently used experts in a memory cache. The answers are identical to the fully loaded model&rsquo;s, only slower: in one measurement on a 36 GB Mac, Qwen3.6-35B-A3B (20 GB) ran at 53 tokens per second fully loaded, 34 with every expert cached, and 4 to 9 tokens per second in 1.8 to 5.7 GB of memory from a cold SSD. Streaming is off by default and turned on per model.
               </p>
             </details>
             <details class="faq-item">
