@@ -51,7 +51,7 @@ dependencies = [
     "fastmcp>=3.4.4",
     # GraphQL endpoint → MCP tools (mcp/generated.py): local introspection + query validation
     # for the generic introspect/run-query tool pair; the HTTP call itself goes through httpx.
-    "graphql-core>=3.2.11",
+    "graphql-core>=3.2.12",
     # OpenAPI documents are commonly authored as YAML — the generated-server preview fetches a
     # spec URL and must parse either form. Present transitively; declared now that we import it.
     "pyyaml>=6",
