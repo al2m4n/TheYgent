@@ -48,7 +48,7 @@ dependencies = [
     # Generated MCP servers (mcp/generated.py): builds an in-process MCP server from a
     # user-provided OpenAPI spec (FastMCP.from_openapi + the in-memory client transport — no
     # subprocess). Apache-2.0; pins mcp>=1.24,<2 so it tracks the official SDK we already wrap.
-    "fastmcp>=3.4.4",
+    "fastmcp>=3.4.10",
     # GraphQL endpoint → MCP tools (mcp/generated.py): local introspection + query validation
     # for the generic introspect/run-query tool pair; the HTTP call itself goes through httpx.
     "graphql-core>=3.2.11",
