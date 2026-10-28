@@ -16,7 +16,8 @@ make docs-build   # strict build — broken links/nav fail
 ## Publishing (automated — .github/workflows/docs.yml)
 
 - **PRs** touching `docs/user-docs/**` run a strict build check.
-- **Pushes to `main`** publish a rolling `dev` version.
+- **Pushes to `main`** re-deploy the published version tree with the current `root/` files
+  (no new version).
 - **GitHub releases** publish the tag as a new docs version, repoint the `latest`
   alias at it, and attach the built site tarball to the release.
 
@@ -40,7 +41,10 @@ citations never fragment across versions. During `mike deploy`, mike's plugin re
 `site_url` to `site_url` + the version name; `mkdocs.yml` therefore sets the bare domain as
 `site_url` and the plugin's `canonical_version: latest`. (Versions up to v1.0.1 were built
 with `/latest/` already in `site_url`, which produced `/latest/<version>/…` canonicals;
-`root/_redirects` sends those URLs to the pages they meant.)
+`root/_redirects` sends those URLs to the pages they meant, and every deploy rewrites those
+versions' canonicals, sitemaps and `llms-full.txt` to `/latest/` with
+`.github/scripts/docs_repair_canonicals.py`. A canonical that redirects is ignored by search
+engines, which otherwise pick an old version's copy over `/latest/`.)
 
 One-time setup for a fork/new deployment:
 
@@ -53,6 +57,10 @@ One-time setup for a fork/new deployment:
    default block returns 403 to GPTBot/ClaudeBot/etc. before robots.txt is ever read)
    and disable the managed robots.txt / Content Signals injection, which otherwise
    prepends contradictory `Disallow` groups over the deployed file.
+4. Turn off Email Address Obfuscation (Scrape Shield) for the zone. The docs and the
+   marketing site show example addresses (`you@example.com`); obfuscation turns each into a
+   link to `/cdn-cgi/l/email-protection`, which crawlers follow and get a 404 from, and
+   readers without JavaScript see `[email protected]` in place of the example.
 
 ## Writing rules
 

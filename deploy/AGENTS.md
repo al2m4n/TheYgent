@@ -36,7 +36,7 @@ The same process types run in every mode (inference plane :8081, control plane :
 | [`k8s/interface.yaml`](k8s/interface.yaml) | nginx serving the SPA; `VITE_*` URLs are baked in at image build |
 | [`k8s/ai-gateway.yaml`](k8s/ai-gateway.yaml) | A StatefulSet in team mode with an HPA (one volume per replica for its spool and last-known config); waits for its Secret |
 | [`otel/`](otel) | `make otel-up` ([`docker-compose.yml`](otel/docker-compose.yml)): the collector ([`otel-collector.yaml`](otel/otel-collector.yaml), :4318) → Tempo ([`tempo.yaml`](otel/tempo.yaml)) → Grafana (:3000; [`grafana/`](otel/grafana) provisions the Tempo datasource and a traces dashboard) |
-| [`tests/`](tests) | Contract guards: `test_dockerfiles.py`, `test_compose.py`, `test_k8s.py`; shared constants in `contract_utils.py`, fixtures in `conftest.py` |
+| [`tests/`](tests) | Contract guards: `test_dockerfiles.py`, `test_compose.py`, `test_k8s.py`; `test_docs_publish.py` (the docs deploy's canonical repair and its place in `docs.yml`); shared constants in `contract_utils.py`, fixtures in `conftest.py` |
 
 The images are built from each app's `Dockerfile` (`apps/control-plane`, `apps/inference-plane`,
 `apps/worker`, `apps/interface`, `apps/ai-gateway`), tagged `theygent/<name>:dev`.
