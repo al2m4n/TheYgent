@@ -2,7 +2,8 @@ name: docs
 
 # User-docs pipeline:
 #   - PRs touching the docs: strict build (broken links/nav fail the check).
-#   - Pushes to main: publish a rolling "dev" version.
+#   - Pushes to main: re-deploy the published version tree with the current domain-root
+#     files and canonical repair.
 #   - Releases: publish the tagged version, point "latest" at it, and attach the
 #     built site to the GitHub release.
 # Versions are managed by mike on the gh-pages branch; the whole version tree is
@@ -18,6 +19,7 @@ on:
     paths:
       - "docs/user-docs/**"
       - ".github/workflows/docs.yml"
+      - ".github/scripts/docs_repair_canonicals.py"
   release:
     types: [published]
 
@@ -106,6 +108,15 @@ jobs:
             [ "$f" = "redirect-index.html" ] && continue
             git show "origin/main:docs/user-docs/root/$f" > "_site/$f"
           done
+
+      # Versions up to v1.0.1 name /latest/<version>/<page> as their own URL in every canonical
+      # link, sitemap and llms-full.txt. Those paths only redirect (root/_redirects), and search
+      # engines ignore a canonical that redirects, so they picked old copies over /latest/.
+      # The script rewrites that prefix to /latest/ for each version _redirects names, here in
+      # the deploy tree only: gh-pages stays as mike published it. Run from origin/main like
+      # the root files above, so a release cut from an older tag still applies it.
+      - name: Point the early versions' canonical URLs at /latest/
+        run: git show "origin/main:.github/scripts/docs_repair_canonicals.py" | python3 - _site
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
