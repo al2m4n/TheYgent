@@ -1,26 +1,29 @@
-# TheYgent Docs — full text
+# Ertir Docs — full text
 
-> User documentation for TheYgent — a self-hosted, no-code, local-first platform for building and running AI agents on a visual canvas, with built-in local inference engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API.
+> User documentation for Ertir (formerly TheYgent) — a self-hosted, no-code, local-first platform for building and running AI agents on a visual canvas, with built-in local inference engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API.
 
-Every page of the user documentation, in navigation order. Browsable at https://docs.theygent.ai/latest
+Every page of the user documentation, in navigation order. Browsable at https://docs.ertir.dev/latest
 
 ---
 
-Source: https://docs.theygent.ai/latest/
+Source: https://docs.ertir.dev/latest/
 
-# TheYgent
+# Ertir
 
-TheYgent is a no-code, local-first platform for building and running AI agents. You compose agents visually on a canvas, chat with them or wire them to triggers, and run them against models on your own machine — or against any OpenAI-compatible API you choose to register.
+!!! note "Ertir is the new name of TheYgent"
+    Same project, same code, same license. Technical names such as the `THEYGENT_*` environment variables and the `~/.theygent` folder are unchanged, so existing installs keep working. See [the name change](name-change.md).
+
+Ertir (formerly TheYgent) is a no-code, local-first platform for building and running AI agents. You compose agents visually on a canvas, chat with them or wire them to triggers, and run them against models on your own machine — or against any OpenAI-compatible API you choose to register.
 
 ## Your models, your machines, your choice
 
-TheYgent's promise is honest and specific: **everything runs where you point it, and you own every hop.**
+Ertir's promise is honest and specific: **everything runs where you point it, and you own every hop.**
 
 - **Local by default.** Models download to your machine and run on local engines — llama.cpp anywhere, MLX on Apple Silicon, vLLM on CUDA GPUs. Weights, the model registry, and credentials live in local files under `~/.theygent/inference`; agents, runs, and conversations live in a Postgres database you control.
 - **Hosted APIs only when you add them.** Any OpenAI-compatible server or hosted API can be registered as a model, with its API key stored on your machine as a local credential that is never sent anywhere else.
 - **The choice is per agent and per call.** Every model gets a logical id (for example `triage-fast`), and agents reference that id — never an engine. You can point one node at a small local model and the next at a hosted one, or swap a model's backing engine later without touching a single agent.
 
-There is no vendor in the middle: TheYgent never proxies your prompts, payloads, or weights through anyone's servers. It has no telemetry or update checks, and once installed it runs fully offline — [Privacy and data flow](concepts/privacy.md) lists every connection it makes, and when.
+There is no vendor in the middle: Ertir never proxies your prompts, payloads, or weights through anyone's servers. It has no telemetry or update checks, and once installed it runs fully offline — [Privacy and data flow](concepts/privacy.md) lists every connection it makes, and when.
 
 ## What you can do
 
@@ -36,7 +39,7 @@ There is no vendor in the middle: TheYgent never proxies your prompts, payloads,
 
 ## Watch it run
 
-Screen recordings of the real product, if you would rather see it than read it first. Each one also has a page on the site with its chapters and a written summary: [theygent.ai/videos](https://theygent.ai/videos/).
+Screen recordings of the real product, if you would rather see it than read it first. Each one also has a page on the site with its chapters and a written summary: [ertir.dev/videos](https://ertir.dev/videos/).
 
 | Video | What it covers |
 |---|---|
@@ -44,11 +47,11 @@ Screen recordings of the real product, if you would rather see it than read it f
 | [Voice In, Voice Out](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54) | A voice agent: speech-to-text, a model, and text-to-speech on the canvas. Also on [Voice](chat/voice.md). |
 | [Run Local + Remote Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01) | One graph routing between a local model and a hosted API. Also on [Remote models](models/remote.md). |
 | [Give Your LLM a Memory: RAG with File Upload & Web Crawl](https://www.youtube.com/watch?v=jFc4on-kH_w) (9:34) | A retrieval source from an uploaded PDF and one from crawling a docs site, wired into an agent as tools. See [RAG sources](rag/index.md). |
-| [How to Deploy TheYgent to Kubernetes](https://www.youtube.com/watch?v=A0kMmTAr-L4) (6:41) | Build and load the images, apply the manifests, port-forward, and sign in. |
+| [How to Deploy Ertir to Kubernetes](https://www.youtube.com/watch?v=A0kMmTAr-L4) (6:41) | Build and load the images, apply the manifests, port-forward, and sign in. |
 
 ## How it fits together
 
-TheYgent runs as four local services, brought up together with `make up`:
+Ertir runs as four local services, brought up together with `make up`:
 
 ```mermaid
 graph LR
@@ -70,7 +73,7 @@ graph LR
 
 - The **AI gateway** sits between your team's Claude Code and its models to cut what it costs: it records what each exchange cost and what routing would save, then — when you choose — routes work to cheaper Claude models, and to models you run yourself in the shares you set. See [AI Gateway](ai-gateway/index.md).
 
-- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — TheYgent as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use TheYgent from coding agents](coding-agents/index.md).
+- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — Ertir as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use Ertir from coding agents](coding-agents/index.md).
 
 The [architecture page](concepts/index.md) explains the split and exactly where each kind of data lives.
 
@@ -78,25 +81,54 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 
 | If you want to… | Go to |
 |---|---|
-| Install TheYgent and get it running | [Getting started](getting-started/index.md) |
+| Install Ertir and get it running | [Getting started](getting-started/index.md) |
 | Install a model and have your first conversation | [First chat](getting-started/first-chat.md) |
 | Build, test, and publish your first agent | [First agent](getting-started/first-agent.md) |
 | Understand agents, graphs, runs, and versioning | [Concepts](concepts/index.md) |
 | Look up what every node does | [Node reference](building/nodes/index.md) |
-| Use TheYgent from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |
+| Use Ertir from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |
 
 ---
 
-Source: https://docs.theygent.ai/latest/getting-started/
+Source: https://docs.ertir.dev/latest/name-change/
+
+# The name change: TheYgent is now Ertir
+
+Ertir is the new name of TheYgent. It is the same project: the same code, the same maintainer and the same license ([Sustainable Use License](https://github.com/al2m4n/ertir/blob/main/LICENSE.md)). Version 2.0.0 is the first release under the new name.
+
+## What changed
+
+- **The name.** The app, these docs and the website say Ertir.
+- **The website and docs addresses.** The website is [ertir.dev](https://ertir.dev) and the docs are at [docs.ertir.dev](https://docs.ertir.dev). Links to `theygent.ai` and `docs.theygent.ai` redirect to the matching page on the new addresses.
+- **The GitHub repository.** It is [github.com/al2m4n/ertir](https://github.com/al2m4n/ertir). GitHub redirects the old `al2m4n/TheYgent` URLs, so existing clones, issues and pull requests keep working.
+
+## What stays the same
+
+- **Your installation and your data.** Agents, versions, runs, conversations, models, credentials and settings are untouched. There is nothing to migrate.
+- **Technical names.** They keep the old spelling, so scripts and configuration you already have keep working:
+
+| What | Name |
+|------|------|
+| Environment variables | `THEYGENT_*` (see [environment variables](reference/environment.md)) |
+| Data folder | `~/.theygent` |
+| Webhook signature header | `X-TheYgent-Signature` |
+| AI gateway key header | `X-TheYgent-Gateway-Key` |
+| Python packages and modules, npm packages, Docker and Kubernetes names | `theygent…` |
+
+If a later release renames any of these, its release notes say how to switch, and the old names keep working during the change.
+
+---
+
+Source: https://docs.ertir.dev/latest/getting-started/
 
 # Getting started
 
-TheYgent is a local-first platform for building and running AI agents: three small services run on your own machine, and everything — models, agents, runs, chat history — lives where you put it. This section takes you from a fresh clone to your first working agent in about ten minutes.
+Ertir is a local-first platform for building and running AI agents: three small services run on your own machine, and everything — models, agents, runs, chat history — lives where you put it. This section takes you from a fresh clone to your first working agent in about ten minutes.
 
 ## Watch the walkthrough
 
 <figure class="video">
-  <iframe src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I" title="Self-Hosted AI Agent Orchestration — a full TheYgent walkthrough" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <iframe src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I" title="Self-Hosted AI Agent Orchestration — a full Ertir walkthrough" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
   <figcaption>Self-Hosted AI Agent Orchestration (23:52) — cloning the repository, bringing the stack up, installing a model, and building, running, and tracing an agent. The pages below are the written version of the same path.</figcaption>
 </figure>
 
@@ -106,12 +138,12 @@ TheYgent is a local-first platform for building and running AI agents: three sma
 |---|---|
 | **Python 3.12** | Runs the two backend services. The repo pins the version, and `uv` manages it for you. |
 | **uv** on `PATH` | The Python package manager. Installs dependencies and the MLX engine servers. |
-| **pnpm** on `PATH` (with Node.js) | Runs the visual interface. The repo pins pnpm `11.8.0`; TheYgent is developed against Node 22. |
-| **PostgreSQL** | The control plane stores agents, runs, and sessions in Postgres. You supply a running server — TheYgent does not provision one. |
+| **pnpm** on `PATH` (with Node.js) | Runs the visual interface. The repo pins pnpm `11.8.0`; Ertir is developed against Node 22. |
+| **PostgreSQL** | The control plane stores agents, runs, and sessions in Postgres. You supply a running server — Ertir does not provision one. |
 | **Homebrew** (macOS) | `make engines` uses it to install llama.cpp, whisper.cpp, and ffmpeg. |
 
 !!! note "Bring your own Postgres"
-    Any way you already run Postgres works — a native install, a container, a managed instance. All TheYgent needs is a database it can reach at the `DATABASE_URL` connection string you set during [installation](installation.md).
+    Any way you already run Postgres works — a native install, a container, a managed instance. All Ertir needs is a database it can reach at the `DATABASE_URL` connection string you set during [installation](installation.md).
 
 ### Hardware and platform notes
 
@@ -148,17 +180,17 @@ Everything runs where *you* point it: model weights download to `~/.theygent/inf
 ## The ten-minute path
 
 1. **[Installation](installation.md)** — clone the repo, create `.env`, install the engines and dependencies.
-2. **[Running TheYgent](running.md)** — `make up`, then confirm everything is healthy with `make status` and `/readyz`.
+2. **[Running Ertir](running.md)** — `make up`, then confirm everything is healthy with `make status` and `/readyz`.
 3. **[Your first chat](first-chat.md)** — install a small model from the Registries page and talk to it in New Chat.
 4. **[Your first agent](first-agent.md)** — build input → llm → output on the canvas, test it right there, and publish it as a named agent.
 
 ---
 
-Source: https://docs.theygent.ai/latest/getting-started/installation/
+Source: https://docs.ertir.dev/latest/getting-started/installation/
 
 # Installation
 
-This page takes you from nothing to an installed TheYgent: clone the repository, create your configuration, and install the local model engines and dependencies. When you are done here, move on to [Running TheYgent](running.md) to start the services.
+This page takes you from nothing to an installed Ertir: clone the repository, create your configuration, and install the local model engines and dependencies. When you are done here, move on to [Running Ertir](running.md) to start the services.
 
 ## Before you start
 
@@ -172,13 +204,13 @@ pnpm --version
 ```
 
 !!! note "You supply Postgres"
-    TheYgent does not provision a database. Point it at any Postgres you already run — a native install, a container, or a managed instance. All it needs is a database it can reach at the `DATABASE_URL` you set below.
+    Ertir does not provision a database. Point it at any Postgres you already run — a native install, a container, or a managed instance. All it needs is a database it can reach at the `DATABASE_URL` you set below.
 
 ## 1. Clone the repository
 
 ```bash
-git clone https://github.com/al2m4n/TheYgent.git
-cd TheYgent
+git clone https://github.com/al2m4n/ertir.git
+cd Ertir
 ```
 
 Run every command below (and every `make` target) from this repository root.
@@ -254,7 +286,7 @@ make migrate   # apply the control-plane database schema
 
 ## Where things land
 
-After installation, TheYgent keeps your data in these places, all under your control:
+After installation, Ertir keeps your data in these places, all under your control:
 
 - **`~/.theygent/inference/`** — the local model registry, downloaded model weights (under `models/`), and local credentials for remote APIs.
 - **Your Postgres** (`DATABASE_URL`) — agents and their versions, runs, chat sessions, triggers, MCP registrations, connections, and observability traces.
@@ -263,13 +295,13 @@ After installation, TheYgent keeps your data in these places, all under your con
 
 ## Next
 
-Head to [Running TheYgent](running.md) to bring the services up and confirm they're healthy.
+Head to [Running Ertir](running.md) to bring the services up and confirm they're healthy.
 
 ---
 
-Source: https://docs.theygent.ai/latest/getting-started/running/
+Source: https://docs.ertir.dev/latest/getting-started/running/
 
-# Running TheYgent
+# Running Ertir
 
 With the code [installed](installation.md), a single command brings up all four services. This page covers starting them, checking they're healthy, stopping them, and the one optional process — the durable worker — you'll only need for certain agents.
 
@@ -376,11 +408,11 @@ Everything is up — now [install a model and have your first chat](first-chat.m
 
 ---
 
-Source: https://docs.theygent.ai/latest/getting-started/first-chat/
+Source: https://docs.ertir.dev/latest/getting-started/first-chat/
 
 # Your first chat
 
-The quickest way to see TheYgent working is to install a small model and talk to it. This takes a few minutes once the services are up.
+The quickest way to see Ertir working is to install a small model and talk to it. This takes a few minutes once the services are up.
 
 **Before you start:** the three services should be [running](running.md) (`make status` to confirm), and you should have at least one local engine [installed](installation.md) with `make engines`. No local engine? You can register a [remote model](../models/remote.md) instead and skip straight to step 3.
 
@@ -433,7 +465,7 @@ A few things worth knowing:
 
 ---
 
-Source: https://docs.theygent.ai/latest/getting-started/first-agent/
+Source: https://docs.ertir.dev/latest/getting-started/first-agent/
 
 # Your first agent
 
@@ -527,12 +559,12 @@ The answer streams back just like chat, followed by a **run waterfall** showing 
 
 ---
 
-Source: https://docs.theygent.ai/latest/samples/
+Source: https://docs.ertir.dev/latest/samples/
 
 # Sample agents
 
 **Ready-made agents you install in one click** — each one a complete, runnable graph that
-demonstrates a core TheYgent pattern. Install them from **Settings → Samples**, pick which of
+demonstrates a core Ertir pattern. Install them from **Settings → Samples**, pick which of
 your models fill each role, then open them on the canvas, run them, change them, or delete them:
 an installed sample is an ordinary agent, not a special object. Every sample's name starts with
 `sample-` so they stay easy to spot on the Agents page.
@@ -766,11 +798,11 @@ the rest of the batch still installs.
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/
+Source: https://docs.ertir.dev/latest/concepts/
 
 # Architecture
 
-TheYgent is split into a small number of cooperating processes, each with a clear job and a clear home for its data. Understanding the split — the interface, the control plane, the inference plane, and the optional durable worker — tells you where your agents live, where your models run, and exactly when (if ever) anything leaves your machine.
+Ertir is split into a small number of cooperating processes, each with a clear job and a clear home for its data. Understanding the split — the interface, the control plane, the inference plane, and the optional durable worker — tells you where your agents live, where your models run, and exactly when (if ever) anything leaves your machine.
 
 ## The pieces
 
@@ -839,14 +871,14 @@ The storage locations and listen addresses are all configurable — see the [env
 
 ## The sovereignty story, honestly
 
-TheYgent's promise is not "no data ever leaves your machine". The honest version is: **everything runs where you point it, and you own every hop.**
+Ertir's promise is not "no data ever leaves your machine". The honest version is: **everything runs where you point it, and you own every hop.**
 
 - All four processes run locally by default, listening on `127.0.0.1`. Your prompts travel from your browser to the control plane to the inference plane over local HTTP.
 - Local models run on your hardware; weights download to your disk.
 - A hosted API is contacted **only when you register one** — as an `openai-compatible` model with a base URL you supply — and then only for calls routed to that model. Nothing is ever proxied through a vendor server. See [Remote models](../models/remote.md).
 - Because agents reference logical model ids, the local-versus-hosted choice is per model and per agent, and reversible: re-register the id, and every call site follows.
 - Credentials live in two separate stores, both on your machine and never written into agent documents. **Hosted-API keys** are inference-plane credentials, referenced as `secret://NAME` and never sent to the control plane (see [Remote models](../models/remote.md)). **Tool and MCP connection secrets** live in the control-plane store, encrypted with `THEYGENT_SECRET_KEY`.
-- Nothing is exported for telemetry unless you opt in by setting `OTEL_EXPORTER_OTLP_ENDPOINT`; otherwise all trace data stays in your Postgres. Every connection TheYgent makes on its own, and how to run fully offline, is listed in [Privacy and data flow](privacy.md).
+- Nothing is exported for telemetry unless you opt in by setting `OTEL_EXPORTER_OTLP_ENDPOINT`; otherwise all trace data stays in your Postgres. Every connection Ertir makes on its own, and how to run fully offline, is listed in [Privacy and data flow](privacy.md).
 
 !!! warning "Keep the inference plane on loopback"
     The control plane requires sign-in: a fresh install's API is closed until the first-run wizard creates an admin, and every call after that carries a bearer token — see [Users, roles and sign-in](../running/users.md). The inference plane has no sign-in of its own. It listens on `127.0.0.1` by default, and anything that can reach port 8081 can use your models, so don't expose it to untrusted networks.
@@ -872,11 +904,11 @@ A missing engine binary shows up in the inference plane's `/readyz` report — n
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/agents-and-graphs/
+Source: https://docs.ertir.dev/latest/concepts/agents-and-graphs/
 
 # Agents and graphs
 
-In TheYgent, an agent *is* a graph: a set of steps (nodes) wired together (edges), plus everything those steps need to run. This page explains what that document contains and why the way you arrange it on the canvas has no effect on what it does.
+In Ertir, an agent *is* a graph: a set of steps (nodes) wired together (edges), plus everything those steps need to run. This page explains what that document contains and why the way you arrange it on the canvas has no effect on what it does.
 
 ## An agent is a graph document
 
@@ -1019,7 +1051,7 @@ A brand-new graph in the editor already contains an `input` node wired to an `ou
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/nodes-ports-edges/
+Source: https://docs.ertir.dev/latest/concepts/nodes-ports-edges/
 
 # Nodes, ports, and edges
 
@@ -1098,11 +1130,11 @@ Notice each branch ends in **its own** `output` node. That is deliberate: at mos
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/models-and-engines/
+Source: https://docs.ertir.dev/latest/concepts/models-and-engines/
 
 # Models and engines
 
-TheYgent separates *what an agent calls* from *what actually runs*. An agent always names a model by a **logical id** — a label you choose, like `triage-fast` — and never an engine. Behind that id, the inference plane holds a registration that says which engine (or hosted endpoint) serves the id, where its weights come from, and what task it performs. This page explains that split and the vocabulary around it: bindings, sources, and modalities.
+Ertir separates *what an agent calls* from *what actually runs*. An agent always names a model by a **logical id** — a label you choose, like `triage-fast` — and never an engine. Behind that id, the inference plane holds a registration that says which engine (or hosted endpoint) serves the id, where its weights come from, and what task it performs. This page explains that split and the vocabulary around it: bindings, sources, and modalities.
 
 ## Logical model ids
 
@@ -1122,14 +1154,14 @@ This indirection is the whole point. Because the agent only knows the id, you ca
 
 The **binding** says what kind of thing serves a logical id. There are exactly four values, and they never change meaning:
 
-| Binding | What backs the id | How TheYgent treats it |
+| Binding | What backs the id | How Ertir treats it |
 |---|---|---|
 | `llamacpp` | A llama.cpp server running GGUF weights. Runs anywhere the binary is installed. | Managed — spawned and supervised for you. |
 | `mlx` | The MLX family of servers on Apple Silicon. | Managed. |
 | `vllm` | A vLLM server on an NVIDIA/CUDA GPU host. | Managed. |
 | `openai-compatible` | Any OpenAI-compatible HTTP server or hosted API you point at with a base URL. | Reached, not managed — no process is started or stopped for you. |
 
-The first three are **managed engines**: TheYgent starts the server on first use, health-checks it, and stops it when it is idle. The fourth, `openai-compatible`, is a **reachable endpoint**: TheYgent just forwards calls to a URL you supply — whether that URL is a hosted API or another local server. For details on each engine and its platform, see [The engines](../models/engines.md); to register a hosted endpoint, see [Remote models](../models/remote.md).
+The first three are **managed engines**: Ertir starts the server on first use, health-checks it, and stops it when it is idle. The fourth, `openai-compatible`, is a **reachable endpoint**: Ertir just forwards calls to a URL you supply — whether that URL is a hosted API or another local server. For details on each engine and its platform, see [The engines](../models/engines.md); to register a hosted endpoint, see [Remote models](../models/remote.md).
 
 !!! note "vLLM is experimental in this build"
     The `vllm` binding exists and targets CUDA GPU hosts, but it has not yet been verified on the maintainers' hardware. llama.cpp and MLX are the proven local paths. Treat vLLM as experimental until you have confirmed it on your own GPU.
@@ -1167,7 +1199,7 @@ The modality here describes a *model*. It is separate from the `modality` field 
 
 ## How engines run
 
-Managed engines are started **lazily** — the first call to a logical id spawns its server, and TheYgent waits for it to become healthy before forwarding the request. Only a limited number of engines stay resident at once (two by default). When that ceiling is reached, the least-important, least-recently-used engine is stopped to make room; an engine that is in the middle of a request is never evicted. Idle engines are also reaped after a timeout. You do not manage any of this by hand — but it is why the very first call to a large model can take a moment while it loads. The full lifecycle and its knobs are covered in [The engines](../models/engines.md).
+Managed engines are started **lazily** — the first call to a logical id spawns its server, and Ertir waits for it to become healthy before forwarding the request. Only a limited number of engines stay resident at once (two by default). When that ceiling is reached, the least-important, least-recently-used engine is stopped to make room; an engine that is in the middle of a request is never evicted. Idle engines are also reaped after a timeout. You do not manage any of this by hand — but it is why the very first call to a large model can take a moment while it loads. The full lifecycle and its knobs are covered in [The engines](../models/engines.md).
 
 A reachable (`openai-compatible`) id has no lifecycle: nothing is spawned or evicted, and calls are proxied straight to your URL.
 
@@ -1188,10 +1220,10 @@ graph LR
   ID -.->|"after re-registration"| H["hosted openai-compatible"]
 ```
 
-This works because, at run time, TheYgent forwards only the logical id to the inference plane; the inference plane's current registration for that id decides the engine, source, and endpoint.
+This works because, at run time, Ertir forwards only the logical id to the inference plane; the inference plane's current registration for that id decides the engine, source, and endpoint.
 
 ??? note "What the agent document actually stores"
-    When you pick a model in the editor, TheYgent records the logical id on the model binding and copies in the binding value it was registered under at that moment (so the editor knows the model family). That stored binding value is a snapshot — it is not consulted when the run executes. The run resolves purely by logical id, so re-registering the id under a different engine takes effect on the next run without re-saving the agent. Generation parameters (temperature, max tokens, and so on) are the exception: those live on the agent's model binding and travel with each call, so they are part of the agent, not the registration.
+    When you pick a model in the editor, Ertir records the logical id on the model binding and copies in the binding value it was registered under at that moment (so the editor knows the model family). That stored binding value is a snapshot — it is not consulted when the run executes. The run resolves purely by logical id, so re-registering the id under a different engine takes effect on the next run without re-saving the agent. Generation parameters (temperature, max tokens, and so on) are the exception: those live on the agent's model binding and travel with each call, so they are part of the agent, not the registration.
 
 ## Related pages
 
@@ -1203,7 +1235,7 @@ This works because, at run time, TheYgent forwards only the logical id to the in
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/runs-and-sessions/
+Source: https://docs.ertir.dev/latest/concepts/runs-and-sessions/
 
 # Runs and sessions
 
@@ -1298,17 +1330,17 @@ Sessions are what power the **Recents** list in chat: each ongoing conversation 
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/versioning/
+Source: https://docs.ertir.dev/latest/concepts/versioning/
 
 # Versioning
 
-When you publish an agent, TheYgent stores it as an **immutable, content-addressed version**. "Content-addressed" means the version's identity is a fingerprint of what the agent *means* — its nodes, edges, models, tools, and configuration — and nothing else. Rearranging the canvas never creates a new version; changing what the agent does always does. This page explains that fingerprint, what counts as a change, and how versions are pinned and resolved.
+When you publish an agent, Ertir stores it as an **immutable, content-addressed version**. "Content-addressed" means the version's identity is a fingerprint of what the agent *means* — its nodes, edges, models, tools, and configuration — and nothing else. Rearranging the canvas never creates a new version; changing what the agent does always does. This page explains that fingerprint, what counts as a change, and how versions are pinned and resolved.
 
 Versions are one of two tiers the editor works with: while you are still building, the graph autosaves as a mutable **draft** — no hash, no history, nothing pinnable. Publishing is the moment a draft's content graduates into everything below. See [Drafts & publishing](../building/saving-agents.md).
 
 ## Immutable versions
 
-A published agent has a stable id and a series of versions. Each version, once published, never changes — TheYgent will not overwrite it. When you want to change an agent, you publish a new version alongside the old ones; the earlier versions remain exactly as they were, so anything pinned to them keeps behaving identically.
+A published agent has a stable id and a series of versions. Each version, once published, never changes — Ertir will not overwrite it. When you want to change an agent, you publish a new version alongside the old ones; the earlier versions remain exactly as they were, so anything pinned to them keeps behaving identically.
 
 This immutability is what makes an agent safe to deploy. A [trigger](../running/triggers.md), a [durable run](../running/durable.md), or a parent agent that composes this one can pin a specific version and trust that it will never shift under them.
 
@@ -1366,7 +1398,7 @@ The idempotent case matters in practice: re-publishing an agent you have not act
 
 ## Pinning and resolving a version
 
-Anything that runs a published agent can pin which version it means, in one of two ways: by its exact `content_hash`, or by its version label. If neither is pinned, TheYgent uses the **latest** version.
+Anything that runs a published agent can pin which version it means, in one of two ways: by its exact `content_hash`, or by its version label. If neither is pinned, Ertir uses the **latest** version.
 
 The resolution order is always:
 
@@ -1392,11 +1424,11 @@ When one agent composes another — through a [subgraph, loop, or map](../buildi
 
 ---
 
-Source: https://docs.theygent.ai/latest/concepts/privacy/
+Source: https://docs.ertir.dev/latest/concepts/privacy/
 
 # Privacy and data flow
 
-TheYgent's promise is **everything runs where you point it, and you own every hop** — not "no data ever leaves your machine". This page is the checkable version of that promise: where each kind of data lives, every connection the software makes on its own and when, and how to run with no network at all.
+Ertir's promise is **everything runs where you point it, and you own every hop** — not "no data ever leaves your machine". This page is the checkable version of that promise: where each kind of data lives, every connection the software makes on its own and when, and how to run with no network at all.
 
 ## Where your data lives
 
@@ -1411,7 +1443,7 @@ TheYgent's promise is **everything runs where you point it, and you own every ho
 | What a crawler collects | A [crawler node](../building/nodes/crawler.md) sends its input to the provider it names, which crawls on its own servers; the results come back into your run. The provider's token stays in the secret store. |
 | Audio and images | Local artifacts under `THEYGENT_ARTIFACT_DIR` on the control-plane host — never written into run history or exported with traces. |
 
-## Every connection TheYgent makes
+## Every connection Ertir makes
 
 This is the complete list for a running install. Apart from the first row, nothing connects until you open a feature that needs the network, or configure one.
 
@@ -1423,15 +1455,15 @@ This is the complete list for a running install. Apart from the first row, nothi
 | The Apify Store | When you open the **Crawlers browser** in the editor. The control plane makes the request; your browser does not. | Your searches and the Actors you open. No token is sent. See [Crawler](../building/nodes/crawler.md#adding-a-crawler). |
 | Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a crawler node's provider (which receives the node's input), a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
 
-Installing TheYgent — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
+Installing Ertir — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
 
-### What TheYgent doesn't have
+### What Ertir doesn't have
 
 There is no usage analytics, crash reporting, update check, or license activation, and no vendor account: the only account is the local admin you create in the first-run wizard. Trace export is off until you set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector you run.
 
 ## Running offline or air-gapped
 
-Once it is installed, TheYgent runs with no network access: the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model. To prepare a host that will never be online:
+Once it is installed, Ertir runs with no network access: the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model. To prepare a host that will never be online:
 
 1. **Install while connected** — or on a connected machine of the same platform that you then move across. Follow [Installation](../getting-started/installation.md) through `make engines`, and run `make up` once so dependencies install and the schema migrates.
 2. **Bring the weights.** Install models from the catalog while connected, or copy GGUF files and MLX model folders onto the host and [register them by path](../models/installing.md#register-a-model-already-on-disk). Avoid hand-registered `source: hf` models on an offline host: their engine looks for the weights on Hugging Face when it starts.
@@ -1449,7 +1481,7 @@ The startup price-list request fails fast and falls back to the bundled copy; no
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/editor/
+Source: https://docs.ertir.dev/latest/building/editor/
 
 # The editor
 
@@ -1713,7 +1745,7 @@ Undo restores node positions too, so a mistaken drag is one keystroke away. Text
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/input-references/
+Source: https://docs.ertir.dev/latest/building/input-references/
 
 # Referencing inputs
 
@@ -1833,7 +1865,7 @@ Because these fail at run time, the editor's validation cannot catch every dangl
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/
+Source: https://docs.ertir.dev/latest/building/nodes/
 
 # Node reference
 
@@ -1922,7 +1954,7 @@ A handful of type ids exist in the underlying schema but do not run yet and neve
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/input-output/
+Source: https://docs.ertir.dev/latest/building/nodes/input-output/
 
 # Input & output nodes
 
@@ -2074,7 +2106,7 @@ graph LR
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/llm/
+Source: https://docs.ertir.dev/latest/building/nodes/llm/
 
 # The LLM node
 
@@ -2239,7 +2271,7 @@ A tool node is *either* a capability (wired to an llm's `tools` port, the model 
 
 The llm node **streams**. As the model generates, tokens arrive incrementally, so a long answer appears as it is written rather than all at once — you see this live in [chat](../../chat/index.md), on [the Bench](../../running/bench.md), and in the [run waterfall](../../running/observability.md).
 
-Reasoning models emit a hidden **thinking** phase before their answer. TheYgent keeps the two apart:
+Reasoning models emit a hidden **thinking** phase before their answer. Ertir keeps the two apart:
 
 - **Reasoning** is streamed as its own frame — visible progress during a long think — but is **never** merged into the answer.
 - Only the final **content** becomes the run's output and the session turn.
@@ -2293,7 +2325,7 @@ A single-shot summarizer:
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/tools/
+Source: https://docs.ertir.dev/latest/building/nodes/tools/
 
 # Tool nodes
 
@@ -2301,7 +2333,7 @@ A **tool** node gives an agent an action beyond generating text: it runs a small
 
 There is one Tool node with three flavours, chosen from the **Kind** picker in the inspector:
 
-- **Builtin** — a small function TheYgent ships. Two are available: `echo` and `http_fetch`.
+- **Builtin** — a small function Ertir ships. Two are available: `echo` and `http_fetch`.
 - **REST** — call any HTTP API, optionally authenticated through a saved connection.
 - **MCP** — a tool exposed by a connected server. Picking MCP swaps the node to the `mcp_tool` type, which has its own page: [MCP tools](mcp.md).
 
@@ -2516,11 +2548,11 @@ The `$in.query` placeholder in the URL and the `query` property in the schema mu
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/mcp/
+Source: https://docs.ertir.dev/latest/building/nodes/mcp/
 
 # MCP tools
 
-An **mcp_tool** node calls one tool on an external MCP server. MCP — the Model Context Protocol — is an open standard for exposing tools (a filesystem browser, a database client, a computer-vision model, a company API) to an agent. Where a [built-in or REST tool](tools.md) is defined inside TheYgent, an MCP tool lives in a separate server process that you register once and then reference from any agent. It is an **activity** node.
+An **mcp_tool** node calls one tool on an external MCP server. MCP — the Model Context Protocol — is an open standard for exposing tools (a filesystem browser, a database client, a computer-vision model, a company API) to an agent. Where a [built-in or REST tool](tools.md) is defined inside Ertir, an MCP tool lives in a separate server process that you register once and then reference from any agent. It is an **activity** node.
 
 ## Where the node comes from
 
@@ -2559,7 +2591,7 @@ Everything the MCP page creates is an `mcp_server` **connection**, referenced fr
 
 ## How tools are discovered
 
-You do not list a server's tools by hand — the server reports them. When a server first connects (on first use, or when you press **Warm** or **Tools**), TheYgent calls the server's tool-listing method and caches the result for the connection's lifetime.
+You do not list a server's tools by hand — the server reports them. When a server first connects (on first use, or when you press **Warm** or **Tools**), Ertir calls the server's tool-listing method and caches the result for the connection's lifetime.
 
 That cache also drives validation. When you reference a tool in an `mcp_tool` node:
 
@@ -2630,7 +2662,7 @@ Wiring its `use` handle into the llm's `tools` port exposes it as a `read_file` 
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/rag/
+Source: https://docs.ertir.dev/latest/building/nodes/rag/
 
 # RAG
 
@@ -2662,7 +2694,7 @@ Like a [tool node](tools.md), it has two lives: a **step** in the dataflow, or a
 1. Drop a **rag** node and pick its source.
 2. Drag its violet **`use`** handle into the llm node's violet **`tools`** port.
 
-The model now sees a function named after the node's id taking one argument, `query`. When it calls, TheYgent runs the retrieval and feeds the matches back as the tool result; the model reads them and answers (usually citing the `uri` of the passages it used). `topK` and `minSimilarity` stay authored knobs — the model cannot override them.
+The model now sees a function named after the node's id taking one argument, `query`. When it calls, Ertir runs the retrieval and feeds the matches back as the tool result; the model reads them and answers (usually citing the `uri` of the passages it used). `topK` and `minSimilarity` stay authored knobs — the model cannot override them.
 
 !!! tip "Name the node meaningfully"
     The node **id is the function name** the model sees. `docs_search` beats `n_rag1` — models call well-named functions more reliably.
@@ -2716,7 +2748,7 @@ Both runtimes execute the node identically; on a [durable run](../../running/dur
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/crawler/
+Source: https://docs.ertir.dev/latest/building/nodes/crawler/
 
 # Crawler
 
@@ -2744,7 +2776,7 @@ Open an Actor to see its input fields. The fields a model can usefully fill are 
 
 The first time, the browser asks for your **Apify API token** and stores it as a connection — encrypted, and never shown again. Later installs reuse that connection. Press **Add crawler** and the configured node lands on the canvas.
 
-!!! note "The browser goes through TheYgent"
+!!! note "The browser goes through Ertir"
     Store searches go from your control plane to Apify's public Store API, which needs no token, and are cached for a few minutes. Your browser never calls Apify directly.
 
 ## Ports
@@ -2789,7 +2821,7 @@ Wire the node's violet **`use`** handle into an llm's violet **`tools`** port (t
 
 When it calls:
 
-1. TheYgent builds the Actor input: the fixed input, plus the model's values for the exposed fields. A value for any other field is dropped, so a model can't raise a result count or switch on a paid add-on by inventing an argument.
+1. Ertir builds the Actor input: the fixed input, plus the model's values for the exposed fields. A value for any other field is dropped, so a model can't raise a result count or switch on a paid add-on by inventing an argument.
 2. The Actor runs under the node's limits.
 3. The model gets the results back as text: only the chosen `fields`, each item given an equal share of `resultChars`, long items cut with a marker. A crawl can return megabytes; the model reads what fits.
 
@@ -2814,7 +2846,7 @@ The [run waterfall](../../running/observability.md) shows what each crawl return
 
 ## Long crawls
 
-An interactive run — the editor's **Test** panel, chat, `POST /graphs/runs` — waits for the crawl in one request, which Apify holds for at most **300 seconds**. TheYgent caps the Actor's own timeout there too, so a run never keeps going after the agent has given up. A crawl that needs longer fails with a message saying so.
+An interactive run — the editor's **Test** panel, chat, `POST /graphs/runs` — waits for the crawl in one request, which Apify holds for at most **300 seconds**. Ertir caps the Actor's own timeout there too, so a run never keeps going after the agent has given up. A crawl that needs longer fails with a message saying so.
 
 A [durable run](../../running/durable.md) starts the crawl, checks on it about once a minute, and reads the results when it finishes, so a crawl can take as long as `timeoutSeconds` and survives a restart in between. A resumed run keeps polling the crawl it already started instead of starting (and paying for) another.
 
@@ -2823,7 +2855,7 @@ A [durable run](../../running/durable.md) starts the crawl, checks on it about o
 Small local models are better at filling one or two simple fields than many. Two defaults help:
 
 - **Few exposed fields.** Each exposed field adds to every prompt; an Actor offered with every field can cost thousands of tokens per call.
-- **One value per call** (`scalar`). Local models write list arguments unreliably — and on MLX, a list written as a bare string can drop the request. A scalar field takes one search term or URL; TheYgent wraps it into the list the Actor wants, and unpacks a model's JSON-encoded list if it writes one anyway.
+- **One value per call** (`scalar`). Local models write list arguments unreliably — and on MLX, a list written as a bare string can drop the request. A scalar field takes one search term or URL; Ertir wraps it into the list the Actor wants, and unpacks a model's JSON-encoded list if it writes one anyway.
 
 ## Failure modes
 
@@ -2848,7 +2880,7 @@ A crawler node sends its input — the fixed input and, in capability mode, the 
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/router/
+Source: https://docs.ertir.dev/latest/building/nodes/router/
 
 # Router node
 
@@ -2945,7 +2977,7 @@ The router's config is `{ "select": "$in" }`, and its out-ports are `billing`, `
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/transform/
+Source: https://docs.ertir.dev/latest/building/nodes/transform/
 
 # Transform node
 
@@ -3023,7 +3055,7 @@ The llm node downstream then references `$in.in.temperature` and `$in.in.summary
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/guardrail/
+Source: https://docs.ertir.dev/latest/building/nodes/guardrail/
 
 # Guardrail node
 
@@ -3137,7 +3169,7 @@ A prompt mentioning a database matches the pattern, so in `deny` mode the check 
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/ratelimit-quota/
+Source: https://docs.ertir.dev/latest/building/nodes/ratelimit-quota/
 
 # Rate limit and quota nodes
 
@@ -3255,7 +3287,7 @@ Each `deny` branch ends at its own `output`, so a throttled or over-budget calle
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/human/
+Source: https://docs.ertir.dev/latest/building/nodes/human/
 
 # Human node
 
@@ -3363,7 +3395,7 @@ When this run reaches the gate it pauses as `waiting`. You resume with, for exam
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/orchestration/
+Source: https://docs.ertir.dev/latest/building/nodes/orchestration/
 
 # Orchestration nodes: subgraph, loop, map
 
@@ -3509,7 +3541,7 @@ Because all three are durable-only, run them the durable way:
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/nodes/media/
+Source: https://docs.ertir.dev/latest/building/nodes/media/
 
 # Media nodes: transcribe, speak, imagine
 
@@ -3590,7 +3622,7 @@ The node calls the inference speech endpoint, stores the returned audio as a new
 
     Getting this wrong is worth recognising, because the symptom does not look like a bad parameter: a speech server asked for a voice it does not have accepts the request, answers `200`, and then aborts the response body with no message. The run reports *the speech engine aborted mid-synthesis* and names the voice it asked for. If **every** input fails, it is the voice (or an unloadable model), not the text.
 
-    The trade-off runs the other way for a **hosted** TTS API, where `voice` is a required request field: leave it out and the provider rejects the call with its own error, relayed verbatim. Name a voice that provider offers when you point a `speak` node at one. TheYgent does not guess on your behalf in either direction — a guess is what breaks the local case silently.
+    The trade-off runs the other way for a **hosted** TTS API, where `voice` is a required request field: leave it out and the provider rejects the call with its own error, relayed verbatim. Name a voice that provider offers when you point a `speak` node at one. Ertir does not guess on your behalf in either direction — a guess is what breaks the local case silently.
 
 ---
 
@@ -3649,7 +3681,7 @@ An image-generating agent follows the same idea with `imagine` feeding an `outpu
 
 ---
 
-Source: https://docs.theygent.ai/latest/building/saving-agents/
+Source: https://docs.ertir.dev/latest/building/saving-agents/
 
 # Drafts & publishing
 
@@ -3798,7 +3830,7 @@ The **Select** button in the page header switches the page into selection mode: 
 
 ---
 
-Source: https://docs.theygent.ai/latest/chat/
+Source: https://docs.ertir.dev/latest/chat/
 
 # Chat
 
@@ -3850,7 +3882,7 @@ While a reply streams, the **Send** button becomes **Stop generating**. Stopping
 
 ## Thinking (reasoning models)
 
-A reasoning model "thinks" before it answers. TheYgent keeps that thinking apart from the answer everywhere:
+A reasoning model "thinks" before it answers. Ertir keeps that thinking apart from the answer everywhere:
 
 - The thinking renders in a collapsible **"Thinking…"** block above the answer. It is open and follows its live edge while streaming (scroll up to unpin), auto-collapses once the answer starts, and can be reopened at any time.
 - Both wire shapes are handled — a separate reasoning stream and inline `<think>…</think>` tags — so it works the same across engines.
@@ -3903,7 +3935,7 @@ What the composer offers for an **agent** is read from its input node's `modalit
 
 ---
 
-Source: https://docs.theygent.ai/latest/chat/voice/
+Source: https://docs.ertir.dev/latest/chat/voice/
 
 # Voice
 
@@ -3951,7 +3983,7 @@ graph LR
   S --> OUT[output · modality audio]
 ```
 
-To use one, pick **Agent** in New Chat and select it. TheYgent reads the agent's input and output nodes and gives it a **voice**/**audio** badge and the voice composer (mic and attach, text disabled). Then:
+To use one, pick **Agent** in New Chat and select it. Ertir reads the agent's input and output nodes and gives it a **voice**/**audio** badge and the voice composer (mic and attach, text disabled). Then:
 
 1. You record or attach a clip and send.
 2. The clip is uploaded to the control plane as an **artifact** (`POST /artifacts`) and passed to the run as a reference — the raw bytes are handed straight to the inference plane, never journaled into run history.
@@ -3975,7 +4007,7 @@ The `speak` node defaults `format` to `mp3` when its params omit it; `format` ma
 
 ## What models you need
 
-Voice needs two kinds of engine, and TheYgent forces a specific split for each:
+Voice needs two kinds of engine, and Ertir forces a specific split for each:
 
 | Job | Engine | Binary | Notes |
 |---|---|---|---|
@@ -4005,7 +4037,7 @@ Reopen a voice conversation from **Chats** and the composer keeps talking to the
 
 ---
 
-Source: https://docs.theygent.ai/latest/chat/vision-and-images/
+Source: https://docs.ertir.dev/latest/chat/vision-and-images/
 
 # Vision and images
 
@@ -4100,7 +4132,7 @@ Direct image-**model** generation creates no artifact: the bytes come back inlin
 
 ---
 
-Source: https://docs.theygent.ai/latest/models/
+Source: https://docs.ertir.dev/latest/models/
 
 # Registries
 
@@ -4209,13 +4241,13 @@ Hover a badge for the reasoning, e.g. "~5 GB needed · 16 GB RAM". Picking a too
 
 Some image-generation repositories publish only **part** of a model. A modern text-to-image model is three pieces — a denoiser, a VAE, and a text encoder — and many repositories ship quantizations of the denoiser alone, with the other two living in separate repositories. The files look like everything else: multi-gigabyte, `.gguf`, tagged for text-to-image.
 
-TheYgent loads one self-contained checkpoint, so a denoiser on its own can't render. Those variants show an **incomplete** badge instead of a fit badge, their **Install** button is disabled, and none of them is ever marked recommended. Hover the badge for what's missing. Look for a repository that publishes a complete checkpoint — a single file that bundles all three parts.
+Ertir loads one self-contained checkpoint, so a denoiser on its own can't render. Those variants show an **incomplete** badge instead of a fit badge, their **Install** button is disabled, and none of them is ever marked recommended. Hover the badge for what's missing. Look for a repository that publishes a complete checkpoint — a single file that bundles all three parts.
 
 If a repository slips past this check, the install still succeeds and the refusal arrives when you register or first use the model, naming the same missing parts.
 
 ### Download progress
 
-When you install, the download runs **inside your inference plane** — TheYgent never sees the bytes. Progress appears as a card in the notification center (bottom-right): a progress bar, bytes done and total, live speed, an ETA, and a **Cancel** button. It moves through `downloading → registering → done`, survives navigation and page reloads (it re-attaches to active jobs), and finishes with "Installed ✓". On completion the model is auto-registered under the logical id you chose and appears in the Installed table.
+When you install, the download runs **inside your inference plane** — Ertir never sees the bytes. Progress appears as a card in the notification center (bottom-right): a progress bar, bytes done and total, live speed, an ETA, and a **Cancel** button. It moves through `downloading → registering → done`, survives navigation and page reloads (it re-attaches to active jobs), and finishes with "Installed ✓". On completion the model is auto-registered under the logical id you chose and appears in the Installed table.
 
 The full install walkthrough — including the install dialog and choosing a logical id — is on the next page.
 
@@ -4241,7 +4273,7 @@ On import:
 
 ---
 
-Source: https://docs.theygent.ai/latest/models/installing/
+Source: https://docs.ertir.dev/latest/models/installing/
 
 # Installing local models
 
@@ -4284,7 +4316,7 @@ If you already have model weights on your machine — a GGUF file, or an MLX mod
 4. In **Model**, enter the path to the weights on disk.
 5. Save.
 
-Models registered this way use **source `local-path`** — TheYgent loads them from where they are and never copies or moves them. The first call to the logical id spawns the engine against that path.
+Models registered this way use **source `local-path`** — Ertir loads them from where they are and never copies or moves them. The first call to the logical id spawns the engine against that path.
 
 You can also register a local model over the management API directly. The inference plane listens on `http://localhost:8081`, and registration is a `PUT` under the logical id (the wire format is camelCase):
 
@@ -4344,16 +4376,16 @@ Deleting evicts the engine if it's resident, then removes the registration. It d
 
 ---
 
-Source: https://docs.theygent.ai/latest/models/remote/
+Source: https://docs.ertir.dev/latest/models/remote/
 
 # Remote models
 
 Not every model has to run on your machine. You can register **any OpenAI-compatible server or hosted API** under a logical id and call it exactly like a local model — the same `llm` node, the same chat surface, the same agents. This page covers registering one, the credential store that keeps your API key on your machine, the quirks worth knowing, and how to mix local and remote models in a single agent.
 
-Remote models use the **`openai-compatible`** binding. Unlike the managed engines, TheYgent never starts, stops, or supervises a remote endpoint — it simply forwards your calls to the base URL you give it. For the binding vocabulary, see [Models and engines](../concepts/models-and-engines.md).
+Remote models use the **`openai-compatible`** binding. Unlike the managed engines, Ertir never starts, stops, or supervises a remote endpoint — it simply forwards your calls to the base URL you give it. For the binding vocabulary, see [Models and engines](../concepts/models-and-engines.md).
 
 !!! note "The honest boundary"
-    A remote model means your prompts go to whatever endpoint you register — a hosted provider, or a server on your own network. That is your choice and your hop: TheYgent forwards the call and relays the answer, and never inserts itself as a required middleman. Local models keep everything on your machine; remote models go exactly where you point them.
+    A remote model means your prompts go to whatever endpoint you register — a hosted provider, or a server on your own network. That is your choice and your hop: Ertir forwards the call and relays the answer, and never inserts itself as a required middleman. Local models keep everything on your machine; remote models go exactly where you point them.
 
 ## 1. Store the API key as a local credential
 
@@ -4391,9 +4423,9 @@ curl -X PUT http://localhost:8081/admin/models/writer \
   }'
 ```
 
-For a non-chat upstream (an embeddings or speech endpoint, say), set `modality` accordingly. A reachable endpoint is a pure declaration — TheYgent doesn't probe it — so the modality you declare is the one it's routed as.
+For a non-chat upstream (an embeddings or speech endpoint, say), set `modality` accordingly. A reachable endpoint is a pure declaration — Ertir doesn't probe it — so the modality you declare is the one it's routed as.
 
-If the endpoint needs no authentication (a local server, for instance), leave the credential empty; TheYgent sends a placeholder key that unauthenticated servers ignore.
+If the endpoint needs no authentication (a local server, for instance), leave the credential empty; Ertir sends a placeholder key that unauthenticated servers ignore.
 
 ## Quirks worth knowing
 
@@ -4403,11 +4435,11 @@ The base URL is the **root the endpoint's `/chat/completions`, `/embeddings`, et
 
 ### Some hosts reject parameters others accept
 
-Hosted models don't all take the same parameters — one may reject `temperature`, another may not support a particular sampling knob. TheYgent doesn't second-guess this: it relays the request as you built it, and if the provider rejects a parameter, **the provider's own error message and status come straight back to you**, before the answer starts streaming. If a call fails with an "unexpected parameter" style error, remove that parameter from the model's or node's params. A failure that happens partway through a stream ends the stream with a structured error rather than a torn connection.
+Hosted models don't all take the same parameters — one may reject `temperature`, another may not support a particular sampling knob. Ertir doesn't second-guess this: it relays the request as you built it, and if the provider rejects a parameter, **the provider's own error message and status come straight back to you**, before the answer starts streaming. If a call fails with an "unexpected parameter" style error, remove that parameter from the model's or node's params. A failure that happens partway through a stream ends the stream with a structured error rather than a torn connection.
 
 ### A reply cut off mid-stream can read as finished
 
-If a remote server stops partway through a streamed reply, its stream just ends. The layer TheYgent dispatches through then closes the stream as though the reply had finished. Your agent gets a shorter answer with nothing to say it was cut off. Local models are always checked for this, because every engine TheYgent manages ends a finished reply with a **finish reason**. A remote server is checked only when you say it sends one too: a server that never does would have every reply fail.
+If a remote server stops partway through a streamed reply, its stream just ends. The layer Ertir dispatches through then closes the stream as though the reply had finished. Your agent gets a shorter answer with nothing to say it was cut off. Local models are always checked for this, because every engine Ertir manages ends a finished reply with a **finish reason**. A remote server is checked only when you say it sends one too: a server that never does would have every reply fail.
 
 To turn the check on, click the model in **Registries** and tick **Report a reply cut off mid-stream** (shown for chat models), then save. Over the management API, it's `"requireFinishReason": true` on the registration:
 
@@ -4429,7 +4461,7 @@ Turn it on for a server you know sends a finish reason at the end of every strea
 
 ### Remote models have no lifecycle
 
-There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its **State** stays effectively cold, and **Warm** / **Evict** are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (`llama-server`), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked **approx** because TheYgent didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (**approx**), not as unsupported.
+There is nothing to warm, evict, or wait for. A remote id never counts against your resident-engine ceiling, its **State** stays effectively cold, and **Warm** / **Evict** are no-ops. Probing loads nothing: for a llama.cpp server you started yourself (`llama-server`), the probe reads its real context size and chat template, the same way it does for a local llama.cpp model, marked **approx** because Ertir didn't choose its flags. Any other endpoint offers no way to ask, so it advertises only the modality you declared and its other capabilities read as unknown (**approx**), not as unsupported.
 
 ## Mixing local and remote in one agent
 
@@ -4464,11 +4496,11 @@ Nothing about the agent changes when you swap a local id for a remote one later 
 
 ---
 
-Source: https://docs.theygent.ai/latest/models/engines/
+Source: https://docs.ertir.dev/latest/models/engines/
 
 # The engines
 
-An **engine** is the program that actually runs a local model. TheYgent manages three of them — **llama.cpp**, **MLX**, and **vLLM** — plus a fourth binding, `openai-compatible`, for endpoints it merely reaches. This page explains what each engine is for, where it runs, how the managed ones start and share memory, and which modalities (chat, vision, embeddings, speech, images) each covers.
+An **engine** is the program that actually runs a local model. Ertir manages three of them — **llama.cpp**, **MLX**, and **vLLM** — plus a fourth binding, `openai-compatible`, for endpoints it merely reaches. This page explains what each engine is for, where it runs, how the managed ones start and share memory, and which modalities (chat, vision, embeddings, speech, images) each covers.
 
 If you only need to *use* models, you don't have to think about engines much — a catalog install picks the right one for you. Read on when you're choosing hardware, registering weights by hand, or wondering why a first call is slow. For the vocabulary of bindings, sources, and modalities, see [Models and engines](../concepts/models-and-engines.md).
 
@@ -4483,16 +4515,16 @@ Every registered model has a **binding** that says what runs it. There are exact
 | `vllm` | A vLLM server on an NVIDIA/CUDA GPU host. | Yes (experimental). |
 | `openai-compatible` | Any OpenAI-compatible server or hosted API at a base URL you supply. | No — reached, never managed. |
 
-The first three are **managed**: TheYgent starts the server on first use, health-checks it, and stops it when idle. `openai-compatible` is **reached** — nothing is spawned or stopped; see [Remote models](remote.md).
+The first three are **managed**: Ertir starts the server on first use, health-checks it, and stops it when idle. `openai-compatible` is **reached** — nothing is spawned or stopped; see [Remote models](remote.md).
 
 ## llama.cpp
 
 **llama.cpp** runs models in the **GGUF** format and is the broadest, most portable local engine — it runs anywhere its `llama-server` binary is installed (macOS, Linux, with or without a GPU). It's the default choice when you want a model to run on the same machine regardless of platform. GGUF models come in **quantizations** (labels like `Q4_K_M`), and the catalog lists each quant as a separate variant with its own fit badge.
 
-Under the `llamacpp` binding, TheYgent covers several modalities by spawning the right server for the registered modality:
+Under the `llamacpp` binding, Ertir covers several modalities by spawning the right server for the registered modality:
 
 - **Chat** and **embeddings** — the `llama-server` binary (embeddings use mean pooling).
-- **Vision** — the same `llama-server` with a multimodal projector; TheYgent finds the projector file next to the weights or falls back to auto-detection.
+- **Vision** — the same `llama-server` with a multimodal projector; Ertir finds the projector file next to the weights or falls back to auto-detection.
 - **Speech-to-text** — served by **whisper.cpp**'s `whisper-server`, registered under `binding: llamacpp` with `modality: audio.transcription`. With `ffmpeg` installed it also transcodes browser microphone recordings (webm/opus); without it, only WAV works. Whisper needs its own native `ggml-*.bin` weights — a chat-style GGUF won't work, and an ambiguous weights path raises a clear error telling you which file to point at.
 - **Image generation** — a bundled wrapper around stable-diffusion.cpp's `sd-cli` (see the note under [Installing the engine binaries](#installing-the-engine-binaries)).
 
@@ -4514,7 +4546,7 @@ Set any of them in the model's registration `params` to override, for example `"
 
 ## MLX
 
-**MLX** is Apple's array framework, and TheYgent's MLX engines run **only on Apple Silicon** (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.
+**MLX** is Apple's array framework, and Ertir's MLX engines run **only on Apple Silicon** (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.
 
 Under the `mlx` binding, the modalities map to distinct server programs:
 
@@ -4537,7 +4569,7 @@ Like the other launch settings it applies when the engine starts, is never sent 
 
 ### MoE models bigger than memory (expert streaming)
 
-A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
+A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, Ertir keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
 
 It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:
 
@@ -4602,17 +4634,17 @@ Which engine covers which modality:
 A registered model whose exact (engine, modality) combination has no server is refused with a clear error rather than being served wrong. `openai-compatible` endpoints aren't in this table — they serve whatever the upstream serves, and you declare the modality when you register them.
 
 !!! note "Image generation needs extra setup"
-    The image-generation engines (stable-diffusion.cpp's `sd-cli` and `mflux`) are the newest and least-exercised paths, and their binaries are **not** installed by the standard engine install. You must build/install them yourself and point TheYgent at them (`THEYGENT_SDCPP_BIN`, `THEYGENT_MFLUX_BIN`) before an image-generation model will run. See [Image generation in chat](../chat/vision-and-images.md).
+    The image-generation engines (stable-diffusion.cpp's `sd-cli` and `mflux`) are the newest and least-exercised paths, and their binaries are **not** installed by the standard engine install. You must build/install them yourself and point Ertir at them (`THEYGENT_SDCPP_BIN`, `THEYGENT_MFLUX_BIN`) before an image-generation model will run. See [Image generation in chat](../chat/vision-and-images.md).
 
 ## How managed engines run
 
-You never start or stop a managed engine by hand. TheYgent handles the whole lifecycle, and understanding it explains a few things you'll notice.
+You never start or stop a managed engine by hand. Ertir handles the whole lifecycle, and understanding it explains a few things you'll notice.
 
-**Lazy start.** An engine spawns on the **first call** to one of its logical ids, on a free local port, and TheYgent waits for it to become healthy before forwarding your request. This is why the very first call to a model is slower than the ones after it — the model is loading. Large models take longer; startup waits allow a few minutes for llama.cpp and MLX, and up to ten for vLLM. Once loaded, the engine stays **warm** for subsequent calls.
+**Lazy start.** An engine spawns on the **first call** to one of its logical ids, on a free local port, and Ertir waits for it to become healthy before forwarding your request. This is why the very first call to a model is slower than the ones after it — the model is loading. Large models take longer; startup waits allow a few minutes for llama.cpp and MLX, and up to ten for vLLM. Once loaded, the engine stays **warm** for subsequent calls.
 
-**A resident ceiling.** Only a limited number of engines stay loaded at once — **two by default** (`THEYGENT_MAX_RESIDENT`). When a new engine is needed and the ceiling is full, TheYgent **evicts** one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is **never** evicted; if nothing can be freed, the new call is refused with a `no_capacity` error rather than thrashing.
+**A resident ceiling.** Only a limited number of engines stay loaded at once — **two by default** (`THEYGENT_MAX_RESIDENT`). When a new engine is needed and the ceiling is full, Ertir **evicts** one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is **never** evicted; if nothing can be freed, the new call is refused with a `no_capacity` error rather than thrashing.
 
-**Abandoned calls are cancelled.** If the caller hangs up before an answer arrives — its client timed out, or the connection closed — TheYgent closes the request to the engine right away instead of holding it open for an answer nobody will read. That holds for every call that returns one answer rather than a stream: chat answers, embeddings, transcriptions, speech, and generated images. Engines that watch for a closed connection stop working on the request at once, so the engine is free for the next call — llama.cpp stops generating a chat answer, and the bundled image generator stops an abandoned render and skips one still waiting its turn, which matters most because a render can take minutes. Either way, a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.
+**Abandoned calls are cancelled.** If the caller hangs up before an answer arrives — its client timed out, or the connection closed — Ertir closes the request to the engine right away instead of holding it open for an answer nobody will read. That holds for every call that returns one answer rather than a stream: chat answers, embeddings, transcriptions, speech, and generated images. Engines that watch for a closed connection stop working on the request at once, so the engine is free for the next call — llama.cpp stops generating a chat answer, and the bundled image generator stops an abandoned render and skips one still waiting its turn, which matters most because a render can take minutes. Either way, a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.
 
 **Idle reaping.** An engine left idle longer than its idle timeout (**900 seconds** by default) is torn down automatically by a background sweep, freeing its memory. Mark a model **Keep warm** to exempt it from reaping.
 
@@ -4620,7 +4652,7 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 
 **Missing binaries fail cleanly.** If a model's engine binary isn't installed on the machine, the call returns `engine_unavailable` — a clear, up-front error — never a mysterious crash on first inference.
 
-**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
+**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, Ertir stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
 
 **A dropped request is named.** If an engine closes the connection before it finishes an answer, the call fails with `engine_dropped_request`, and the engine keeps serving other requests. This covers a reply cut off partway through a stream, which would otherwise read as a finished, shorter answer. The inference plane doesn't retry a request to a local engine; the caller's own retry policy decides. See [troubleshooting](../reference/troubleshooting.md#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream) for the known MLX tool-call cause.
 
@@ -4652,9 +4684,9 @@ make engines
 === "NVIDIA GPU host"
     Install vLLM yourself with `pip install vllm`. It is deliberately not part of `make engines`. Remember it is experimental in this build.
 
-TheYgent finds each binary by checking an explicit environment override first, then your `PATH`, then (for Python-module servers) `python -m …`. To point at a binary in a non-standard location, set its override — `THEYGENT_LLAMACPP_BIN`, `THEYGENT_MLX_BIN`, `THEYGENT_MLX_VLM_BIN`, `THEYGENT_MLX_AUDIO_BIN`, `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_VLLM_BIN`, `THEYGENT_SDCPP_BIN`, or `THEYGENT_MFLUX_BIN`. The full list is in the [environment reference](../reference/environment.md).
+Ertir finds each binary by checking an explicit environment override first, then your `PATH`, then (for Python-module servers) `python -m …`. To point at a binary in a non-standard location, set its override — `THEYGENT_LLAMACPP_BIN`, `THEYGENT_MLX_BIN`, `THEYGENT_MLX_VLM_BIN`, `THEYGENT_MLX_AUDIO_BIN`, `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_VLLM_BIN`, `THEYGENT_SDCPP_BIN`, or `THEYGENT_MFLUX_BIN`. The full list is in the [environment reference](../reference/environment.md).
 
-TheYgent launches and supervises these binaries but never builds or downloads them — that part is on you (or on `make engines`).
+Ertir launches and supervises these binaries but never builds or downloads them — that part is on you (or on `make engines`).
 
 ## Checking what's ready
 
@@ -4677,11 +4709,11 @@ The service stays "ready" as long as **any** engine is available, so a Mac witho
 
 ---
 
-Source: https://docs.theygent.ai/latest/rag/
+Source: https://docs.ertir.dev/latest/rag/
 
 # RAG sources
 
-A **RAG source** is a named collection of documents your agents can search — your product docs, a contract folder, an internal wiki. You fill it once (upload files or crawl a site), TheYgent chunks and embeds the text against a model *you* choose, and stores the vectors in your own Postgres. From then on, any agent can retrieve from it through the [rag node](../building/nodes/rag.md): as a fixed pipeline step, or as a tool the model calls on demand.
+A **RAG source** is a named collection of documents your agents can search — your product docs, a contract folder, an internal wiki. You fill it once (upload files or crawl a site), Ertir chunks and embeds the text against a model *you* choose, and stores the vectors in your own Postgres. From then on, any agent can retrieve from it through the [rag node](../building/nodes/rag.md): as a fixed pipeline step, or as a tool the model calls on demand.
 
 RAG — retrieval-augmented generation — exists because a document collection never fits a model's context window. Instead of pasting documents into prompts, the agent asks a search question, gets back the handful of most relevant passages, and answers from those. Everything stays in your trust domain: the documents, the vectors, and the embedding calls (which go to your inference plane, not a third party).
 
@@ -4697,7 +4729,7 @@ Retrieval needs an **embedding model** — a small model that turns text into ve
 Two things to know:
 
 1. **The model is pinned per source.** Vectors from different embedding models are not comparable, so each source locks its model at creation. Changing it later means creating a new source (or re-ingesting into one). The source's create form only offers this choice once, on purpose.
-2. **It's a logical id, like every model in TheYgent.** The source stores the id (say `nomic-embed`), and your inference plane decides what serves it — swap the engine behind the id any time.
+2. **It's a logical id, like every model in Ertir.** The source stores the id (say `nomic-embed`), and your inference plane decides what serves it — swap the engine behind the id any time.
 
 !!! tip "Pooling"
     Most embedding GGUFs work out of the box (`mean` pooling). Models that pool on the last token can set `params: {"pooling": "last"}` on their registration.
@@ -4717,7 +4749,7 @@ Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON,
 
 ### Crawl sources
 
-A **crawl** source ingests a website — point it at a docs root and TheYgent walks the pages:
+A **crawl** source ingests a website — point it at a docs root and Ertir walks the pages:
 
 | Field | What it does |
 |---|---|
@@ -4777,11 +4809,11 @@ Agents reference a source by its stable id, so re-crawling or uploading more doc
 
 ---
 
-Source: https://docs.theygent.ai/latest/mcp/
+Source: https://docs.ertir.dev/latest/mcp/
 
 # MCP servers
 
-An **MCP server** gives your agents tools that live outside TheYgent — a filesystem browser, a database client, a company API, a hosted search service. MCP (the Model Context Protocol) is the open standard those servers speak. You set a server up once on the **MCP** page in the sidebar, and from then on any agent can call its tools through the [mcp_tool node](../building/nodes/mcp.md), either at a fixed step in the graph or autonomously, whenever the model decides to.
+An **MCP server** gives your agents tools that live outside Ertir — a filesystem browser, a database client, a company API, a hosted search service. MCP (the Model Context Protocol) is the open standard those servers speak. You set a server up once on the **MCP** page in the sidebar, and from then on any agent can call its tools through the [mcp_tool node](../building/nodes/mcp.md), either at a fixed step in the graph or autonomously, whenever the model decides to.
 
 The MCP page covers the whole story: **browse and install** published servers from public hubs, **add your own** four different ways (a local process, a remote endpoint, an OpenAPI spec, a GraphQL endpoint), **sign in** to OAuth-protected servers from the browser, and manage everything in one list.
 
@@ -4820,7 +4852,7 @@ You can add your own with the `THEYGENT_MCP_REGISTRIES` environment variable —
 Pick a hub, search, and read the entries: each shows its description, version, transport and package badges, and a star count where the publisher provides one. A **deprecated** entry carries a visible warning with the publisher's message — prefer whatever replacement it names.
 
 !!! note "Cold searches can take a while"
-    The official registry's substring search can take fifteen seconds or more on a cold query. TheYgent waits generously rather than timing out — a slow first search is the hub warming up, not the hub being down. Repeat searches are cached and fast.
+    The official registry's substring search can take fifteen seconds or more on a cold query. Ertir waits generously rather than timing out — a slow first search is the hub warming up, not the hub being down. Repeat searches are cached and fast.
 
 ### Installing an entry
 
@@ -4854,7 +4886,7 @@ A server that runs as a process on your machine, in your trust domain.
 
 A server someone else hosts, reached over streamable-HTTP or SSE. Give it a name, the URL, any non-secret headers, and an auth type:
 
-| Auth | You supply | What TheYgent sends |
+| Auth | You supply | What Ertir sends |
 |---|---|---|
 | **None** | — | plain requests |
 | **Bearer token** | the token | `Authorization: Bearer <token>` |
@@ -4873,7 +4905,7 @@ If you already have a REST API, you don't have to write an MCP server for it. Pa
 Press **Preview** first: it shows exactly the tool list an agent would see, and **Create** is enabled only once the spec derives cleanly.
 
 !!! warning "A relative `servers` entry needs an explicit base URL"
-    Many specs declare a relative server URL (say `/api/v3`), which only means something relative to wherever the spec lives. When you give the spec by URL, TheYgent resolves the relative path against the spec's own origin. A **pasted** spec has no origin — give an explicit **Base URL** or the derived tools will have nowhere to call.
+    Many specs declare a relative server URL (say `/api/v3`), which only means something relative to wherever the spec lives. When you give the spec by URL, Ertir resolves the relative path against the spec's own origin. A **pasted** spec has no origin — give an explicit **Base URL** or the derived tools will have nowhere to call.
 
 ### GraphQL — generate tools from an endpoint
 
@@ -4881,13 +4913,13 @@ Give a GraphQL endpoint and its auth, and the server derives exactly **two tools
 
 ## Authorize with OAuth (sign in)
 
-Many hosted MCP servers use OAuth: there is no token to paste, because the server wants *you* to sign in and consent. TheYgent handles this without any manual configuration:
+Many hosted MCP servers use OAuth: there is no token to paste, because the server wants *you* to sign in and consent. Ertir handles this without any manual configuration:
 
 1. Create the connection with the **OAuth sign-in** auth type (Remote form), or check **"Sign in with the provider instead"** when installing from a hub.
 2. Press **Connect** on the server's row. A browser tab opens the provider's consent page.
 3. Approve. The tab tells you it's done; back on the MCP page, the row shows connected.
 
-TheYgent stores the tokens **encrypted** in your own database and refreshes them automatically — you should only see the consent page again if the provider revokes access or the grant fully expires. Authorizing (or re-authorizing) never changes any agent's version: the tokens live behind the connection's stable secret reference.
+Ertir stores the tokens **encrypted** in your own database and refreshes them automatically — you should only see the consent page again if the provider revokes access or the grant fully expires. Authorizing (or re-authorizing) never changes any agent's version: the tokens live behind the connection's stable secret reference.
 
 Unattended runs never hang waiting for a login. If a server needs re-authorization during a triggered or scheduled run, the tool call **fails immediately** with a message telling you to reconnect the server on the MCP page — the node binds its `err` port and the run carries on, per the normal [tool error contract](../building/nodes/tools.md#the-success-error-contract). A browser flow only ever starts because you pressed Connect.
 
@@ -4914,7 +4946,7 @@ Drop a **Tool** node in the [editor](../building/editor.md), choose **MCP** in t
 
 ---
 
-Source: https://docs.theygent.ai/latest/mcp/examples/
+Source: https://docs.ertir.dev/latest/mcp/examples/
 
 # Example agents
 
@@ -5110,7 +5142,7 @@ supplies the arguments.
 
 ---
 
-Source: https://docs.theygent.ai/latest/mcp/apify/
+Source: https://docs.ertir.dev/latest/mcp/apify/
 
 # Apify through the MCP hub
 
@@ -5199,18 +5231,18 @@ The model's tool arguments — search terms, URLs, place names — go to Apify, 
 
 ---
 
-Source: https://docs.theygent.ai/latest/coding-agents/
+Source: https://docs.ertir.dev/latest/coding-agents/
 
-# Use TheYgent from Coding Agents
+# Use Ertir from Coding Agents
 
-TheYgent ships an **MCP server** that hands your coding agent the platform as tools. Add it to
+Ertir ships an **MCP server** that hands your coding agent the platform as tools. Add it to
 Claude Code, Codex, OpenCode or any other MCP client, and the coding agent can:
 
 - **Offload work to your local models.** Summarize a long file, draft a commit message or
   release notes, classify or extract data, or get a second opinion. The work runs on the model
   you pick. With a local MLX or llama.cpp model, the content stays on your machine and costs
   nothing per token.
-- **Run your TheYgent agents.** Anything you have built and published, such as a triage
+- **Run your Ertir agents.** Anything you have built and published, such as a triage
   router, a PII firewall or a review loop, becomes one tool call away.
 - **Build new agents for you.** Describe a repeatable job and the coding agent writes the agent,
   checks it, test-runs it, and publishes it. It then appears on your **Agents** page like
@@ -5220,43 +5252,43 @@ Claude Code, Codex, OpenCode or any other MCP client, and the coding agent can:
   retrieval your agents use.
 
 !!! note "Two directions of MCP"
-    The [MCP](../mcp/index.md) section is about TheYgent *using* MCP servers inside agents. This
-    page is the other direction: **TheYgent as an MCP server** that other tools use.
+    The [MCP](../mcp/index.md) section is about Ertir *using* MCP servers inside agents. This
+    page is the other direction: **Ertir as an MCP server** that other tools use.
 
 ## Before you start
 
-- **TheYgent is running.** Use `make up` or Docker Compose (see [Running TheYgent](../getting-started/running.md)).
+- **Ertir is running.** Use `make up` or Docker Compose (see [Running Ertir](../getting-started/running.md)).
   The MCP server talks to the control plane on `:8080` and the inference plane on `:8081`.
 - **At least one chat model is registered** (see [Installing local models](../models/installing.md)). Add an
   embeddings model too if you want the coding agent to index and search documents.
-- **`uv` is on your `PATH`.** The coding tool starts the MCP server from your TheYgent checkout
+- **`uv` is on your `PATH`.** The coding tool starts the MCP server from your Ertir checkout
   with `uv run`.
-- **A personal API key.** In TheYgent, open the profile menu at the bottom of the sidebar and
+- **A personal API key.** In Ertir, open the profile menu at the bottom of the sidebar and
   choose **API keys → Create**. Copy the `tyk_…` key; it is shown only once. The key acts with your
   role, and creating agents needs **editor** or above (see [Users, roles & sign-in](../running/users.md#personal-api-keys)).
 
 ## Print your setup commands
 
-From your TheYgent checkout:
+From your Ertir checkout:
 
 ```bash
 make mcp-setup
 ```
 
 It prints a ready-to-paste setup for each tool below, with your checkout's path already filled in.
-Replace `<your TheYgent API key>` with your key.
+Replace `<your Ertir API key>` with your key.
 
 ## Claude Code
 
 ```bash
 claude mcp add theygent --scope user \
   -e 'THEYGENT_API_KEY=tyk_…your key' \
-  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp
+  -- uv run --project /path/to/Ertir --package theygent-mcp theygent-mcp
 ```
 
-`--scope user` makes TheYgent available in every project. Leave it out to add it only to the
+`--scope user` makes Ertir available in every project. Leave it out to add it only to the
 current project. Check the connection with `claude mcp list`, or run `/mcp` inside a session.
-Then ask in plain words, for example *"use TheYgent's local model to summarize this log"*. Claude
+Then ask in plain words, for example *"use Ertir's local model to summarize this log"*. Claude
 picks the tools itself.
 
 Agent runs on a local model can take a few minutes. If a long run is cut off, raise Claude Code's
@@ -5266,7 +5298,7 @@ MCP tool timeout, for example `export MCP_TOOL_TIMEOUT=600000` (milliseconds) be
 
 ```bash
 codex mcp add theygent --env 'THEYGENT_API_KEY=tyk_…your key' \
-  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp
+  -- uv run --project /path/to/Ertir --package theygent-mcp theygent-mcp
 ```
 
 Codex stops a tool call after 60 seconds by default, which is too short for agent runs on a
@@ -5275,14 +5307,14 @@ local model. Give it room in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.theygent]
 command = "uv"
-args = ["run", "--project", "/path/to/TheYgent", "--package", "theygent-mcp", "theygent-mcp"]
+args = ["run", "--project", "/path/to/Ertir", "--package", "theygent-mcp", "theygent-mcp"]
 tool_timeout_sec = 600
 env = { THEYGENT_API_KEY = "tyk_…your key" }
 ```
 
 ## OpenCode
 
-Add TheYgent to `opencode.json`, either in the project or in `~/.config/opencode/opencode.json`:
+Add Ertir to `opencode.json`, either in the project or in `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -5290,7 +5322,7 @@ Add TheYgent to `opencode.json`, either in the project or in `~/.config/opencode
   "mcp": {
     "theygent": {
       "type": "local",
-      "command": ["uv", "run", "--project", "/path/to/TheYgent", "--package", "theygent-mcp", "theygent-mcp"],
+      "command": ["uv", "run", "--project", "/path/to/Ertir", "--package", "theygent-mcp", "theygent-mcp"],
       "enabled": true,
       "environment": { "THEYGENT_API_KEY": "tyk_…your key" }
     }
@@ -5341,15 +5373,15 @@ The coding tool sees only what the tools return. See [Privacy & data flow](../co
 ## Next
 
 - [Tools & recipes](tools.md) lists every tool, gives prompts that work well, and has a snippet that
-  teaches your coding agent when to reach for TheYgent.
+  teaches your coding agent when to reach for Ertir.
 
 ---
 
-Source: https://docs.theygent.ai/latest/coding-agents/tools/
+Source: https://docs.ertir.dev/latest/coding-agents/tools/
 
 # Tools & Recipes
 
-Once [TheYgent is connected](index.md), your coding agent sees the tools below. You rarely name
+Once [Ertir is connected](index.md), your coding agent sees the tools below. You rarely name
 them. Ask for the outcome and the agent picks the tools itself. Wherever a tool takes an agent or
 a retrieval source, it accepts the id or the exact name you gave it.
 
@@ -5357,7 +5389,7 @@ a retrieval source, it accepts the id or the exact name you gave it.
 
 | Tool | What it does |
 |---|---|
-| `list_models` | The models registered in TheYgent: logical id, engine, modality (chat, vision, embeddings…), and which chat model `ask_model` uses by default. |
+| `list_models` | The models registered in Ertir: logical id, engine, modality (chat, vision, embeddings…), and which chat model `ask_model` uses by default. |
 | `ask_model` | Sends one prompt to a model and returns its answer. `files` attaches local text files: the MCP server reads them and sends them only to the model, so a long log or file never passes through the coding agent's own context or its provider. Only the answer comes back. Up to 256 KiB of files per call. `think: false` turns a reasoning model's thinking off for a faster answer. |
 
 ## Agents and runs
@@ -5384,7 +5416,7 @@ the interface or the API instead.
 | `publish_agent_version` | Publishes a new version of an existing agent. Earlier versions stay runnable. |
 | `list_samples` / `install_samples` | The ready-made [sample agents](../samples/index.md), and installing them with your models in their slots. |
 
-Agents the coding agent builds are ordinary TheYgent agents. They follow
+Agents the coding agent builds are ordinary Ertir agents. They follow
 [versioning](../concepts/versioning.md), show up in the editor, can get
 [triggers](../running/triggers.md), and their runs are traced on the **Runs** page.
 
@@ -5394,7 +5426,7 @@ Agents the coding agent builds are ordinary TheYgent agents. They follow
 |---|---|
 | `list_rag_sources` | Your [retrieval sources](../rag/index.md) and their status. |
 | `create_rag_source` | Creates an `upload` source, or a `crawl` source for a website. Needs an embeddings model from `list_models`. |
-| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over TheYgent's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
+| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over Ertir's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
 | `add_rag_text` | Adds a document from text, such as notes, a generated summary, or an API response. |
 | `ingest_rag_source` | Starts or re-runs a crawl source's crawl. |
 | `get_rag_source` | Ingest progress and each document's status. |
@@ -5405,42 +5437,42 @@ Source code and config files index as plain text, next to the document formats l
 
 ## Recipes
 
-Prompts that work well with Claude Code, Codex or OpenCode once TheYgent is connected:
+Prompts that work well with Claude Code, Codex or OpenCode once Ertir is connected:
 
 **Offload a summary to a local model**
 
-> Have TheYgent's local model read `logs/build.log` and summarize the failures in five bullets.
+> Have Ertir's local model read `logs/build.log` and summarize the failures in five bullets.
 > Pass the log as a file, don't read it yourself. Use think=false.
 
 **Draft with a private model**
 
-> Write the release notes for the commits since the last tag. Draft them with TheYgent's local
+> Write the release notes for the commits since the last tag. Draft them with Ertir's local
 > model, then tidy the draft yourself.
 
 **Index the docs, then answer from them**
 
-> Create a TheYgent retrieval source called `project-docs` with the `local-embed` model and add
+> Create an Ertir retrieval source called `project-docs` with the `local-embed` model and add
 > `docs/` and `README.md` to it. When it's ready, search it for how authentication is configured.
 
 **Build a reusable agent**
 
-> Build me a TheYgent agent called `commit-titler` that turns a change description into a
+> Build me an Ertir agent called `commit-titler` that turns a change description into a
 > conventional-commit title using my local model. Test it on two examples, then publish it.
 
 **Use an agent you already have**
 
-> Run my TheYgent agent `pii-firewall` on `fixtures/customers.csv` before you paste any of it here.
+> Run my Ertir agent `pii-firewall` on `fixtures/customers.csv` before you paste any of it here.
 
-## Teach your coding agent when to use TheYgent
+## Teach your coding agent when to use Ertir
 
 The MCP server tells the coding agent what it offers. A line in your project instructions turns
 that into a habit. Add something like this to `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex,
 OpenCode):
 
 ```markdown
-## TheYgent
+## Ertir
 
-TheYgent's MCP tools are available. For summaries, first drafts and extraction over large or
+Ertir's MCP tools are available. For summaries, first drafts and extraction over large or
 private files, call `ask_model` with the paths in `files` (think=false for quick tasks) instead of
 reading the files yourself. Search the `project-docs` retrieval source before guessing how something works here.
 Check `list_agents` for an existing agent before writing a one-off script for a repeatable task.
@@ -5455,17 +5487,17 @@ Every tool error says what to do next:
 | `THEYGENT_API_KEY is not set` | Add your key to the server's environment, then restart the coding tool. |
 | `rejected the API key (401)` | The key was revoked or mistyped. Create a new one under **API keys**. |
 | `refused this action (403)` | Your role can't do this. Publishing agents needs **editor** or above. |
-| `is not reachable at …` | TheYgent isn't running, or isn't at that address. Start it with `make up`, or set the plane URL variables. |
+| `is not reachable at …` | Ertir isn't running, or isn't at that address. Start it with `make up`, or set the plane URL variables. |
 | `No chat model is registered` | Install a model from **Registries → Add model**. |
 | `did not answer in time` | A run took longer than `THEYGENT_MCP_RUN_TIMEOUT_S`. Raise it, and the coding tool's own tool timeout. |
 
-Errors from TheYgent itself pass through with their code, for example `agent_exists` when
+Errors from Ertir itself pass through with their code, for example `agent_exists` when
 publishing an id that is taken (use `publish_agent_version`), or `unsupported_document` for a
 file type retrieval can't read.
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/
+Source: https://docs.ertir.dev/latest/running/
 
 # Runs
 
@@ -5583,7 +5615,7 @@ If the control plane restarts while a run is mid-flight, that run is swept to `f
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/durable/
+Source: https://docs.ertir.dev/latest/running/durable/
 
 # Durable runs
 
@@ -5696,7 +5728,7 @@ A few behaviours worth knowing:
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/human-in-the-loop/
+Source: https://docs.ertir.dev/latest/running/human-in-the-loop/
 
 # Human-in-the-loop
 
@@ -5805,7 +5837,7 @@ If the node has a `timeout` and no one answers in time, the outcome follows `onT
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/triggers/
+Source: https://docs.ertir.dev/latest/running/triggers/
 
 # Triggers & webhooks
 
@@ -5995,11 +6027,11 @@ curl -X PATCH http://localhost:8080/triggers/TRIGGER_ID \
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/users/
+Source: https://docs.ertir.dev/latest/running/users/
 
 # Users, roles & sign-in
 
-TheYgent's control plane has an **identity layer**: every person gets an account with one of three roles, every call to the API carries a bearer token, and admins can wire up single sign-on through any OIDC or OAuth2 provider. This page covers the first-run wizard, what each role can do, managing accounts, SSO, and the personal API keys that let your own scripts and frontends call TheYgent.
+Ertir's control plane has an **identity layer**: every person gets an account with one of three roles, every call to the API carries a bearer token, and admins can wire up single sign-on through any OIDC or OAuth2 provider. This page covers the first-run wizard, what each role can do, managing accounts, SSO, and the personal API keys that let your own scripts and frontends call Ertir.
 
 All examples target the control plane at `http://localhost:8080`.
 
@@ -6065,7 +6097,7 @@ Two behaviors worth calling out:
 - **Creating an account without a password** makes an **SSO-only** account: the user cannot password-login and is expected to arrive through a sign-in provider. Give it an `email` and the first provider sign-in with a matching verified email claims it — see [pre-provisioning](#who-gets-in-auto-provision-domains-and-pre-provisioning).
 
 !!! warning "The last admin is protected"
-    The last active admin can never be demoted, disabled, or deleted — any attempt returns `409 last_admin`. Promote a second admin first. This is deliberate: a TheYgent install with no admin has no in-band way to recover itself.
+    The last active admin can never be demoted, disabled, or deleted — any attempt returns `409 last_admin`. Promote a second admin first. This is deliberate: an Ertir install with no admin has no in-band way to recover itself.
 
 ### Self-service
 
@@ -6199,11 +6231,11 @@ Deleting a provider removes the sign-in button and its stored secret; accounts c
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/observability/
+Source: https://docs.ertir.dev/latest/running/observability/
 
 # Observability
 
-Every run is traced. TheYgent records a timing tree for each execution into its own database and renders it as a zoomable **run waterfall** — one bar per graph node, with timings, token usage, and a click-through into each node's input and output. Nothing is sent to an external tracing service unless you opt in. This page explains how to read the waterfall, what gets captured and how to change it, and how to export traces to your own tools.
+Every run is traced. Ertir records a timing tree for each execution into its own database and renders it as a zoomable **run waterfall** — one bar per graph node, with timings, token usage, and a click-through into each node's input and output. Nothing is sent to an external tracing service unless you opt in. This page explains how to read the waterfall, what gets captured and how to change it, and how to export traces to your own tools.
 
 ## Where the waterfall appears
 
@@ -6366,7 +6398,7 @@ The click-through payloads come from `GET /runs/{run_id}/nodes/{node_id}/io`, wh
 
 ## Exporting traces to external tools
 
-By default traces stay entirely local — the in-app waterfall reads TheYgent's own store and there is no external tracing backend to run. If you already use an OpenTelemetry-compatible collector, you can opt in to export.
+By default traces stay entirely local — the in-app waterfall reads Ertir's own store and there is no external tracing backend to run. If you already use an OpenTelemetry-compatible collector, you can opt in to export.
 
 Set the standard OTLP endpoint and export turns on:
 
@@ -6374,7 +6406,7 @@ Set the standard OTLP endpoint and export turns on:
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-With the endpoint unset, export is off. When it is set, spans are pushed over OTLP/HTTP as they close. The OpenTelemetry SDK is an optional dependency — if the endpoint is set but the SDK isn't installed, TheYgent logs a clear warning and simply leaves export off; a run never fails because of tracing.
+With the endpoint unset, export is off. When it is set, spans are pushed over OTLP/HTTP as they close. The OpenTelemetry SDK is an optional dependency — if the endpoint is set but the SDK isn't installed, Ertir logs a clear warning and simply leaves export off; a run never fails because of tracing.
 
 What crosses, and what does not:
 
@@ -6396,7 +6428,7 @@ If observability is off or a run recorded no spans, the waterfall shows a plain 
 
 ---
 
-Source: https://docs.theygent.ai/latest/running/bench/
+Source: https://docs.ertir.dev/latest/running/bench/
 
 # The Bench
 
@@ -6486,7 +6518,7 @@ For agents that aren't durable-only, a **Chat** section lets you hold a real con
 
 ### Applying a preset to an agent
 
-If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. Each preset's modality is shown beside its name so you can tell which binding it belongs on; the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
+If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and Ertir writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. Each preset's modality is shown beside its name so you can tell which binding it belongs on; the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
 
 ## Testing an MCP tool
 
@@ -6497,7 +6529,7 @@ The [MCP](../building/nodes/mcp.md) page has a **tool tester** for exercising on
 Saved model-bench results, presets, and any test suites live in the control plane's Postgres database (the bench tables), alongside your runs and agents. What is stored is deliberately lightweight:
 
 - **Metrics and digests**, not raw outputs. The `output_digest` lets comparisons check whether two outputs matched without keeping the text.
-- **Raw output only on opt-in**, and then only as a **local reference** in your own trust domain — TheYgent never uploads the generated text, image, or audio.
+- **Raw output only on opt-in**, and then only as a **local reference** in your own trust domain — Ertir never uploads the generated text, image, or audio.
 - Bench records carry the coordinates you'd expect for later analysis: `target_kind` (`model` or `agent`), `modality`, `logical_id`, `binding`, the `params` and their digest, the `metrics`, the `output_digest`, and a `run_id`.
 
 Saved results are readable through the API (`GET /bench/runs`, filterable by `logical_id`, `agent_id`, `suite_id`, or `case_id`) and comparable in-modal. Suites of golden cases and assertions exist in the API for future use, but there is no page for them yet — recording results, in-modal compare, and presets are what the interface surfaces today.
@@ -6512,7 +6544,7 @@ Saved results are readable through the API (`GET /bench/runs`, filterable by `lo
 
 ---
 
-Source: https://docs.theygent.ai/latest/ai-gateway/
+Source: https://docs.ertir.dev/latest/ai-gateway/
 
 # AI Gateway
 
@@ -6593,7 +6625,7 @@ personal gateway on its own records from the start.
 
 A personal gateway needs no keys and no setup beyond Claude Code's settings:
 
-1. **Start TheYgent** with `make up` ([Running TheYgent](../getting-started/running.md)). The
+1. **Start Ertir** with `make up` ([Running Ertir](../getting-started/running.md)). The
    gateway listens on `127.0.0.1:8082`.
 2. **Point Claude Code at it**, in the shell you start Claude Code from:
 
@@ -6650,7 +6682,7 @@ A personal gateway needs no keys and no setup beyond Claude Code's settings:
 
 ---
 
-Source: https://docs.theygent.ai/latest/ai-gateway/setup/
+Source: https://docs.ertir.dev/latest/ai-gateway/setup/
 
 # Set up Claude Code
 
@@ -6664,7 +6696,7 @@ it — so this page explains what they are and why each one is there.
   gateway, use its address; the Setup & keys tab lets you set the address its snippets use.
 - **A gateway key** (team gateways only). Create one on **Setup & keys → New key**. It is shown
   **once**, in the dialog that creates it, together with setups that already contain it. A
-  gateway key identifies you to the gateway and opens nothing else in TheYgent; revoke it there
+  gateway key identifies you to the gateway and opens nothing else in Ertir; revoke it there
   when a machine is retired.
 - **How you are billed.** An admin sets it per developer (**Settings → Developers**):
 
@@ -6787,7 +6819,7 @@ a bill; the Report shows plan usage separately.
 
 ---
 
-Source: https://docs.theygent.ai/latest/ai-gateway/reports/
+Source: https://docs.ertir.dev/latest/ai-gateway/reports/
 
 # Reports & policy
 
@@ -6836,7 +6868,7 @@ reading of the plan's five-hour and weekly allowance and how much of it was used
 |---|---|
 | Tool search is off — every tool's definition went with every request | Set `ENABLE_TOOL_SEARCH=true` (desktop app: tool search on) |
 | Claude Code is not labelling its requests | Set `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` |
-| Unknown request classes | A newer Claude Code than this gateway knows: update TheYgent |
+| Unknown request classes | A newer Claude Code than this gateway knows: update Ertir |
 | No price known for a model | An admin adds its rates under **Settings → Contracted prices** |
 
 ## The Sessions tab
@@ -6903,7 +6935,7 @@ only the days still kept in detail. A Sessions timeline lists only the requests 
 detail, and its totals still count every request.
 
 **Prices.** Figures use Anthropic's published list prices. The Report's footer names the date
-they were read (*Prices: 2026-10-11*), and TheYgent checks for changes every week. Requests in
+they were read (*Prices: 2026-10-11*), and Ertir checks for changes every week. Requests in
 Claude Code's fast mode are priced at fast-mode rates. A model priced by prompt length, such as
 Haiku 5.5, is priced at its higher rates for a long prompt. Where your organization pays other
 rates, an admin enters them under **Settings → Contracted prices**.
@@ -6987,7 +7019,7 @@ The same tab holds the [organization's Anthropic key](running.md#the-organizatio
 
 ---
 
-Source: https://docs.theygent.ai/latest/ai-gateway/local-models/
+Source: https://docs.ertir.dev/latest/ai-gateway/local-models/
 
 # Local models
 
@@ -7196,11 +7228,11 @@ Anthropic](#what-always-stays-with-anthropic) and what falls back under the
 
 ---
 
-Source: https://docs.theygent.ai/latest/ai-gateway/running/
+Source: https://docs.ertir.dev/latest/ai-gateway/running/
 
 # Running the gateway
 
-The AI Gateway is the fourth TheYgent service, on port **8082**. It runs the same way as the
+The AI Gateway is the fourth Ertir service, on port **8082**. It runs the same way as the
 others — on a machine with `make up`, in Docker Compose, or in Kubernetes — and in one of two
 [modes](index.md#personal-or-team): **personal** (yours, on loopback, no keys) or **team** (shared,
 developers identified by gateway keys).
@@ -7351,11 +7383,11 @@ record each, exactly as the gateway sent it.
 
 - [Environment variables](../reference/environment.md#ai-gateway) — every gateway setting.
 - [Set up Claude Code](setup.md) — the client side.
-- [Running TheYgent](../getting-started/running.md) — the other services.
+- [Running Ertir](../getting-started/running.md) — the other services.
 
 ---
 
-Source: https://docs.theygent.ai/latest/import-export/
+Source: https://docs.ertir.dev/latest/import-export/
 
 # Import & export
 
@@ -7437,7 +7469,7 @@ Because secrets and weights never travel, some things need your attention on the
 - **RAG sources** import empty: re-run the crawl, or re-upload the documents.
 - **Model weights** re-download automatically for catalog-installed models (watch the notification center). A model that was registered against a local file path with no install provenance is registered anyway but warns `weights_unavailable` — it will fail at first use until you put weights at that path or reinstall it. See [Moving models to another machine](../models/index.md#moving-models-to-another-machine).
 
-The curl equivalents import the two JSON halves the zip contains (the zip itself has no single server endpoint — the browser unpacks it). A body that isn't a bundle is `400 invalid_bundle`; a bundle from a future TheYgent is `400 unsupported_bundle_version`:
+The curl equivalents import the two JSON halves the zip contains (the zip itself has no single server endpoint — the browser unpacks it). A body that isn't a bundle is `400 invalid_bundle`; a bundle from a future Ertir is `400 unsupported_bundle_version`:
 
 ```bash
 curl -X POST http://localhost:8080/import \
@@ -7470,11 +7502,11 @@ curl -X PUT http://localhost:8080/artifacts/art_01J9ZS3NDEKTSV4RRFFQ69G5FA \
 
 ---
 
-Source: https://docs.theygent.ai/latest/reference/api/
+Source: https://docs.ertir.dev/latest/reference/api/
 
 # API reference
 
-A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. TheYgent has **three services** with an API, each with its own base URL:
+A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. Ertir has **three services** with an API, each with its own base URL:
 
 - **Control plane** — `http://localhost:8080` — agents, runs, sessions, triggers, connections, artifacts, observability, and the AI gateway's configuration and reports.
 - **Inference plane** — `http://localhost:8081` — the OpenAI-compatible data plane (`/v1/*`) and model management (`/admin/*`).
@@ -7862,7 +7894,7 @@ Its own surface is `camelCase`:
 | GET | `/admin/credentials` | Whether the organization's key and the service key are set, and where the org key came from — never a value. `readOnly` says why the page may not write it: `env`, `personal_mode` or `deployment_only`. |
 | PUT / DELETE | `/admin/credentials/org-api-key` | Set (`{"api_key": "…"}`) / remove the organization's key on this gateway. `409 org_key_pinned`, `org_key_not_applicable` or `org_key_deployment_only` when it cannot; `422 invalid_api_key`. |
 
-The `/admin/*` paths take your TheYgent bearer (a session or a personal API key) and admit admins only — the gateway asks the control plane, and answers `503` if it cannot. A personal gateway with no control plane leaves them open, on loopback.
+The `/admin/*` paths take your Ertir bearer (a session or a personal API key) and admit admins only — the gateway asks the control plane, and answers `503` if it cannot. A personal gateway with no control plane leaves them open, on loopback.
 
 ## Related pages
 
@@ -7872,11 +7904,11 @@ The `/admin/*` paths take your TheYgent bearer (a session or a personal API key)
 
 ---
 
-Source: https://docs.theygent.ai/latest/reference/environment/
+Source: https://docs.ertir.dev/latest/reference/environment/
 
 # Environment variables
 
-Every setting TheYgent reads from the environment. You configure these in the `.env` file at the repository root, which `make up` and the services load automatically. Only `DATABASE_URL` is required — everything else has a working default for a local install.
+Every setting Ertir reads from the environment. You configure these in the `.env` file at the repository root, which `make up` and the services load automatically. Only `DATABASE_URL` is required — everything else has a working default for a local install.
 
 !!! tip "Where to set them"
     Copy `.env.example` to `.env` and edit it. The `Makefile` includes `.env` and exports every variable to the services it starts, so a value set there reaches every service it starts. After editing `.env`, run `make restart` to pick up the change. See [Installation](../getting-started/installation.md).
@@ -8014,12 +8046,12 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 ## Related pages
 
 - [Installation](../getting-started/installation.md) — setting up `.env` for the first time.
-- [Running TheYgent](../getting-started/running.md) — starting the services that read these.
+- [Running Ertir](../getting-started/running.md) — starting the services that read these.
 - [Troubleshooting](troubleshooting.md) — symptoms that trace back to a misconfigured variable.
 
 ---
 
-Source: https://docs.theygent.ai/latest/reference/settings/
+Source: https://docs.ertir.dev/latest/reference/settings/
 
 # Platform settings
 
@@ -8115,11 +8147,11 @@ A `PATCH` body maps keys to values; `null` resets a key to its default. The patc
 
 ---
 
-Source: https://docs.theygent.ai/latest/reference/glossary/
+Source: https://docs.ertir.dev/latest/reference/glossary/
 
 # Glossary
 
-The terms used across TheYgent and this documentation, in alphabetical order. Where a concept has its own page, the definition links to it.
+The terms used across Ertir and this documentation, in alphabetical order. Where a concept has its own page, the definition links to it.
 
 ### Activity
 
@@ -8139,7 +8171,7 @@ A blob of generated media — audio or an image — stored on local disk and pas
 
 ### Binding
 
-How a logical model maps to something that can actually answer a request. The binding value is one of four: `mlx`, `vllm`, `llamacpp` (local engines TheYgent manages), or `openai-compatible` (any reachable OpenAI-style server or hosted API). See [Models & engines](../concepts/models-and-engines.md).
+How a logical model maps to something that can actually answer a request. The binding value is one of four: `mlx`, `vllm`, `llamacpp` (local engines Ertir manages), or `openai-compatible` (any reachable OpenAI-style server or hosted API). See [Models & engines](../concepts/models-and-engines.md).
 
 ### Boundary
 
@@ -8183,7 +8215,7 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 ### Engine
 
-The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
+The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. Ertir lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
 ### Expert streaming
 
@@ -8191,11 +8223,11 @@ Running a [mixture-of-experts](#mixture-of-experts-moe) model on MLX with its ex
 
 ### Gateway key
 
-A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See [Set up Claude Code](../ai-gateway/setup.md).
+A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in Ertir. See [Set up Claude Code](../ai-gateway/setup.md).
 
 ### Generated server
 
-An MCP server TheYgent mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
+An MCP server Ertir mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
 
 ### Graph
 
@@ -8235,7 +8267,7 @@ The name you give a model when you register it (for example `triage-fast`) and t
 
 ### MCP (Model Context Protocol)
 
-An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+An open protocol for exposing external tools to models. Ertir connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
 
 ### Mixture of experts (MoE)
 
@@ -8328,7 +8360,7 @@ The standalone process (`theygent-worker`) that runs the durable queue in a serv
 
 ---
 
-Source: https://docs.theygent.ai/latest/reference/troubleshooting/
+Source: https://docs.ertir.dev/latest/reference/troubleshooting/
 
 # Troubleshooting
 
@@ -8342,7 +8374,7 @@ Common problems, what causes them, and how to fix them. Most issues fall into on
     curl http://localhost:8080/readyz   # control plane
     ```
 
-    The inference plane's `/readyz` tells you exactly which `(engine, modality)` slots are missing and why; the control plane's tells you if Postgres or the inference plane is unreachable. See [Running TheYgent](../getting-started/running.md).
+    The inference plane's `/readyz` tells you exactly which `(engine, modality)` slots are missing and why; the control plane's tells you if Postgres or the inference plane is unreachable. See [Running Ertir](../getting-started/running.md).
 
 ## Services and startup
 
@@ -8350,13 +8382,13 @@ Common problems, what causes them, and how to fix them. Most issues fall into on
 
 **Cause.** Something is already listening on that port (a stale instance, or another app on `:8080`, `:8081`, or `:5174`). `make up` refuses to clobber it and skips that service loudly.
 
-**Fix.** Stop the other process, then `make restart`. To stop TheYgent's own services, `make down`. Confirm what's up with `make status`, and read the per-service logs under `.run/` (`.run/control-plane.log`, `.run/inference-plane.log`, `.run/interface.log`) with `make logs`.
+**Fix.** Stop the other process, then `make restart`. To stop Ertir's own services, `make down`. Confirm what's up with `make status`, and read the per-service logs under `.run/` (`.run/control-plane.log`, `.run/inference-plane.log`, `.run/interface.log`) with `make logs`.
 
 ### The control plane won't come up / `/readyz` says the database is down
 
 **Cause.** `DATABASE_URL` is unset, wrong, or points at a Postgres that isn't running. The control plane requires Postgres and fails readiness without it.
 
-**Fix.** Set `DATABASE_URL` in `.env` to a reachable async DSN — `postgresql+asyncpg://user:pass@host:5432/dbname` — and make sure the database and user exist. You supply your own Postgres; TheYgent does not provision one. See [Installation](../getting-started/installation.md) and [`DATABASE_URL`](environment.md#required).
+**Fix.** Set `DATABASE_URL` in `.env` to a reachable async DSN — `postgresql+asyncpg://user:pass@host:5432/dbname` — and make sure the database and user exist. You supply your own Postgres; Ertir does not provision one. See [Installation](../getting-started/installation.md) and [`DATABASE_URL`](environment.md#required).
 
 ## Database and migrations
 
@@ -8414,7 +8446,7 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 ### `engine_failed` (503)
 
-**Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.
+**Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. Ertir has shut that engine down; the next request starts a new one.
 
 **Fix.** Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the `ctxSize` [launch setting](../models/engines.md#llamacpp-launch-settings), pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's **Logs** button).
 
@@ -8496,7 +8528,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ### "a second output node executed — the run output would be ambiguous"
 
-**Cause.** Two `output` nodes were live in the same run. TheYgent refuses to guess which one is the answer.
+**Cause.** Two `output` nodes were live in the same run. Ertir refuses to guess which one is the answer.
 
 **Fix.** Route exclusive branches (with a `router` or `guardrail`) so at most one output node is reachable per run. Having multiple output nodes is fine as long as only one executes.
 
@@ -8576,7 +8608,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ### `unsupported_bundle_version` (400)
 
-**Cause.** The bundle's `format_version` is newer than this install understands — it was exported by a newer TheYgent.
+**Cause.** The bundle's `format_version` is newer than this install understands — it was exported by a newer Ertir.
 
 **Fix.** Upgrade the importing install, then re-run the import.
 
@@ -8612,7 +8644,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ## AI gateway
 
-### Claude Code shows an error from the TheYgent AI gateway
+### Claude Code shows an error from the Ertir AI gateway
 
 The gateway names the reason in its message (and in the `x-theygent-gateway-error` header): a missing or revoked gateway key, no Anthropic credential where you are billed to your own, no organization key on the gateway, or Anthropic unreachable. Each code and its fix: [errors the gateway returns](../ai-gateway/running.md#errors-the-gateway-returns).
 
@@ -8654,4 +8686,4 @@ Claude Code turns MCP tool search off for any custom base URL and then sends eve
 
 - [API reference](api.md) — where each error code originates.
 - [Environment variables](environment.md) — the settings behind most configuration issues.
-- [Running TheYgent](../getting-started/running.md) — starting, stopping, and checking the services.
+- [Running Ertir](../getting-started/running.md) — starting, stopping, and checking the services.
