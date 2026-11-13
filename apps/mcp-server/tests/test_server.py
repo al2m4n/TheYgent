@@ -477,7 +477,7 @@ async def test_add_rag_files_leaves_the_size_limit_to_the_control_plane(
     assert by_path["manual.pdf"]["bytes"] == 60 * 1024 * 1024
     assert by_path["archive.pdf"]["skipped"] == (
         f"{70 * 1024 * 1024} bytes: document exceeds the 64 MiB upload limit. An admin "
-        "can raise the limit in TheYgent under Settings → RAG."
+        "can raise the limit in Ertir under Settings → RAG."
     )
     sent = planes.last("POST", "/rag/sources/rag_1/documents")
     assert sent.url.params["filename"] == "manual.pdf"
@@ -520,7 +520,7 @@ async def test_add_rag_files_walks_a_project_tree(
     assert (tree["uploaded"], tree["skipped"], tree["failed"]) == (3, 2, 0)
     assert {r["path"]: r.get("skipped") for r in tree["results"] if "skipped" in r} == {
         "src/empty.py": "empty file",
-        "src/logo.png": "TheYgent can't read this type",
+        "src/logo.png": "Ertir can't read this type",
     }
     assert pattern["uploaded"] == 2
     assert nothing["results"] == [{"path": "*.rs", "error": "no files match this pattern"}]

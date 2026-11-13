@@ -1,15 +1,15 @@
-# TheYgent Contributor License Agreement
+# Ertir Contributor License Agreement
 
 This agreement clarifies the terms under which you contribute code, documentation, or
-other material to TheYgent, so that both you and the project are protected. It is
+other material to Ertir (formerly TheYgent), so that both you and the project are protected. It is
 deliberately short and in plain English.
 
 By signing, you agree to the following for each contribution you submit:
 
-1. **License permission.** You give Arman Bahlakeh, the TheYgent maintainer ("we"),
+1. **License permission.** You give Arman Bahlakeh, the Ertir maintainer ("we"),
    permission to license your contribution on any terms we like. This permission is
    perpetual and irrevocable once your contribution is accepted. It is what allows us to
-   distribute TheYgent — including your contribution — under the
+   distribute Ertir — including your contribution — under the
    [Sustainable Use License](LICENSE.md) today, and under other license terms in the
    future, without having to ask every past contributor again.
 

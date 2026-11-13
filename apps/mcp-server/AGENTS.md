@@ -6,13 +6,13 @@ Rules specific to `apps/mcp-server`. The repo-wide rules in the root
 
 ## What it is
 
-An MCP server that gives coding agents (Claude Code, Codex, OpenCode, any MCP client) TheYgent's
+An MCP server that gives coding agents (Claude Code, Codex, OpenCode, any MCP client) Ertir's
 platform as tools: build, test and run agents, ask local models, and search retrieval sources.
 It runs on the developer's machine next to the coding tool — over stdio by default, or
 streamable HTTP — and is a **client** of both planes, exactly like the interface:
 
 - **Control plane** (`THEYGENT_CONTROL_PLANE_URL`, default `http://127.0.0.1:8080`) for agents,
-  runs, retrieval sources and samples, authenticated with a TheYgent API key
+  runs, retrieval sources and samples, authenticated with an Ertir API key
   (`THEYGENT_API_KEY`, `Authorization: Bearer`).
 - **Inference plane** (`THEYGENT_INFERENCE_PLANE_URL`, default `http://127.0.0.1:8081/v1`)
   directly for model calls — prompts never route through the control plane.

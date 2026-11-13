@@ -4,7 +4,7 @@ A **tool** node gives an agent an action beyond generating text: it runs a small
 
 There is one Tool node with three flavours, chosen from the **Kind** picker in the inspector:
 
-- **Builtin** — a small function TheYgent ships. Two are available: `echo` and `http_fetch`.
+- **Builtin** — a small function Ertir ships. Two are available: `echo` and `http_fetch`.
 - **REST** — call any HTTP API, optionally authenticated through a saved connection.
 - **MCP** — a tool exposed by a connected server. Picking MCP swaps the node to the `mcp_tool` type, which has its own page: [MCP tools](mcp.md).
 

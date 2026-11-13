@@ -28,7 +28,7 @@ is the index.
 | [durable-execution.md](durable-execution.md) | The DBOS workflow, durable-only nodes, schedules, the worker | `durable/`, `apps/worker` |
 | [inference-plane.md](inference-plane.md) | Bindings and modalities, the two surfaces, engine lifecycle, catalog, settings | `apps/inference-plane` |
 | [ai-gateway.md](ai-gateway.md) | The coding agents' proxy: pass-through, identity, policy, router mode, local models, shadows, prices, records | `apps/ai-gateway`, control plane `ai_gateway/` |
-| [mcp-server.md](mcp-server.md) | TheYgent as MCP tools for coding agents | `apps/mcp-server` |
+| [mcp-server.md](mcp-server.md) | Ertir as MCP tools for coding agents | `apps/mcp-server` |
 | [interface.md](interface.md) | The SPA: routes, the IR/React Flow adapter, generated types, the HTTP seam, drafts, chat, bench, waterfall | `apps/interface` |
 | [ir-and-packages.md](ir-and-packages.md) | The IR envelope and `contentHash`, validation, codegen, the gateway client | `packages/*` |
 | [deployment.md](deployment.md) | Bare metal, compose, Kubernetes, CI gates, publishing | `deploy/`, `.github/`, `Makefile` |

@@ -1,6 +1,6 @@
 # AGENTS.md — web (marketing site)
 
-Rules for `apps/web`, the static marketing site for theygent.ai. The repo-wide rules in
+Rules for `apps/web`, the static marketing site for ertir.dev. The repo-wide rules in
 the root [AGENTS.md](../../AGENTS.md) apply first. It is not part of the product: nothing
 imports it, and it imports nothing. Preview with `make web-up` (http://localhost:4321); see
 [README.md](README.md) for deploy setup.
@@ -36,13 +36,13 @@ added in the control plane gets a page under `templates/`.
   anything a machine addresses: logical ids, ports, the binding enum, hashes). Both themes
   must work; theme is set before first paint.
 - **Copy rules:** claims must stay honest — the promise is "you own every hop", never
-  "no data ever leaves your machine". Brand casing is "TheYgent" in prose. Don't name
+  "no data ever leaves your machine". Brand casing is "Ertir" in prose. Don't name
   competing products — except on the comparison pages below.
 - **Comparison pages (`compare/`) are the one place other products are named**, because
   "alternative to X" is how people search. Every claim about another product cites that
   product's own source file or documentation in the page's Sources section and carries the
   date and version it was checked; re-check and re-date when either product changes. State
-  where the other product is the better pick — a comparison that only flatters TheYgent is
+  where the other product is the better pick — a comparison that only flatters Ertir is
   neither credible nor honest. Parity is reported as parity.
 - **Every page is indexable by construction:** a page lives at `<slug>/index.html`, shares
   the nav/footer chrome, loads `styles.css` then `pages.css`, has one `<h1>` and a canonical

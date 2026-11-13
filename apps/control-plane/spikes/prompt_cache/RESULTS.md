@@ -79,7 +79,7 @@ off (`--prompt-cache-size 0`). Each call generates up to 48 tokens.
 
 ## Conclusions
 
-- **No fix is needed for reuse.** TheYgent's agent calls already get prompt-cache reuse from
+- **No fix is needed for reuse.** Ertir's agent calls already get prompt-cache reuse from
   mlx-lm, on plain and hybrid models alike, directly and through the inference plane.
 - **Possible follow-ups, both small:**
   - mlx-lm's default of 10 cached sequences can be outgrown by many agents or concurrent runs on

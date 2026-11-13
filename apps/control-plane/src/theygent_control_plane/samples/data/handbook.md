@@ -1,12 +1,12 @@
-# TheYgent — Company Handbook (fictional demo)
+# Ertir — Company Handbook (fictional demo)
 
-This is the demo knowledge base behind the Handbook Q&A sample. It treats TheYgent as a
+This is the demo knowledge base behind the Handbook Q&A sample. It treats Ertir as a
 fictional company so the sample has something real to search — **every fact in it is
 invented** and carries no meaning outside the sample.
 
-## About TheYgent
+## About Ertir
 
-In this demo universe, TheYgent is a small software company founded in 2019, with one
+In this demo universe, Ertir is a small software company founded in 2019, with one
 office and a fully remote engineering team. Its fictional customers and their orders also
 seed the private-SQL sample's demo database, so the two samples share one consistent world.
 

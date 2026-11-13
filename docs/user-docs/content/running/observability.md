@@ -1,6 +1,6 @@
 # Observability
 
-Every run is traced. TheYgent records a timing tree for each execution into its own database and renders it as a zoomable **run waterfall** — one bar per graph node, with timings, token usage, and a click-through into each node's input and output. Nothing is sent to an external tracing service unless you opt in. This page explains how to read the waterfall, what gets captured and how to change it, and how to export traces to your own tools.
+Every run is traced. Ertir records a timing tree for each execution into its own database and renders it as a zoomable **run waterfall** — one bar per graph node, with timings, token usage, and a click-through into each node's input and output. Nothing is sent to an external tracing service unless you opt in. This page explains how to read the waterfall, what gets captured and how to change it, and how to export traces to your own tools.
 
 ## Where the waterfall appears
 
@@ -163,7 +163,7 @@ The click-through payloads come from `GET /runs/{run_id}/nodes/{node_id}/io`, wh
 
 ## Exporting traces to external tools
 
-By default traces stay entirely local — the in-app waterfall reads TheYgent's own store and there is no external tracing backend to run. If you already use an OpenTelemetry-compatible collector, you can opt in to export.
+By default traces stay entirely local — the in-app waterfall reads Ertir's own store and there is no external tracing backend to run. If you already use an OpenTelemetry-compatible collector, you can opt in to export.
 
 Set the standard OTLP endpoint and export turns on:
 
@@ -171,7 +171,7 @@ Set the standard OTLP endpoint and export turns on:
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-With the endpoint unset, export is off. When it is set, spans are pushed over OTLP/HTTP as they close. The OpenTelemetry SDK is an optional dependency — if the endpoint is set but the SDK isn't installed, TheYgent logs a clear warning and simply leaves export off; a run never fails because of tracing.
+With the endpoint unset, export is off. When it is set, spans are pushed over OTLP/HTTP as they close. The OpenTelemetry SDK is an optional dependency — if the endpoint is set but the SDK isn't installed, Ertir logs a clear warning and simply leaves export off; a run never fails because of tracing.
 
 What crosses, and what does not:
 

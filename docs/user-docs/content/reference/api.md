@@ -1,6 +1,6 @@
 # API reference
 
-A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. TheYgent has **three services** with an API, each with its own base URL:
+A quick reference to the HTTP endpoints you are most likely to call directly — for scripting, automation, or debugging. Ertir has **three services** with an API, each with its own base URL:
 
 - **Control plane** — `http://localhost:8080` — agents, runs, sessions, triggers, connections, artifacts, observability, and the AI gateway's configuration and reports.
 - **Inference plane** — `http://localhost:8081` — the OpenAI-compatible data plane (`/v1/*`) and model management (`/admin/*`).
@@ -388,7 +388,7 @@ Its own surface is `camelCase`:
 | GET | `/admin/credentials` | Whether the organization's key and the service key are set, and where the org key came from — never a value. `readOnly` says why the page may not write it: `env`, `personal_mode` or `deployment_only`. |
 | PUT / DELETE | `/admin/credentials/org-api-key` | Set (`{"api_key": "…"}`) / remove the organization's key on this gateway. `409 org_key_pinned`, `org_key_not_applicable` or `org_key_deployment_only` when it cannot; `422 invalid_api_key`. |
 
-The `/admin/*` paths take your TheYgent bearer (a session or a personal API key) and admit admins only — the gateway asks the control plane, and answers `503` if it cannot. A personal gateway with no control plane leaves them open, on loopback.
+The `/admin/*` paths take your Ertir bearer (a session or a personal API key) and admit admins only — the gateway asks the control plane, and answers `503` if it cannot. A personal gateway with no control plane leaves them open, on loopback.
 
 ## Related pages
 

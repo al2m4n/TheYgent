@@ -146,7 +146,7 @@ function previewWarningLines(p: ImportPreview): string[] {
   const lines: string[] = [];
   if (w.modelDownloads > 0) {
     lines.push(
-      `${plural(w.modelDownloads, "model")} will be registered — TheYgent will download their weights from Hugging Face.`,
+      `${plural(w.modelDownloads, "model")} will be registered — Ertir will download their weights from Hugging Face.`,
     );
   }
   if (w.weightsUnavailable > 0) {

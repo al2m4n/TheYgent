@@ -45,7 +45,7 @@ reading of the plan's five-hour and weekly allowance and how much of it was used
 |---|---|
 | Tool search is off — every tool's definition went with every request | Set `ENABLE_TOOL_SEARCH=true` (desktop app: tool search on) |
 | Claude Code is not labelling its requests | Set `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1` |
-| Unknown request classes | A newer Claude Code than this gateway knows: update TheYgent |
+| Unknown request classes | A newer Claude Code than this gateway knows: update Ertir |
 | No price known for a model | An admin adds its rates under **Settings → Contracted prices** |
 
 ## The Sessions tab
@@ -112,7 +112,7 @@ only the days still kept in detail. A Sessions timeline lists only the requests 
 detail, and its totals still count every request.
 
 **Prices.** Figures use Anthropic's published list prices. The Report's footer names the date
-they were read (*Prices: 2026-10-11*), and TheYgent checks for changes every week. Requests in
+they were read (*Prices: 2026-10-11*), and Ertir checks for changes every week. Requests in
 Claude Code's fast mode are priced at fast-mode rates. A model priced by prompt length, such as
 Haiku 5.5, is priced at its higher rates for a long prompt. Where your organization pays other
 rates, an admin enters them under **Settings → Contracted prices**.

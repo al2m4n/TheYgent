@@ -8,7 +8,7 @@ to a cheaper Anthropic model where that is a drop-in, and to local models on the
 in the shares an admin sets. It is the fourth process type, on :8082.
 
 Not to be confused with the inference plane's OpenAI-compatible data plane (`/v1/*`, reached
-through `packages/gateway-client`): that serves TheYgent's own agents; this one serves a coding
+through `packages/gateway-client`): that serves Ertir's own agents; this one serves a coding
 agent's Anthropic-format traffic. The gateway is a client of that data plane for local models: the
 requests a local dial serves, local trials and local shadow runs (see *Local models, by share*
 and *Shadow runs* below). Users' view of the same features: the
@@ -356,7 +356,7 @@ status for kinds it recognises by shape (quota check, main-prefix side request, 
 
 `/admin/status`, `/admin/credentials`, and `PUT`/`DELETE /admin/credentials/org-api-key`
 (camelCase) back the interface's AI Gateway Settings tab, called straight from the browser so the
-org key never transits the control plane. Callers present their TheYgent bearer; the gateway asks
+org key never transits the control plane. Callers present their Ertir bearer; the gateway asks
 the control plane (`POST /gateway/introspect`, with its service key) whether it is a live admin's,
 and caches the answer briefly by the bearer's digest — 503 when the control plane cannot answer.
 A standalone personal gateway (loopback, no control plane) has an open admin surface. CORS is

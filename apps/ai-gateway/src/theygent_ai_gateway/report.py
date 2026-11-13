@@ -343,7 +343,7 @@ def _ratio(part: int, whole: int) -> str:
 
 def render_text(report: Report, *, top: int = 20) -> str:
     total = report.total
-    out: list[str] = ["TheYgent AI gateway — report"]
+    out: list[str] = ["Ertir AI gateway — report"]
     if not total.calls:
         out.append("No records in this window.")
         out.extend(f"! {w.message}" for w in report.warnings)

@@ -1,4 +1,4 @@
-# Running TheYgent
+# Running Ertir
 
 With the code [installed](installation.md), a single command brings up all four services. This page covers starting them, checking they're healthy, stopping them, and the one optional process — the durable worker — you'll only need for certain agents.
 

@@ -3,27 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reduce Claude Code Cost with a Self-Hosted AI Gateway | TheYgent</title>
+    <title>Reduce Claude Code Cost with a Self-Hosted AI Gateway | Ertir</title>
     <meta name="description" content="Track what Claude Code costs per session and developer, then route subagents to a cheaper Claude model or local models you run — on a gateway you host." />
-    <link rel="canonical" href="https://theygent.ai/ai-gateway/" />
+    <link rel="canonical" href="https://ertir.dev/ai-gateway/" />
     <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="dark light" />
 
     <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://theygent.ai/ai-gateway/" />
-    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:url" content="https://ertir.dev/ai-gateway/" />
+    <meta property="og:site_name" content="Ertir" />
     <meta property="og:title" content="Reduce Claude Code Cost, Measured on Your Own Traffic" />
     <meta property="og:description" content="A gateway you run between Claude Code and the Anthropic API: spend per session and developer, routing to a cheaper Claude model, and a share of the work served by your own local models." />
-    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:image" content="https://ertir.dev/assets/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:image:alt" content="Ertir — build agents on a canvas, run them where you point" />
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Reduce Claude Code Cost, Measured on Your Own Traffic" />
     <meta name="twitter:description" content="A gateway you run between Claude Code and the Anthropic API: spend per session and developer, routing to a cheaper Claude model, and a share of the work served by your own local models." />
-    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta name="twitter:image" content="https://ertir.dev/assets/og-image.png" />
 
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
@@ -40,50 +40,51 @@
         "@graph": [
           {
             "@type": "WebPage",
-            "@id": "https://theygent.ai/ai-gateway/#webpage",
-            "url": "https://theygent.ai/ai-gateway/",
-            "name": "Reduce Claude Code Cost with a Self-Hosted AI Gateway | TheYgent",
+            "@id": "https://ertir.dev/ai-gateway/#webpage",
+            "url": "https://ertir.dev/ai-gateway/",
+            "name": "Reduce Claude Code Cost with a Self-Hosted AI Gateway | Ertir",
             "description": "Track what Claude Code costs per session and developer, then route subagents to a cheaper Claude model or local models you run — on a gateway you host.",
             "inLanguage": "en",
             "dateModified": "2026-10-15",
             "isPartOf": {
-              "@id": "https://theygent.ai/#website"
+              "@id": "https://ertir.dev/#website"
             },
             "about": {
-              "@id": "https://theygent.ai/#software"
+              "@id": "https://ertir.dev/#software"
             },
             "breadcrumb": {
-              "@id": "https://theygent.ai/ai-gateway/#breadcrumb"
+              "@id": "https://ertir.dev/ai-gateway/#breadcrumb"
             }
           },
           {
             "@type": "BreadcrumbList",
-            "@id": "https://theygent.ai/ai-gateway/#breadcrumb",
+            "@id": "https://ertir.dev/ai-gateway/#breadcrumb",
             "itemListElement": [
               {
                 "@type": "ListItem",
                 "position": 1,
-                "name": "TheYgent",
-                "item": "https://theygent.ai/"
+                "name": "Ertir",
+                "alternateName": "TheYgent",
+                "item": "https://ertir.dev/"
               },
               {
                 "@type": "ListItem",
                 "position": 2,
                 "name": "AI Gateway",
-                "item": "https://theygent.ai/ai-gateway/"
+                "item": "https://ertir.dev/ai-gateway/"
               }
             ]
           },
           {
             "@type": "FAQPage",
-            "@id": "https://theygent.ai/ai-gateway/#faq",
+            "@id": "https://ertir.dev/ai-gateway/#faq",
             "mainEntity": [
               {
                 "@type": "Question",
                 "name": "How do I reduce what Claude Code costs?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Measure first. Run TheYgent's AI Gateway between Claude Code and the Anthropic API in observer mode: it records what every request cost and what routing would have saved, without changing anything. Then switch to router mode to move subagents and cold-cache turns to a cheaper Claude model — Sonnet 5.5 is half the list price of Opus 5.5 — and, if you choose, a share of the work to models you run yourself. Keep tool search on, too: Claude Code turns it off behind a custom base URL, and every request then carries every connected tool's definition."
+                  "text": "Measure first. Run Ertir's AI Gateway between Claude Code and the Anthropic API in observer mode: it records what every request cost and what routing would have saved, without changing anything. Then switch to router mode to move subagents and cold-cache turns to a cheaper Claude model — Sonnet 5.5 is half the list price of Opus 5.5 — and, if you choose, a share of the work to models you run yourself. Keep tool search on, too: Claude Code turns it off behind a custom base URL, and every request then carries every connected tool's definition."
                 }
               },
               {
@@ -91,7 +92,7 @@
                 "name": "Can Claude Code use a local model?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes, through the AI Gateway in router mode. You set a share per kind of request — side requests such as session titles, subagents, and the main conversation — and the gateway answers that share with a model on your TheYgent inference plane, at no API spend. Each model is measured first: a trial sends copies of real requests to it while Anthropic still answers, and records how often it picked the same next action. Whatever a local model can't take goes to Anthropic before Claude Code sees anything."
+                  "text": "Yes, through the AI Gateway in router mode. You set a share per kind of request — side requests such as session titles, subagents, and the main conversation — and the gateway answers that share with a model on your Ertir inference plane, at no API spend. Each model is measured first: a trial sends copies of real requests to it while Anthropic still answers, and records how often it picked the same next action. Whatever a local model can't take goes to Anthropic before Claude Code sees anything."
                 }
               },
               {
@@ -107,7 +108,7 @@
                 "name": "Does the AI Gateway see my code?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes — it relays Claude Code's prompts, code, and credentials, so it runs where you run it: your machine or your cluster. It never writes a prompt or a response anywhere, and never stores a credential except an organization key you give it. TheYgent's control plane receives metadata only: timings, model names, token counts, costs, and the reasons behind each routing decision."
+                  "text": "Yes — it relays Claude Code's prompts, code, and credentials, so it runs where you run it: your machine or your cluster. It never writes a prompt or a response anywhere, and never stores a credential except an organization key you give it. Ertir's control plane receives metadata only: timings, model names, token counts, costs, and the reasons behind each routing decision."
                 }
               },
               {
@@ -149,22 +150,22 @@
     <!-- ─────────────────────────── NAV ─────────────────────────── -->
     <header class="nav" id="top">
       <div class="nav-inner">
-        <a class="brand" href="/" aria-label="TheYgent home">
-          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        <a class="brand" href="/" aria-label="Ertir home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
         </a>
         <nav class="nav-links" aria-label="Primary">
           <a href="/">Product</a>
           <a href="/private-ai/">Private &amp; Offline</a>
           <a href="/apple-silicon/">Apple Silicon</a>
           <a href="/compare/">Compare</a>
-          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+          <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
         </nav>
         <div class="nav-actions">
           <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
             <span class="theme-dot"></span><span class="theme-label mono">dark</span>
           </button>
-          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/ertir" rel="noopener">
             <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -183,8 +184,8 @@
         <a href="/private-ai/">Private &amp; Offline</a>
         <a href="/apple-silicon/">Apple Silicon</a>
         <a href="/compare/">Compare</a>
-        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+        <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
       </div>
     </header>
 
@@ -193,21 +194,21 @@
         <div class="wrap">
           <nav class="crumbs mono" aria-label="Breadcrumb">
             <ol>
-              <li><a href="/">TheYgent</a></li>
+              <li><a href="/">Ertir</a></li>
               <li><span aria-current="page">AI Gateway</span></li>
             </ol>
           </nav>
           <p class="eyebrow mono"><i class="dia"></i>AI Gateway · Claude Code · Self-Hosted</p>
           <h1 id="page-h">Reduce Claude Code Cost, <span class="ramp-text">Measured on Your Own Traffic.</span></h1>
           <p class="lede">
-            TheYgent&rsquo;s AI Gateway sits between Claude Code and the Anthropic API. It shows what every session,
+            Ertir&rsquo;s AI Gateway sits between Claude Code and the Anthropic API. It shows what every session,
             subagent, and developer costs, and what routing would save — then, when you choose, sends subagents and
             cold-cache turns to a cheaper Claude model and a share of the work to local models you run. It runs on your
-            machine or your cluster, and ships with TheYgent 1.0.
+            machine or your cluster, and ships with Ertir 1.0.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="#try">Try It on Your Machine&nbsp;↓</a>
-            <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/ai-gateway/" rel="noopener">Read the AI Gateway Guide&nbsp;→</a>
+            <a class="btn btn-ghost" href="https://docs.ertir.dev/latest/ai-gateway/" rel="noopener">Read the AI Gateway Guide&nbsp;→</a>
           </div>
         </div>
       </section>
@@ -381,7 +382,7 @@
           <div class="prose">
             <h2 id="local-h">Route Claude Code to a Local LLM, One Share at a Time</h2>
             <p>
-              In router mode, the gateway can answer part of Claude Code&rsquo;s work with models on your TheYgent
+              In router mode, the gateway can answer part of Claude Code&rsquo;s work with models on your Ertir
               inference plane: models you install from the in-app catalog and run on its built-in engines —
               <strong>llama.cpp</strong> on any machine, <strong>MLX</strong> on Apple Silicon — or a model on your own
               GPU servers, registered as OpenAI-compatible. A request a local model answers costs no API spend. How much
@@ -441,7 +442,7 @@
             The local route is verified with llama.cpp. For a team, serve the model on an engine that handles several
             requests at once, such as a llama.cpp model with parallel slots: a request that waits past the
             gateway&rsquo;s time limit goes to Anthropic instead.
-            <a href="https://docs.theygent.ai/latest/ai-gateway/local-models/" rel="noopener">Local models: setup, trials, and limits.</a>
+            <a href="https://docs.ertir.dev/latest/ai-gateway/local-models/" rel="noopener">Local models: setup, trials, and limits.</a>
           </p>
         </div>
       </section>
@@ -451,7 +452,7 @@
           <h2 id="track-h">Claude Code Usage and Cost Tracking, Self-Hosted</h2>
           <p>
             Every exchange becomes a record: the model Claude Code asked for and the one that served it, tokens, cost,
-            the request&rsquo;s kind, and the decision with its reason. The AI Gateway page in TheYgent turns those
+            the request&rsquo;s kind, and the decision with its reason. The AI Gateway page in Ertir turns those
             records into:
           </p>
           <ul>
@@ -543,7 +544,7 @@
             <p>
               The gateway relays Claude Code&rsquo;s prompts, code, and credentials, so it runs where you run it,
               beside Claude Code. It never writes a prompt or a response anywhere, never stores a credential except an
-              organization key you give it, and never sends a gateway key upstream. What it sends to TheYgent&rsquo;s
+              organization key you give it, and never sends a gateway key upstream. What it sends to Ertir&rsquo;s
               control plane is metadata only: timings, model names, token counts, costs, the routing decision and its
               reasons, and Claude Code&rsquo;s session and agent ids — never prompt or response text. Developers see
               their own records in full; admins see everyone&rsquo;s.
@@ -562,10 +563,10 @@
         <div class="wrap prose">
           <h2 id="try-h">Try It on Your Machine</h2>
           <p>
-            A personal gateway needs no keys. <code>make up</code> starts it with the rest of TheYgent, on
+            A personal gateway needs no keys. <code>make up</code> starts it with the rest of Ertir, on
             <code>127.0.0.1:8082</code>:
           </p>
-          <pre><code>git clone https://github.com/al2m4n/TheYgent.git &amp;&amp; cd TheYgent
+          <pre><code>git clone https://github.com/al2m4n/ertir.git &amp;&amp; cd Ertir
 cp .env.example .env   # ships a personal gateway on 127.0.0.1:8082
 make up</code></pre>
           <p>Then point Claude Code at it, in the shell you start Claude Code from:</p>
@@ -582,9 +583,9 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
             in Docker if you don&rsquo;t have your own. To see the gateway on the AI Gateway page and to route, attach
             it to the control plane with a service key, then save observer or router mode on
             <strong>AI Gateway → Settings</strong>. For a team, IDEs, <code>settings.json</code>, and the desktop app,
-            see <a href="https://docs.theygent.ai/latest/ai-gateway/setup/" rel="noopener">Set Up Claude Code</a>; for
+            see <a href="https://docs.ertir.dev/latest/ai-gateway/setup/" rel="noopener">Set Up Claude Code</a>; for
             Docker Compose and Kubernetes, see
-            <a href="https://docs.theygent.ai/latest/ai-gateway/running/" rel="noopener">Running the Gateway</a>.
+            <a href="https://docs.ertir.dev/latest/ai-gateway/running/" rel="noopener">Running the Gateway</a>.
           </p>
         </div>
       </section>
@@ -597,7 +598,7 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
             <details class="faq-item">
               <summary><h3>How do I reduce what Claude Code costs?</h3></summary>
               <p>
-                Measure first. Run TheYgent&rsquo;s AI Gateway between Claude Code and the Anthropic API in observer
+                Measure first. Run Ertir&rsquo;s AI Gateway between Claude Code and the Anthropic API in observer
                 mode: it records what every request cost and what routing would have saved, without changing anything.
                 Then switch to router mode to move subagents and cold-cache turns to a cheaper Claude model — Sonnet 5.5
                 is half the list price of Opus 5.5 — and, if you choose, a share of the work to models you run yourself.
@@ -610,7 +611,7 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
               <p>
                 Yes, through the AI Gateway in router mode. You set a share per kind of request — side requests such as
                 session titles, subagents, and the main conversation — and the gateway answers that share with a model
-                on your TheYgent inference plane, at no API spend. Each model is measured first: a trial sends copies of
+                on your Ertir inference plane, at no API spend. Each model is measured first: a trial sends copies of
                 real requests to it while Anthropic still answers, and records how often it picked the same next action.
                 Whatever a local model can&rsquo;t take goes to Anthropic before Claude Code sees anything.
               </p>
@@ -629,7 +630,7 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
               <p>
                 Yes — it relays Claude Code&rsquo;s prompts, code, and credentials, so it runs where you run it: your
                 machine or your cluster. It never writes a prompt or a response anywhere, and never stores a credential
-                except an organization key you give it. TheYgent&rsquo;s control plane receives metadata only: timings,
+                except an organization key you give it. Ertir&rsquo;s control plane receives metadata only: timings,
                 model names, token counts, costs, and the reasons behind each routing decision.
               </p>
             </details>
@@ -661,13 +662,13 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
         <div class="wrap">
           <h2 id="next-h" class="prose">Keep Reading</h2>
           <div class="card-grid">
-            <a class="cap cut-card" href="https://docs.theygent.ai/latest/ai-gateway/setup/" rel="noopener">
+            <a class="cap cut-card" href="https://docs.ertir.dev/latest/ai-gateway/setup/" rel="noopener">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>docs</span>
               <h3>Set Up Claude Code</h3>
               <p>The settings per client — terminal, IDEs, <code>settings.json</code>, the desktop app — and why each one is there.</p>
               <span class="cap-more mono">Open the docs →</span>
             </a>
-            <a class="cap cut-card" href="https://docs.theygent.ai/latest/ai-gateway/reports/" rel="noopener">
+            <a class="cap cut-card" href="https://docs.ertir.dev/latest/ai-gateway/reports/" rel="noopener">
               <span class="cap-kicker mono"><i class="dia dia-amber"></i>docs</span>
               <h3>Reports &amp; Policy</h3>
               <p>Reading the figures, every reason label, and how the policy decides what moves.</p>
@@ -676,7 +677,7 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
             <a class="cap cut-card" href="/private-ai/">
               <span class="cap-kicker mono"><i class="dia dia-green"></i>privacy</span>
               <h3>Private &amp; Offline AI</h3>
-              <p>Where your data lives, and everything TheYgent ever connects to.</p>
+              <p>Where your data lives, and everything Ertir ever connects to.</p>
               <span class="cap-more mono">Read more →</span>
             </a>
           </div>
@@ -688,9 +689,9 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
     <footer class="footer">
       <div class="wrap footer-inner">
         <div class="footer-brand">
-          <a class="brand" href="/" aria-label="TheYgent home">
-            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          <a class="brand" href="/" aria-label="Ertir home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
           </a>
           <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
         </div>
@@ -718,22 +719,22 @@ export ENABLE_TOOL_SEARCH='true'</code></pre>
             <a href="/templates/">Agent Templates</a>
             <a href="/blog/">Blog</a>
             <a href="/compare/">Compare Platforms</a>
-            <a href="/compare/dify/">TheYgent vs Dify</a>
-            <a href="/compare/n8n/">TheYgent vs n8n</a>
-            <a href="/compare/langflow/">TheYgent vs Langflow</a>
-            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+            <a href="/compare/dify/">Ertir vs Dify</a>
+            <a href="/compare/n8n/">Ertir vs n8n</a>
+            <a href="/compare/langflow/">Ertir vs Langflow</a>
+            <a href="/compare/flowise/">Ertir vs Flowise</a>
           </div>
           <div class="footer-col">
             <span class="footer-h mono">resources</span>
-            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
-            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/ertir/blob/main/LICENSE.md" rel="noopener">License</a>
             <a href="/llms.txt">llms.txt</a>
           </div>
         </nav>
       </div>
       <div class="wrap footer-base mono">
-        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span>© 2026 Arman Bahlakeh · Ertir (formerly TheYgent) · Sustainable Use License</span>
         <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
       </div>
     </footer>

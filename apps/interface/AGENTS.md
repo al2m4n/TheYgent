@@ -6,7 +6,7 @@ Rules specific to `apps/interface` (the React SPA). The repo-wide rules in the r
 
 ## What it is
 
-TheYgent's one frontend (`@theygent/interface`): a Vite + React 19 SPA on :5174 (TanStack
+Ertir's one frontend (`@theygent/interface`): a Vite + React 19 SPA on :5174 (TanStack
 Router and Query, Tailwind v4, shadcn/ui, React Flow, CodeMirror). It renders the visual agent
 builder (an agent's IR as a canvas) and every operator surface: dashboard, agents, chat, runs,
 sessions, model registries, MCP, RAG, the AI Gateway page, settings. It is served by Vite in dev

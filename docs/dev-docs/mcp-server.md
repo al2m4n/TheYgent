@@ -1,9 +1,9 @@
 # MCP server
 
-`apps/mcp-server` (`theygent-mcp`) turns TheYgent's platform into tools a coding agent can call.
+`apps/mcp-server` (`theygent-mcp`) turns Ertir's platform into tools a coding agent can call.
 Claude Code, Codex, OpenCode or any MCP client gets twenty tools. With them it can offload a
 prompt to a local model, run and build agents, and index and search retrieval sources. The user
-guide is [Use TheYgent from coding agents](../user-docs/content/coding-agents/index.md).
+guide is [Use Ertir from coding agents](../user-docs/content/coding-agents/index.md).
 
 ## Place in the system
 
@@ -62,7 +62,7 @@ Design rules for the tools:
 - **References resolve by id or name.** Coding agents know agents and sources by the names
   users give them. `_agent_id` and `_source_id` map an exact, case-insensitive name to its id
   and fail loudly when the name is ambiguous. An unknown source name lists the real ones.
-- **Errors are actionable.** `Planes._send` maps an unreachable plane to "start TheYgent / set
+- **Errors are actionable.** `Planes._send` maps an unreachable plane to "start Ertir / set
   the URL", `401` to "make a new key", and `403` to "needs editor". Other errors pass the
   plane's envelope `{"error": {"code", "message"}}` through with its code.
 - **Runs are synchronous and bounded.** `run_agent` and `run_graph` call the non-streaming,

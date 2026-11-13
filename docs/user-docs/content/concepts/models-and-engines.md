@@ -1,6 +1,6 @@
 # Models and engines
 
-TheYgent separates *what an agent calls* from *what actually runs*. An agent always names a model by a **logical id** — a label you choose, like `triage-fast` — and never an engine. Behind that id, the inference plane holds a registration that says which engine (or hosted endpoint) serves the id, where its weights come from, and what task it performs. This page explains that split and the vocabulary around it: bindings, sources, and modalities.
+Ertir separates *what an agent calls* from *what actually runs*. An agent always names a model by a **logical id** — a label you choose, like `triage-fast` — and never an engine. Behind that id, the inference plane holds a registration that says which engine (or hosted endpoint) serves the id, where its weights come from, and what task it performs. This page explains that split and the vocabulary around it: bindings, sources, and modalities.
 
 ## Logical model ids
 
@@ -20,14 +20,14 @@ This indirection is the whole point. Because the agent only knows the id, you ca
 
 The **binding** says what kind of thing serves a logical id. There are exactly four values, and they never change meaning:
 
-| Binding | What backs the id | How TheYgent treats it |
+| Binding | What backs the id | How Ertir treats it |
 |---|---|---|
 | `llamacpp` | A llama.cpp server running GGUF weights. Runs anywhere the binary is installed. | Managed — spawned and supervised for you. |
 | `mlx` | The MLX family of servers on Apple Silicon. | Managed. |
 | `vllm` | A vLLM server on an NVIDIA/CUDA GPU host. | Managed. |
 | `openai-compatible` | Any OpenAI-compatible HTTP server or hosted API you point at with a base URL. | Reached, not managed — no process is started or stopped for you. |
 
-The first three are **managed engines**: TheYgent starts the server on first use, health-checks it, and stops it when it is idle. The fourth, `openai-compatible`, is a **reachable endpoint**: TheYgent just forwards calls to a URL you supply — whether that URL is a hosted API or another local server. For details on each engine and its platform, see [The engines](../models/engines.md); to register a hosted endpoint, see [Remote models](../models/remote.md).
+The first three are **managed engines**: Ertir starts the server on first use, health-checks it, and stops it when it is idle. The fourth, `openai-compatible`, is a **reachable endpoint**: Ertir just forwards calls to a URL you supply — whether that URL is a hosted API or another local server. For details on each engine and its platform, see [The engines](../models/engines.md); to register a hosted endpoint, see [Remote models](../models/remote.md).
 
 !!! note "vLLM is experimental in this build"
     The `vllm` binding exists and targets CUDA GPU hosts, but it has not yet been verified on the maintainers' hardware. llama.cpp and MLX are the proven local paths. Treat vLLM as experimental until you have confirmed it on your own GPU.
@@ -65,7 +65,7 @@ The modality here describes a *model*. It is separate from the `modality` field 
 
 ## How engines run
 
-Managed engines are started **lazily** — the first call to a logical id spawns its server, and TheYgent waits for it to become healthy before forwarding the request. Only a limited number of engines stay resident at once (two by default). When that ceiling is reached, the least-important, least-recently-used engine is stopped to make room; an engine that is in the middle of a request is never evicted. Idle engines are also reaped after a timeout. You do not manage any of this by hand — but it is why the very first call to a large model can take a moment while it loads. The full lifecycle and its knobs are covered in [The engines](../models/engines.md).
+Managed engines are started **lazily** — the first call to a logical id spawns its server, and Ertir waits for it to become healthy before forwarding the request. Only a limited number of engines stay resident at once (two by default). When that ceiling is reached, the least-important, least-recently-used engine is stopped to make room; an engine that is in the middle of a request is never evicted. Idle engines are also reaped after a timeout. You do not manage any of this by hand — but it is why the very first call to a large model can take a moment while it loads. The full lifecycle and its knobs are covered in [The engines](../models/engines.md).
 
 A reachable (`openai-compatible`) id has no lifecycle: nothing is spawned or evicted, and calls are proxied straight to your URL.
 
@@ -86,10 +86,10 @@ graph LR
   ID -.->|"after re-registration"| H["hosted openai-compatible"]
 ```
 
-This works because, at run time, TheYgent forwards only the logical id to the inference plane; the inference plane's current registration for that id decides the engine, source, and endpoint.
+This works because, at run time, Ertir forwards only the logical id to the inference plane; the inference plane's current registration for that id decides the engine, source, and endpoint.
 
 ??? note "What the agent document actually stores"
-    When you pick a model in the editor, TheYgent records the logical id on the model binding and copies in the binding value it was registered under at that moment (so the editor knows the model family). That stored binding value is a snapshot — it is not consulted when the run executes. The run resolves purely by logical id, so re-registering the id under a different engine takes effect on the next run without re-saving the agent. Generation parameters (temperature, max tokens, and so on) are the exception: those live on the agent's model binding and travel with each call, so they are part of the agent, not the registration.
+    When you pick a model in the editor, Ertir records the logical id on the model binding and copies in the binding value it was registered under at that moment (so the editor knows the model family). That stored binding value is a snapshot — it is not consulted when the run executes. The run resolves purely by logical id, so re-registering the id under a different engine takes effect on the next run without re-saving the agent. Generation parameters (temperature, max tokens, and so on) are the exception: those live on the agent's model binding and travel with each call, so they are part of the agent, not the registration.
 
 ## Related pages
 

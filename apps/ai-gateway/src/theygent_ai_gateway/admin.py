@@ -9,7 +9,7 @@
   deployment set the key, personal mode uses none, or a replicated gateway takes it from its
   deployment only.
 
-Callers present their TheYgent bearer (a session or a personal API key). The gateway asks the
+Callers present their Ertir bearer (a session or a personal API key). The gateway asks the
 control plane whether it is live and an admin's (``POST /gateway/introspect`` with its service
 key) and caches the answer briefly — allowed for ``ALLOW_SECONDS``, refused for
 ``DENY_SECONDS`` — keyed by the bearer's digest, never the bearer. If the control plane cannot
@@ -146,7 +146,7 @@ async def require_admin(request: Request) -> GatewayTokenCheckResult | None:
         raise AdminRefused(
             401,
             "admin_auth_required",
-            "sign in to TheYgent: Authorization: Bearer <session or key>",
+            "sign in to Ertir: Authorization: Bearer <session or key>",
         )
     try:
         result = await checker.check(token)

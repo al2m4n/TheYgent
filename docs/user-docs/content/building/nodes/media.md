@@ -77,7 +77,7 @@ The node calls the inference speech endpoint, stores the returned audio as a new
 
     Getting this wrong is worth recognising, because the symptom does not look like a bad parameter: a speech server asked for a voice it does not have accepts the request, answers `200`, and then aborts the response body with no message. The run reports *the speech engine aborted mid-synthesis* and names the voice it asked for. If **every** input fails, it is the voice (or an unloadable model), not the text.
 
-    The trade-off runs the other way for a **hosted** TTS API, where `voice` is a required request field: leave it out and the provider rejects the call with its own error, relayed verbatim. Name a voice that provider offers when you point a `speak` node at one. TheYgent does not guess on your behalf in either direction — a guess is what breaks the local case silently.
+    The trade-off runs the other way for a **hosted** TTS API, where `voice` is a required request field: leave it out and the provider rejects the call with its own error, relayed verbatim. Name a voice that provider offers when you point a `speak` node at one. Ertir does not guess on your behalf in either direction — a guess is what breaks the local case silently.
 
 ---
 

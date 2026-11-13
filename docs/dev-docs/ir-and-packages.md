@@ -1,6 +1,6 @@
 # The IR and shared packages
 
-Three small packages carry every contract that crosses a process boundary in TheYgent. `packages/ir` (`theygent_ir`) is the pure-Pydantic single source of truth for the Agent Graph IR — the builder ↔ runtime seam — and for the inference-plane registration payload. `packages/ir-types` is the generated TypeScript mirror of the IR that keeps the frontend and backend in lockstep, enforced by a CI drift guard. `packages/gateway-client` is the one OpenAI-compatible HTTP client through which the control plane and worker reach the inference plane.
+Three small packages carry every contract that crosses a process boundary in Ertir. `packages/ir` (`theygent_ir`) is the pure-Pydantic single source of truth for the Agent Graph IR — the builder ↔ runtime seam — and for the inference-plane registration payload. `packages/ir-types` is the generated TypeScript mirror of the IR that keeps the frontend and backend in lockstep, enforced by a CI drift guard. `packages/gateway-client` is the one OpenAI-compatible HTTP client through which the control plane and worker reach the inference plane.
 
 They exist as separate packages because the things they define are the hard-to-reverse decisions: graph identity (the `contentHash` rule), the node `kind` taxonomy, the binding enum, and the shape of the inference seam. Keeping them small, dependency-light, and consumed-by-everyone means no two components can drift into disagreeing about what a graph *is* or how a model is reached.
 
@@ -145,7 +145,7 @@ The plane boundary is enforced by the types:
   `request_refused`, and one the policy failed on with `policy_error`, so the records add up to
   the traffic.
 - **Token checks never show the token.** `GatewayTokenCheck` (a gateway asking whether a
-  TheYgent bearer is live) keeps its token out of every repr; `GatewayTokenCheckResult` names an
+  Ertir bearer is live) keeps its token out of every repr; `GatewayTokenCheckResult` names an
   account and role exactly when it is active.
 - **Catalog suggestions are not decisions.** A `FingerprintEntry` carries the kind's status from
   the config (the only home of routing rules) and, separately, a `known_kind` recognised by shape
@@ -235,4 +235,4 @@ The IR suite runs in the backend CI job; the ir-types drift guard runs in the fr
 - [durable-execution.md](./durable-execution.md) — the durable runtime and the worker process that hosts it
 - [deployment.md](./deployment.md) — the two topologies these packages serve unchanged
 - [testing.md](./testing.md) — suites and CI jobs across the repo
-- User documentation: <https://docs.theygent.ai/>
+- User documentation: <https://docs.ertir.dev/>

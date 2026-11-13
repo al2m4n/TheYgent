@@ -1,6 +1,6 @@
 # Installation
 
-This page takes you from nothing to an installed TheYgent: clone the repository, create your configuration, and install the local model engines and dependencies. When you are done here, move on to [Running TheYgent](running.md) to start the services.
+This page takes you from nothing to an installed Ertir: clone the repository, create your configuration, and install the local model engines and dependencies. When you are done here, move on to [Running Ertir](running.md) to start the services.
 
 ## Before you start
 
@@ -14,13 +14,13 @@ pnpm --version
 ```
 
 !!! note "You supply Postgres"
-    TheYgent does not provision a database. Point it at any Postgres you already run — a native install, a container, or a managed instance. All it needs is a database it can reach at the `DATABASE_URL` you set below.
+    Ertir does not provision a database. Point it at any Postgres you already run — a native install, a container, or a managed instance. All it needs is a database it can reach at the `DATABASE_URL` you set below.
 
 ## 1. Clone the repository
 
 ```bash
-git clone https://github.com/al2m4n/TheYgent.git
-cd TheYgent
+git clone https://github.com/al2m4n/ertir.git
+cd Ertir
 ```
 
 Run every command below (and every `make` target) from this repository root.
@@ -96,7 +96,7 @@ make migrate   # apply the control-plane database schema
 
 ## Where things land
 
-After installation, TheYgent keeps your data in these places, all under your control:
+After installation, Ertir keeps your data in these places, all under your control:
 
 - **`~/.theygent/inference/`** — the local model registry, downloaded model weights (under `models/`), and local credentials for remote APIs.
 - **Your Postgres** (`DATABASE_URL`) — agents and their versions, runs, chat sessions, triggers, MCP registrations, connections, and observability traces.
@@ -105,4 +105,4 @@ After installation, TheYgent keeps your data in these places, all under your con
 
 ## Next
 
-Head to [Running TheYgent](running.md) to bring the services up and confirm they're healthy.
+Head to [Running Ertir](running.md) to bring the services up and confirm they're healthy.

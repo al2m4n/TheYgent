@@ -1,16 +1,19 @@
-# TheYgent
+# Ertir
 
-TheYgent is a no-code, local-first platform for building and running AI agents. You compose agents visually on a canvas, chat with them or wire them to triggers, and run them against models on your own machine — or against any OpenAI-compatible API you choose to register.
+!!! note "Ertir is the new name of TheYgent"
+    Same project, same code, same license. Technical names such as the `THEYGENT_*` environment variables and the `~/.theygent` folder are unchanged, so existing installs keep working. See [the name change](name-change.md).
+
+Ertir (formerly TheYgent) is a no-code, local-first platform for building and running AI agents. You compose agents visually on a canvas, chat with them or wire them to triggers, and run them against models on your own machine — or against any OpenAI-compatible API you choose to register.
 
 ## Your models, your machines, your choice
 
-TheYgent's promise is honest and specific: **everything runs where you point it, and you own every hop.**
+Ertir's promise is honest and specific: **everything runs where you point it, and you own every hop.**
 
 - **Local by default.** Models download to your machine and run on local engines — llama.cpp anywhere, MLX on Apple Silicon, vLLM on CUDA GPUs. Weights, the model registry, and credentials live in local files under `~/.theygent/inference`; agents, runs, and conversations live in a Postgres database you control.
 - **Hosted APIs only when you add them.** Any OpenAI-compatible server or hosted API can be registered as a model, with its API key stored on your machine as a local credential that is never sent anywhere else.
 - **The choice is per agent and per call.** Every model gets a logical id (for example `triage-fast`), and agents reference that id — never an engine. You can point one node at a small local model and the next at a hosted one, or swap a model's backing engine later without touching a single agent.
 
-There is no vendor in the middle: TheYgent never proxies your prompts, payloads, or weights through anyone's servers. It has no telemetry or update checks, and once installed it runs fully offline — [Privacy and data flow](concepts/privacy.md) lists every connection it makes, and when.
+There is no vendor in the middle: Ertir never proxies your prompts, payloads, or weights through anyone's servers. It has no telemetry or update checks, and once installed it runs fully offline — [Privacy and data flow](concepts/privacy.md) lists every connection it makes, and when.
 
 ## What you can do
 
@@ -26,7 +29,7 @@ There is no vendor in the middle: TheYgent never proxies your prompts, payloads,
 
 ## Watch it run
 
-Screen recordings of the real product, if you would rather see it than read it first. Each one also has a page on the site with its chapters and a written summary: [theygent.ai/videos](https://theygent.ai/videos/).
+Screen recordings of the real product, if you would rather see it than read it first. Each one also has a page on the site with its chapters and a written summary: [ertir.dev/videos](https://ertir.dev/videos/).
 
 | Video | What it covers |
 |---|---|
@@ -34,11 +37,11 @@ Screen recordings of the real product, if you would rather see it than read it f
 | [Voice In, Voice Out](https://www.youtube.com/watch?v=leoPQLaWMeU) (5:54) | A voice agent: speech-to-text, a model, and text-to-speech on the canvas. Also on [Voice](chat/voice.md). |
 | [Run Local + Remote Models in One Agent](https://www.youtube.com/watch?v=eHIHABKbwVg) (7:01) | One graph routing between a local model and a hosted API. Also on [Remote models](models/remote.md). |
 | [Give Your LLM a Memory: RAG with File Upload & Web Crawl](https://www.youtube.com/watch?v=jFc4on-kH_w) (9:34) | A retrieval source from an uploaded PDF and one from crawling a docs site, wired into an agent as tools. See [RAG sources](rag/index.md). |
-| [How to Deploy TheYgent to Kubernetes](https://www.youtube.com/watch?v=A0kMmTAr-L4) (6:41) | Build and load the images, apply the manifests, port-forward, and sign in. |
+| [How to Deploy Ertir to Kubernetes](https://www.youtube.com/watch?v=A0kMmTAr-L4) (6:41) | Build and load the images, apply the manifests, port-forward, and sign in. |
 
 ## How it fits together
 
-TheYgent runs as four local services, brought up together with `make up`:
+Ertir runs as four local services, brought up together with `make up`:
 
 ```mermaid
 graph LR
@@ -60,7 +63,7 @@ graph LR
 
 - The **AI gateway** sits between your team's Claude Code and its models to cut what it costs: it records what each exchange cost and what routing would save, then — when you choose — routes work to cheaper Claude models, and to models you run yourself in the shares you set. See [AI Gateway](ai-gateway/index.md).
 
-- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — TheYgent as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use TheYgent from coding agents](coding-agents/index.md).
+- The **MCP server** gives coding agents — Claude Code, Codex, OpenCode — Ertir as tools: offload work to your local models, run and build agents, and search your documents and code. See [Use Ertir from coding agents](coding-agents/index.md).
 
 The [architecture page](concepts/index.md) explains the split and exactly where each kind of data lives.
 
@@ -68,9 +71,9 @@ The [architecture page](concepts/index.md) explains the split and exactly where 
 
 | If you want to… | Go to |
 |---|---|
-| Install TheYgent and get it running | [Getting started](getting-started/index.md) |
+| Install Ertir and get it running | [Getting started](getting-started/index.md) |
 | Install a model and have your first conversation | [First chat](getting-started/first-chat.md) |
 | Build, test, and publish your first agent | [First agent](getting-started/first-agent.md) |
 | Understand agents, graphs, runs, and versioning | [Concepts](concepts/index.md) |
 | Look up what every node does | [Node reference](building/nodes/index.md) |
-| Use TheYgent from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |
+| Use Ertir from Claude Code, Codex or OpenCode | [Coding agents](coding-agents/index.md) |

@@ -1,10 +1,10 @@
 ---
-description: Every tool TheYgent's MCP server gives a coding agent, prompts that work well, and a project-instructions snippet that teaches the agent when to use TheYgent.
+description: Every tool Ertir's MCP server gives a coding agent, prompts that work well, and a project-instructions snippet that teaches the agent when to use Ertir.
 ---
 
 # Tools & Recipes
 
-Once [TheYgent is connected](index.md), your coding agent sees the tools below. You rarely name
+Once [Ertir is connected](index.md), your coding agent sees the tools below. You rarely name
 them. Ask for the outcome and the agent picks the tools itself. Wherever a tool takes an agent or
 a retrieval source, it accepts the id or the exact name you gave it.
 
@@ -12,7 +12,7 @@ a retrieval source, it accepts the id or the exact name you gave it.
 
 | Tool | What it does |
 |---|---|
-| `list_models` | The models registered in TheYgent: logical id, engine, modality (chat, vision, embeddings…), and which chat model `ask_model` uses by default. |
+| `list_models` | The models registered in Ertir: logical id, engine, modality (chat, vision, embeddings…), and which chat model `ask_model` uses by default. |
 | `ask_model` | Sends one prompt to a model and returns its answer. `files` attaches local text files: the MCP server reads them and sends them only to the model, so a long log or file never passes through the coding agent's own context or its provider. Only the answer comes back. Up to 256 KiB of files per call. `think: false` turns a reasoning model's thinking off for a faster answer. |
 
 ## Agents and runs
@@ -39,7 +39,7 @@ the interface or the API instead.
 | `publish_agent_version` | Publishes a new version of an existing agent. Earlier versions stay runnable. |
 | `list_samples` / `install_samples` | The ready-made [sample agents](../samples/index.md), and installing them with your models in their slots. |
 
-Agents the coding agent builds are ordinary TheYgent agents. They follow
+Agents the coding agent builds are ordinary Ertir agents. They follow
 [versioning](../concepts/versioning.md), show up in the editor, can get
 [triggers](../running/triggers.md), and their runs are traced on the **Runs** page.
 
@@ -49,7 +49,7 @@ Agents the coding agent builds are ordinary TheYgent agents. They follow
 |---|---|
 | `list_rag_sources` | Your [retrieval sources](../rag/index.md) and their status. |
 | `create_rag_source` | Creates an `upload` source, or a `crawl` source for a website. Needs an embeddings model from `list_models`. |
-| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over TheYgent's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
+| `add_rag_files` | Indexes local files, whole directories, or glob patterns such as `docs/**/*.md`. Relative paths resolve against the project the coding tool runs in. Hidden, dependency, and build directories are skipped. Each file is named by its path in the project, so two `index.ts` files stay two documents, and adding a file again replaces its earlier copy. One call indexes up to 500 files. Files stream from disk, and a file over Ertir's upload limit (50 MiB by default, raised under **Settings → RAG**) is skipped with the limit in its result. |
 | `add_rag_text` | Adds a document from text, such as notes, a generated summary, or an API response. |
 | `ingest_rag_source` | Starts or re-runs a crawl source's crawl. |
 | `get_rag_source` | Ingest progress and each document's status. |
@@ -60,42 +60,42 @@ Source code and config files index as plain text, next to the document formats l
 
 ## Recipes
 
-Prompts that work well with Claude Code, Codex or OpenCode once TheYgent is connected:
+Prompts that work well with Claude Code, Codex or OpenCode once Ertir is connected:
 
 **Offload a summary to a local model**
 
-> Have TheYgent's local model read `logs/build.log` and summarize the failures in five bullets.
+> Have Ertir's local model read `logs/build.log` and summarize the failures in five bullets.
 > Pass the log as a file, don't read it yourself. Use think=false.
 
 **Draft with a private model**
 
-> Write the release notes for the commits since the last tag. Draft them with TheYgent's local
+> Write the release notes for the commits since the last tag. Draft them with Ertir's local
 > model, then tidy the draft yourself.
 
 **Index the docs, then answer from them**
 
-> Create a TheYgent retrieval source called `project-docs` with the `local-embed` model and add
+> Create an Ertir retrieval source called `project-docs` with the `local-embed` model and add
 > `docs/` and `README.md` to it. When it's ready, search it for how authentication is configured.
 
 **Build a reusable agent**
 
-> Build me a TheYgent agent called `commit-titler` that turns a change description into a
+> Build me an Ertir agent called `commit-titler` that turns a change description into a
 > conventional-commit title using my local model. Test it on two examples, then publish it.
 
 **Use an agent you already have**
 
-> Run my TheYgent agent `pii-firewall` on `fixtures/customers.csv` before you paste any of it here.
+> Run my Ertir agent `pii-firewall` on `fixtures/customers.csv` before you paste any of it here.
 
-## Teach your coding agent when to use TheYgent
+## Teach your coding agent when to use Ertir
 
 The MCP server tells the coding agent what it offers. A line in your project instructions turns
 that into a habit. Add something like this to `CLAUDE.md` (Claude Code) or `AGENTS.md` (Codex,
 OpenCode):
 
 ```markdown
-## TheYgent
+## Ertir
 
-TheYgent's MCP tools are available. For summaries, first drafts and extraction over large or
+Ertir's MCP tools are available. For summaries, first drafts and extraction over large or
 private files, call `ask_model` with the paths in `files` (think=false for quick tasks) instead of
 reading the files yourself. Search the `project-docs` retrieval source before guessing how something works here.
 Check `list_agents` for an existing agent before writing a one-off script for a repeatable task.
@@ -110,10 +110,10 @@ Every tool error says what to do next:
 | `THEYGENT_API_KEY is not set` | Add your key to the server's environment, then restart the coding tool. |
 | `rejected the API key (401)` | The key was revoked or mistyped. Create a new one under **API keys**. |
 | `refused this action (403)` | Your role can't do this. Publishing agents needs **editor** or above. |
-| `is not reachable at …` | TheYgent isn't running, or isn't at that address. Start it with `make up`, or set the plane URL variables. |
+| `is not reachable at …` | Ertir isn't running, or isn't at that address. Start it with `make up`, or set the plane URL variables. |
 | `No chat model is registered` | Install a model from **Registries → Add model**. |
 | `did not answer in time` | A run took longer than `THEYGENT_MCP_RUN_TIMEOUT_S`. Raise it, and the coding tool's own tool timeout. |
 
-Errors from TheYgent itself pass through with their code, for example `agent_exists` when
+Errors from Ertir itself pass through with their code, for example `agent_exists` when
 publishing an id that is taken (use `publish_agent_version`), or `unsupported_document` for a
 file type retrieval can't read.

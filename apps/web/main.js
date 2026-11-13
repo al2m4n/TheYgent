@@ -1,4 +1,4 @@
-/* TheYgent marketing site — small progressive enhancements, no framework.
+/* Ertir marketing site — small progressive enhancements, no framework.
    Everything degrades gracefully: with JS off the page is fully readable, and
    under prefers-reduced-motion all motion-driven behaviour early-returns. */
 (function () {
@@ -162,7 +162,7 @@
         var frame = document.createElement("iframe");
         frame.src =
           "https://www.youtube-nocookie.com/embed/" + link.getAttribute("data-video") + "?autoplay=1&rel=0";
-        frame.title = link.getAttribute("data-title") || "TheYgent walkthrough";
+        frame.title = link.getAttribute("data-title") || "Ertir walkthrough";
         frame.allow =
           "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
         frame.referrerPolicy = "strict-origin-when-cross-origin";

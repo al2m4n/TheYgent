@@ -24,7 +24,7 @@ Open an Actor to see its input fields. The fields a model can usefully fill are 
 
 The first time, the browser asks for your **Apify API token** and stores it as a connection — encrypted, and never shown again. Later installs reuse that connection. Press **Add crawler** and the configured node lands on the canvas.
 
-!!! note "The browser goes through TheYgent"
+!!! note "The browser goes through Ertir"
     Store searches go from your control plane to Apify's public Store API, which needs no token, and are cached for a few minutes. Your browser never calls Apify directly.
 
 ## Ports
@@ -69,7 +69,7 @@ Wire the node's violet **`use`** handle into an llm's violet **`tools`** port (t
 
 When it calls:
 
-1. TheYgent builds the Actor input: the fixed input, plus the model's values for the exposed fields. A value for any other field is dropped, so a model can't raise a result count or switch on a paid add-on by inventing an argument.
+1. Ertir builds the Actor input: the fixed input, plus the model's values for the exposed fields. A value for any other field is dropped, so a model can't raise a result count or switch on a paid add-on by inventing an argument.
 2. The Actor runs under the node's limits.
 3. The model gets the results back as text: only the chosen `fields`, each item given an equal share of `resultChars`, long items cut with a marker. A crawl can return megabytes; the model reads what fits.
 
@@ -94,7 +94,7 @@ The [run waterfall](../../running/observability.md) shows what each crawl return
 
 ## Long crawls
 
-An interactive run — the editor's **Test** panel, chat, `POST /graphs/runs` — waits for the crawl in one request, which Apify holds for at most **300 seconds**. TheYgent caps the Actor's own timeout there too, so a run never keeps going after the agent has given up. A crawl that needs longer fails with a message saying so.
+An interactive run — the editor's **Test** panel, chat, `POST /graphs/runs` — waits for the crawl in one request, which Apify holds for at most **300 seconds**. Ertir caps the Actor's own timeout there too, so a run never keeps going after the agent has given up. A crawl that needs longer fails with a message saying so.
 
 A [durable run](../../running/durable.md) starts the crawl, checks on it about once a minute, and reads the results when it finishes, so a crawl can take as long as `timeoutSeconds` and survives a restart in between. A resumed run keeps polling the crawl it already started instead of starting (and paying for) another.
 
@@ -103,7 +103,7 @@ A [durable run](../../running/durable.md) starts the crawl, checks on it about o
 Small local models are better at filling one or two simple fields than many. Two defaults help:
 
 - **Few exposed fields.** Each exposed field adds to every prompt; an Actor offered with every field can cost thousands of tokens per call.
-- **One value per call** (`scalar`). Local models write list arguments unreliably — and on MLX, a list written as a bare string can drop the request. A scalar field takes one search term or URL; TheYgent wraps it into the list the Actor wants, and unpacks a model's JSON-encoded list if it writes one anyway.
+- **One value per call** (`scalar`). Local models write list arguments unreliably — and on MLX, a list written as a bare string can drop the request. A scalar field takes one search term or URL; Ertir wraps it into the list the Actor wants, and unpacks a model's JSON-encoded list if it writes one anyway.
 
 ## Failure modes
 

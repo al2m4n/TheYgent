@@ -1,7 +1,7 @@
 # Sample agents
 
 **Ready-made agents you install in one click** — each one a complete, runnable graph that
-demonstrates a core TheYgent pattern. Install them from **Settings → Samples**, pick which of
+demonstrates a core Ertir pattern. Install them from **Settings → Samples**, pick which of
 your models fill each role, then open them on the canvas, run them, change them, or delete them:
 an installed sample is an ordinary agent, not a special object. Every sample's name starts with
 `sample-` so they stay easy to spot on the Agents page.

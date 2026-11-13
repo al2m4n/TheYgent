@@ -1,4 +1,4 @@
-"""TheYgent as an MCP server for coding agents."""
+"""Ertir as an MCP server for coding agents."""
 
 from theygent_mcp.server import build_server
 

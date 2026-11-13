@@ -1,6 +1,6 @@
 # MCP tools
 
-An **mcp_tool** node calls one tool on an external MCP server. MCP — the Model Context Protocol — is an open standard for exposing tools (a filesystem browser, a database client, a computer-vision model, a company API) to an agent. Where a [built-in or REST tool](tools.md) is defined inside TheYgent, an MCP tool lives in a separate server process that you register once and then reference from any agent. It is an **activity** node.
+An **mcp_tool** node calls one tool on an external MCP server. MCP — the Model Context Protocol — is an open standard for exposing tools (a filesystem browser, a database client, a computer-vision model, a company API) to an agent. Where a [built-in or REST tool](tools.md) is defined inside Ertir, an MCP tool lives in a separate server process that you register once and then reference from any agent. It is an **activity** node.
 
 ## Where the node comes from
 
@@ -39,7 +39,7 @@ Everything the MCP page creates is an `mcp_server` **connection**, referenced fr
 
 ## How tools are discovered
 
-You do not list a server's tools by hand — the server reports them. When a server first connects (on first use, or when you press **Warm** or **Tools**), TheYgent calls the server's tool-listing method and caches the result for the connection's lifetime.
+You do not list a server's tools by hand — the server reports them. When a server first connects (on first use, or when you press **Warm** or **Tools**), Ertir calls the server's tool-listing method and caches the result for the connection's lifetime.
 
 That cache also drives validation. When you reference a tool in an `mcp_tool` node:
 

@@ -78,7 +78,7 @@ Because secrets and weights never travel, some things need your attention on the
 - **RAG sources** import empty: re-run the crawl, or re-upload the documents.
 - **Model weights** re-download automatically for catalog-installed models (watch the notification center). A model that was registered against a local file path with no install provenance is registered anyway but warns `weights_unavailable` — it will fail at first use until you put weights at that path or reinstall it. See [Moving models to another machine](../models/index.md#moving-models-to-another-machine).
 
-The curl equivalents import the two JSON halves the zip contains (the zip itself has no single server endpoint — the browser unpacks it). A body that isn't a bundle is `400 invalid_bundle`; a bundle from a future TheYgent is `400 unsupported_bundle_version`:
+The curl equivalents import the two JSON halves the zip contains (the zip itself has no single server endpoint — the browser unpacks it). A body that isn't a bundle is `400 invalid_bundle`; a bundle from a future Ertir is `400 unsupported_bundle_version`:
 
 ```bash
 curl -X POST http://localhost:8080/import \

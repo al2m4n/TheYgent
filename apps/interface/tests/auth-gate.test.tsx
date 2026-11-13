@@ -71,7 +71,7 @@ describe("AuthGate", () => {
   it("boots a fresh install into the setup wizard", async () => {
     stubStatus({ setup_required: true, user: null, providers: [] });
     mount(<div>the app</div>);
-    expect(await screen.findByText(/Welcome to TheYgent/)).toBeInTheDocument();
+    expect(await screen.findByText(/Welcome to Ertir/)).toBeInTheDocument();
     expect(screen.queryByText("the app")).not.toBeInTheDocument();
   });
 

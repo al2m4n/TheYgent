@@ -224,7 +224,7 @@ def create_app(
                     app.state.admin_check = None
 
     app = FastAPI(
-        title="TheYgent AI gateway",
+        title="Ertir AI gateway",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,

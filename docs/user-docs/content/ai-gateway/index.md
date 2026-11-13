@@ -77,7 +77,7 @@ personal gateway on its own records from the start.
 
 A personal gateway needs no keys and no setup beyond Claude Code's settings:
 
-1. **Start TheYgent** with `make up` ([Running TheYgent](../getting-started/running.md)). The
+1. **Start Ertir** with `make up` ([Running Ertir](../getting-started/running.md)). The
    gateway listens on `127.0.0.1:8082`.
 2. **Point Claude Code at it**, in the shell you start Claude Code from:
 

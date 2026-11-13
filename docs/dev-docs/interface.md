@@ -1,6 +1,6 @@
 # The interface (React SPA)
 
-`apps/interface` is TheYgent's single frontend: a Vite + React 19 SPA (TanStack Router/Query, Tailwind v4, shadcn/ui) that renders the visual agent builder — an agent's IR as a React Flow canvas — plus every operator surface: dashboard, agents grid, runs, sessions, unified chat, the bench, model registries, the MCP hub, RAG sources, and platform settings. It talks directly to **both** backend planes over HTTP — the control plane and the user-controlled inference plane — and never proxies one through the other. It consumes only generated IR types from `@theygent/ir-types`, so the frontend and the Pydantic IR stay in provable lockstep. The same bundle is intended for the browser and the desktop webview; an earlier separate cockpit app was folded into this one.
+`apps/interface` is Ertir's single frontend: a Vite + React 19 SPA (TanStack Router/Query, Tailwind v4, shadcn/ui) that renders the visual agent builder — an agent's IR as a React Flow canvas — plus every operator surface: dashboard, agents grid, runs, sessions, unified chat, the bench, model registries, the MCP hub, RAG sources, and platform settings. It talks directly to **both** backend planes over HTTP — the control plane and the user-controlled inference plane — and never proxies one through the other. It consumes only generated IR types from `@theygent/ir-types`, so the frontend and the Pydantic IR stay in provable lockstep. The same bundle is intended for the browser and the desktop webview; an earlier separate cockpit app was folded into this one.
 
 ## Design rules
 
@@ -165,7 +165,7 @@ Four cooperating surfaces around the one `IRDocument`:
 
 ## The run waterfall
 
-`src/components/waterfall/` is the one run-trace UI for every surface. `RunWaterfall` renders a zoomable shared time axis over the span tree (`parent_span_id`), with gap bands, worker attribution, and hover→canvas flash on node spans. `useRunSpans` polls `GET /runs/{id}/trace` at 1 s while live and overlays the `/trace/stream` SSE, merged by deterministic span id with closed persisted spans authoritative — replay can never double-count. `SpanDetail` shows the stat strip and gated node I/O (`/runs/{id}/nodes/{nodeId}/io`); a gated payload is a *reason*, never an error. The trace comes from TheYgent's own span store — never an external trace backend — and `span.node_id == canvas node id` makes the canvas overlay a free join.
+`src/components/waterfall/` is the one run-trace UI for every surface. `RunWaterfall` renders a zoomable shared time axis over the span tree (`parent_span_id`), with gap bands, worker attribution, and hover→canvas flash on node spans. `useRunSpans` polls `GET /runs/{id}/trace` at 1 s while live and overlays the `/trace/stream` SSE, merged by deterministic span id with closed persisted spans authoritative — replay can never double-count. `SpanDetail` shows the stat strip and gated node I/O (`/runs/{id}/nodes/{nodeId}/io`); a gated payload is a *reason*, never an error. The trace comes from Ertir's own span store — never an external trace backend — and `span.node_id == canvas node id` makes the canvas overlay a free join.
 
 ## shadcn/ui and theme tokens
 
@@ -212,4 +212,4 @@ Run locally with `pnpm --filter @theygent/interface test`. CI's `frontend` job r
 - [./durable-execution.md](./durable-execution.md) — why some node types are durable-only
 - [./deployment.md](./deployment.md) — serving the SPA in each topology
 - [./testing.md](./testing.md) — repo-wide test and CI conventions
-- User documentation: https://docs.theygent.ai/
+- User documentation: https://docs.ertir.dev/

@@ -1,4 +1,4 @@
-# TheYgent user docs
+# Ertir user docs
 
 End-user documentation, built with [MkDocs Material](https://squidfunk.github.io/mkdocs-material/)
 and versioned per release with [mike](https://github.com/jimporter/mike). Content lives in

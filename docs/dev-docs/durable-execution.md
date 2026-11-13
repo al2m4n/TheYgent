@@ -1,6 +1,6 @@
 # Durable execution and the worker
 
-TheYgent runs agent graphs on two runtimes. The interactive walker (see [control-plane.md](./control-plane.md)) is an in-process interpreter: it streams tokens live, and if the process dies mid-run the run is honestly reconciled to `failed` on the next boot. That posture is fine when a person is watching, but unattended runs — webhooks firing at 3 a.m., cron schedules, long multi-step agents waiting on a human — need a stronger guarantee: **a run survives a crash and resumes from the last completed step**, without re-doing work that already happened.
+Ertir runs agent graphs on two runtimes. The interactive walker (see [control-plane.md](./control-plane.md)) is an in-process interpreter: it streams tokens live, and if the process dies mid-run the run is honestly reconciled to `failed` on the next boot. That posture is fine when a person is watching, but unattended runs — webhooks firing at 3 a.m., cron schedules, long multi-step agents waiting on a human — need a stronger guarantee: **a run survives a crash and resumes from the last completed step**, without re-doing work that already happened.
 
 That guarantee is the durable runtime. It is built on [DBOS](https://www.dbos.dev/), chosen because it is an embedded Python library that journals workflow state into the Postgres the control plane already has — no new stateful service to deploy. DBOS system tables live in a separate `dbos` schema on the same instance, migrated at launch and deliberately kept out of Alembic's chain (Alembic owns `public`; the two never touch).
 
@@ -155,4 +155,4 @@ The worker has no test directory by design: `build_runtime()` (assemble, no laun
 - [inference-plane.md](./inference-plane.md) — the OpenAI-compatible seam every step's model call crosses
 - [deployment.md](./deployment.md) — running the worker as a container / on Kubernetes
 - [testing.md](./testing.md) — suite layout and conventions
-- User documentation: <https://docs.theygent.ai/>
+- User documentation: <https://docs.ertir.dev/>

@@ -10,8 +10,8 @@
   ],
   "durable": false,
   "input_example": {
-    "image_url": "https://theygent.ai/assets/og-image.png",
-    "criteria": "The image must be a dark banner showing the TheYgent wordmark, legible and not cropped."
+    "image_url": "https://ertir.dev/assets/og-image.png",
+    "criteria": "The image must be a dark banner showing the Ertir wordmark, legible and not cropped."
   },
   "model_slots": {
     "vision": {

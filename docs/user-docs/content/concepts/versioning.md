@@ -1,12 +1,12 @@
 # Versioning
 
-When you publish an agent, TheYgent stores it as an **immutable, content-addressed version**. "Content-addressed" means the version's identity is a fingerprint of what the agent *means* — its nodes, edges, models, tools, and configuration — and nothing else. Rearranging the canvas never creates a new version; changing what the agent does always does. This page explains that fingerprint, what counts as a change, and how versions are pinned and resolved.
+When you publish an agent, Ertir stores it as an **immutable, content-addressed version**. "Content-addressed" means the version's identity is a fingerprint of what the agent *means* — its nodes, edges, models, tools, and configuration — and nothing else. Rearranging the canvas never creates a new version; changing what the agent does always does. This page explains that fingerprint, what counts as a change, and how versions are pinned and resolved.
 
 Versions are one of two tiers the editor works with: while you are still building, the graph autosaves as a mutable **draft** — no hash, no history, nothing pinnable. Publishing is the moment a draft's content graduates into everything below. See [Drafts & publishing](../building/saving-agents.md).
 
 ## Immutable versions
 
-A published agent has a stable id and a series of versions. Each version, once published, never changes — TheYgent will not overwrite it. When you want to change an agent, you publish a new version alongside the old ones; the earlier versions remain exactly as they were, so anything pinned to them keeps behaving identically.
+A published agent has a stable id and a series of versions. Each version, once published, never changes — Ertir will not overwrite it. When you want to change an agent, you publish a new version alongside the old ones; the earlier versions remain exactly as they were, so anything pinned to them keeps behaving identically.
 
 This immutability is what makes an agent safe to deploy. A [trigger](../running/triggers.md), a [durable run](../running/durable.md), or a parent agent that composes this one can pin a specific version and trust that it will never shift under them.
 
@@ -64,7 +64,7 @@ The idempotent case matters in practice: re-publishing an agent you have not act
 
 ## Pinning and resolving a version
 
-Anything that runs a published agent can pin which version it means, in one of two ways: by its exact `content_hash`, or by its version label. If neither is pinned, TheYgent uses the **latest** version.
+Anything that runs a published agent can pin which version it means, in one of two ways: by its exact `content_hash`, or by its version label. If neither is pinned, Ertir uses the **latest** version.
 
 The resolution order is always:
 

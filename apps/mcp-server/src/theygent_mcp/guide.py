@@ -1,4 +1,4 @@
-"""How to author a TheYgent agent: the guide text, the node-type registry, and local validation."""
+"""How to author an Ertir agent: the guide text, the node-type registry, and local validation."""
 
 from __future__ import annotations
 
@@ -22,9 +22,9 @@ _REGISTRY_PATH = (
 )
 
 GUIDE = """\
-# Authoring a TheYgent agent
+# Authoring an Ertir agent
 
-An agent is one JSON document (the IR). TheYgent runs it on its own runtime, against models
+An agent is one JSON document (the IR). Ertir runs it on its own runtime, against models
 registered on the inference plane. Workflow: `list_models` → write the IR → `validate_agent` →
 `run_graph` (test it, nothing saved) → `create_agent` (publish) → `run_agent`. To change a
 published agent, bump `version` and call `publish_agent_version`.

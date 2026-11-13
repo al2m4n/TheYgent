@@ -58,7 +58,7 @@ RequestClass = Literal[
 #: Which Anthropic-format endpoint a request hit. Only ``messages`` carries a model turn.
 Endpoint = Literal["messages", "count_tokens", "models", "hello", "other"]
 #: The credential a request arrived with: a claude.ai login (``oauth``), an Anthropic API key, a
-#: TheYgent gateway key, none, or something else.
+#: Ertir gateway key, none, or something else.
 CredentialKind = Literal["oauth", "api_key", "gateway_key", "none", "other"]
 #: How the gateway authenticates upstream: forward the caller's own credential (personal mode and
 #: subscription seats) or swap in the organization's Anthropic key (org-billed developers).
@@ -79,7 +79,7 @@ CompactionTrigger = Literal["auto", "manual", "reactive"]
 FingerprintStatus = Literal[
     "unreviewed", "observe_only", "allow_cheaper", "allow_local", "never_route"
 ]
-#: A TheYgent account's role, as the control plane's identity layer defines it.
+#: An Ertir account's role, as the control plane's identity layer defines it.
 AccountRole = Literal["viewer", "editor", "admin"]
 DecisionAction = Literal["stay", "route"]
 TargetKind = Literal["anthropic", "local"]
@@ -715,7 +715,7 @@ class GatewayKeySet(_GatewayWire):
 
 
 class GatewayTokenCheck(_GatewayWire):
-    """A gateway asks the control plane whether a TheYgent bearer (a session or a personal API
+    """A gateway asks the control plane whether an Ertir bearer (a session or a personal API
     key) presented to the gateway's admin surface is live. The token travels only between the
     gateway and the control plane, and never appears in a repr."""
 

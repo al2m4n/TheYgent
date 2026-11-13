@@ -176,7 +176,7 @@ function KeysCard({ address, profile }: { address: string; profile: CredentialPr
           <div>
             <CardTitle>{everyone ? "Everyone's gateway keys" : "Your gateway keys"}</CardTitle>
             <CardDescription>
-              A gateway key identifies you to the gateway. It opens nothing else in TheYgent.
+              A gateway key identifies you to the gateway. It opens nothing else in Ertir.
             </CardDescription>
           </div>
           <div className="flex shrink-0 items-center gap-3">

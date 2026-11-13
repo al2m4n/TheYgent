@@ -4,7 +4,7 @@ Replays one agent the way the control plane's walker runs it: a system prompt, t
 the user's question, then two tool rounds. After each model turn it appends the assistant
 tool-call message and the tool result with the walker's own helpers
 (``assistant_tool_calls_message`` / ``tool_result_message``), so every request has the shape
-TheYgent sends. A second run then asks the same agent a different question. Every call
+Ertir sends. A second run then asks the same agent a different question. Every call
 streams with ``stream_options.include_usage``, as the walker does, and records the prompt size,
 how many prompt tokens the engine served from its cache
 (``usage.prompt_tokens_details.cached_tokens``), and the time to the first streamed token.

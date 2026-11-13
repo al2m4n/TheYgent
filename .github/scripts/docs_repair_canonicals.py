@@ -23,7 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-ORIGIN = "https://docs.theygent.ai/latest/"
+ORIGIN = "https://docs.ertir.dev/latest/"
 RULE = re.compile(r"^/latest/(v[^/\s]+)/\* /latest/:splat 301$", re.MULTILINE)
 
 

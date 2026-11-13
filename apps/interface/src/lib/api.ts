@@ -2763,7 +2763,7 @@ export function flushDraftOnUnload(draftId: string, ir: IRDocument): void {
 // ── the AI gateway's own admin surface (camelCase) ──────────────────────────
 // Reached DIRECTLY at the gateway's address, never through the control plane: the organization's
 // Anthropic key is written to the gateway here and nowhere else. The gateway checks the caller's
-// TheYgent bearer with the control plane and admits admins only.
+// Ertir bearer with the control plane and admits admins only.
 export const gatewayAdmin = {
   status: () => request<GatewayAdminStatus>(gatewayUrl(), "/admin/status"),
   credentials: () => request<GatewayCredentials>(gatewayUrl(), "/admin/credentials"),

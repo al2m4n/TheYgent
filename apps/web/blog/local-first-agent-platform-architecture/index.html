@@ -3,29 +3,29 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog</title>
-    <meta name="description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
-    <link rel="canonical" href="https://theygent.ai/blog/local-first-agent-platform-architecture/" />
+    <title>Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | Ertir Blog</title>
+    <meta name="description" content="How Ertir keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <link rel="canonical" href="https://ertir.dev/blog/local-first-agent-platform-architecture/" />
     <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="dark light" />
 
     <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://theygent.ai/blog/local-first-agent-platform-architecture/" />
-    <meta property="og:site_name" content="TheYgent" />
-    <meta property="og:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog" />
-    <meta property="og:description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
-    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:url" content="https://ertir.dev/blog/local-first-agent-platform-architecture/" />
+    <meta property="og:site_name" content="Ertir" />
+    <meta property="og:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | Ertir Blog" />
+    <meta property="og:description" content="How Ertir keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <meta property="og:image" content="https://ertir.dev/assets/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:image:alt" content="Ertir — build agents on a canvas, run them where you point" />
     <meta property="og:locale" content="en_US" />
     <meta property="article:published_time" content="2026-10-12" />
     <meta property="article:author" content="Arman Bahlakeh" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | TheYgent Blog" />
-    <meta name="twitter:description" content="How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
-    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta name="twitter:title" content="Building a Local-First Agent Platform Where the Vendor Is Never in the Middle | Ertir Blog" />
+    <meta name="twitter:description" content="How Ertir keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs." />
+    <meta name="twitter:image" content="https://ertir.dev/assets/og-image.png" />
 
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
@@ -40,9 +40,9 @@
         "@graph": [
           {
             "@type": "BlogPosting",
-            "@id": "https://theygent.ai/blog/local-first-agent-platform-architecture/#article",
+            "@id": "https://ertir.dev/blog/local-first-agent-platform-architecture/#article",
             "headline": "Building a Local-First Agent Platform Where the Vendor Is Never in the Middle",
-            "description": "How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.",
+            "description": "How Ertir keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.",
             "datePublished": "2026-10-12",
             "dateModified": "2026-10-12",
             "inLanguage": "en",
@@ -52,38 +52,39 @@
               "name": "Arman Bahlakeh"
             },
             "publisher": {
-              "@id": "https://theygent.ai/#organization"
+              "@id": "https://ertir.dev/#organization"
             },
-            "image": "https://theygent.ai/assets/og-image.png",
-            "mainEntityOfPage": "https://theygent.ai/blog/local-first-agent-platform-architecture/",
+            "image": "https://ertir.dev/assets/og-image.png",
+            "mainEntityOfPage": "https://ertir.dev/blog/local-first-agent-platform-architecture/",
             "isPartOf": {
-              "@id": "https://theygent.ai/blog/#blog"
+              "@id": "https://ertir.dev/blog/#blog"
             },
             "about": {
-              "@id": "https://theygent.ai/#software"
+              "@id": "https://ertir.dev/#software"
             }
           },
           {
             "@type": "BreadcrumbList",
-            "@id": "https://theygent.ai/blog/local-first-agent-platform-architecture/#breadcrumb",
+            "@id": "https://ertir.dev/blog/local-first-agent-platform-architecture/#breadcrumb",
             "itemListElement": [
               {
                 "@type": "ListItem",
                 "position": 1,
-                "name": "TheYgent",
-                "item": "https://theygent.ai/"
+                "name": "Ertir",
+                "alternateName": "TheYgent",
+                "item": "https://ertir.dev/"
               },
               {
                 "@type": "ListItem",
                 "position": 2,
                 "name": "Blog",
-                "item": "https://theygent.ai/blog/"
+                "item": "https://ertir.dev/blog/"
               },
               {
                 "@type": "ListItem",
                 "position": 3,
                 "name": "Building a Local-First Agent Platform Where the Vendor Is Never in the Middle",
-                "item": "https://theygent.ai/blog/local-first-agent-platform-architecture/"
+                "item": "https://ertir.dev/blog/local-first-agent-platform-architecture/"
               }
             ]
           }
@@ -108,22 +109,22 @@
     <!-- ─────────────────────────── NAV ─────────────────────────── -->
     <header class="nav" id="top">
       <div class="nav-inner">
-        <a class="brand" href="/" aria-label="TheYgent home">
-          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        <a class="brand" href="/" aria-label="Ertir home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
         </a>
         <nav class="nav-links" aria-label="Primary">
           <a href="/">Product</a>
           <a href="/private-ai/">Private &amp; Offline</a>
           <a href="/apple-silicon/">Apple Silicon</a>
           <a href="/compare/">Compare</a>
-          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+          <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
         </nav>
         <div class="nav-actions">
           <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
             <span class="theme-dot"></span><span class="theme-label mono">dark</span>
           </button>
-          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/ertir" rel="noopener">
             <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -142,8 +143,8 @@
         <a href="/private-ai/">Private &amp; Offline</a>
         <a href="/apple-silicon/">Apple Silicon</a>
         <a href="/compare/">Compare</a>
-        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+        <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
       </div>
     </header>
 
@@ -153,14 +154,14 @@
           <div class="wrap">
             <nav class="crumbs mono" aria-label="Breadcrumb">
               <ol>
-                <li><a href="/">TheYgent</a></li>
+                <li><a href="/">Ertir</a></li>
                 <li><a href="/blog/">Blog</a></li>
                 <li><span aria-current="page">Architecture</span></li>
               </ol>
             </nav>
             <p class="eyebrow mono"><i class="dia"></i>Engineering · <time datetime="2026-10-12">October 12, 2026</time> · 8 min read</p>
             <h1 id="page-h">Building a Local-First Agent Platform Where the Vendor Is Never in the Middle</h1>
-            <p class="lede">How TheYgent keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.</p>
+            <p class="lede">How Ertir keeps inference on hardware you control: two planes and one seam, logical model IDs, an engine manager instead of a model server, agents as content-addressed documents, and durable runs.</p>
             <p class="checked mono">By Arman Bahlakeh</p>
           </div>
         </header>
@@ -168,9 +169,9 @@
         <div class="band page-section">
           <div class="wrap prose post-body">
 <p>Every visual AI builder we tried had the same footnote: <em>local models supported — bring your own server.</em> That footnote is where most of the work lives. Someone has to pick an engine, download the right quantization, size the context to the machine, keep the server running, and wire its URL into the builder. And the builder itself often reports usage home by default.</p>
-<p>TheYgent started from the other end. The inference engine is part of the product, and the product is never a middleman you didn't choose between you and your models. This post walks through the architecture that follows from that: what the pieces are, where the boundaries sit, and why they are shaped the way they are.</p>
+<p>Ertir started from the other end. The inference engine is part of the product, and the product is never a middleman you didn't choose between you and your models. This post walks through the architecture that follows from that: what the pieces are, where the boundaries sit, and why they are shaped the way they are.</p>
 <h2 id="two-planes-one-seam">Two planes, one seam</h2>
-<p>The most important boundary in TheYgent splits the system into two planes.</p>
+<p>The most important boundary in Ertir splits the system into two planes.</p>
 <p>The <strong>inference plane</strong> runs models. It holds everything heavy — engine processes, model weights, the model registry, API credentials — and it runs wherever you point it: the same laptop, a GPU box across the network, or both.</p>
 <p>The <strong>control plane</strong> orchestrates agents: the graph runtime, the agent registry and versions, sessions, triggers, MCP servers, retrieval sources, secrets, and run traces.</p>
 <p>One rule keeps the split honest: <strong>the control plane never imports an engine.</strong> There is no MLX, vLLM, or llama.cpp binding anywhere in it. It reaches inference only through the inference plane's OpenAI-compatible HTTP API, through one shared client. Two things follow.</p>
@@ -188,7 +189,7 @@
     &quot;modality&quot;: &quot;chat&quot;
   }'
 </code></pre>
-<p>The <strong>binding</strong> is one of exactly four values: <code>mlx</code>, <code>vllm</code>, <code>llamacpp</code>, or <code>openai-compatible</code>. The first three are engines whose lifecycle TheYgent manages; everything else in the world — a hosted API, a model server you already run — is <code>openai-compatible</code> plus a URL. Two more axes sit beside it and never fold into it: <strong>source</strong> says where weights come from (<code>hf</code>, <code>local-path</code>, <code>url</code>), and <strong>modality</strong> says what the server does (chat, vision, embeddings, speech-to-text, text-to-speech, image generation).</p>
+<p>The <strong>binding</strong> is one of exactly four values: <code>mlx</code>, <code>vllm</code>, <code>llamacpp</code>, or <code>openai-compatible</code>. The first three are engines whose lifecycle Ertir manages; everything else in the world — a hosted API, a model server you already run — is <code>openai-compatible</code> plus a URL. Two more axes sit beside it and never fold into it: <strong>source</strong> says where weights come from (<code>hf</code>, <code>local-path</code>, <code>url</code>), and <strong>modality</strong> says what the server does (chat, vision, embeddings, speech-to-text, text-to-speech, image generation).</p>
 <p>The payoff is that moving a model from MLX on a Mac to llama.cpp on a Linux box — or from a local model to a hosted API — is one registration change. No agent is edited and none is republished. And because engine choice is per node, one graph can run a local model and a hosted one side by side: a small local model triages every request and a router sends only the hard ones to an API.</p>
 <h2 id="an-engine-manager-not-a-model-server">An engine manager, not a model server</h2>
 <p>The inference plane doesn't ask you to start servers. It starts them.</p>
@@ -217,16 +218,16 @@
 <h2 id="observability-without-extra-infrastructure">Observability without extra infrastructure</h2>
 <p>Every run produces spans and per-node inputs and outputs in your own Postgres, and the interface draws them as a zoomable waterfall: which node ran, for how long, on which model, with how many tokens. What gets captured — and for how long — is set per agent, with retention and redaction rules. Exporting to an OpenTelemetry collector is a second, opt-in sink, never a requirement.</p>
 <h2 id="being-checkable-about-privacy">Being checkable about privacy</h2>
-<p>"Your data stays private" is easy to write and hard to verify. So rather than promise, TheYgent publishes the <a href="/private-ai/#network">complete list of every connection it makes</a> and when it makes it: Hugging Face when you browse or install models, the MCP registries when you open the hub browser, and whatever you configure yourself — a hosted API, a remote MCP server, a site you crawl.</p>
-<p>The list includes the one request we could have left out: at startup, the inference plane's model client library fetches a public model price list from GitHub. It carries none of your data and falls back to a bundled copy offline — but it is a request, so it's on the list. There's no usage analytics, crash reporting, update check, or license server, and once installed, TheYgent runs fully offline.</p>
-<p>The promise is precise on purpose: <strong>you own every hop.</strong> You can register a hosted API whenever you want one. TheYgent just refuses to be a middleman you didn't choose.</p>
+<p>"Your data stays private" is easy to write and hard to verify. So rather than promise, Ertir publishes the <a href="/private-ai/#network">complete list of every connection it makes</a> and when it makes it: Hugging Face when you browse or install models, the MCP registries when you open the hub browser, and whatever you configure yourself — a hosted API, a remote MCP server, a site you crawl.</p>
+<p>The list includes the one request we could have left out: at startup, the inference plane's model client library fetches a public model price list from GitHub. It carries none of your data and falls back to a bundled copy offline — but it is a request, so it's on the list. There's no usage analytics, crash reporting, update check, or license server, and once installed, Ertir runs fully offline.</p>
+<p>The promise is precise on purpose: <strong>you own every hop.</strong> You can register a hosted API whenever you want one. Ertir just refuses to be a middleman you didn't choose.</p>
 <h2 id="loud-failures-deliberate-contracts">Loud failures, deliberate contracts</h2>
 <p>Two habits run through the codebase. Failures are loud: an unknown input reference, an invalid graph, an engine name where a logical ID belongs, a port nothing can fill — each fails fast with a named error code, never a silent fallback. And contracts are deliberate: the data-plane shape, the agent document envelope, and the four-value binding enum stay frozen until a change is consciously made, named, and tested — even when it's additive.</p>
 <h2 id="try-it">Try it</h2>
-<p>TheYgent is source-available under the Sustainable Use License, and it self-hosts on macOS and Linux — bare metal, Docker Compose, or Kubernetes.</p>
+<p>Ertir is source-available under the Sustainable Use License, and it self-hosts on macOS and Linux — bare metal, Docker Compose, or Kubernetes.</p>
 <ul>
-<li><strong>Code:</strong> <a href="https://github.com/al2m4n/TheYgent">github.com/al2m4n/TheYgent</a></li>
-<li><strong>Docs:</strong> <a href="https://docs.theygent.ai/">docs.theygent.ai</a>, including the full <a href="https://github.com/al2m4n/TheYgent/blob/main/docs/dev-docs/architecture.md">architecture</a> for contributors</li>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/ertir">github.com/al2m4n/ertir</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.ertir.dev/">docs.ertir.dev</a>, including the full <a href="https://github.com/al2m4n/ertir/blob/main/docs/dev-docs/architecture.md">architecture</a> for contributors</li>
 <li><strong>Watch it run:</strong> <a href="/videos/">video walkthroughs</a>, from install to a published agent</li>
 <li><strong>Start from a working agent:</strong> <a href="/templates/">twelve agent templates</a> that ship with it</li>
 </ul>
@@ -239,9 +240,9 @@
     <footer class="footer">
       <div class="wrap footer-inner">
         <div class="footer-brand">
-          <a class="brand" href="/" aria-label="TheYgent home">
-            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          <a class="brand" href="/" aria-label="Ertir home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
           </a>
           <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
         </div>
@@ -269,22 +270,22 @@
             <a href="/templates/">Agent Templates</a>
             <a href="/blog/">Blog</a>
             <a href="/compare/">Compare Platforms</a>
-            <a href="/compare/dify/">TheYgent vs Dify</a>
-            <a href="/compare/n8n/">TheYgent vs n8n</a>
-            <a href="/compare/langflow/">TheYgent vs Langflow</a>
-            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+            <a href="/compare/dify/">Ertir vs Dify</a>
+            <a href="/compare/n8n/">Ertir vs n8n</a>
+            <a href="/compare/langflow/">Ertir vs Langflow</a>
+            <a href="/compare/flowise/">Ertir vs Flowise</a>
           </div>
           <div class="footer-col">
             <span class="footer-h mono">resources</span>
-            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
-            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/ertir/blob/main/LICENSE.md" rel="noopener">License</a>
             <a href="/llms.txt">llms.txt</a>
           </div>
         </nav>
       </div>
       <div class="wrap footer-base mono">
-        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span>© 2026 Arman Bahlakeh · Ertir (formerly TheYgent) · Sustainable Use License</span>
         <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
       </div>
     </footer>

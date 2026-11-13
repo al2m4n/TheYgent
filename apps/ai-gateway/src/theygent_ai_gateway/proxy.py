@@ -184,7 +184,7 @@ def gateway_error(status: int, code: str, message: str, *, retry: bool) -> JSONR
     return JSONResponse(
         {
             "type": "error",
-            "error": {"type": "api_error", "message": f"TheYgent AI gateway: {message}"},
+            "error": {"type": "api_error", "message": f"Ertir AI gateway: {message}"},
         },
         status_code=status,
         headers={GATEWAY_ERROR_HEADER: code, "x-should-retry": "true" if retry else "false"},
@@ -668,7 +668,7 @@ def _authenticate(
         return gateway_error(
             401,
             "gateway_key_missing",
-            "this gateway needs a TheYgent gateway key (x-theygent-gateway-key header, or a "
+            "this gateway needs an Ertir gateway key (x-theygent-gateway-key header, or a "
             "tyg_ token in ANTHROPIC_AUTH_TOKEN)",
             retry=False,
         )

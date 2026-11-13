@@ -1,14 +1,14 @@
 {
   "id": "handbook-qa",
   "title": "Handbook Q&A",
-  "description": "Retrieval as a model capability, fully local: the installer creates a retrieval source in your own Postgres (pgvector), seeds it with a fictional TheYgent company handbook, and wires it to a local model as a search tool the model decides to call — answers cite the handbook section they came from.",
+  "description": "Retrieval as a model capability, fully local: the installer creates a retrieval source in your own Postgres (pgvector), seeds it with a fictional Ertir company handbook, and wires it to a local model as a search tool the model decides to call — answers cite the handbook section they came from.",
   "capabilities": [
     "local RAG (pgvector)",
     "retrieval as a model capability",
     "seeded knowledge base"
   ],
   "durable": false,
-  "input_example": "How long does TheYgent keep customer data, and who approves an exception?",
+  "input_example": "How long does Ertir keep customer data, and who approves an exception?",
   "model_slots": {
     "local": {
       "label": "Local model",
@@ -82,7 +82,7 @@
           "messages": [
             {
               "role": "system",
-              "content": "You answer questions about TheYgent (the fictional demo company) using ONLY the company handbook. ALWAYS search the handbook with the n_handbook tool before answering, and cite the section heading your answer came from. If the handbook does not cover the question, say exactly that."
+              "content": "You answer questions about Ertir (the fictional demo company) using ONLY the company handbook. ALWAYS search the handbook with the n_handbook tool before answering, and cite the section heading your answer came from. If the handbook does not cover the question, say exactly that."
             },
             {
               "role": "user",
@@ -119,7 +119,7 @@
         "config": {
           "source": "{rag:handbook}",
           "topK": 4,
-          "description": "Search the fictional TheYgent company handbook. Pass a short search query."
+          "description": "Search the fictional Ertir company handbook. Pass a short search query."
         },
         "ports": {
           "in": [

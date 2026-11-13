@@ -1,6 +1,6 @@
 # Architecture
 
-TheYgent is split into a small number of cooperating processes, each with a clear job and a clear home for its data. Understanding the split — the interface, the control plane, the inference plane, and the optional durable worker — tells you where your agents live, where your models run, and exactly when (if ever) anything leaves your machine.
+Ertir is split into a small number of cooperating processes, each with a clear job and a clear home for its data. Understanding the split — the interface, the control plane, the inference plane, and the optional durable worker — tells you where your agents live, where your models run, and exactly when (if ever) anything leaves your machine.
 
 ## The pieces
 
@@ -69,14 +69,14 @@ The storage locations and listen addresses are all configurable — see the [env
 
 ## The sovereignty story, honestly
 
-TheYgent's promise is not "no data ever leaves your machine". The honest version is: **everything runs where you point it, and you own every hop.**
+Ertir's promise is not "no data ever leaves your machine". The honest version is: **everything runs where you point it, and you own every hop.**
 
 - All four processes run locally by default, listening on `127.0.0.1`. Your prompts travel from your browser to the control plane to the inference plane over local HTTP.
 - Local models run on your hardware; weights download to your disk.
 - A hosted API is contacted **only when you register one** — as an `openai-compatible` model with a base URL you supply — and then only for calls routed to that model. Nothing is ever proxied through a vendor server. See [Remote models](../models/remote.md).
 - Because agents reference logical model ids, the local-versus-hosted choice is per model and per agent, and reversible: re-register the id, and every call site follows.
 - Credentials live in two separate stores, both on your machine and never written into agent documents. **Hosted-API keys** are inference-plane credentials, referenced as `secret://NAME` and never sent to the control plane (see [Remote models](../models/remote.md)). **Tool and MCP connection secrets** live in the control-plane store, encrypted with `THEYGENT_SECRET_KEY`.
-- Nothing is exported for telemetry unless you opt in by setting `OTEL_EXPORTER_OTLP_ENDPOINT`; otherwise all trace data stays in your Postgres. Every connection TheYgent makes on its own, and how to run fully offline, is listed in [Privacy and data flow](privacy.md).
+- Nothing is exported for telemetry unless you opt in by setting `OTEL_EXPORTER_OTLP_ENDPOINT`; otherwise all trace data stays in your Postgres. Every connection Ertir makes on its own, and how to run fully offline, is listed in [Privacy and data flow](privacy.md).
 
 !!! warning "Keep the inference plane on loopback"
     The control plane requires sign-in: a fresh install's API is closed until the first-run wizard creates an admin, and every call after that carries a bearer token — see [Users, roles and sign-in](../running/users.md). The inference plane has no sign-in of its own. It listens on `127.0.0.1` by default, and anything that can reach port 8081 can use your models, so don't expose it to untrusted networks.

@@ -1,7 +1,7 @@
 [project]
 name = "theygent-mcp"
 version = "1.0.0"
-description = "TheYgent MCP server — lets coding agents (Claude Code, Codex, OpenCode) build and run TheYgent agents, use local models, and search retrieval sources"
+description = "Ertir MCP server — lets coding agents (Claude Code, Codex, OpenCode) build and run Ertir agents, use local models, and search retrieval sources"
 requires-python = ">=3.12"
 license = { text = "Sustainable Use License 1.0; see LICENSE.md" }
 dependencies = [

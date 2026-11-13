@@ -1,9 +1,16 @@
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="apps/web/assets/logo/theygent-lockup-dark.svg">
-    <img src="apps/web/assets/logo/theygent-lockup.svg" alt="TheYgent" width="460">
+    <img src="apps/web/assets/logo/theygent-lockup.svg" alt="Ertir" width="460">
   </picture>
 </div>
+
+> [!NOTE]
+> **Ertir is the new name of TheYgent.** Same project, same code, same license. The website
+> is now [ertir.dev](https://ertir.dev) and the docs are at [docs.ertir.dev](https://docs.ertir.dev).
+> The repository is `al2m4n/ertir`, and GitHub redirects the old `al2m4n/TheYgent` links.
+> Technical names (`THEYGENT_*` variables, the `~/.theygent` folder) are unchanged, so
+> existing installs keep working. [What changed and what didn't](https://docs.ertir.dev/latest/name-change/).
 
 <p align="center"><strong>Build agents on a canvas. Run them where you point.</strong></p>
 
@@ -13,10 +20,10 @@
 </p>
 
 <p align="center">
-  <a href="https://theygent.ai">Website</a> ·
-  <a href="https://docs.theygent.ai">User docs</a> ·
-  <a href="https://theygent.ai/private-ai/">Private &amp; offline</a> ·
-  <a href="https://theygent.ai/compare/">How it compares</a> ·
+  <a href="https://ertir.dev">Website</a> ·
+  <a href="https://docs.ertir.dev">User docs</a> ·
+  <a href="https://ertir.dev/private-ai/">Private &amp; offline</a> ·
+  <a href="https://ertir.dev/compare/">How it compares</a> ·
   <a href="docs/dev-docs/README.md">Developer docs</a>
 </p>
 
@@ -27,13 +34,13 @@
   <p><em><strong>Voice in, voice out</strong> (5:54) — speech-to-text, a model, and text-to-speech wired on the canvas, then a spoken conversation with the agent.</em></p>
 </div>
 
-TheYgent is a no-code, local-first AI orchestration platform for building and running AI
+Ertir (formerly TheYgent) is a no-code, local-first AI orchestration platform for building and running AI
 agents. You compose an agent visually — LLM steps, tools, MCP servers, retrieval, routers, guardrails, human
 approval — and run it against models on *your* infrastructure: llama.cpp anywhere, MLX on
 Apple Silicon, vLLM on NVIDIA GPUs, or any OpenAI-compatible API you register. Local and
 hosted models mix freely in one graph, chosen per node and per call by a logical id.
 
-The promise is sovereignty and anti-lock-in, stated honestly: TheYgent is never an
+The promise is sovereignty and anti-lock-in, stated honestly: Ertir is never an
 involuntary middleman between you and your models. Prompts, payloads, and weights are never
 routed through anyone's servers — when something crosses a wire, it does so because you
 sent it there.
@@ -42,7 +49,7 @@ sent it there.
 
 - **Visual builder** — drag-and-drop canvas; the graph *is* the agent. Publishing mints an
   immutable, content-addressed version you can roll back to.
-- **Built-in local inference** — TheYgent runs the models itself: install one from the
+- **Built-in local inference** — Ertir runs the models itself: install one from the
   in-app Hugging Face catalog (each variant shows whether it fits your RAM), and llama.cpp,
   MLX on Apple Silicon, or vLLM (experimental) on NVIDIA starts on the first call and
   unloads when idle — no separate model server to run. Chat, vision, embeddings,
@@ -52,7 +59,7 @@ sent it there.
   site untouched. Local and hosted models mix freely, per node.
 - **Private by default** — no telemetry, usage analytics, update checks, or vendor account,
   and it runs offline or air-gapped once installed. Every connection it makes on its own is
-  [listed, with when and why](https://theygent.ai/private-ai/#network).
+  [listed, with when and why](https://ertir.dev/private-ai/#network).
 - **Tools & MCP** — built-in tools, HTTP tools, and any MCP server over stdio or HTTP,
   including servers generated in-process from an OpenAPI or GraphQL spec; a registry to
   browse and install from, with full auth including interactive OAuth.
@@ -74,7 +81,7 @@ sent it there.
   open models you run yourself. Per-session timelines explain every decision.
 
 - **An MCP server for coding agents** — connect Claude Code, Codex or OpenCode and they can
-  offload work to your local models, run and build TheYgent agents, and index and search your
+  offload work to your local models, run and build Ertir agents, and index and search your
   docs and code (`make mcp-setup` prints the setup).
 
 ## Architecture at a glance
@@ -132,7 +139,7 @@ The full contributor docs live in [docs/dev-docs](docs/dev-docs/README.md):
 | [Durable execution](docs/dev-docs/durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [Inference plane](docs/dev-docs/inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
 | [AI gateway](docs/dev-docs/ai-gateway.md) | The Claude Code proxy: pass-through, identity, the routing policy, local models and trials, records, the admin surface |
-| [MCP server](docs/dev-docs/mcp-server.md) | TheYgent as tools for coding agents: the tools, auth with personal API keys, local-file indexing |
+| [MCP server](docs/dev-docs/mcp-server.md) | Ertir as tools for coding agents: the tools, auth with personal API keys, local-file indexing |
 | [Interface](docs/dev-docs/interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [IR and packages](docs/dev-docs/ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [Deployment](docs/dev-docs/deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |
@@ -203,6 +210,6 @@ guardrails hold. Security reports: see [SECURITY.md](SECURITY.md).
 ## License
 
 Fair-code, under the Sustainable Use License: free to use, modify, self-host, and build
-on for your own internal business or personal purposes; commercializing TheYgent itself —
+on for your own internal business or personal purposes; commercializing Ertir itself —
 selling it, or offering it as a hosted service — is reserved. See
 [LICENSE.md](LICENSE.md).

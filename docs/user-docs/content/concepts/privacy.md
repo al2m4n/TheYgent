@@ -1,6 +1,6 @@
 # Privacy and data flow
 
-TheYgent's promise is **everything runs where you point it, and you own every hop** — not "no data ever leaves your machine". This page is the checkable version of that promise: where each kind of data lives, every connection the software makes on its own and when, and how to run with no network at all.
+Ertir's promise is **everything runs where you point it, and you own every hop** — not "no data ever leaves your machine". This page is the checkable version of that promise: where each kind of data lives, every connection the software makes on its own and when, and how to run with no network at all.
 
 ## Where your data lives
 
@@ -15,7 +15,7 @@ TheYgent's promise is **everything runs where you point it, and you own every ho
 | What a crawler collects | A [crawler node](../building/nodes/crawler.md) sends its input to the provider it names, which crawls on its own servers; the results come back into your run. The provider's token stays in the secret store. |
 | Audio and images | Local artifacts under `THEYGENT_ARTIFACT_DIR` on the control-plane host — never written into run history or exported with traces. |
 
-## Every connection TheYgent makes
+## Every connection Ertir makes
 
 This is the complete list for a running install. Apart from the first row, nothing connects until you open a feature that needs the network, or configure one.
 
@@ -27,15 +27,15 @@ This is the complete list for a running install. Apart from the first row, nothi
 | The Apify Store | When you open the **Crawlers browser** in the editor. The control plane makes the request; your browser does not. | Your searches and the Actors you open. No token is sent. See [Crawler](../building/nodes/crawler.md#adding-a-crawler). |
 | Things you configure | When an agent or a setting uses them. | Exactly what you wired: a [hosted API](../models/remote.md) you registered, a remote MCP server, an HTTP tool, a crawler node's provider (which receives the node's input), a site you crawl for retrieval, a sign-in provider, an [OpenTelemetry collector](../running/observability.md), or the Claude Code traffic you route through the [AI Gateway](../ai-gateway/index.md). |
 
-Installing TheYgent — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
+Installing Ertir — cloning the repository, installing dependencies and engines, pulling container images — needs the network once.
 
-### What TheYgent doesn't have
+### What Ertir doesn't have
 
 There is no usage analytics, crash reporting, update check, or license activation, and no vendor account: the only account is the local admin you create in the first-run wizard. Trace export is off until you set `OTEL_EXPORTER_OTLP_ENDPOINT` to a collector you run.
 
 ## Running offline or air-gapped
 
-Once it is installed, TheYgent runs with no network access: the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model. To prepare a host that will never be online:
+Once it is installed, Ertir runs with no network access: the canvas, the engines, Postgres, durable runs, and retrieval with a local embedding model. To prepare a host that will never be online:
 
 1. **Install while connected** — or on a connected machine of the same platform that you then move across. Follow [Installation](../getting-started/installation.md) through `make engines`, and run `make up` once so dependencies install and the schema migrates.
 2. **Bring the weights.** Install models from the catalog while connected, or copy GGUF files and MLX model folders onto the host and [register them by path](../models/installing.md#register-a-model-already-on-disk). Avoid hand-registered `source: hf` models on an offline host: their engine looks for the weights on Hugging Face when it starts.

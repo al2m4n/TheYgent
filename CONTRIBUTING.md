@@ -1,6 +1,6 @@
-# Contributing to TheYgent
+# Contributing to Ertir
 
-Thanks for helping build TheYgent! This page covers the mechanics of getting a change
+Thanks for helping build Ertir! This page covers the mechanics of getting a change
 merged. The engineering bar every change must clear lives in [AGENTS.md](AGENTS.md) —
 read that too before you start.
 
@@ -8,7 +8,7 @@ read that too before you start.
 
 - **Bugs and small fixes:** open an issue, or go straight to a PR if it's trivial.
 - **Features and behavior changes:** open an issue first so we can agree on the shape
-  before you invest time. TheYgent has deliberate architectural guardrails (the
+  before you invest time. Ertir has deliberate architectural guardrails (the
   two-plane split, the frozen binding enum, hash stability — see
   [AGENTS.md](AGENTS.md)) and PRs that cross them can't be merged, however good the
   code.

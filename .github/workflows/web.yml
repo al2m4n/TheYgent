@@ -1,6 +1,6 @@
 name: web
 
-# Marketing site pipeline (apps/web — a static, no-build HTML/CSS/JS site served at theygent.ai):
+# Marketing site pipeline (apps/web — a static, no-build HTML/CSS/JS site served at ertir.dev):
 #   - PRs touching the site: validate that every local asset reference resolves, then deploy a
 #     per-branch Cloudflare Pages *preview* so the change can be eyeballed before merge.
 #   - Pushes to main: deploy the production site.
@@ -98,7 +98,7 @@ jobs:
 
       # IndexNow tells Bing-family and other participating engines about the change within
       # minutes instead of a crawl cycle. The key is public by design: the engine verifies
-      # ownership by fetching https://theygent.ai/<key>.txt, which ships with the site.
+      # ownership by fetching https://ertir.dev/<key>.txt, which ships with the site.
       # Push-only: IndexNow asks that only changed URLs be submitted, and release-triggered
       # redeploys change nothing.
       # Only the pages whose own file changed in this push are submitted.
@@ -116,5 +116,5 @@ jobs:
           echo "Submitting: $urls"
           curl -fsS -X POST "https://api.indexnow.org/indexnow" \
             -H "Content-Type: application/json; charset=utf-8" \
-            -d "{\"host\":\"theygent.ai\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://theygent.ai/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
+            -d "{\"host\":\"ertir.dev\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://ertir.dev/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
             || echo "IndexNow submission failed (non-fatal)"

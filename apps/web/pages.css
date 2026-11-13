@@ -3,7 +3,7 @@
    follow automatically. The home page loads this file too, for the three-column footer. */
 
 /* ── Footer: product · learn · resources ──────────────────────────────────── */
-/* The learn column carries the longest labels ("TheYgent vs Langflow"), so it gets the most room. */
+/* The learn column carries the longest labels ("Ertir vs Langflow"), so it gets the most room. */
 .footer-cols {
   grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.25fr) minmax(0, 0.8fr);
 }
@@ -220,7 +220,7 @@
 .cmp-table tbody tr:last-child td {
   border-bottom: 0;
 }
-/* TheYgent's own column: a quiet tint, never a louder voice. */
+/* Ertir's own column: a quiet tint, never a louder voice. */
 .cmp-table .us {
   background: color-mix(in oklab, var(--periwinkle) 7%, transparent);
 }
