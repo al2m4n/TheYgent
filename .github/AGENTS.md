@@ -23,7 +23,7 @@ rules in the root [AGENTS.md](../AGENTS.md) apply first; CI gates are described 
 | [`scripts/check_agent_docs.py`](scripts/check_agent_docs.py) | `ci.yml`, pre-commit | The context files are in step with the tree: `CLAUDE.md` stubs, root links, relative links and anchors, and every file in each `agents-map: covers=` directory named in its map |
 | [`scripts/web_sitemap.py`](scripts/web_sitemap.py) | `web.yml` | Stamps sitemap `lastmod` from git history; lists changed URLs |
 | [`scripts/docs_indexnow.py`](scripts/docs_indexnow.py) | `docs.yml` | Lists the docs URLs a release changed |
-| [`scripts/docs_repair_canonicals.py`](scripts/docs_repair_canonicals.py) | `docs.yml` | Rewrites the `/latest/<version>/` self-URLs of the versions `_redirects` names to `/latest/` in the deploy tree; guarded by `deploy/tests/test_docs_publish.py` |
+| [`scripts/docs_repair_canonicals.py`](scripts/docs_repair_canonicals.py) | `docs.yml` | In the deploy tree, moves every version's `docs.theygent.ai`/`theygent.ai` URLs to the Ertir hosts, then rewrites the `/latest/<version>/` self-URLs of the versions `_redirects` names to `/latest/`; guarded by `deploy/tests/test_docs_publish.py` |
 | [`pull_request_template.md`](pull_request_template.md) | Every PR | The checklist every PR fills in, including the context-docs line |
 
 ## Rules

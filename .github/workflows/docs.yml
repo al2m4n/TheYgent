@@ -109,13 +109,16 @@ jobs:
             git show "origin/main:docs/user-docs/root/$f" > "_site/$f"
           done
 
-      # Versions up to v1.0.1 name /latest/<version>/<page> as their own URL in every canonical
-      # link, sitemap and llms-full.txt. Those paths only redirect (root/_redirects), and search
-      # engines ignore a canonical that redirects, so they picked old copies over /latest/.
-      # The script rewrites that prefix to /latest/ for each version _redirects names, here in
-      # the deploy tree only: gh-pages stays as mike published it. Run from origin/main like
-      # the root files above, so a release cut from an older tag still applies it.
-      - name: Point the early versions' canonical URLs at /latest/
+      # Versions up to v1.3.3 name the TheYgent hosts (docs.theygent.ai, theygent.ai), which the
+      # project does not keep, so the script first moves every version's URLs on those hosts to
+      # docs.ertir.dev and ertir.dev. Versions up to v1.0.1 also name /latest/<version>/<page>
+      # as their own URL in every canonical link, sitemap and llms-full.txt. Those paths only
+      # redirect (root/_redirects), and search engines ignore a canonical that redirects, so
+      # they picked old copies over /latest/; the script then rewrites that prefix to /latest/
+      # for each version _redirects names. Both happen in the deploy tree only: gh-pages stays
+      # as mike published it. Run from origin/main like the root files above, so a release cut
+      # from an older tag still applies it.
+      - name: Point the published versions' URLs at the current hosts and /latest/
         run: git show "origin/main:.github/scripts/docs_repair_canonicals.py" | python3 - _site
 
       - name: Deploy to Cloudflare Pages

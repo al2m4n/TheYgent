@@ -1,4 +1,4 @@
-"""Docs publish guards — the deploy-time repair of the early versions' canonical URLs."""
+"""Docs publish guards — the deploy-time repair of the published versions' URLs."""
 
 from __future__ import annotations
 
@@ -84,6 +84,60 @@ def test_repair_fails_when_redirects_name_no_version(site: Path) -> None:
     (site / "_redirects").write_text("# no rules\n")
     with pytest.raises(ValueError, match="no /latest/<version>"):
         repair_canonicals.repair(site)
+
+
+OLD_DOCS = "https://docs.theygent.ai/latest/"
+
+
+def test_move_hosts_rewrites_every_version_to_the_ertir_hosts(tmp_path: Path) -> None:
+    page = (
+        _page(f"{OLD_DOCS}chat/")
+        + '<a href="https://theygent.ai/videos/?t=5">v</a><a href="http://www.theygent.ai">w</a>'
+        + "See https://theygent.ai. Not https://theygent.ai.example.com or https://theygent.aix/"
+    )
+    (tmp_path / "v1.3.3/chat").mkdir(parents=True)
+    (tmp_path / "v1.3.3/chat/index.html").write_text(page)
+    sitemap = _sitemap(OLD_DOCS, f"{OLD_DOCS}chat/")
+    (tmp_path / "v1.3.3/sitemap.xml.gz").write_bytes(gzip.compress(sitemap.encode()))
+    (tmp_path / "v1.3.3/logo.png").write_bytes(b"\x89PNG https://theygent.ai/")
+    (tmp_path / "v2.0.0").mkdir()
+    (tmp_path / "v2.0.0/index.html").write_text(_page(ORIGIN))
+    (tmp_path / "latest").mkdir()
+    (tmp_path / "latest/index.html").write_text(_page(f"{OLD_DOCS}"))
+
+    assert repair_canonicals.move_hosts(tmp_path) == {"v1.3.3": 6, "v2.0.0": 0}
+    assert (tmp_path / "v1.3.3/chat/index.html").read_text() == (
+        _page(f"{ORIGIN}chat/")
+        + '<a href="https://ertir.dev/videos/?t=5">v</a><a href="https://ertir.dev">w</a>'
+        + "See https://ertir.dev. Not https://theygent.ai.example.com or https://theygent.aix/"
+    )
+    moved = gzip.decompress((tmp_path / "v1.3.3/sitemap.xml.gz").read_bytes()).decode()
+    assert moved == _sitemap(ORIGIN, f"{ORIGIN}chat/")
+    assert (tmp_path / "v1.3.3/logo.png").read_bytes() == b"\x89PNG https://theygent.ai/"
+    assert (tmp_path / "latest/index.html").read_text() == _page(OLD_DOCS)
+    assert repair_canonicals.move_hosts(tmp_path) == {"v1.3.3": 0, "v2.0.0": 0}
+
+
+def test_main_moves_hosts_before_repairing_the_early_versions(
+    site: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for path in site.rglob("*"):
+        if path.is_file() and path.suffix in {".html", ".xml", ".txt"}:
+            path.write_text(path.read_text().replace(ORIGIN, OLD_DOCS))
+    for version in ("v0.2.0", "v1.0.1"):
+        sitemap = _sitemap(f"{OLD_DOCS}{version}/", f"{OLD_DOCS}{version}/chat/")
+        (site / version / "sitemap.xml.gz").write_bytes(gzip.compress(sitemap.encode()))
+    monkeypatch.setattr("sys.argv", ["docs_repair_canonicals.py", str(site)])
+
+    assert repair_canonicals.main() == 0
+    for version in ("v0.2.0", "v1.0.1"):
+        assert (site / version / "chat/index.html").read_text() == _page(f"{ORIGIN}chat/")
+        sitemap = _sitemap(ORIGIN, f"{ORIGIN}chat/")
+        assert gzip.decompress((site / version / "sitemap.xml.gz").read_bytes()).decode() == sitemap
+    assert (site / "v1.3.3/chat/index.html").read_text() == _page(f"{ORIGIN}chat/")
+    out = capsys.readouterr().out
+    assert "v1.3.3: 1 URLs now point at the Ertir hosts" in out
+    assert "v1.0.1: 8 URLs now point at /latest/" in out
 
 
 def test_shipped_redirects_name_the_early_versions() -> None:
