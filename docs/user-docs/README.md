@@ -44,7 +44,9 @@ with `/latest/` already in `site_url`, which produced `/latest/<version>/…` ca
 `root/_redirects` sends those URLs to the pages they meant, and every deploy rewrites those
 versions' canonicals, sitemaps and `llms-full.txt` to `/latest/` with
 `.github/scripts/docs_repair_canonicals.py`. A canonical that redirects is ignored by search
-engines, which otherwise pick an old version's copy over `/latest/`.)
+engines, which otherwise pick an old version's copy over `/latest/`. Versions up to v1.3.3 were
+built for `docs.theygent.ai`; the same script first moves every version's `docs.theygent.ai`
+and `theygent.ai` URLs to `docs.ertir.dev` and `ertir.dev`.)
 
 One-time setup for a fork/new deployment:
 
