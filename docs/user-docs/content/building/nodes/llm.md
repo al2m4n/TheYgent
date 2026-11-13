@@ -161,7 +161,7 @@ A tool node is *either* a capability (wired to an llm's `tools` port, the model 
 
 The llm node **streams**. As the model generates, tokens arrive incrementally, so a long answer appears as it is written rather than all at once — you see this live in [chat](../../chat/index.md), on [the Bench](../../running/bench.md), and in the [run waterfall](../../running/observability.md).
 
-Reasoning models emit a hidden **thinking** phase before their answer. TheYgent keeps the two apart:
+Reasoning models emit a hidden **thinking** phase before their answer. Ertir keeps the two apart:
 
 - **Reasoning** is streamed as its own frame — visible progress during a long think — but is **never** merged into the answer.
 - Only the final **content** becomes the run's output and the session turn.

@@ -236,4 +236,4 @@ Two suites guard the plane boundary specifically: `tests/test_registry_persisten
 - [Interface](./interface.md) — the SPA that talks to `/admin/*` directly from the browser
 - [Durable execution](./durable-execution.md) — the worker, another `/v1/*`-only consumer
 - [Deployment](./deployment.md) — desktop sidecar vs. cloud deployable, same code both ways
-- [User docs](https://docs.theygent.ai/) — end-user guides for connecting engines and models
+- [User docs](https://docs.ertir.dev/) — end-user guides for connecting engines and models

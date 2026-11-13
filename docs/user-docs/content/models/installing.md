@@ -39,7 +39,7 @@ If you already have model weights on your machine — a GGUF file, or an MLX mod
 4. In **Model**, enter the path to the weights on disk.
 5. Save.
 
-Models registered this way use **source `local-path`** — TheYgent loads them from where they are and never copies or moves them. The first call to the logical id spawns the engine against that path.
+Models registered this way use **source `local-path`** — Ertir loads them from where they are and never copies or moves them. The first call to the logical id spawns the engine against that path.
 
 You can also register a local model over the management API directly. The inference plane listens on `http://localhost:8081`, and registration is a `PUT` under the logical id (the wire format is camelCase):
 

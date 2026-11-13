@@ -1,8 +1,8 @@
 # Developer documentation
 
-Documentation for people working **on** TheYgent — the architecture, each component's
+Documentation for people working **on** Ertir — the architecture, each component's
 design and invariants, and how to build, test, and deploy the stack. If you want to *use*
-TheYgent, read the [user documentation](https://docs.theygent.ai/) instead.
+Ertir, read the [user documentation](https://docs.ertir.dev/) instead.
 
 Start with [architecture.md](./architecture.md) — the system map and the reasoning behind
 the load-bearing boundaries. Then go component by component:
@@ -15,7 +15,7 @@ the load-bearing boundaries. Then go component by component:
 | [durable-execution.md](./durable-execution.md) | Crash-safe runs: the journaled workflow, durable-only nodes, the worker process |
 | [inference-plane.md](./inference-plane.md) | Engines and the gateway: bindings, modalities, lifecycle, catalog, credentials |
 | [ai-gateway.md](./ai-gateway.md) | The coding agents' Anthropic-Messages proxy: pass-through, identity, the policy, router mode, local models and trials, shadow runs, prices, records and export, the admin surface |
-| [mcp-server.md](./mcp-server.md) | TheYgent as tools for coding agents: the twenty tools, auth with personal API keys, local-file indexing, the plane boundary |
+| [mcp-server.md](./mcp-server.md) | Ertir as tools for coding agents: the twenty tools, auth with personal API keys, local-file indexing, the plane boundary |
 | [interface.md](./interface.md) | The React SPA: the canvas/IR adapter, generated types, chat, bench, the run waterfall |
 | [ir-and-packages.md](./ir-and-packages.md) | The IR document envelope, `contentHash`, validation, TS codegen, the gateway client |
 | [deployment.md](./deployment.md) | Bare metal, Docker Compose, Kubernetes; CI gates; the sample OTel stack |

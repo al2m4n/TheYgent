@@ -25,7 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ORIGIN = "https://theygent.ai"
+ORIGIN = "https://ertir.dev"
 URL_RE = re.compile(r"(<loc>([^<]+)</loc>\s*<lastmod>)[^<]*(</lastmod>)")
 
 

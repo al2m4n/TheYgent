@@ -303,7 +303,7 @@ def test_an_unreachable_upstream_is_an_anthropic_shaped_error(tmp_path: Path) ->
     body = response.json()
     assert body["type"] == "error"
     assert body["error"]["type"] == "api_error"
-    assert body["error"]["message"].startswith("TheYgent AI gateway:")
+    assert body["error"]["message"].startswith("Ertir AI gateway:")
 
 
 def test_an_upstream_breaking_mid_stream_is_not_passed_off_as_complete(

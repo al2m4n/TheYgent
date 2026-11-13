@@ -1,6 +1,6 @@
 # Environment variables
 
-Every setting TheYgent reads from the environment. You configure these in the `.env` file at the repository root, which `make up` and the services load automatically. Only `DATABASE_URL` is required — everything else has a working default for a local install.
+Every setting Ertir reads from the environment. You configure these in the `.env` file at the repository root, which `make up` and the services load automatically. Only `DATABASE_URL` is required — everything else has a working default for a local install.
 
 !!! tip "Where to set them"
     Copy `.env.example` to `.env` and edit it. The `Makefile` includes `.env` and exports every variable to the services it starts, so a value set there reaches every service it starts. After editing `.env`, run `make restart` to pick up the change. See [Installation](../getting-started/installation.md).
@@ -138,5 +138,5 @@ The web app reads these at build time (Vite `VITE_*` variables). Change them onl
 ## Related pages
 
 - [Installation](../getting-started/installation.md) — setting up `.env` for the first time.
-- [Running TheYgent](../getting-started/running.md) — starting the services that read these.
+- [Running Ertir](../getting-started/running.md) — starting the services that read these.
 - [Troubleshooting](troubleshooting.md) — symptoms that trace back to a misconfigured variable.

@@ -13,7 +13,7 @@ export function AuthShell({ children, footer }: { children: ReactNode; footer?: 
     <div className="flex h-full min-h-0 flex-col items-center justify-center gap-6 overflow-y-auto bg-background px-4 py-10">
       <div className="flex items-center gap-2.5">
         <img src={mark} alt="" className="h-8 w-auto" />
-        <span className="text-xl font-semibold tracking-tight text-foreground">TheYgent</span>
+        <span className="text-xl font-semibold tracking-tight text-foreground">Ertir</span>
       </div>
       <Card className="w-full max-w-sm p-6">{children}</Card>
       <div className="text-xs text-muted-foreground">{footer}</div>

@@ -1,6 +1,6 @@
 // First-run setup: the wizard a fresh install shows before anything else. One real decision —
 // the admin account — book-ended by a welcome step and a "what roles exist" primer, so the
-// person who installs TheYgent also learns how to bring in their team. POST /auth/setup only
+// person who installs Ertir also learns how to bring in their team. POST /auth/setup only
 // works while the install has zero users; success signs the new admin straight in.
 
 import { useMutation } from "@tanstack/react-query";
@@ -64,7 +64,7 @@ export function SetupWizard() {
         {step === 0 && (
           <div className="space-y-4">
             <div>
-              <h1 className="text-base font-semibold text-foreground">Welcome to TheYgent</h1>
+              <h1 className="text-base font-semibold text-foreground">Welcome to Ertir</h1>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 Your agents, your models, your machine. Before anything runs, this install needs its
                 first account — the administrator. That's you.

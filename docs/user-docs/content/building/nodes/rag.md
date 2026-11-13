@@ -28,7 +28,7 @@ Like a [tool node](tools.md), it has two lives: a **step** in the dataflow, or a
 1. Drop a **rag** node and pick its source.
 2. Drag its violet **`use`** handle into the llm node's violet **`tools`** port.
 
-The model now sees a function named after the node's id taking one argument, `query`. When it calls, TheYgent runs the retrieval and feeds the matches back as the tool result; the model reads them and answers (usually citing the `uri` of the passages it used). `topK` and `minSimilarity` stay authored knobs — the model cannot override them.
+The model now sees a function named after the node's id taking one argument, `query`. When it calls, Ertir runs the retrieval and feeds the matches back as the tool result; the model reads them and answers (usually citing the `uri` of the passages it used). `topK` and `minSimilarity` stay authored knobs — the model cannot override them.
 
 !!! tip "Name the node meaningfully"
     The node **id is the function name** the model sees. `docs_search` beats `n_rag1` — models call well-named functions more reliably.

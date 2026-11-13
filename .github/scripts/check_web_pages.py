@@ -12,7 +12,7 @@ them honest:
 * a page's FAQPage structured data matches its visible FAQ question for question and word for
   word (Google's policy forbids structured data that is not visible on the page);
 * 404.html is noindex and stays out of the sitemap;
-* every theygent.ai URL in llms.txt is a real page.
+* every ertir.dev URL in llms.txt is a real page.
 
 Usage: check_web_pages.py <site-dir>
 """
@@ -26,7 +26,7 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-ORIGIN = "https://theygent.ai"
+ORIGIN = "https://ertir.dev"
 NOT_FOUND = "404.html"
 # Typographic quotes in visible copy versus straight quotes in JSON-LD are the same words.
 QUOTES = str.maketrans({chr(0x2018): "'", chr(0x2019): "'", chr(0x201C): '"', chr(0x201D): '"'})

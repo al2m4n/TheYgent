@@ -44,7 +44,7 @@ graph LR
   S --> OUT[output · modality audio]
 ```
 
-To use one, pick **Agent** in New Chat and select it. TheYgent reads the agent's input and output nodes and gives it a **voice**/**audio** badge and the voice composer (mic and attach, text disabled). Then:
+To use one, pick **Agent** in New Chat and select it. Ertir reads the agent's input and output nodes and gives it a **voice**/**audio** badge and the voice composer (mic and attach, text disabled). Then:
 
 1. You record or attach a clip and send.
 2. The clip is uploaded to the control plane as an **artifact** (`POST /artifacts`) and passed to the run as a reference — the raw bytes are handed straight to the inference plane, never journaled into run history.
@@ -68,7 +68,7 @@ The `speak` node defaults `format` to `mp3` when its params omit it; `format` ma
 
 ## What models you need
 
-Voice needs two kinds of engine, and TheYgent forces a specific split for each:
+Voice needs two kinds of engine, and Ertir forces a specific split for each:
 
 | Job | Engine | Binary | Notes |
 |---|---|---|---|

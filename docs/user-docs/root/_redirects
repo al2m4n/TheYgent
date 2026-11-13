@@ -1,4 +1,4 @@
-# Cloudflare Pages redirects for docs.theygent.ai — docs.yml copies this file to the deploy root.
+# Cloudflare Pages redirects for docs.ertir.dev — docs.yml copies this file to the deploy root.
 #
 # Versions v0.1.0 through v1.0.1 were built while mike appended the version being deployed to a
 # site_url that already ended in /latest/, so their canonical links and sitemaps name

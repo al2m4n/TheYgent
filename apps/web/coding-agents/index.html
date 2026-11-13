@@ -3,27 +3,27 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>TheYgent MCP Server for Claude Code, Codex &amp; OpenCode | TheYgent</title>
-    <meta name="description" content="Connect Claude Code, Codex, or OpenCode to TheYgent over MCP: offload work to your local models, run and build agents, and search your docs and code." />
-    <link rel="canonical" href="https://theygent.ai/coding-agents/" />
+    <title>Ertir MCP Server for Claude Code, Codex &amp; OpenCode | Ertir</title>
+    <meta name="description" content="Connect Claude Code, Codex, or OpenCode to Ertir over MCP: offload work to your local models, run and build agents, and search your docs and code." />
+    <link rel="canonical" href="https://ertir.dev/coding-agents/" />
     <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
     <meta name="color-scheme" content="dark light" />
 
     <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://theygent.ai/coding-agents/" />
-    <meta property="og:site_name" content="TheYgent" />
+    <meta property="og:url" content="https://ertir.dev/coding-agents/" />
+    <meta property="og:site_name" content="Ertir" />
     <meta property="og:title" content="Give Your Coding Agent Local Models, Agents, and Search" />
-    <meta property="og:description" content="TheYgent&#x27;s MCP server hands Claude Code, Codex, and OpenCode your local models, your agents, and retrieval over your docs and code — as tools, on your machine." />
-    <meta property="og:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta property="og:description" content="Ertir&#x27;s MCP server hands Claude Code, Codex, and OpenCode your local models, your agents, and retrieval over your docs and code — as tools, on your machine." />
+    <meta property="og:image" content="https://ertir.dev/assets/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="TheYgent — build agents on a canvas, run them where you point" />
+    <meta property="og:image:alt" content="Ertir — build agents on a canvas, run them where you point" />
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Give Your Coding Agent Local Models, Agents, and Search" />
-    <meta name="twitter:description" content="TheYgent&#x27;s MCP server hands Claude Code, Codex, and OpenCode your local models, your agents, and retrieval over your docs and code — as tools, on your machine." />
-    <meta name="twitter:image" content="https://theygent.ai/assets/og-image.png" />
+    <meta name="twitter:description" content="Ertir&#x27;s MCP server hands Claude Code, Codex, and OpenCode your local models, your agents, and retrieval over your docs and code — as tools, on your machine." />
+    <meta name="twitter:image" content="https://ertir.dev/assets/og-image.png" />
 
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
@@ -40,58 +40,59 @@
         "@graph": [
           {
             "@type": "WebPage",
-            "@id": "https://theygent.ai/coding-agents/#webpage",
-            "url": "https://theygent.ai/coding-agents/",
-            "name": "TheYgent MCP Server for Claude Code, Codex & OpenCode | TheYgent",
-            "description": "Connect Claude Code, Codex, or OpenCode to TheYgent over MCP: offload work to your local models, run and build agents, and search your docs and code.",
+            "@id": "https://ertir.dev/coding-agents/#webpage",
+            "url": "https://ertir.dev/coding-agents/",
+            "name": "Ertir MCP Server for Claude Code, Codex & OpenCode | Ertir",
+            "description": "Connect Claude Code, Codex, or OpenCode to Ertir over MCP: offload work to your local models, run and build agents, and search your docs and code.",
             "inLanguage": "en",
             "dateModified": "2026-10-19",
             "isPartOf": {
-              "@id": "https://theygent.ai/#website"
+              "@id": "https://ertir.dev/#website"
             },
             "about": {
-              "@id": "https://theygent.ai/#software"
+              "@id": "https://ertir.dev/#software"
             },
             "breadcrumb": {
-              "@id": "https://theygent.ai/coding-agents/#breadcrumb"
+              "@id": "https://ertir.dev/coding-agents/#breadcrumb"
             }
           },
           {
             "@type": "BreadcrumbList",
-            "@id": "https://theygent.ai/coding-agents/#breadcrumb",
+            "@id": "https://ertir.dev/coding-agents/#breadcrumb",
             "itemListElement": [
               {
                 "@type": "ListItem",
                 "position": 1,
-                "name": "TheYgent",
-                "item": "https://theygent.ai/"
+                "name": "Ertir",
+                "alternateName": "TheYgent",
+                "item": "https://ertir.dev/"
               },
               {
                 "@type": "ListItem",
                 "position": 2,
                 "name": "Coding Agents",
-                "item": "https://theygent.ai/coding-agents/"
+                "item": "https://ertir.dev/coding-agents/"
               }
             ]
           },
           {
             "@type": "FAQPage",
-            "@id": "https://theygent.ai/coding-agents/#faq",
+            "@id": "https://ertir.dev/coding-agents/#faq",
             "mainEntity": [
               {
                 "@type": "Question",
-                "name": "How do I connect Claude Code to TheYgent?",
+                "name": "How do I connect Claude Code to Ertir?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Start TheYgent, create a personal API key from the profile menu (API keys → Create), and add the MCP server once: claude mcp add theygent --scope user -e THEYGENT_API_KEY=tyk_…your key -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp. Run make mcp-setup in the checkout and it prints that command, and the Codex and OpenCode equivalents, with the path filled in."
+                  "text": "Start Ertir, create a personal API key from the profile menu (API keys → Create), and add the MCP server once: claude mcp add theygent --scope user -e THEYGENT_API_KEY=tyk_…your key -- uv run --project /path/to/Ertir --package theygent-mcp theygent-mcp. Run make mcp-setup in the checkout and it prints that command, and the Codex and OpenCode equivalents, with the path filled in."
                 }
               },
               {
                 "@type": "Question",
-                "name": "Can Claude Code use my local model through TheYgent?",
+                "name": "Can Claude Code use my local model through Ertir?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes, as a tool. The ask_model tool sends a prompt to a model on your TheYgent inference plane — an MLX or llama.cpp model on your machine, or any API you registered — and returns its answer. Claude decides when to call it; your instructions can tell it to prefer the local model for summaries, drafts, and extraction. To serve a share of Claude Code's own requests with local models, use the AI Gateway."
+                  "text": "Yes, as a tool. The ask_model tool sends a prompt to a model on your Ertir inference plane — an MLX or llama.cpp model on your machine, or any API you registered — and returns its answer. Claude decides when to call it; your instructions can tell it to prefer the local model for summaries, drafts, and extraction. To serve a share of Claude Code's own requests with local models, use the AI Gateway."
                 }
               },
               {
@@ -99,7 +100,7 @@
                 "name": "Does my code leave my machine?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Whatever your coding agent reads goes to its own model provider, as it always does. TheYgent adds no hop of its own: model calls go from the MCP server to your inference plane, and agent runs and searches to your control plane, all on your machine unless you deployed them elsewhere. Files you pass to ask_model as files are read by the MCP server and sent only to the model you chose, so the coding agent and its provider see the answer, not the file."
+                  "text": "Whatever your coding agent reads goes to its own model provider, as it always does. Ertir adds no hop of its own: model calls go from the MCP server to your inference plane, and agent runs and searches to your control plane, all on your machine unless you deployed them elsewhere. Files you pass to ask_model as files are read by the MCP server and sent only to the model you chose, so the coding agent and its provider see the answer, not the file."
                 }
               },
               {
@@ -107,15 +108,15 @@
                 "name": "Which coding agents work with it?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Any MCP client. TheYgent's setup command prints the configuration for Claude Code, Codex, and OpenCode, and the server also speaks streamable HTTP for clients that can't start a local process. Agent runs on a local model can take minutes, so give the client a tool timeout of ten minutes; the setup notes show where."
+                  "text": "Any MCP client. Ertir's setup command prints the configuration for Claude Code, Codex, and OpenCode, and the server also speaks streamable HTTP for clients that can't start a local process. Agent runs on a local model can take minutes, so give the client a tool timeout of ten minutes; the setup notes show where."
                 }
               },
               {
                 "@type": "Question",
-                "name": "Can the coding agent build TheYgent agents for me?",
+                "name": "Can the coding agent build Ertir agents for me?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "Yes. It reads the authoring guide, writes the agent document, checks it with validate_agent, test-runs it with run_graph, and publishes it with create_agent. The result is an ordinary TheYgent agent: it appears on your Agents page, opens in the visual editor, keeps immutable versions, and its runs are traced like any other."
+                  "text": "Yes. It reads the authoring guide, writes the agent document, checks it with validate_agent, test-runs it with run_graph, and publishes it with create_agent. The result is an ordinary Ertir agent: it appears on your Agents page, opens in the visual editor, keeps immutable versions, and its runs are traced like any other."
                 }
               }
             ]
@@ -141,22 +142,22 @@
     <!-- ─────────────────────────── NAV ─────────────────────────── -->
     <header class="nav" id="top">
       <div class="nav-inner">
-        <a class="brand" href="/" aria-label="TheYgent home">
-          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+        <a class="brand" href="/" aria-label="Ertir home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
         </a>
         <nav class="nav-links" aria-label="Primary">
           <a href="/">Product</a>
           <a href="/private-ai/">Private &amp; Offline</a>
           <a href="/apple-silicon/">Apple Silicon</a>
           <a href="/compare/">Compare</a>
-          <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
+          <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
         </nav>
         <div class="nav-actions">
           <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
             <span class="theme-dot"></span><span class="theme-label mono">dark</span>
           </button>
-          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/TheYgent" rel="noopener">
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/ertir" rel="noopener">
             <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
               <path
                 fill="currentColor"
@@ -175,8 +176,8 @@
         <a href="/private-ai/">Private &amp; Offline</a>
         <a href="/apple-silicon/">Apple Silicon</a>
         <a href="/compare/">Compare</a>
-        <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-        <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
+        <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
       </div>
     </header>
 
@@ -185,20 +186,20 @@
         <div class="wrap">
           <nav class="crumbs mono" aria-label="Breadcrumb">
             <ol>
-              <li><a href="/">TheYgent</a></li>
+              <li><a href="/">Ertir</a></li>
               <li><span aria-current="page">Coding Agents</span></li>
             </ol>
           </nav>
           <p class="eyebrow mono"><i class="dia"></i>MCP Server · Claude Code · Codex · OpenCode</p>
           <h1 id="page-h">Give Your Coding Agent <span class="ramp-text">Local Models, Agents, and Search.</span></h1>
           <p class="lede">
-            TheYgent ships an MCP server. Add it to Claude Code, Codex, or OpenCode, and your coding agent can hand
-            work to the models on your machine, run and build TheYgent agents, and search your docs and code — as
-            tools it picks itself. It runs beside the coding tool, and ships with TheYgent 1.2.
+            Ertir ships an MCP server. Add it to Claude Code, Codex, or OpenCode, and your coding agent can hand
+            work to the models on your machine, run and build Ertir agents, and search your docs and code — as
+            tools it picks itself. It runs beside the coding tool, and ships with Ertir 1.2.
           </p>
           <div class="cta-row">
             <a class="btn btn-primary" href="#try">Connect It in Two Minutes&nbsp;↓</a>
-            <a class="btn btn-ghost" href="https://docs.theygent.ai/latest/coding-agents/" rel="noopener">Read the Setup Guide&nbsp;→</a>
+            <a class="btn btn-ghost" href="https://docs.ertir.dev/latest/coding-agents/" rel="noopener">Read the Setup Guide&nbsp;→</a>
           </div>
         </div>
       </section>
@@ -208,7 +209,7 @@
           <h2 id="jobs-h">Four Jobs Your Coding Agent Can Hand Off</h2>
           <p>
             <strong>Offload to a local model.</strong> Summaries, first drafts, commit messages, classification,
-            extraction, and second opinions go to a model on your TheYgent inference plane with
+            extraction, and second opinions go to a model on your Ertir inference plane with
             <code>ask_model</code>. Give it a long log or file as <code>files</code> and the MCP server reads it
             itself: the local model gets the file, and your coding agent gets only the answer — a long build log never
             fills its context.
@@ -279,8 +280,8 @@
       <section class="band page-section" id="try" aria-labelledby="try-h">
         <div class="wrap prose">
           <h2 id="try-h">Connect It in Two Minutes</h2>
-          <p>Start TheYgent and install a chat model (and an embeddings model, for search):</p>
-          <pre><code>git clone https://github.com/al2m4n/TheYgent.git &amp;&amp; cd TheYgent
+          <p>Start Ertir and install a chat model (and an embeddings model, for search):</p>
+          <pre><code>git clone https://github.com/al2m4n/ertir.git &amp;&amp; cd Ertir
 cp .env.example .env
 make up</code></pre>
           <p>
@@ -290,15 +291,15 @@ make up</code></pre>
           <pre><code>make mcp-setup</code></pre>
           <p>For Claude Code, it is one command:</p>
           <pre><code>claude mcp add theygent --scope user -e 'THEYGENT_API_KEY=tyk_…your key' \
-  -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp</code></pre>
+  -- uv run --project /path/to/Ertir --package theygent-mcp theygent-mcp</code></pre>
           <p>
             Codex takes the same command with <code>codex mcp add</code> and <code>--env</code>, and OpenCode a few
             lines of <code>opencode.json</code>. Agent runs on a local model can take minutes, so give the client a
             ten-minute tool timeout; the
-            <a href="https://docs.theygent.ai/latest/coding-agents/" rel="noopener">setup guide</a> shows where for each
-            tool, and the <a href="https://docs.theygent.ai/latest/coding-agents/tools/" rel="noopener">tools &amp;
+            <a href="https://docs.ertir.dev/latest/coding-agents/" rel="noopener">setup guide</a> shows where for each
+            tool, and the <a href="https://docs.ertir.dev/latest/coding-agents/tools/" rel="noopener">tools &amp;
             recipes</a> page has prompts that work well and a project-instructions snippet that teaches your coding
-            agent when to reach for TheYgent.
+            agent when to reach for Ertir.
           </p>
         </div>
       </section>
@@ -309,7 +310,7 @@ make up</code></pre>
           <p>
             The MCP server runs on your machine, launched by your coding tool, and holds no state of its own. Model
             calls go from it straight to your inference plane; agent runs and searches go to your control plane with
-            your API key, which acts with your role. TheYgent adds no hop outside what you run.
+            your API key, which acts with your role. Ertir adds no hop outside what you run.
           </p>
           <p class="honesty">
             Your coding agent&rsquo;s own model still sees whatever the agent reads and whatever a tool returns, as it
@@ -325,33 +326,33 @@ make up</code></pre>
           <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
           <div class="faq-list">
             <details class="faq-item">
-              <summary><h3>How do I connect Claude Code to TheYgent?</h3></summary>
+              <summary><h3>How do I connect Claude Code to Ertir?</h3></summary>
               <p>
-                Start TheYgent, create a personal API key from the profile menu (API keys → Create), and add the MCP server once: <code>claude mcp add theygent --scope user -e THEYGENT_API_KEY=tyk_…your key -- uv run --project /path/to/TheYgent --package theygent-mcp theygent-mcp</code>. Run <code>make mcp-setup</code> in the checkout and it prints that command, and the Codex and OpenCode equivalents, with the path filled in.
+                Start Ertir, create a personal API key from the profile menu (API keys → Create), and add the MCP server once: <code>claude mcp add theygent --scope user -e THEYGENT_API_KEY=tyk_…your key -- uv run --project /path/to/Ertir --package theygent-mcp theygent-mcp</code>. Run <code>make mcp-setup</code> in the checkout and it prints that command, and the Codex and OpenCode equivalents, with the path filled in.
               </p>
             </details>
             <details class="faq-item">
-              <summary><h3>Can Claude Code use my local model through TheYgent?</h3></summary>
+              <summary><h3>Can Claude Code use my local model through Ertir?</h3></summary>
               <p>
-                Yes, as a tool. The <code>ask_model</code> tool sends a prompt to a model on your TheYgent inference plane — an MLX or llama.cpp model on your machine, or any API you registered — and returns its answer. Claude decides when to call it; your instructions can tell it to prefer the local model for summaries, drafts, and extraction. To serve a share of Claude Code&rsquo;s own requests with local models, use the AI Gateway.
+                Yes, as a tool. The <code>ask_model</code> tool sends a prompt to a model on your Ertir inference plane — an MLX or llama.cpp model on your machine, or any API you registered — and returns its answer. Claude decides when to call it; your instructions can tell it to prefer the local model for summaries, drafts, and extraction. To serve a share of Claude Code&rsquo;s own requests with local models, use the AI Gateway.
               </p>
             </details>
             <details class="faq-item">
               <summary><h3>Does my code leave my machine?</h3></summary>
               <p>
-                Whatever your coding agent reads goes to its own model provider, as it always does. TheYgent adds no hop of its own: model calls go from the MCP server to your inference plane, and agent runs and searches to your control plane, all on your machine unless you deployed them elsewhere. Files you pass to <code>ask_model</code> as <code>files</code> are read by the MCP server and sent only to the model you chose, so the coding agent and its provider see the answer, not the file.
+                Whatever your coding agent reads goes to its own model provider, as it always does. Ertir adds no hop of its own: model calls go from the MCP server to your inference plane, and agent runs and searches to your control plane, all on your machine unless you deployed them elsewhere. Files you pass to <code>ask_model</code> as <code>files</code> are read by the MCP server and sent only to the model you chose, so the coding agent and its provider see the answer, not the file.
               </p>
             </details>
             <details class="faq-item">
               <summary><h3>Which coding agents work with it?</h3></summary>
               <p>
-                Any MCP client. TheYgent&rsquo;s setup command prints the configuration for Claude Code, Codex, and OpenCode, and the server also speaks streamable HTTP for clients that can&rsquo;t start a local process. Agent runs on a local model can take minutes, so give the client a tool timeout of ten minutes; the setup notes show where.
+                Any MCP client. Ertir&rsquo;s setup command prints the configuration for Claude Code, Codex, and OpenCode, and the server also speaks streamable HTTP for clients that can&rsquo;t start a local process. Agent runs on a local model can take minutes, so give the client a tool timeout of ten minutes; the setup notes show where.
               </p>
             </details>
             <details class="faq-item">
-              <summary><h3>Can the coding agent build TheYgent agents for me?</h3></summary>
+              <summary><h3>Can the coding agent build Ertir agents for me?</h3></summary>
               <p>
-                Yes. It reads the authoring guide, writes the agent document, checks it with <code>validate_agent</code>, test-runs it with <code>run_graph</code>, and publishes it with <code>create_agent</code>. The result is an ordinary TheYgent agent: it appears on your Agents page, opens in the visual editor, keeps immutable versions, and its runs are traced like any other.
+                Yes. It reads the authoring guide, writes the agent document, checks it with <code>validate_agent</code>, test-runs it with <code>run_graph</code>, and publishes it with <code>create_agent</code>. The result is an ordinary Ertir agent: it appears on your Agents page, opens in the visual editor, keeps immutable versions, and its runs are traced like any other.
               </p>
             </details>
           </div>
@@ -362,13 +363,13 @@ make up</code></pre>
         <div class="wrap">
           <h2 id="next-h" class="prose">Keep Reading</h2>
           <div class="card-grid">
-            <a class="cap cut-card" href="https://docs.theygent.ai/latest/coding-agents/" rel="noopener">
+            <a class="cap cut-card" href="https://docs.ertir.dev/latest/coding-agents/" rel="noopener">
               <span class="cap-kicker mono"><i class="dia dia-accent"></i>docs</span>
-              <h3>Use TheYgent from Coding Agents</h3>
+              <h3>Use Ertir from Coding Agents</h3>
               <p>Setup for Claude Code, Codex, OpenCode, and any MCP client, with every setting explained.</p>
               <span class="cap-more mono">Open the docs →</span>
             </a>
-            <a class="cap cut-card" href="https://docs.theygent.ai/latest/coding-agents/tools/" rel="noopener">
+            <a class="cap cut-card" href="https://docs.ertir.dev/latest/coding-agents/tools/" rel="noopener">
               <span class="cap-kicker mono"><i class="dia dia-amber"></i>docs</span>
               <h3>Tools &amp; Recipes</h3>
               <p>Every tool, prompts that work well, and what each error message asks you to do.</p>
@@ -389,9 +390,9 @@ make up</code></pre>
     <footer class="footer">
       <div class="wrap footer-inner">
         <div class="footer-brand">
-          <a class="brand" href="/" aria-label="TheYgent home">
-            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="TheYgent" width="940" height="200" />
-            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="TheYgent" width="940" height="200" />
+          <a class="brand" href="/" aria-label="Ertir home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
           </a>
           <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
         </div>
@@ -419,22 +420,22 @@ make up</code></pre>
             <a href="/templates/">Agent Templates</a>
             <a href="/blog/">Blog</a>
             <a href="/compare/">Compare Platforms</a>
-            <a href="/compare/dify/">TheYgent vs Dify</a>
-            <a href="/compare/n8n/">TheYgent vs n8n</a>
-            <a href="/compare/langflow/">TheYgent vs Langflow</a>
-            <a href="/compare/flowise/">TheYgent vs Flowise</a>
+            <a href="/compare/dify/">Ertir vs Dify</a>
+            <a href="/compare/n8n/">Ertir vs n8n</a>
+            <a href="/compare/langflow/">Ertir vs Langflow</a>
+            <a href="/compare/flowise/">Ertir vs Flowise</a>
           </div>
           <div class="footer-col">
             <span class="footer-h mono">resources</span>
-            <a href="https://docs.theygent.ai/" rel="noopener">Docs</a>
-            <a href="https://github.com/al2m4n/TheYgent" rel="noopener">GitHub</a>
-            <a href="https://github.com/al2m4n/TheYgent/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/ertir/blob/main/LICENSE.md" rel="noopener">License</a>
             <a href="/llms.txt">llms.txt</a>
           </div>
         </nav>
       </div>
       <div class="wrap footer-base mono">
-        <span>© 2026 Arman Bahlakeh · Sustainable Use License</span>
+        <span>© 2026 Arman Bahlakeh · Ertir (formerly TheYgent) · Sustainable Use License</span>
         <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
       </div>
     </footer>

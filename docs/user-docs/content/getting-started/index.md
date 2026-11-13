@@ -1,11 +1,11 @@
 # Getting started
 
-TheYgent is a local-first platform for building and running AI agents: three small services run on your own machine, and everything — models, agents, runs, chat history — lives where you put it. This section takes you from a fresh clone to your first working agent in about ten minutes.
+Ertir is a local-first platform for building and running AI agents: three small services run on your own machine, and everything — models, agents, runs, chat history — lives where you put it. This section takes you from a fresh clone to your first working agent in about ten minutes.
 
 ## Watch the walkthrough
 
 <figure class="video">
-  <iframe src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I" title="Self-Hosted AI Agent Orchestration — a full TheYgent walkthrough" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+  <iframe src="https://www.youtube-nocookie.com/embed/3LE_VrIbe0I" title="Self-Hosted AI Agent Orchestration — a full Ertir walkthrough" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
   <figcaption>Self-Hosted AI Agent Orchestration (23:52) — cloning the repository, bringing the stack up, installing a model, and building, running, and tracing an agent. The pages below are the written version of the same path.</figcaption>
 </figure>
 
@@ -15,12 +15,12 @@ TheYgent is a local-first platform for building and running AI agents: three sma
 |---|---|
 | **Python 3.12** | Runs the two backend services. The repo pins the version, and `uv` manages it for you. |
 | **uv** on `PATH` | The Python package manager. Installs dependencies and the MLX engine servers. |
-| **pnpm** on `PATH` (with Node.js) | Runs the visual interface. The repo pins pnpm `11.8.0`; TheYgent is developed against Node 22. |
-| **PostgreSQL** | The control plane stores agents, runs, and sessions in Postgres. You supply a running server — TheYgent does not provision one. |
+| **pnpm** on `PATH` (with Node.js) | Runs the visual interface. The repo pins pnpm `11.8.0`; Ertir is developed against Node 22. |
+| **PostgreSQL** | The control plane stores agents, runs, and sessions in Postgres. You supply a running server — Ertir does not provision one. |
 | **Homebrew** (macOS) | `make engines` uses it to install llama.cpp, whisper.cpp, and ffmpeg. |
 
 !!! note "Bring your own Postgres"
-    Any way you already run Postgres works — a native install, a container, a managed instance. All TheYgent needs is a database it can reach at the `DATABASE_URL` connection string you set during [installation](installation.md).
+    Any way you already run Postgres works — a native install, a container, a managed instance. All Ertir needs is a database it can reach at the `DATABASE_URL` connection string you set during [installation](installation.md).
 
 ### Hardware and platform notes
 
@@ -57,6 +57,6 @@ Everything runs where *you* point it: model weights download to `~/.theygent/inf
 ## The ten-minute path
 
 1. **[Installation](installation.md)** — clone the repo, create `.env`, install the engines and dependencies.
-2. **[Running TheYgent](running.md)** — `make up`, then confirm everything is healthy with `make status` and `/readyz`.
+2. **[Running Ertir](running.md)** — `make up`, then confirm everything is healthy with `make status` and `/readyz`.
 3. **[Your first chat](first-chat.md)** — install a small model from the Registries page and talk to it in New Chat.
 4. **[Your first agent](first-agent.md)** — build input → llm → output on the canvas, test it right there, and publish it as a named agent.

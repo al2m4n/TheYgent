@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- mike's root redirect page, passed to `mike set-default --template`. This is the URL
-     search engines index for docs.theygent.ai, so unlike mike's stock template it must
+     search engines index for docs.ertir.dev, so unlike mike's stock template it must
      declare the favicon: a redirect stub with no <link rel="icon"> gets a generic globe
      in results. The only value mike substitutes is the href placeholder below — it
      expands to the default version plus a trailing slash ("latest/"), so never add a
@@ -9,8 +9,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>TheYgent Docs</title>
-    <link rel="canonical" href="https://docs.theygent.ai/{{href}}" />
+    <title>Ertir Docs</title>
+    <link rel="canonical" href="https://docs.ertir.dev/{{href}}" />
     <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -22,6 +22,6 @@
     </script>
   </head>
   <body>
-    Redirecting to <a href="{{href}}">TheYgent documentation</a>...
+    Redirecting to <a href="{{href}}">Ertir documentation</a>...
   </body>
 </html>

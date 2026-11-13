@@ -1,6 +1,6 @@
 # Testing
 
-TheYgent's test strategy follows one idea: **everything real except the expensive part**.
+Ertir's test strategy follows one idea: **everything real except the expensive part**.
 Suites run against a real Postgres with the real migration chain, a real HTTP hop across the
 plane seam, real stdio subprocesses for MCP — and only the model weights, the upstream
 content, or the network fetch are faked. That keeps the fast suites deterministic and
@@ -290,4 +290,4 @@ non-blocking real-engine tier described above.
 - [IR and packages](./ir-and-packages.md) — the generated types the drift guard protects
 - [Deployment](./deployment.md) — the run modes the deploy guards keep in contract
 - [Durable execution](./durable-execution.md) — the worker paths covered by the durable tests
-- [User docs](https://docs.theygent.ai/) — end-user documentation
+- [User docs](https://docs.ertir.dev/) — end-user documentation

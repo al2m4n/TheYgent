@@ -4664,7 +4664,7 @@ def create_app(
     ) -> HTMLResponse:
         ok = app.state.oauth_broker.callback(state, code, error)
         if ok and not error:
-            body = "<h3>Authorized.</h3><p>You can close this tab and return to TheYgent.</p>"
+            body = "<h3>Authorized.</h3><p>You can close this tab and return to Ertir.</p>"
             status = 200
         elif ok:
             # `error` arrives on the query string — escape it, this page renders as HTML.

@@ -1,6 +1,6 @@
 # Your first chat
 
-The quickest way to see TheYgent working is to install a small model and talk to it. This takes a few minutes once the services are up.
+The quickest way to see Ertir working is to install a small model and talk to it. This takes a few minutes once the services are up.
 
 **Before you start:** the three services should be [running](running.md) (`make status` to confirm), and you should have at least one local engine [installed](installation.md) with `make engines`. No local engine? You can register a [remote model](../models/remote.md) instead and skip straight to step 3.
 

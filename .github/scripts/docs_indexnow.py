@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print, as a JSON array, the docs.theygent.ai/latest/ URLs a release changed.
+"""Print, as a JSON array, the docs.ertir.dev/latest/ URLs a release changed.
 
 IndexNow asks for changed URLs only. A docs page is changed when its source Markdown under
 docs/user-docs/content/ differs between the previous release and this one. A change to the
@@ -19,7 +19,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-ORIGIN = "https://docs.theygent.ai/latest/"
+ORIGIN = "https://docs.ertir.dev/latest/"
 CONTENT = "docs/user-docs/content/"
 SITE_WIDE = ("docs/user-docs/mkdocs.yml", "docs/user-docs/hooks/")
 

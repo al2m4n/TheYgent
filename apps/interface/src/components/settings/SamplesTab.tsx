@@ -129,10 +129,10 @@ export function SamplesTab() {
       <CardHeader className="border-b">
         <CardTitle>Sample agents</CardTitle>
         <CardDescription>
-          Ready-made agents that show what TheYgent can do — two-model runs, private SQL over a
-          local database, human approval, MCP tools from REST and GraphQL. Installing creates a
-          normal agent named <span className="font-mono">sample-…</span> that you can open in the
-          editor, change, or delete.
+          Ready-made agents that show what Ertir can do — two-model runs, private SQL over a local
+          database, human approval, MCP tools from REST and GraphQL. Installing creates a normal
+          agent named <span className="font-mono">sample-…</span> that you can open in the editor,
+          change, or delete.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 p-4">

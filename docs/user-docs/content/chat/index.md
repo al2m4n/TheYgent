@@ -48,7 +48,7 @@ While a reply streams, the **Send** button becomes **Stop generating**. Stopping
 
 ## Thinking (reasoning models)
 
-A reasoning model "thinks" before it answers. TheYgent keeps that thinking apart from the answer everywhere:
+A reasoning model "thinks" before it answers. Ertir keeps that thinking apart from the answer everywhere:
 
 - The thinking renders in a collapsible **"Thinking…"** block above the answer. It is open and follows its live edge while streaming (scroll up to unpin), auto-collapses once the answer starts, and can be reopened at any time.
 - Both wire shapes are handled — a separate reasoning stream and inline `<think>…</think>` tags — so it works the same across engines.

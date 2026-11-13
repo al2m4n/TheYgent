@@ -1,6 +1,6 @@
 # Graph execution: the walker and the node set
 
-This page describes how a validated Agent Graph IR actually runs inside the TheYgent control plane. The execution layer takes an `IRDocument` (see [IR and packages](./ir-and-packages.md)), traverses it in topological order, and dispatches each node to an executor — streaming model tokens out as SSE while it goes. It exists as its own layer, separate from the API surface, because the same node executors must serve two runtimes: the in-process interactive walker described here, and the durable, journaled runtime described in [Durable execution](./durable-execution.md). Everything runtime-agnostic — executor bodies, the `$in` substitution language, edge-liveness logic, traversal helpers — lives in `walker.py` and is imported by the durable compiler, so parity between the runtimes is structural, not coincidental.
+This page describes how a validated Agent Graph IR actually runs inside the Ertir control plane. The execution layer takes an `IRDocument` (see [IR and packages](./ir-and-packages.md)), traverses it in topological order, and dispatches each node to an executor — streaming model tokens out as SSE while it goes. It exists as its own layer, separate from the API surface, because the same node executors must serve two runtimes: the in-process interactive walker described here, and the durable, journaled runtime described in [Durable execution](./durable-execution.md). Everything runtime-agnostic — executor bodies, the `$in` substitution language, edge-liveness logic, traversal helpers — lives in `walker.py` and is imported by the durable compiler, so parity between the runtimes is structural, not coincidental.
 
 ## Design rules
 
@@ -184,4 +184,4 @@ Env-gated integration tests (`-m integration`) close each feature on the real su
 - [Inference plane](./inference-plane.md) — the OpenAI-compatible seam every model call crosses
 - [Interface](./interface.md) — the editor and run views downstream of this layer's streams
 - [Testing](./testing.md)
-- [User documentation](https://docs.theygent.ai/)
+- [User documentation](https://docs.ertir.dev/)

@@ -86,7 +86,7 @@ For agents that aren't durable-only, a **Chat** section lets you hold a real con
 
 ### Applying a preset to an agent
 
-If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and TheYgent writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. Each preset's modality is shown beside its name so you can tell which binding it belongs on; the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
+If you saved parameter presets from a model bench, the agent bench offers **Apply a preset**: pick a saved preset and one of the agent's model bindings, and Ertir writes the preset's literal parameters into that binding and publishes a **new agent version** through the registry. Each preset's modality is shown beside its name so you can tell which binding it belongs on; the preset name never enters the graph — only its values do, so the new version's [content hash](../concepts/versioning.md) reflects real content.
 
 ## Testing an MCP tool
 
@@ -97,7 +97,7 @@ The [MCP](../building/nodes/mcp.md) page has a **tool tester** for exercising on
 Saved model-bench results, presets, and any test suites live in the control plane's Postgres database (the bench tables), alongside your runs and agents. What is stored is deliberately lightweight:
 
 - **Metrics and digests**, not raw outputs. The `output_digest` lets comparisons check whether two outputs matched without keeping the text.
-- **Raw output only on opt-in**, and then only as a **local reference** in your own trust domain — TheYgent never uploads the generated text, image, or audio.
+- **Raw output only on opt-in**, and then only as a **local reference** in your own trust domain — Ertir never uploads the generated text, image, or audio.
 - Bench records carry the coordinates you'd expect for later analysis: `target_kind` (`model` or `agent`), `modality`, `logical_id`, `binding`, the `params` and their digest, the `metrics`, the `output_digest`, and a `run_id`.
 
 Saved results are readable through the API (`GET /bench/runs`, filterable by `logical_id`, `agent_id`, `suite_id`, or `case_id`) and comparable in-modal. Suites of golden cases and assertions exist in the API for future use, but there is no page for them yet — recording results, in-modal compare, and presets are what the interface surfaces today.

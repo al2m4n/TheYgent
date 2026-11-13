@@ -17,7 +17,7 @@
   Permissions-Policy: geolocation=(), microphone=(), camera=()
 
 # The production project subdomain and the per-deployment URLs serve exact duplicates of
-# theygent.ai and, unlike preview deployments, get no automatic noindex from Cloudflare —
+# ertir.dev and, unlike preview deployments, get no automatic noindex from Cloudflare —
 # keep them out of search so the canonical domain owns every ranking signal.
 https://:project.pages.dev/*
   X-Robots-Tag: noindex

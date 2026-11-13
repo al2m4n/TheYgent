@@ -28,7 +28,7 @@ evidence behind every rule here is in [spike/FINDINGS.md](spike/FINDINGS.md).
 | Shadow runs | Local shadows on by default. Cloud shadows are off by default, API-key only, with a daily cap (Phase 2) |
 | Wire types | `theygent_ir.gateway` (Pydantic), following the registration-types pattern; outside anything hashed |
 | Response compression | Force `accept-encoding: identity` upstream; the client's value is recorded |
-| Gateway admin auth | The gateway checks the user's TheYgent session or API key with the control plane (cached); admin role required |
+| Gateway admin auth | The gateway checks the user's Ertir session or API key with the control plane (cached); admin role required |
 | Local request log | JSONL: append-only, bounded, rotated, `0600`. Aggregation happens in the control plane |
 
 ## Tasks

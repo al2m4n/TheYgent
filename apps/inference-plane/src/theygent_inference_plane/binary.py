@@ -79,7 +79,7 @@ MLX_PYTHON_ENV_VAR = "THEYGENT_MLX_PYTHON"
 
 
 def resolve_mlx_python(server_command: list[str]) -> str:
-    """The Python interpreter mlx-lm is installed in, for servers TheYgent runs inside mlx-lm's
+    """The Python interpreter mlx-lm is installed in, for servers Ertir runs inside mlx-lm's
     environment (expert streaming). ``server_command`` is the resolved ``mlx_lm.server`` command.
 
     Resolution order: ``THEYGENT_MLX_PYTHON``; the interpreter of a ``python -m mlx_lm.server``

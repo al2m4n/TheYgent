@@ -248,7 +248,7 @@ function AppSidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
 }
 
 // The rail head: brand mark + the collapse/expand control. Expanded shows the logo mark beside the
-// "TheYgent" wordmark (real text, so it re-colors with the theme) and a collapse button; collapsed
+// "Ertir" wordmark (real text, so it re-colors with the theme) and a collapse button; collapsed
 // shows the mark alone — resting on it swaps the mark for the expand control, so the logo doubles as
 // the affordance to reopen the rail. The mark artwork is theme-aware: a light-on-dark set for the dark
 // theme, a dark-on-light set for the light theme (served from the static logo folder).
@@ -287,12 +287,12 @@ function Brand() {
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 px-2.5">
-      <Link to="/" aria-label="TheYgent — home" className="flex min-w-0 items-center gap-2">
+      <Link to="/" aria-label="Ertir — home" className="flex min-w-0 items-center gap-2">
         {/* The mark is decorative (empty alt) — the link's aria-label + the visible wordmark carry
             the accessible name. The wordmark is real text, so it re-colors with the theme. */}
         <img src={mark} alt="" className="h-6 w-auto shrink-0" />
         <span className="truncate text-[15px] font-semibold tracking-tight text-sidebar-foreground">
-          TheYgent
+          Ertir
         </span>
       </Link>
       <button

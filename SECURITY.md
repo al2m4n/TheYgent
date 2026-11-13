@@ -1,6 +1,6 @@
 # Security Policy
 
-TheYgent's core promise is sovereignty over your models and data — security reports are
+Ertir's core promise is sovereignty over your models and data — security reports are
 taken seriously and handled with priority.
 
 ## Reporting a vulnerability
@@ -22,4 +22,4 @@ The latest release and the current `main` branch are supported with security fix
 
 Vulnerabilities in the underlying engines (llama.cpp, MLX, vLLM), in models, or in
 third-party MCP servers belong upstream with those projects — but reports about how
-TheYgent wires, isolates, or authenticates them are absolutely in scope.
+Ertir wires, isolates, or authenticates them are absolutely in scope.

@@ -1,6 +1,6 @@
 # The engines
 
-An **engine** is the program that actually runs a local model. TheYgent manages three of them — **llama.cpp**, **MLX**, and **vLLM** — plus a fourth binding, `openai-compatible`, for endpoints it merely reaches. This page explains what each engine is for, where it runs, how the managed ones start and share memory, and which modalities (chat, vision, embeddings, speech, images) each covers.
+An **engine** is the program that actually runs a local model. Ertir manages three of them — **llama.cpp**, **MLX**, and **vLLM** — plus a fourth binding, `openai-compatible`, for endpoints it merely reaches. This page explains what each engine is for, where it runs, how the managed ones start and share memory, and which modalities (chat, vision, embeddings, speech, images) each covers.
 
 If you only need to *use* models, you don't have to think about engines much — a catalog install picks the right one for you. Read on when you're choosing hardware, registering weights by hand, or wondering why a first call is slow. For the vocabulary of bindings, sources, and modalities, see [Models and engines](../concepts/models-and-engines.md).
 
@@ -15,16 +15,16 @@ Every registered model has a **binding** that says what runs it. There are exact
 | `vllm` | A vLLM server on an NVIDIA/CUDA GPU host. | Yes (experimental). |
 | `openai-compatible` | Any OpenAI-compatible server or hosted API at a base URL you supply. | No — reached, never managed. |
 
-The first three are **managed**: TheYgent starts the server on first use, health-checks it, and stops it when idle. `openai-compatible` is **reached** — nothing is spawned or stopped; see [Remote models](remote.md).
+The first three are **managed**: Ertir starts the server on first use, health-checks it, and stops it when idle. `openai-compatible` is **reached** — nothing is spawned or stopped; see [Remote models](remote.md).
 
 ## llama.cpp
 
 **llama.cpp** runs models in the **GGUF** format and is the broadest, most portable local engine — it runs anywhere its `llama-server` binary is installed (macOS, Linux, with or without a GPU). It's the default choice when you want a model to run on the same machine regardless of platform. GGUF models come in **quantizations** (labels like `Q4_K_M`), and the catalog lists each quant as a separate variant with its own fit badge.
 
-Under the `llamacpp` binding, TheYgent covers several modalities by spawning the right server for the registered modality:
+Under the `llamacpp` binding, Ertir covers several modalities by spawning the right server for the registered modality:
 
 - **Chat** and **embeddings** — the `llama-server` binary (embeddings use mean pooling).
-- **Vision** — the same `llama-server` with a multimodal projector; TheYgent finds the projector file next to the weights or falls back to auto-detection.
+- **Vision** — the same `llama-server` with a multimodal projector; Ertir finds the projector file next to the weights or falls back to auto-detection.
 - **Speech-to-text** — served by **whisper.cpp**'s `whisper-server`, registered under `binding: llamacpp` with `modality: audio.transcription`. With `ffmpeg` installed it also transcodes browser microphone recordings (webm/opus); without it, only WAV works. Whisper needs its own native `ggml-*.bin` weights — a chat-style GGUF won't work, and an ambiguous weights path raises a clear error telling you which file to point at.
 - **Image generation** — a bundled wrapper around stable-diffusion.cpp's `sd-cli` (see the note under [Installing the engine binaries](#installing-the-engine-binaries)).
 
@@ -46,7 +46,7 @@ Set any of them in the model's registration `params` to override, for example `"
 
 ## MLX
 
-**MLX** is Apple's array framework, and TheYgent's MLX engines run **only on Apple Silicon** (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.
+**MLX** is Apple's array framework, and Ertir's MLX engines run **only on Apple Silicon** (M-series Macs). On that hardware they're fast and memory-efficient because the CPU and GPU share one pool of unified memory. When you're on an Apple Silicon Mac, MLX is usually the best local option for chat and vision; the same model repo often ships both a GGUF (for llama.cpp) and an MLX variant, and the catalog shows whichever your ready engines can run.
 
 Under the `mlx` binding, the modalities map to distinct server programs:
 
@@ -69,7 +69,7 @@ Like the other launch settings it applies when the engine starts, is never sent 
 
 ### MoE models bigger than memory (expert streaming)
 
-A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, TheYgent keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
+A **mixture-of-experts** (MoE) model splits most of its weights into many small "experts" and uses only a few of them for each token — Qwen3.6-35B-A3B, for example, picks 8 of its 256 experts per layer. With **expert streaming**, Ertir keeps the rest of the model in memory and reads each layer's chosen experts from disk as they're needed, holding the recently used ones in a memory cache. A model whose full weights don't fit in your Mac's memory can still run; the answers are exactly the ones the fully loaded model gives, only slower.
 
 It's off unless you turn it on for a model, because a model that fits in memory is always faster fully loaded. Three ways to turn it on:
 
@@ -134,17 +134,17 @@ Which engine covers which modality:
 A registered model whose exact (engine, modality) combination has no server is refused with a clear error rather than being served wrong. `openai-compatible` endpoints aren't in this table — they serve whatever the upstream serves, and you declare the modality when you register them.
 
 !!! note "Image generation needs extra setup"
-    The image-generation engines (stable-diffusion.cpp's `sd-cli` and `mflux`) are the newest and least-exercised paths, and their binaries are **not** installed by the standard engine install. You must build/install them yourself and point TheYgent at them (`THEYGENT_SDCPP_BIN`, `THEYGENT_MFLUX_BIN`) before an image-generation model will run. See [Image generation in chat](../chat/vision-and-images.md).
+    The image-generation engines (stable-diffusion.cpp's `sd-cli` and `mflux`) are the newest and least-exercised paths, and their binaries are **not** installed by the standard engine install. You must build/install them yourself and point Ertir at them (`THEYGENT_SDCPP_BIN`, `THEYGENT_MFLUX_BIN`) before an image-generation model will run. See [Image generation in chat](../chat/vision-and-images.md).
 
 ## How managed engines run
 
-You never start or stop a managed engine by hand. TheYgent handles the whole lifecycle, and understanding it explains a few things you'll notice.
+You never start or stop a managed engine by hand. Ertir handles the whole lifecycle, and understanding it explains a few things you'll notice.
 
-**Lazy start.** An engine spawns on the **first call** to one of its logical ids, on a free local port, and TheYgent waits for it to become healthy before forwarding your request. This is why the very first call to a model is slower than the ones after it — the model is loading. Large models take longer; startup waits allow a few minutes for llama.cpp and MLX, and up to ten for vLLM. Once loaded, the engine stays **warm** for subsequent calls.
+**Lazy start.** An engine spawns on the **first call** to one of its logical ids, on a free local port, and Ertir waits for it to become healthy before forwarding your request. This is why the very first call to a model is slower than the ones after it — the model is loading. Large models take longer; startup waits allow a few minutes for llama.cpp and MLX, and up to ten for vLLM. Once loaded, the engine stays **warm** for subsequent calls.
 
-**A resident ceiling.** Only a limited number of engines stay loaded at once — **two by default** (`THEYGENT_MAX_RESIDENT`). When a new engine is needed and the ceiling is full, TheYgent **evicts** one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is **never** evicted; if nothing can be freed, the new call is refused with a `no_capacity` error rather than thrashing.
+**A resident ceiling.** Only a limited number of engines stay loaded at once — **two by default** (`THEYGENT_MAX_RESIDENT`). When a new engine is needed and the ceiling is full, Ertir **evicts** one to make room, choosing the lowest-priority, least-recently-used engine. An engine with a request in flight is **never** evicted; if nothing can be freed, the new call is refused with a `no_capacity` error rather than thrashing.
 
-**Abandoned calls are cancelled.** If the caller hangs up before an answer arrives — its client timed out, or the connection closed — TheYgent closes the request to the engine right away instead of holding it open for an answer nobody will read. That holds for every call that returns one answer rather than a stream: chat answers, embeddings, transcriptions, speech, and generated images. Engines that watch for a closed connection stop working on the request at once, so the engine is free for the next call — llama.cpp stops generating a chat answer, and the bundled image generator stops an abandoned render and skips one still waiting its turn, which matters most because a render can take minutes. Either way, a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.
+**Abandoned calls are cancelled.** If the caller hangs up before an answer arrives — its client timed out, or the connection closed — Ertir closes the request to the engine right away instead of holding it open for an answer nobody will read. That holds for every call that returns one answer rather than a stream: chat answers, embeddings, transcriptions, speech, and generated images. Engines that watch for a closed connection stop working on the request at once, so the engine is free for the next call — llama.cpp stops generating a chat answer, and the bundled image generator stops an abandoned render and skips one still waiting its turn, which matters most because a render can take minutes. Either way, a model you asked to evict no longer waits for the abandoned answer before it unloads. A request to a hosted endpoint is closed the same way.
 
 **Idle reaping.** An engine left idle longer than its idle timeout (**900 seconds** by default) is torn down automatically by a background sweep, freeing its memory. Mark a model **Keep warm** to exempt it from reaping.
 
@@ -152,7 +152,7 @@ You never start or stop a managed engine by hand. TheYgent handles the whole lif
 
 **Missing binaries fail cleanly.** If a model's engine binary isn't installed on the machine, the call returns `engine_unavailable` — a clear, up-front error — never a mysterious crash on first inference.
 
-**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, TheYgent stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
+**A failed engine is replaced.** If an engine reports that it can no longer compute (llama.cpp's `Compute error`, usually after it ran out of GPU memory) or its process dies, Ertir stops using it: the call fails with `engine_failed` (503, safe to retry), the engine is shut down, and the next call starts a fresh one. The model's row in [Registries](index.md) shows a red **failed** badge, with the reason on hover, until the replacement starts.
 
 **A dropped request is named.** If an engine closes the connection before it finishes an answer, the call fails with `engine_dropped_request`, and the engine keeps serving other requests. This covers a reply cut off partway through a stream, which would otherwise read as a finished, shorter answer. The inference plane doesn't retry a request to a local engine; the caller's own retry policy decides. See [troubleshooting](../reference/troubleshooting.md#engine_dropped_request-502-or-an-error-at-the-end-of-a-stream) for the known MLX tool-call cause.
 
@@ -184,9 +184,9 @@ make engines
 === "NVIDIA GPU host"
     Install vLLM yourself with `pip install vllm`. It is deliberately not part of `make engines`. Remember it is experimental in this build.
 
-TheYgent finds each binary by checking an explicit environment override first, then your `PATH`, then (for Python-module servers) `python -m …`. To point at a binary in a non-standard location, set its override — `THEYGENT_LLAMACPP_BIN`, `THEYGENT_MLX_BIN`, `THEYGENT_MLX_VLM_BIN`, `THEYGENT_MLX_AUDIO_BIN`, `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_VLLM_BIN`, `THEYGENT_SDCPP_BIN`, or `THEYGENT_MFLUX_BIN`. The full list is in the [environment reference](../reference/environment.md).
+Ertir finds each binary by checking an explicit environment override first, then your `PATH`, then (for Python-module servers) `python -m …`. To point at a binary in a non-standard location, set its override — `THEYGENT_LLAMACPP_BIN`, `THEYGENT_MLX_BIN`, `THEYGENT_MLX_VLM_BIN`, `THEYGENT_MLX_AUDIO_BIN`, `THEYGENT_WHISPERCPP_BIN`, `THEYGENT_VLLM_BIN`, `THEYGENT_SDCPP_BIN`, or `THEYGENT_MFLUX_BIN`. The full list is in the [environment reference](../reference/environment.md).
 
-TheYgent launches and supervises these binaries but never builds or downloads them — that part is on you (or on `make engines`).
+Ertir launches and supervises these binaries but never builds or downloads them — that part is on you (or on `make engines`).
 
 ## Checking what's ready
 

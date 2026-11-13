@@ -10,7 +10,7 @@ Common problems, what causes them, and how to fix them. Most issues fall into on
     curl http://localhost:8080/readyz   # control plane
     ```
 
-    The inference plane's `/readyz` tells you exactly which `(engine, modality)` slots are missing and why; the control plane's tells you if Postgres or the inference plane is unreachable. See [Running TheYgent](../getting-started/running.md).
+    The inference plane's `/readyz` tells you exactly which `(engine, modality)` slots are missing and why; the control plane's tells you if Postgres or the inference plane is unreachable. See [Running Ertir](../getting-started/running.md).
 
 ## Services and startup
 
@@ -18,13 +18,13 @@ Common problems, what causes them, and how to fix them. Most issues fall into on
 
 **Cause.** Something is already listening on that port (a stale instance, or another app on `:8080`, `:8081`, or `:5174`). `make up` refuses to clobber it and skips that service loudly.
 
-**Fix.** Stop the other process, then `make restart`. To stop TheYgent's own services, `make down`. Confirm what's up with `make status`, and read the per-service logs under `.run/` (`.run/control-plane.log`, `.run/inference-plane.log`, `.run/interface.log`) with `make logs`.
+**Fix.** Stop the other process, then `make restart`. To stop Ertir's own services, `make down`. Confirm what's up with `make status`, and read the per-service logs under `.run/` (`.run/control-plane.log`, `.run/inference-plane.log`, `.run/interface.log`) with `make logs`.
 
 ### The control plane won't come up / `/readyz` says the database is down
 
 **Cause.** `DATABASE_URL` is unset, wrong, or points at a Postgres that isn't running. The control plane requires Postgres and fails readiness without it.
 
-**Fix.** Set `DATABASE_URL` in `.env` to a reachable async DSN — `postgresql+asyncpg://user:pass@host:5432/dbname` — and make sure the database and user exist. You supply your own Postgres; TheYgent does not provision one. See [Installation](../getting-started/installation.md) and [`DATABASE_URL`](environment.md#required).
+**Fix.** Set `DATABASE_URL` in `.env` to a reachable async DSN — `postgresql+asyncpg://user:pass@host:5432/dbname` — and make sure the database and user exist. You supply your own Postgres; Ertir does not provision one. See [Installation](../getting-started/installation.md) and [`DATABASE_URL`](environment.md#required).
 
 ## Database and migrations
 
@@ -82,7 +82,7 @@ Durable-runtime tables live in a separate `dbos` schema on the same Postgres and
 
 ### `engine_failed` (503)
 
-**Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. TheYgent has shut that engine down; the next request starts a new one.
+**Cause.** The model's engine stopped being able to compute — llama.cpp answers `Compute error` once its GPU backend has failed, most often because the model ran out of GPU memory — or the engine process died. Ertir has shut that engine down; the next request starts a new one.
 
 **Fix.** Retry. If it fails again, the model doesn't fit with its current settings: lower its context with the `ctxSize` [launch setting](../models/engines.md#llamacpp-launch-settings), pick a smaller quantization, or close other GPU-heavy apps. The message names the engine log, which has the engine's own error (also under the model's **Logs** button).
 
@@ -164,7 +164,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ### "a second output node executed — the run output would be ambiguous"
 
-**Cause.** Two `output` nodes were live in the same run. TheYgent refuses to guess which one is the answer.
+**Cause.** Two `output` nodes were live in the same run. Ertir refuses to guess which one is the answer.
 
 **Fix.** Route exclusive branches (with a `router` or `guardrail`) so at most one output node is reachable per run. Having multiple output nodes is fine as long as only one executes.
 
@@ -244,7 +244,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ### `unsupported_bundle_version` (400)
 
-**Cause.** The bundle's `format_version` is newer than this install understands — it was exported by a newer TheYgent.
+**Cause.** The bundle's `format_version` is newer than this install understands — it was exported by a newer Ertir.
 
 **Fix.** Upgrade the importing install, then re-run the import.
 
@@ -280,7 +280,7 @@ For a [remote model](../models/remote.md), the server behind it closed the conne
 
 ## AI gateway
 
-### Claude Code shows an error from the TheYgent AI gateway
+### Claude Code shows an error from the Ertir AI gateway
 
 The gateway names the reason in its message (and in the `x-theygent-gateway-error` header): a missing or revoked gateway key, no Anthropic credential where you are billed to your own, no organization key on the gateway, or Anthropic unreachable. Each code and its fix: [errors the gateway returns](../ai-gateway/running.md#errors-the-gateway-returns).
 
@@ -322,4 +322,4 @@ Claude Code turns MCP tool search off for any custom base URL and then sends eve
 
 - [API reference](api.md) — where each error code originates.
 - [Environment variables](environment.md) — the settings behind most configuration issues.
-- [Running TheYgent](../getting-started/running.md) — starting, stopping, and checking the services.
+- [Running Ertir](../getting-started/running.md) — starting, stopping, and checking the services.

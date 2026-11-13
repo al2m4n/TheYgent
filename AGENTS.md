@@ -6,10 +6,10 @@ the per-module context files below. Read the architecture first:
 
 ## What this is
 
-TheYgent is a no-code, local-first platform for building and running AI agents: a visual
+Ertir is a no-code, local-first platform for building and running AI agents: a visual
 builder that compiles graphs into a typed IR, and a runtime that executes them against
 local engines (llama.cpp, MLX, vLLM) or any OpenAI-compatible API — the user's choice per
-agent and per call. The core promise is anti-lock-in: TheYgent is never an involuntary
+agent and per call. The core promise is anti-lock-in: Ertir is never an involuntary
 middleman between a user and their models.
 
 ## How the context files work
@@ -42,14 +42,14 @@ text. `AGENTS.md` is the only file with content; never write context into a `CLA
 | `apps/inference-plane` | Engines and the OpenAI-compatible data plane (:8081), model registry, catalog | [AGENTS.md](apps/inference-plane/AGENTS.md) |
 | `apps/worker` | Separate deployable hosting the durable runtime | [AGENTS.md](apps/worker/AGENTS.md) |
 | `apps/ai-gateway` | Anthropic-Messages proxy for coding agents (:8082): observer and router | [AGENTS.md](apps/ai-gateway/AGENTS.md) |
-| `apps/mcp-server` | TheYgent as MCP tools for coding agents | [AGENTS.md](apps/mcp-server/AGENTS.md) |
+| `apps/mcp-server` | Ertir as MCP tools for coding agents | [AGENTS.md](apps/mcp-server/AGENTS.md) |
 | `apps/interface` | The React SPA (:5174): builder and every operator surface | [AGENTS.md](apps/interface/AGENTS.md) |
 | ↳ `src/lib` | The HTTP seam, SSE, auth, modality, client-side mirrors, transfer | [AGENTS.md](apps/interface/src/lib/AGENTS.md) |
 | ↳ `src/components` | Editor pieces, shared widgets, gateway and settings tabs, waterfall, shadcn | [AGENTS.md](apps/interface/src/components/AGENTS.md) |
 | ↳ `src/routes` | One component per page | [AGENTS.md](apps/interface/src/routes/AGENTS.md) |
 | ↳ `src/chat` | Unified chat and its two transports | [AGENTS.md](apps/interface/src/chat/AGENTS.md) |
 | ↳ `src/bench` | Model and agent benches | [AGENTS.md](apps/interface/src/bench/AGENTS.md) |
-| `apps/web` | Static marketing site (theygent.ai) | [AGENTS.md](apps/web/AGENTS.md) |
+| `apps/web` | Static marketing site (ertir.dev) | [AGENTS.md](apps/web/AGENTS.md) |
 | `packages/ir` | Pydantic IR, registration payload, AI gateway wire types | [AGENTS.md](packages/ir/AGENTS.md) |
 | `packages/ir-types` | Generated TypeScript mirror of the IR | [AGENTS.md](packages/ir-types/AGENTS.md) |
 | `packages/gateway-client` | The one Python client for the inference data plane | [AGENTS.md](packages/gateway-client/AGENTS.md) |
@@ -130,11 +130,19 @@ if a task seems to require it, stop and flag it instead.
   ports: fail fast with a named, stable error code. No silent fallback or pass-through.
 - **Naming across the wire:** the control-plane API speaks `snake_case`; the inference
   plane's OpenAI-compatible and admin surfaces speak `camelCase`. Don't "fix" either.
-- **Brand casing:** the brand is "TheYgent" — in prose, UI copy, the GitHub repository
-  (`al2m4n/TheYgent`), and wire-visible names (the `X-TheYgent-Signature` header).
-  Lowercase `theygent` only where platform convention forces it: code identifiers,
-  package and module names, env vars (`THEYGENT_*`), domains (`theygent.ai`), and
-  Docker/Kubernetes names.
+- **Brand casing:** the brand is "Ertir" (capital E, the rest lowercase, like any name) in
+  prose and UI copy, including at the start of a sentence. Technical names that carry the
+  new name are all lowercase: the GitHub repository `al2m4n/ertir` and the domains
+  `ertir.dev` and `docs.ertir.dev`. The product was called TheYgent before; technical names
+  keep that spelling and are never renamed as a side effect: code identifiers, package and
+  module names (`theygent_*`, `@theygent/*`), env vars (`THEYGENT_*`), the `~/.theygent`
+  folder, Docker/Kubernetes names, TypeScript types (`TheYgentNode`…) and wire-visible
+  headers (`X-TheYgent-Signature`, `X-TheYgent-Gateway-Key`).
+- **The old name in prose** appears only as "Ertir (formerly TheYgent)" in a fixed set of
+  places, so it can be changed in one pass: the website footer line, page `<title>`/meta
+  and JSON-LD `alternateName`, `apps/web/llms.txt`, `docs/user-docs/root/llms.txt`, the
+  README, the user-docs home and `name-change.md` page, the docs footer (`copyright` in
+  `mkdocs.yml`) and the CLA. Everywhere else, write "Ertir".
 - **Empty env means unset.** Every env read treats `""` like absence (compose/k8s pass
   `${VAR:-}` through); keep new env reads empty-safe.
 - Match the surrounding file's style; Ruff formats Python, Biome formats TS.

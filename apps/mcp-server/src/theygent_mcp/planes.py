@@ -1,4 +1,4 @@
-"""HTTP access to TheYgent's two planes, with failures turned into actionable tool errors."""
+"""HTTP access to Ertir's two planes, with failures turned into actionable tool errors."""
 
 from __future__ import annotations
 
@@ -37,13 +37,13 @@ class Planes:
     ) -> Any:
         if not self.config.api_key:
             raise ToolError(
-                "THEYGENT_API_KEY is not set. Create an API key in TheYgent (your profile menu → "
+                "THEYGENT_API_KEY is not set. Create an API key in Ertir (your profile menu → "
                 "API keys) and add it to this MCP server's environment."
             )
         url = f"{self.config.control_plane_url}{path}"
         all_headers = {"Authorization": f"Bearer {self.config.api_key}", **(headers or {})}
         return await self._send(
-            "TheYgent control plane",
+            "Ertir control plane",
             self.config.control_plane_url,
             method,
             url,
@@ -62,7 +62,7 @@ class Planes:
         """``path`` under the OpenAI-compatible root, e.g. ``/chat/completions``."""
         url = f"{self.config.inference_plane_url}{path}"
         return await self._send(
-            "TheYgent inference plane",
+            "Ertir inference plane",
             self.config.inference_plane_url,
             method,
             url,
@@ -74,7 +74,7 @@ class Planes:
         """``path`` under the inference plane's management surface, e.g. ``/admin/models``."""
         url = f"{self.config.inference_admin_url}{path}"
         return await self._send(
-            "TheYgent inference plane", self.config.inference_admin_url, method, url
+            "Ertir inference plane", self.config.inference_admin_url, method, url
         )
 
     # ── shared ───────────────────────────────────────────────────────────────────────────────
@@ -89,13 +89,13 @@ class Planes:
             raise ToolError(f"{service} at {base} did not answer in time ({exc}).") from exc
         except httpx.HTTPError as exc:
             raise ToolError(
-                f"{service} is not reachable at {base} ({exc}). Start TheYgent (`make up` in the "
-                "TheYgent checkout) or point this MCP server at it with the plane URL variables."
+                f"{service} is not reachable at {base} ({exc}). Start Ertir (`make up` in the "
+                "Ertir checkout) or point this MCP server at it with the plane URL variables."
             ) from exc
         if resp.status_code == 401:
             raise ToolError(
                 f"{service} rejected the API key (401). Check THEYGENT_API_KEY: create a new key "
-                "in TheYgent under your profile menu → API keys."
+                "in Ertir under your profile menu → API keys."
             )
         if resp.status_code == 403:
             raise ToolError(

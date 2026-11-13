@@ -1,7 +1,7 @@
 # AGENTS.md — user docs
 
 Rules for `docs/user-docs`, the end-user documentation site (MkDocs Material, published
-versioned per release to https://docs.theygent.ai/). The repo-wide rules in the root
+versioned per release to https://docs.ertir.dev/). The repo-wide rules in the root
 [AGENTS.md](../../AGENTS.md) apply first.
 
 - **Strict mode is non-negotiable:** `make docs-build` runs `mkdocs build --strict` —
@@ -10,9 +10,12 @@ versioned per release to https://docs.theygent.ai/). The repo-wide rules in the 
   module paths or internal architecture beyond the user-visible plane split. Contributor
   material belongs in [docs/dev-docs](../dev-docs/README.md).
 - **These pages are published:** no competing product names, no internal plan references.
-  Brand casing is "TheYgent" in prose and UI copy — the GitHub repo is `al2m4n/TheYgent`
-  and the webhook header is `X-TheYgent-Signature`; lowercase `theygent` only in code
-  identifiers, env vars, and domains (`theygent.ai`).
+  Brand casing is "Ertir" (capital E, the rest lowercase) in prose and UI copy — the
+  GitHub repo is `al2m4n/ertir` and the domains are `ertir.dev` and `docs.ertir.dev`.
+  Technical names keep the old spelling:
+  the webhook header is `X-TheYgent-Signature`, env vars are `THEYGENT_*`, the data folder is
+  `~/.theygent`. The old name appears in prose only on the home page, `name-change.md` and
+  the footer (`copyright` in `mkdocs.yml`), as "Ertir (formerly TheYgent)".
 - **Honesty rules mirror the product:** never overclaim privacy ("everything runs where
   you point it, and you own every hop" — not "no data ever leaves your machine"); label
   unverified paths (e.g. vLLM as experimental); document limitations plainly.
@@ -31,7 +34,7 @@ versioned per release to https://docs.theygent.ai/). The repo-wide rules in the 
 
 | Section (`content/…`) | Documents | Code it tracks |
 |-----------------------|-----------|----------------|
-| `index.md`, `assets/` | The home page; logos and favicon | Brand, the product overview |
+| `index.md`, `name-change.md`, `assets/` | The home page; the TheYgent → Ertir name change and which technical names kept the old spelling; logos and favicon | Brand, the product overview, env var and header names |
 | `getting-started/` | Install, run, first chat, first agent | `Makefile`, `docker-compose.yml`, `deploy/`, `apps/interface` first-run screens |
 | `concepts/` | Agents and graphs, nodes/ports/edges, models and engines, runs and sessions, versioning, privacy | `packages/ir`, the plane split, the agent registry |
 | `building/` (+ `nodes/`, one page per node family) | The editor, `$in` references, every node type | `apps/interface` editor, `packages/ir/graph.py`, `walker.py` |

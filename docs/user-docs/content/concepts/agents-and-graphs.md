@@ -1,6 +1,6 @@
 # Agents and graphs
 
-In TheYgent, an agent *is* a graph: a set of steps (nodes) wired together (edges), plus everything those steps need to run. This page explains what that document contains and why the way you arrange it on the canvas has no effect on what it does.
+In Ertir, an agent *is* a graph: a set of steps (nodes) wired together (edges), plus everything those steps need to run. This page explains what that document contains and why the way you arrange it on the canvas has no effect on what it does.
 
 ## An agent is a graph document
 

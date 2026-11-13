@@ -312,7 +312,7 @@ def build_oauth_provider(
     Registered as a public client (PKCE, no static secret) — the dominant deployed shape;
     pre-registered credentials can be seeded into the stored blob's ``clientInfo``."""
     metadata = OAuthClientMetadata(
-        client_name="TheYgent",
+        client_name="Ertir",
         redirect_uris=[AnyUrl(redirect_url)],
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],

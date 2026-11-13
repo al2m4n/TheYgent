@@ -19,7 +19,7 @@ assert _spec and _spec.loader
 repair_canonicals = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(repair_canonicals)
 
-ORIGIN = "https://docs.theygent.ai/latest/"
+ORIGIN = "https://docs.ertir.dev/latest/"
 
 
 def _page(canonical: str) -> str:

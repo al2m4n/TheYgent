@@ -1,4 +1,4 @@
-"""The TheYgent MCP server: TheYgent's platform as tools for coding agents."""
+"""The Ertir MCP server: Ertir's platform as tools for coding agents."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from theygent_mcp.config import Config
 from theygent_mcp.planes import Planes
 
 INSTRUCTIONS = """\
-TheYgent is the user's own AI platform: local models (MLX / llama.cpp on their machine), saved
+Ertir is the user's own AI platform: local models (MLX / llama.cpp on their machine), saved
 agents built from those models, and retrieval sources over their documents. Use it to:
 
 - **Offload work to a local model** with `ask_model`: summaries, first drafts, classification,
@@ -34,7 +34,7 @@ agents built from those models, and retrieval sources over their documents. Use 
 - **Search indexed documents** with `search_rag`; index files you are working with using
   `create_rag_source` and `add_rag_files`.
 
-Model ids are TheYgent logical ids from `list_models`, never engine names.
+Model ids are Ertir logical ids from `list_models`, never engine names.
 """
 
 #: Uploads stream from disk in pieces this size, so a large file never sits in memory here. The
@@ -78,7 +78,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         finally:
             await planes.aclose()
 
-    mcp = FastMCP("TheYgent", instructions=INSTRUCTIONS, lifespan=lifespan)
+    mcp = FastMCP("Ertir", instructions=INSTRUCTIONS, lifespan=lifespan)
 
     # ── models ───────────────────────────────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
 
     @mcp.tool
     async def list_models() -> dict[str, Any]:
-        """List the models registered in TheYgent: each one's logical `id` (what `ask_model` and
+        """List the models registered in Ertir: each one's logical `id` (what `ask_model` and
         agents use), its `engine` (mlx, llamacpp, vllm, or openai-compatible for a hosted API),
         its `modality` (chat, vision, embeddings, …) and the weights it serves. Also reports which
         chat model `ask_model` uses by default."""
@@ -158,7 +158,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         chosen = model or _default_model(await _models())
         if not chosen:
             raise ToolError(
-                "No chat model is registered in TheYgent. Install one from Registries → Add model, "
+                "No chat model is registered in Ertir. Install one from Registries → Add model, "
                 "or set THEYGENT_MCP_DEFAULT_MODEL."
             )
         if files:
@@ -215,7 +215,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
     async def list_agents(
         limit: Annotated[int, Field(ge=1, le=200)] = 50,
     ) -> dict[str, Any]:
-        """List the user's published TheYgent agents, newest first: `id`, `name`, latest
+        """List the user's published Ertir agents, newest first: `id`, `name`, latest
         `version` and how many versions exist. Run one with `run_agent`; read its graph with
         `get_agent`."""
         body = await planes.control("GET", "/agents", params={"limit": limit})
@@ -271,10 +271,10 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
             str | None, Field(description="Pin a version; omit for the latest.")
         ] = None,
         session_id: Annotated[
-            str | None, Field(description="Continue a TheYgent chat session.")
+            str | None, Field(description="Continue an Ertir chat session.")
         ] = None,
     ) -> dict[str, Any]:
-        """Run a published TheYgent agent and wait for its output. Returns `run_id`, `status` and
+        """Run a published Ertir agent and wait for its output. Returns `run_id`, `status` and
         `output`; `get_run` shows a run again later. Runs on the user's own models and tools."""
         agent_id = await _agent_id(agent_id)
         body: dict[str, Any] = {"input": input, "stream": False}
@@ -335,7 +335,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
             ),
         ] = None,
     ) -> dict[str, Any]:
-        """How to write a TheYgent agent: the document format, how values flow (`$in`), common
+        """How to write an Ertir agent: the document format, how values flow (`$in`), common
         patterns, a full example, and every runnable node type's kind, default ports and default
         config. Read this before `create_agent` or `run_graph`."""
         if node_types:
@@ -360,7 +360,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
             str | None, Field(description="A display name; defaults to the document's `name`.")
         ] = None,
     ) -> dict[str, Any]:
-        """Publish a new agent from a document. It then appears in the user's TheYgent Agents page
+        """Publish a new agent from a document. It then appears in the user's Ertir Agents page
         and can be run with `run_agent`. If the id is taken, use `publish_agent_version`."""
         body: dict[str, Any] = {"ir": ir}
         if name:
@@ -388,7 +388,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
 
     @mcp.tool
     async def list_samples() -> dict[str, Any]:
-        """List TheYgent's ready-made sample agents (title, what they show, the model slots to fill,
+        """List Ertir's ready-made sample agents (title, what they show, the model slots to fill,
         whether installed). Install one with `install_samples` for a working starting point."""
         body = await planes.control("GET", "/samples")
         samples = body.get("samples", body) if isinstance(body, dict) else body
@@ -444,7 +444,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         query: str,
         top_k: Annotated[int, Field(ge=1, le=50)] = 5,
     ) -> dict[str, Any]:
-        """Search a retrieval source with the same hybrid (semantic + keyword) retrieval TheYgent's
+        """Search a retrieval source with the same hybrid (semantic + keyword) retrieval Ertir's
         agents use. Returns the best-matching passages with their documents and scores."""
         source_id = await _source_id(source_id)
         return await planes.control(
@@ -519,10 +519,10 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
         ],
     ) -> dict[str, Any]:
         """Index local files into an `upload` retrieval source: docs, specs, source code (code
-        indexes as plain text), PDFs and office documents. TheYgent chunks and embeds them in
+        indexes as plain text), PDFs and office documents. Ertir chunks and embeds them in
         the background (`get_rag_source` shows progress), after which `search_rag` and the
         user's agents can search them. Re-adding a file replaces its earlier copy. Files whose
-        type TheYgent can't read, and files over its upload limit, are skipped."""
+        type Ertir can't read, and files over its upload limit, are skipped."""
         source_id = await _source_id(source_id)
         files, misses = await asyncio.to_thread(_expand_paths, paths)
         results: list[dict[str, Any]] = list(misses)
@@ -538,7 +538,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
                 await _upload(source_id, name, _file_chunks(local, size), size, mime)
             except ToolError as exc:
                 if "unsupported_document" in str(exc):
-                    results.append({"path": name, "skipped": "TheYgent can't read this type"})
+                    results.append({"path": name, "skipped": "Ertir can't read this type"})
                     skipped += 1
                 elif "document_too_large" in str(exc):
                     limit = str(exc).partition("document_too_large: ")[2] or "over the limit"
@@ -546,7 +546,7 @@ def build_server(config: Config, transport: httpx.AsyncBaseTransport | None = No
                         {
                             "path": name,
                             "skipped": f"{size} bytes: {limit}. An admin can raise the limit "
-                            "in TheYgent under Settings → RAG.",
+                            "in Ertir under Settings → RAG.",
                         }
                     )
                     skipped += 1

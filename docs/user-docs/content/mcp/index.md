@@ -1,6 +1,6 @@
 # MCP servers
 
-An **MCP server** gives your agents tools that live outside TheYgent — a filesystem browser, a database client, a company API, a hosted search service. MCP (the Model Context Protocol) is the open standard those servers speak. You set a server up once on the **MCP** page in the sidebar, and from then on any agent can call its tools through the [mcp_tool node](../building/nodes/mcp.md), either at a fixed step in the graph or autonomously, whenever the model decides to.
+An **MCP server** gives your agents tools that live outside Ertir — a filesystem browser, a database client, a company API, a hosted search service. MCP (the Model Context Protocol) is the open standard those servers speak. You set a server up once on the **MCP** page in the sidebar, and from then on any agent can call its tools through the [mcp_tool node](../building/nodes/mcp.md), either at a fixed step in the graph or autonomously, whenever the model decides to.
 
 The MCP page covers the whole story: **browse and install** published servers from public hubs, **add your own** four different ways (a local process, a remote endpoint, an OpenAPI spec, a GraphQL endpoint), **sign in** to OAuth-protected servers from the browser, and manage everything in one list.
 
@@ -39,7 +39,7 @@ You can add your own with the `THEYGENT_MCP_REGISTRIES` environment variable —
 Pick a hub, search, and read the entries: each shows its description, version, transport and package badges, and a star count where the publisher provides one. A **deprecated** entry carries a visible warning with the publisher's message — prefer whatever replacement it names.
 
 !!! note "Cold searches can take a while"
-    The official registry's substring search can take fifteen seconds or more on a cold query. TheYgent waits generously rather than timing out — a slow first search is the hub warming up, not the hub being down. Repeat searches are cached and fast.
+    The official registry's substring search can take fifteen seconds or more on a cold query. Ertir waits generously rather than timing out — a slow first search is the hub warming up, not the hub being down. Repeat searches are cached and fast.
 
 ### Installing an entry
 
@@ -73,7 +73,7 @@ A server that runs as a process on your machine, in your trust domain.
 
 A server someone else hosts, reached over streamable-HTTP or SSE. Give it a name, the URL, any non-secret headers, and an auth type:
 
-| Auth | You supply | What TheYgent sends |
+| Auth | You supply | What Ertir sends |
 |---|---|---|
 | **None** | — | plain requests |
 | **Bearer token** | the token | `Authorization: Bearer <token>` |
@@ -92,7 +92,7 @@ If you already have a REST API, you don't have to write an MCP server for it. Pa
 Press **Preview** first: it shows exactly the tool list an agent would see, and **Create** is enabled only once the spec derives cleanly.
 
 !!! warning "A relative `servers` entry needs an explicit base URL"
-    Many specs declare a relative server URL (say `/api/v3`), which only means something relative to wherever the spec lives. When you give the spec by URL, TheYgent resolves the relative path against the spec's own origin. A **pasted** spec has no origin — give an explicit **Base URL** or the derived tools will have nowhere to call.
+    Many specs declare a relative server URL (say `/api/v3`), which only means something relative to wherever the spec lives. When you give the spec by URL, Ertir resolves the relative path against the spec's own origin. A **pasted** spec has no origin — give an explicit **Base URL** or the derived tools will have nowhere to call.
 
 ### GraphQL — generate tools from an endpoint
 
@@ -100,13 +100,13 @@ Give a GraphQL endpoint and its auth, and the server derives exactly **two tools
 
 ## Authorize with OAuth (sign in)
 
-Many hosted MCP servers use OAuth: there is no token to paste, because the server wants *you* to sign in and consent. TheYgent handles this without any manual configuration:
+Many hosted MCP servers use OAuth: there is no token to paste, because the server wants *you* to sign in and consent. Ertir handles this without any manual configuration:
 
 1. Create the connection with the **OAuth sign-in** auth type (Remote form), or check **"Sign in with the provider instead"** when installing from a hub.
 2. Press **Connect** on the server's row. A browser tab opens the provider's consent page.
 3. Approve. The tab tells you it's done; back on the MCP page, the row shows connected.
 
-TheYgent stores the tokens **encrypted** in your own database and refreshes them automatically — you should only see the consent page again if the provider revokes access or the grant fully expires. Authorizing (or re-authorizing) never changes any agent's version: the tokens live behind the connection's stable secret reference.
+Ertir stores the tokens **encrypted** in your own database and refreshes them automatically — you should only see the consent page again if the provider revokes access or the grant fully expires. Authorizing (or re-authorizing) never changes any agent's version: the tokens live behind the connection's stable secret reference.
 
 Unattended runs never hang waiting for a login. If a server needs re-authorization during a triggered or scheduled run, the tool call **fails immediately** with a message telling you to reconnect the server on the MCP page — the node binds its `err` port and the run carries on, per the normal [tool error contract](../building/nodes/tools.md#the-success-error-contract). A browser flow only ever starts because you pressed Connect.
 

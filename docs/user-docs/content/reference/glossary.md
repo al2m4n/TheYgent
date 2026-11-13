@@ -1,6 +1,6 @@
 # Glossary
 
-The terms used across TheYgent and this documentation, in alphabetical order. Where a concept has its own page, the definition links to it.
+The terms used across Ertir and this documentation, in alphabetical order. Where a concept has its own page, the definition links to it.
 
 ### Activity
 
@@ -20,7 +20,7 @@ A blob of generated media — audio or an image — stored on local disk and pas
 
 ### Binding
 
-How a logical model maps to something that can actually answer a request. The binding value is one of four: `mlx`, `vllm`, `llamacpp` (local engines TheYgent manages), or `openai-compatible` (any reachable OpenAI-style server or hosted API). See [Models & engines](../concepts/models-and-engines.md).
+How a logical model maps to something that can actually answer a request. The binding value is one of four: `mlx`, `vllm`, `llamacpp` (local engines Ertir manages), or `openai-compatible` (any reachable OpenAI-style server or hosted API). See [Models & engines](../concepts/models-and-engines.md).
 
 ### Boundary
 
@@ -64,7 +64,7 @@ A model that turns text into a vector so that similar meanings land near each ot
 
 ### Engine
 
-The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. TheYgent lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
+The underlying server program that runs a model — `llama.cpp`, an MLX server, `whisper.cpp`, vLLM, or an image-generation CLI wrapper. Ertir lazily spawns and supervises managed engines; you never name an engine when calling a model. See [Engines](../models/engines.md).
 
 ### Expert streaming
 
@@ -72,11 +72,11 @@ Running a [mixture-of-experts](#mixture-of-experts-moe) model on MLX with its ex
 
 ### Gateway key
 
-A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in TheYgent. See [Set up Claude Code](../ai-gateway/setup.md).
+A developer's key for a team-mode [AI gateway](#ai-gateway) (`tyg_…`), created on **AI Gateway → Setup & keys** and shown once. It identifies the developer to the gateway and opens nothing else in Ertir. See [Set up Claude Code](../ai-gateway/setup.md).
 
 ### Generated server
 
-An MCP server TheYgent mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
+An MCP server Ertir mints in-process from an API you already have: an OpenAPI spec (every operation becomes a callable tool) or a GraphQL endpoint (two tools — schema introspection and a validated query runner). No subprocess; only the upstream API calls leave the process, carrying auth resolved server-side. See [MCP servers](../mcp/index.md).
 
 ### Graph
 
@@ -116,7 +116,7 @@ The name you give a model when you register it (for example `triage-fast`) and t
 
 ### MCP (Model Context Protocol)
 
-An open protocol for exposing external tools to models. TheYgent connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
+An open protocol for exposing external tools to models. Ertir connects to MCP servers — spawned locally over `stdio`, reached remotely over HTTP or SSE, or [generated in-process](#generated-server) from an OpenAPI spec or GraphQL endpoint — and lets your agents call the tools they expose through the `mcp_tool` node. Servers are added by hand or installed from a [hub](#hub-mcp-registry). See [MCP servers](../mcp/index.md) and [MCP tools](../building/nodes/mcp.md).
 
 ### Mixture of experts (MoE)
 

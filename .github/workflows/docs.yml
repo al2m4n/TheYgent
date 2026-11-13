@@ -145,7 +145,7 @@ jobs:
           echo "Submitting: $urls"
           curl -fsS -X POST "https://api.indexnow.org/indexnow" \
             -H "Content-Type: application/json; charset=utf-8" \
-            -d "{\"host\":\"docs.theygent.ai\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://docs.theygent.ai/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
+            -d "{\"host\":\"docs.ertir.dev\",\"key\":\"$INDEXNOW_KEY\",\"keyLocation\":\"https://docs.ertir.dev/$INDEXNOW_KEY.txt\",\"urlList\":$urls}" \
             || echo "IndexNow submission failed (non-fatal)"
 
       # Last, and best-effort: the docs are already live on Cloudflare by this point, so a

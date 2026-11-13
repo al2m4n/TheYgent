@@ -1,6 +1,6 @@
 # RAG sources
 
-A **RAG source** is a named collection of documents your agents can search — your product docs, a contract folder, an internal wiki. You fill it once (upload files or crawl a site), TheYgent chunks and embeds the text against a model *you* choose, and stores the vectors in your own Postgres. From then on, any agent can retrieve from it through the [rag node](../building/nodes/rag.md): as a fixed pipeline step, or as a tool the model calls on demand.
+A **RAG source** is a named collection of documents your agents can search — your product docs, a contract folder, an internal wiki. You fill it once (upload files or crawl a site), Ertir chunks and embeds the text against a model *you* choose, and stores the vectors in your own Postgres. From then on, any agent can retrieve from it through the [rag node](../building/nodes/rag.md): as a fixed pipeline step, or as a tool the model calls on demand.
 
 RAG — retrieval-augmented generation — exists because a document collection never fits a model's context window. Instead of pasting documents into prompts, the agent asks a search question, gets back the handful of most relevant passages, and answers from those. Everything stays in your trust domain: the documents, the vectors, and the embedding calls (which go to your inference plane, not a third party).
 
@@ -16,7 +16,7 @@ Retrieval needs an **embedding model** — a small model that turns text into ve
 Two things to know:
 
 1. **The model is pinned per source.** Vectors from different embedding models are not comparable, so each source locks its model at creation. Changing it later means creating a new source (or re-ingesting into one). The source's create form only offers this choice once, on purpose.
-2. **It's a logical id, like every model in TheYgent.** The source stores the id (say `nomic-embed`), and your inference plane decides what serves it — swap the engine behind the id any time.
+2. **It's a logical id, like every model in Ertir.** The source stores the id (say `nomic-embed`), and your inference plane decides what serves it — swap the engine behind the id any time.
 
 !!! tip "Pooling"
     Most embedding GGUFs work out of the box (`mean` pooling). Models that pool on the last token can set `params: {"pooling": "last"}` on their registration.
@@ -36,7 +36,7 @@ Supported formats: PDF, DOCX, PPTX, XLSX, Markdown, plain text, HTML, CSV, JSON,
 
 ### Crawl sources
 
-A **crawl** source ingests a website — point it at a docs root and TheYgent walks the pages:
+A **crawl** source ingests a website — point it at a docs root and Ertir walks the pages:
 
 | Field | What it does |
 |---|---|

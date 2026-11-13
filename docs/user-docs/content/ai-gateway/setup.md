@@ -10,7 +10,7 @@ it — so this page explains what they are and why each one is there.
   gateway, use its address; the Setup & keys tab lets you set the address its snippets use.
 - **A gateway key** (team gateways only). Create one on **Setup & keys → New key**. It is shown
   **once**, in the dialog that creates it, together with setups that already contain it. A
-  gateway key identifies you to the gateway and opens nothing else in TheYgent; revoke it there
+  gateway key identifies you to the gateway and opens nothing else in Ertir; revoke it there
   when a machine is retired.
 - **How you are billed.** An admin sets it per developer (**Settings → Developers**):
 

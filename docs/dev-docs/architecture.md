@@ -1,6 +1,6 @@
 # Architecture
 
-TheYgent is a no-code, local-first platform for building and running AI agents: a visual
+Ertir is a no-code, local-first platform for building and running AI agents: a visual
 builder that compiles drag-and-drop graphs into a typed intermediate representation (IR),
 and a runtime that executes those graphs against models running wherever the user points —
 a local engine on the same machine, a GPU box across the network, or any hosted
@@ -58,7 +58,7 @@ Three contracts hold the system together. All three are deliberately hard to cha
    change with every call site untouched. See [inference-plane.md](./inference-plane.md).
 
 3. **The binding enum** — `mlx | vllm | llamacpp | openai-compatible`. The first three are
-   engines whose lifecycle TheYgent manages (spawn, supervise, evict); everything else in
+   engines whose lifecycle Ertir manages (spawn, supervise, evict); everything else in
    the world is reached as `openai-compatible` plus a URL. Orthogonal to binding:
    `source` (`hf | local-path | url`) says where weights come from, and `modality`
    (chat, embeddings, vision, speech-to-text, text-to-speech, image generation) says what
@@ -191,9 +191,9 @@ the walk, [control-plane.md](./control-plane.md) for persistence and spans,
 | [apps/inference-plane](../../apps/inference-plane) | Engine manager + OpenAI-compatible gateway | Python, uv |
 | [apps/worker](../../apps/worker) | Durable-runtime host (separate deployable) | Python, uv |
 | [apps/ai-gateway](../../apps/ai-gateway) | Anthropic-Messages proxy for coding agents (observer and router) | Python, uv |
-| [apps/mcp-server](../../apps/mcp-server) | MCP server giving coding agents TheYgent's agents, models and retrieval as tools | Python, uv |
+| [apps/mcp-server](../../apps/mcp-server) | MCP server giving coding agents Ertir's agents, models and retrieval as tools | Python, uv |
 | [apps/interface](../../apps/interface) | React SPA: visual builder + every operator surface | TS, pnpm, Vite |
-| [apps/web](../../apps/web) | Static marketing site (theygent.ai) | plain HTML/CSS/JS |
+| [apps/web](../../apps/web) | Static marketing site (ertir.dev) | plain HTML/CSS/JS |
 | [packages/ir](../../packages/ir) | Pydantic IR models — the single source of truth | Python, uv |
 | [packages/ir-types](../../packages/ir-types) | Generated TS mirror of the IR (never hand-edited) | TS, pnpm |
 | [packages/gateway-client](../../packages/gateway-client) | The one OpenAI-compatible HTTP client | Python, uv |
@@ -243,9 +243,9 @@ justification:
 - [durable-execution.md](./durable-execution.md) — crash-safe runs and the worker
 - [inference-plane.md](./inference-plane.md) — engines, bindings, the gateway
 - [ai-gateway.md](./ai-gateway.md) — the coding agents' proxy: observer, policy, records
-- [mcp-server.md](./mcp-server.md) — TheYgent as tools for coding agents
+- [mcp-server.md](./mcp-server.md) — Ertir as tools for coding agents
 - [interface.md](./interface.md) — the SPA and the canvas
 - [ir-and-packages.md](./ir-and-packages.md) — the IR, codegen, gateway client
 - [deployment.md](./deployment.md) — run modes, CI, operations
 - [testing.md](./testing.md) — suites, fixtures, gates
-- [User documentation](https://docs.theygent.ai/) — the product, for users
+- [User documentation](https://docs.ertir.dev/) — the product, for users

@@ -1,7 +1,7 @@
 # The control plane
 
 The control plane ([apps/control-plane](../../apps/control-plane), package
-`theygent_control_plane`) is TheYgent's orchestration spine: one FastAPI service that owns
+`theygent_control_plane`) is Ertir's orchestration spine: one FastAPI service that owns
 runs end to end (prompt runs, inline graph runs, saved-agent invokes, trigger fires), chat
 sessions and memory, the agent registry and drafts, triggers and webhooks, connections and
 encrypted secrets, RAG sources, the bench store, MCP hosting, the observability waterfall,
@@ -277,7 +277,7 @@ flowchart LR
 ```
 
 The local span store is always on and needs zero external infrastructure — the in-UI run
-waterfall reads TheYgent's own tables, never an external backend and never the durable
+waterfall reads Ertir's own tables, never an external backend and never the durable
 runtime's journal. OTLP export is the opt-in second sink: redacted spans only, never node
 I/O payloads, lazily constructed, and always stoppable by the stored
 `telemetry.otlp_enabled` setting even when an endpoint env var is set — telemetry egress
@@ -399,4 +399,4 @@ API-key narrowing, last-admin guards, and the OIDC flow against a fake IdP), and
 - [interface.md](./interface.md) — the SPA that consumes this API
 - [deployment.md](./deployment.md) — running the service in compose and Kubernetes
 - [testing.md](./testing.md) — suites, fixtures, and CI gates
-- [User documentation](https://docs.theygent.ai/) — for using TheYgent rather than working on it
+- [User documentation](https://docs.ertir.dev/) — for using Ertir rather than working on it

@@ -1,4 +1,4 @@
-# robots.txt — docs.theygent.ai
+# robots.txt — docs.ertir.dev
 #
 # Policy: every crawler — classic search engines and AI/answer engines alike —
 # is welcome everywhere on this site. The named groups below make that welcome
@@ -8,7 +8,7 @@
 #
 # This file lives in docs/user-docs/root/ on the main branch and is copied to the
 # deploy tree root by .github/workflows/docs.yml (mike owns the gh-pages root).
-# Curated machine-readable summary: https://docs.theygent.ai/llms.txt
+# Curated machine-readable summary: https://docs.ertir.dev/llms.txt
 
 User-agent: *
 Allow: /
@@ -77,4 +77,4 @@ User-agent: Timpibot
 Allow: /
 
 # The stable alias's sitemap — every version's pages canonicalize into these URLs.
-Sitemap: https://docs.theygent.ai/latest/sitemap.xml
+Sitemap: https://docs.ertir.dev/latest/sitemap.xml

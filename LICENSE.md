@@ -5,7 +5,7 @@ Copyright (c) 2026 Arman Bahlakeh
 Portions of this software are licensed as follows:
 
 - Content of branches other than the main branch is not licensed.
-- All third party components incorporated into the TheYgent software are licensed
+- All third party components incorporated into the Ertir software are licensed
   under the original license provided by the owner of the applicable component.
 - Content not covered by the restrictions above is available under the
   "Sustainable Use License" as defined below.

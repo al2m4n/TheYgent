@@ -1,6 +1,6 @@
 # Users, roles & sign-in
 
-TheYgent's control plane has an **identity layer**: every person gets an account with one of three roles, every call to the API carries a bearer token, and admins can wire up single sign-on through any OIDC or OAuth2 provider. This page covers the first-run wizard, what each role can do, managing accounts, SSO, and the personal API keys that let your own scripts and frontends call TheYgent.
+Ertir's control plane has an **identity layer**: every person gets an account with one of three roles, every call to the API carries a bearer token, and admins can wire up single sign-on through any OIDC or OAuth2 provider. This page covers the first-run wizard, what each role can do, managing accounts, SSO, and the personal API keys that let your own scripts and frontends call Ertir.
 
 All examples target the control plane at `http://localhost:8080`.
 
@@ -66,7 +66,7 @@ Two behaviors worth calling out:
 - **Creating an account without a password** makes an **SSO-only** account: the user cannot password-login and is expected to arrive through a sign-in provider. Give it an `email` and the first provider sign-in with a matching verified email claims it — see [pre-provisioning](#who-gets-in-auto-provision-domains-and-pre-provisioning).
 
 !!! warning "The last admin is protected"
-    The last active admin can never be demoted, disabled, or deleted — any attempt returns `409 last_admin`. Promote a second admin first. This is deliberate: a TheYgent install with no admin has no in-band way to recover itself.
+    The last active admin can never be demoted, disabled, or deleted — any attempt returns `409 last_admin`. Promote a second admin first. This is deliberate: an Ertir install with no admin has no in-band way to recover itself.
 
 ### Self-service
 

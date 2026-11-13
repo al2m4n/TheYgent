@@ -323,7 +323,7 @@ otel-up: ## Start the sample OTel stack (collector :4318 → Tempo → Grafana :
 	@echo "Collector ready. In Settings → Telemetry set the OTLP endpoint to:"
 	@echo "    http://127.0.0.1:4318/v1/traces"
 	@echo "enable export, hit 'Test connection', then run any agent."
-	@echo "Grafana: http://localhost:3000 (dashboard: TheYgent → Traces, no login needed)"
+	@echo "Grafana: http://localhost:3000 (dashboard: Ertir → Traces, no login needed)"
 
 otel-down: ## Stop the sample OTel stack (Tempo's trace volume survives)
 	docker compose -f $(OTEL_COMPOSE) down
@@ -410,7 +410,7 @@ k8s-delete: k8s-down ## Alias for k8s-down
 docs-serve: ## Serve the user docs locally with live reload (http://127.0.0.1:8000)
 	uv run --project docs/user-docs mkdocs serve -f docs/user-docs/mkdocs.yml
 
-mcp-setup: ## Print how to connect Claude Code, Codex or OpenCode to TheYgent's MCP server
+mcp-setup: ## Print how to connect Claude Code, Codex or OpenCode to Ertir's MCP server
 	@uv run --package theygent-mcp theygent-mcp setup
 
 docs-build: ## Build the user docs site (strict — broken links fail the build)

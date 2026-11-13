@@ -2,7 +2,7 @@ apiVersion: 1
 
 providers:
   - name: theygent
-    folder: TheYgent
+    folder: Ertir
     type: file
     disableDeletion: false
     editable: true

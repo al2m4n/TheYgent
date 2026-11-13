@@ -186,7 +186,7 @@ describe("Import / Export tab", () => {
     // The two spec'd warnings, verbatim themes: HF weight downloads + secrets never exported.
     expect(
       screen.getByText(
-        /2 models will be registered — TheYgent will download their weights from Hugging Face/,
+        /2 models will be registered — Ertir will download their weights from Hugging Face/,
       ),
     ).toBeInTheDocument();
     expect(

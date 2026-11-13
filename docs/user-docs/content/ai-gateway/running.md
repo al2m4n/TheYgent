@@ -1,6 +1,6 @@
 # Running the gateway
 
-The AI Gateway is the fourth TheYgent service, on port **8082**. It runs the same way as the
+The AI Gateway is the fourth Ertir service, on port **8082**. It runs the same way as the
 others — on a machine with `make up`, in Docker Compose, or in Kubernetes — and in one of two
 [modes](index.md#personal-or-team): **personal** (yours, on loopback, no keys) or **team** (shared,
 developers identified by gateway keys).
@@ -151,4 +151,4 @@ record each, exactly as the gateway sent it.
 
 - [Environment variables](../reference/environment.md#ai-gateway) — every gateway setting.
 - [Set up Claude Code](setup.md) — the client side.
-- [Running TheYgent](../getting-started/running.md) — the other services.
+- [Running Ertir](../getting-started/running.md) — the other services.
