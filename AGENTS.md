@@ -142,7 +142,8 @@ if a task seems to require it, stop and flag it instead.
   places, so it can be changed in one pass: the website footer line, page `<title>`/meta
   and JSON-LD `alternateName`, `apps/web/llms.txt` and `docs/user-docs/root/llms.txt` (their
   intro and "Name" key fact), the name-change blog post (`apps/web/blog/theygent-is-now-ertir/`,
-  linked from the blog index), the README, the user-docs home and `name-change.md` page, the
+  linked from the blog index), the website's rename bar ("TheYgent is now Ertir", above the nav
+  on every other page), the README, the user-docs home and `name-change.md` page, the
   docs footer (`copyright` in `mkdocs.yml`) and the CLA. Everywhere else, write "Ertir".
 - **Empty env means unset.** Every env read treats `""` like absence (compose/k8s pass
   `${VAR:-}` through); keep new env reads empty-safe.

@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="apps/web/assets/logo/theygent-lockup-dark.svg">
-    <img src="apps/web/assets/logo/theygent-lockup.svg" alt="Ertir" width="460">
+    <img src="apps/web/assets/logo/theygent-lockup.svg" alt="Ertir" width="260">
   </picture>
 </div>
 

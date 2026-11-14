@@ -383,6 +383,42 @@ h3 {
   flex: none;
 }
 
+/* ── Rename bar ───────────────────────────────────────────────────────────── */
+/* Sits above the sticky nav and scrolls away with the page. */
+.rename-bar {
+  border-bottom: 1px solid color-mix(in oklab, var(--periwinkle) 30%, transparent);
+  background: color-mix(in oklab, var(--periwinkle) 11%, var(--bg));
+}
+.rename-bar a {
+  max-width: var(--maxw);
+  margin-inline: auto;
+  padding: 8px var(--pad);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 12px;
+  font-size: 0.86rem;
+  color: var(--text);
+  text-align: center;
+}
+.rename-bar .announce-tag {
+  font-size: 0.72rem;
+}
+.rename-bar-more {
+  font-size: 0.78rem;
+  color: var(--periwinkle);
+}
+.rename-bar a:hover .rename-bar-more {
+  text-decoration: underline;
+}
+@media (max-width: 560px) {
+  .rename-bar-detail,
+  .rename-bar-more {
+    display: none;
+  }
+}
+
 /* ── Nav ──────────────────────────────────────────────────────────────────── */
 .nav {
   position: sticky;
@@ -410,9 +446,10 @@ h3 {
   font-size: 1.12rem;
   letter-spacing: -0.03em;
 }
-/* the full lockup ships as two theme-tuned SVGs; CSS picks the one matching the theme */
+/* the logo is the dot-matrix wordmark alone (a mark beside it would read as an extra letter); it
+   ships as two theme-tuned SVGs and CSS picks the one matching the theme */
 .brand-lockup {
-  height: 26px;
+  height: 19px;
   width: auto;
 }
 [data-theme="dark"] .only-light {
@@ -1892,7 +1929,7 @@ h3 {
   padding-bottom: 40px;
 }
 .footer .brand-lockup {
-  height: 30px;
+  height: 23px;
 }
 .footer-tag {
   margin-top: 16px;
