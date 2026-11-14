@@ -6,7 +6,8 @@ name: web
 #   - Pushes to main: deploy the production site.
 #   - Releases: re-deploy production from the tagged commit, so a release always ships
 #     exactly the site state it was cut from (release events carry no path filter).
-# There is no build step — the folder is uploaded as-is. Reuses the same Cloudflare Pages secrets
+# There is no build step: the folder is uploaded as it is, apart from two stamps in the deploy tree
+# (asset URLs versioned by content; on production, sitemap lastmod). Reuses the same Cloudflare Pages secrets
 # as the docs pipeline (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID); only the Pages project differs.
 
 on:
@@ -55,6 +56,14 @@ jobs:
       - name: Check pages, sitemap, and structured data agree
         run: python3 .github/scripts/check_web_pages.py "$SITE_DIR"
 
+      # The preview serves the tree production would, so its asset URLs are versioned too, and
+      # the asset check runs again on the stamped tree to prove every rewritten URL still resolves.
+      - name: Version asset URLs by content
+        run: python3 .github/scripts/web_asset_versions.py "$SITE_DIR"
+
+      - name: Check the versioned asset references resolve
+        run: python3 .github/scripts/check_web_assets.py "$SITE_DIR"
+
       - name: Deploy preview to Cloudflare Pages
         # Fork PRs receive no secrets from GitHub — the asset check above still runs for
         # them, but the preview deploy would fail with an empty token, so it runs for
@@ -86,6 +95,13 @@ jobs:
       # changed whenever one did.
       - name: Stamp each sitemap lastmod with its page's last-change date
         run: python3 .github/scripts/web_sitemap.py stamp "$SITE_DIR"
+
+      # Cloudflare caches /assets/* for a week and a deploy does not purge that cache, so a file
+      # whose contents change under the same URL would stay stale at the edge and in browsers.
+      # Every reference to a local static file gets ?v=<content hash>: a changed file gets a new
+      # URL, an unchanged one keeps its URL and its cache.
+      - name: Version asset URLs by content
+        run: python3 .github/scripts/web_asset_versions.py "$SITE_DIR"
 
       - name: Deploy to Cloudflare Pages (production)
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
