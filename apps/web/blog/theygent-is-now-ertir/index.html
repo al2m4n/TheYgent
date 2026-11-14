@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TheYgent Is Now Ertir: Same Project, New Name | Ertir Blog</title>
+    <meta name="description" content="TheYgent is now Ertir: the same no-code, local-first AI agent platform under a new name. What changed, what stays the same, and where the website, docs and code moved." />
+    <link rel="canonical" href="https://ertir.dev/blog/theygent-is-now-ertir/" />
+    <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#eef1f6" media="(prefers-color-scheme: light)" />
+    <meta name="color-scheme" content="dark light" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://ertir.dev/blog/theygent-is-now-ertir/" />
+    <meta property="og:site_name" content="Ertir" />
+    <meta property="og:title" content="TheYgent Is Now Ertir: Same Project, New Name | Ertir Blog" />
+    <meta property="og:description" content="TheYgent is now Ertir: the same no-code, local-first AI agent platform under a new name. What changed, what stays the same, and where the website, docs and code moved." />
+    <meta property="og:image" content="https://ertir.dev/assets/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Ertir — build agents on a canvas, run them where you point" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="article:published_time" content="2026-11-13" />
+    <meta property="article:author" content="Arman Bahlakeh" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TheYgent Is Now Ertir: Same Project, New Name | Ertir Blog" />
+    <meta name="twitter:description" content="TheYgent is now Ertir: the same no-code, local-first AI agent platform under a new name. What changed, what stays the same, and where the website, docs and code moved." />
+    <meta name="twitter:image" content="https://ertir.dev/assets/og-image.png" />
+
+    <link rel="icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" type="image/svg+xml" href="/assets/logo/favicon.svg" />
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png" />
+    <link rel="preload" href="/assets/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/pages.css" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "BlogPosting",
+            "@id": "https://ertir.dev/blog/theygent-is-now-ertir/#article",
+            "headline": "TheYgent Is Now Ertir: Same Project, New Name",
+            "alternativeHeadline": "Ertir, formerly TheYgent",
+            "description": "TheYgent is now Ertir: the same no-code, local-first AI agent platform under a new name. What changed, what stays the same, and where the website, docs and code moved.",
+            "datePublished": "2026-11-13",
+            "dateModified": "2026-11-13",
+            "inLanguage": "en",
+            "wordCount": 432,
+            "keywords": "Ertir, TheYgent, name change",
+            "author": {
+              "@type": "Person",
+              "name": "Arman Bahlakeh"
+            },
+            "publisher": {
+              "@id": "https://ertir.dev/#organization"
+            },
+            "image": "https://ertir.dev/assets/og-image.png",
+            "mainEntityOfPage": "https://ertir.dev/blog/theygent-is-now-ertir/",
+            "isPartOf": {
+              "@id": "https://ertir.dev/blog/#blog"
+            },
+            "about": {
+              "@id": "https://ertir.dev/#software"
+            }
+          },
+          {
+            "@type": "BreadcrumbList",
+            "@id": "https://ertir.dev/blog/theygent-is-now-ertir/#breadcrumb",
+            "itemListElement": [
+              {
+                "@type": "ListItem",
+                "position": 1,
+                "name": "Ertir",
+                "alternateName": "TheYgent",
+                "item": "https://ertir.dev/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 2,
+                "name": "Blog",
+                "item": "https://ertir.dev/blog/"
+              },
+              {
+                "@type": "ListItem",
+                "position": 3,
+                "name": "TheYgent Is Now Ertir",
+                "item": "https://ertir.dev/blog/theygent-is-now-ertir/"
+              }
+            ]
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://ertir.dev/blog/theygent-is-now-ertir/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Is Ertir the same project as TheYgent?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Yes. Ertir is the new name of TheYgent: the same code, the same maintainer and the same license. Version 2.0.0 is the first release under the new name."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Where did theygent.ai and the TheYgent GitHub repository go?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "The website moved to ertir.dev and the docs to docs.ertir.dev. The repository is github.com/al2m4n/ertir, and GitHub redirects the old al2m4n/TheYgent URLs."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Do I need to migrate data or change my configuration?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "No. Agents, runs, conversations, models, credentials and settings carry over unchanged. Technical names keep the old spelling, so THEYGENT_* environment variables, the ~/.theygent data folder and the X-TheYgent-Signature and X-TheYgent-Gateway-Key headers keep working."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "How is the new name written?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Ertir, with a capital E and the rest lowercase. The domains and the repository are all lowercase: ertir.dev, docs.ertir.dev and github.com/al2m4n/ertir."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <script>
+      (function () {
+        document.documentElement.classList.add("js");
+        try {
+          var t = localStorage.getItem("ty-theme");
+          if (t !== "light" && t !== "dark") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {}
+      })();
+    </script>
+
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <!-- ─────────────────────────── NAV ─────────────────────────── -->
+    <header class="nav" id="top">
+      <div class="nav-inner">
+        <a class="brand" href="/" aria-label="Ertir home">
+          <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+          <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
+        </a>
+        <nav class="nav-links" aria-label="Primary">
+          <a href="/">Product</a>
+          <a href="/private-ai/">Private &amp; Offline</a>
+          <a href="/apple-silicon/">Apple Silicon</a>
+          <a href="/compare/">Compare</a>
+          <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+        </nav>
+        <div class="nav-actions">
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme" title="Toggle theme">
+            <span class="theme-dot"></span><span class="theme-label mono">dark</span>
+          </button>
+          <a class="btn btn-ghost btn-github mono" href="https://github.com/al2m4n/ertir" rel="noopener">
+            <svg class="gh" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+              />
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <button class="nav-burger" id="navBurger" type="button" aria-label="Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </div>
+      <div class="nav-mobile" id="navMobile" hidden>
+        <a href="/">Product</a>
+        <a href="/private-ai/">Private &amp; Offline</a>
+        <a href="/apple-silicon/">Apple Silicon</a>
+        <a href="/compare/">Compare</a>
+        <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+        <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <article aria-labelledby="page-h">
+        <header class="page-hero">
+          <div class="wrap">
+            <nav class="crumbs mono" aria-label="Breadcrumb">
+              <ol>
+                <li><a href="/">Ertir</a></li>
+                <li><a href="/blog/">Blog</a></li>
+                <li><span aria-current="page">TheYgent Is Now Ertir</span></li>
+              </ol>
+            </nav>
+            <p class="eyebrow mono"><i class="dia"></i>Announcement · <time datetime="2026-11-13">November 13, 2026</time> · 2 min read</p>
+            <h1 id="page-h">TheYgent Is Now Ertir</h1>
+            <p class="lede">TheYgent, the no-code, local-first AI agent platform, has a new name: Ertir. Same code, same maintainer, same license. Here is what changed, what didn&rsquo;t, and where everything moved.</p>
+            <p class="checked mono">By Arman Bahlakeh</p>
+          </div>
+        </header>
+
+        <div class="band page-section">
+          <div class="wrap prose post-body">
+<p>TheYgent is now called <strong>Ertir</strong>. It is the same project: the same code, the same maintainer and the same license. <a href="https://github.com/al2m4n/ertir/releases/tag/v2.0.0">Version 2.0.0</a> is the first release under the new name. If a link to theygent.ai brought you here, you&rsquo;re in the right place.</p>
+<h2 id="what-ertir-is">What Ertir is</h2>
+<p>Ertir is a no-code, local-first platform for building and running AI agents on a visual canvas. Inference runs on your own machine, with llama.cpp, MLX or vLLM, or on any OpenAI-compatible API you register, chosen per agent and per call. It is source-available fair-code software under the Sustainable Use License, self-hosted on bare metal, Docker Compose or Kubernetes. The promise hasn&rsquo;t changed: you own every hop.</p>
+<h2 id="what-changed">What changed</h2>
+<ul>
+<li><strong>The name.</strong> The app, the docs and this website say Ertir.</li>
+<li><strong>The website</strong> moved from theygent.ai to <a href="/">ertir.dev</a>.</li>
+<li><strong>The docs</strong> moved from docs.theygent.ai to <a href="https://docs.ertir.dev/">docs.ertir.dev</a>, every earlier version included.</li>
+<li><strong>The repository</strong> is <a href="https://github.com/al2m4n/ertir">github.com/al2m4n/ertir</a>. GitHub redirects the old al2m4n/TheYgent URLs, so clones, issues and pull requests keep working.</li>
+</ul>
+<p>During the move, links to theygent.ai and docs.theygent.ai redirect to the matching page on the new addresses.</p>
+<h2 id="what-stays">What stays the same</h2>
+<p>Your installation and your data carry over unchanged: agents and their versions, runs, conversations, models, credentials and settings. There is nothing to migrate, and every agent keeps its content hash.</p>
+<p>Technical names keep the old spelling, so the scripts and configuration you already have keep working:</p>
+<ul>
+<li>environment variables: <code>THEYGENT_*</code></li>
+<li>the data folder: <code>~/.theygent</code></li>
+<li>headers: <code>X-TheYgent-Signature</code> on webhooks and <code>X-TheYgent-Gateway-Key</code> on the AI gateway</li>
+<li>Python packages and modules, npm packages, and Docker and Kubernetes names: <code>theygent&hellip;</code></li>
+</ul>
+<p>The names people read did change. API titles, the MCP sign-in screen and the AI gateway&rsquo;s messages and reports now say Ertir, so a script that matched the old &ldquo;TheYgent AI gateway:&rdquo; message prefix needs updating. The <a href="https://docs.ertir.dev/latest/name-change/">name change page</a> in the docs lists what changed and what didn&rsquo;t.</p>
+<h2 id="writing-the-name">Writing the name</h2>
+<p>Ertir: a capital E and the rest lowercase, like any other name. Anything technical that carries the new name is all lowercase: ertir.dev, docs.ertir.dev and github.com/al2m4n/ertir. A few places say &ldquo;Ertir (formerly TheYgent)&rdquo;, so people and search engines that know the old name find the new one.</p>
+<h2 id="upgrade">Upgrading</h2>
+<p>Update the way you usually do. Version 2.0.0 has no database migrations and no changes to API routes or to request and response fields. The major version marks the rename of the names people read, listed above.</p>
+<h2 id="links">Where to find everything</h2>
+<ul>
+<li><strong>Website:</strong> <a href="/">ertir.dev</a></li>
+<li><strong>Docs:</strong> <a href="https://docs.ertir.dev/">docs.ertir.dev</a></li>
+<li><strong>Code:</strong> <a href="https://github.com/al2m4n/ertir">github.com/al2m4n/ertir</a></li>
+<li><strong>Release notes:</strong> <a href="https://github.com/al2m4n/ertir/releases/tag/v2.0.0">v2.0.0</a></li>
+</ul>
+<p>Thank you to everyone who used, starred and reported issues on TheYgent. Ertir is the same project under a new name.</p>
+          </div>
+        </div>
+
+        <section class="band section faq" id="faq" aria-labelledby="faq-h">
+          <div class="wrap">
+            <p class="eyebrow mono"><i class="dia"></i>Questions</p>
+            <h2 id="faq-h">Asked and <span class="ramp-text">Answered.</span></h2>
+            <div class="faq-list">
+            <details class="faq-item">
+              <summary><h3>Is Ertir the same project as TheYgent?</h3></summary>
+              <p>Yes. Ertir is the new name of TheYgent: the same code, the same maintainer and the same license. Version 2.0.0 is the first release under the new name.</p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Where did theygent.ai and the TheYgent GitHub repository go?</h3></summary>
+              <p>The website moved to ertir.dev and the docs to docs.ertir.dev. The repository is github.com/al2m4n/ertir, and GitHub redirects the old al2m4n/TheYgent URLs.</p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>Do I need to migrate data or change my configuration?</h3></summary>
+              <p>No. Agents, runs, conversations, models, credentials and settings carry over unchanged. Technical names keep the old spelling, so THEYGENT_* environment variables, the ~/.theygent data folder and the X-TheYgent-Signature and X-TheYgent-Gateway-Key headers keep working.</p>
+            </details>
+            <details class="faq-item">
+              <summary><h3>How is the new name written?</h3></summary>
+              <p>Ertir, with a capital E and the rest lowercase. The domains and the repository are all lowercase: ertir.dev, docs.ertir.dev and github.com/al2m4n/ertir.</p>
+            </details>
+            </div>
+          </div>
+        </section>
+      </article>
+    </main>
+
+    <!-- ───────────────────────── FOOTER ───────────────────────── -->
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="Ertir home">
+            <img class="brand-lockup only-dark" src="/assets/logo/theygent-lockup-dark.svg" alt="Ertir" width="518" height="200" />
+            <img class="brand-lockup only-light" src="/assets/logo/theygent-lockup.svg" alt="Ertir" width="518" height="200" />
+          </a>
+          <p class="footer-tag">Build agents on a canvas. Run them where you point — you own every hop.</p>
+        </div>
+        <nav class="footer-cols" aria-label="Footer">
+          <div class="footer-col">
+            <span class="footer-h mono">product</span>
+            <a href="/#build-visually">Build</a>
+            <a href="/#multi-engine">Engines</a>
+            <a href="/#moe-streaming">MoE on a Mac</a>
+            <a href="/#capabilities">Capabilities</a>
+            <a href="/#production">Production</a>
+            <a href="/#ai-gateway">AI Gateway</a>
+            <a href="/#watch">Watch</a>
+            <a href="/#quickstart">Quickstart</a>
+            <a href="/#faq">FAQ</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">learn</span>
+            <a href="/private-ai/">Private &amp; Offline AI</a>
+            <a href="/apple-silicon/">Apple Silicon (MLX)</a>
+            <a href="/ai-gateway/">AI Gateway for Claude Code</a>
+            <a href="/coding-agents/">MCP Server for Coding Agents</a>
+            <a href="/crawlers/">Crawler Nodes</a>
+            <a href="/videos/">Video Walkthroughs</a>
+            <a href="/templates/">Agent Templates</a>
+            <a href="/blog/">Blog</a>
+            <a href="/compare/">Compare Platforms</a>
+            <a href="/compare/dify/">Ertir vs Dify</a>
+            <a href="/compare/n8n/">Ertir vs n8n</a>
+            <a href="/compare/langflow/">Ertir vs Langflow</a>
+            <a href="/compare/flowise/">Ertir vs Flowise</a>
+          </div>
+          <div class="footer-col">
+            <span class="footer-h mono">resources</span>
+            <a href="https://docs.ertir.dev/" rel="noopener">Docs</a>
+            <a href="https://github.com/al2m4n/ertir" rel="noopener">GitHub</a>
+            <a href="https://github.com/al2m4n/ertir/blob/main/LICENSE.md" rel="noopener">License</a>
+            <a href="/llms.txt">llms.txt</a>
+          </div>
+        </nav>
+      </div>
+      <div class="wrap footer-base mono">
+        <span>© 2026 Arman Bahlakeh · Ertir (formerly TheYgent) · Sustainable Use License</span>
+        <span class="footer-hash">0x9f81c7 · Local-First · Fair-Code</span>
+      </div>
+    </footer>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>

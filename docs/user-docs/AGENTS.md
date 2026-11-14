@@ -14,8 +14,9 @@ versioned per release to https://docs.ertir.dev/). The repo-wide rules in the ro
   GitHub repo is `al2m4n/ertir` and the domains are `ertir.dev` and `docs.ertir.dev`.
   Technical names keep the old spelling:
   the webhook header is `X-TheYgent-Signature`, env vars are `THEYGENT_*`, the data folder is
-  `~/.theygent`. The old name appears in prose only on the home page, `name-change.md` and
-  the footer (`copyright` in `mkdocs.yml`), as "Ertir (formerly TheYgent)".
+  `~/.theygent`. The old name appears in prose only on the home page, `name-change.md`, the
+  footer (`copyright` in `mkdocs.yml`) and `root/llms.txt` (its intro and "Name" key fact),
+  as "Ertir (formerly TheYgent)".
 - **Honesty rules mirror the product:** never overclaim privacy ("everything runs where
   you point it, and you own every hop" — not "no data ever leaves your machine"); label
   unverified paths (e.g. vLLM as experimental); document limitations plainly.
