@@ -48,6 +48,11 @@ added in the control plane gets a page under `templates/`.
   `<aside class="rename-bar">` above the nav ("TheYgent is now Ertir", linking
   `/blog/theygent-is-now-ertir/`), because the theygent.ai redirects land visitors on any path.
   A new page copies it with the nav.
+- **Asset URLs are versioned at deploy, never by hand.** `web.yml` runs
+  `.github/scripts/web_asset_versions.py`, which adds `?v=<content hash>` to every reference to a
+  local static file in the uploaded tree, because Cloudflare caches `/assets/*` for a week and a
+  deploy does not purge it. Write plain paths in the source; a reference that already has a query
+  is left alone.
 - **Every page is indexable by construction:** a page lives at `<slug>/index.html`, shares
   the nav/footer chrome, loads `styles.css` then `pages.css`, has one `<h1>` and a canonical
   URL, is listed in `sitemap.xml`, and keeps any FAQPage structured data word-for-word equal
