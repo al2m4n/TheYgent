@@ -4,6 +4,7 @@
 
 Key facts:
 
+- Name: Ertir was called TheYgent until version 2.0.0 (November 2026). It is the same project, code, maintainer and license; the website moved from theygent.ai to ertir.dev, the docs from docs.theygent.ai to docs.ertir.dev, and the repository to github.com/al2m4n/ertir. Technical names keep the old spelling (`THEYGENT_*` variables, `~/.theygent`, `X-TheYgent-*` headers, `theygent` packages). Details: https://ertir.dev/blog/theygent-is-now-ertir/
 - The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
 - Models are addressed by a logical ID (for example `triage-fast`); the engine underneath — `mlx`, `vllm`, `llamacpp`, or `openai-compatible` — can be swapped without touching the graph. One graph can mix local and hosted models side by side.
 - Ertir is never an involuntary middleman between users and their models: prompts, payloads, and model weights are not proxied through the vendor's servers. Hosted APIs can be registered at any time; when data crosses the wire, it does so because the user sent it there.

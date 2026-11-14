@@ -126,7 +126,7 @@
   </url>
   <url>
     <loc>https://ertir.dev/blog/</loc>
-    <lastmod>2026-10-19</lastmod>
+    <lastmod>2026-11-13</lastmod>
   </url>
   <url>
     <loc>https://ertir.dev/blog/local-first-agent-platform-architecture/</loc>
@@ -143,5 +143,9 @@
   <url>
     <loc>https://ertir.dev/blog/local-models-web-search-crawler-nodes/</loc>
     <lastmod>2026-10-19</lastmod>
+  </url>
+  <url>
+    <loc>https://ertir.dev/blog/theygent-is-now-ertir/</loc>
+    <lastmod>2026-11-13</lastmod>
   </url>
 </urlset>

@@ -4,6 +4,7 @@
 
 Key facts:
 
+- Name: Ertir was called TheYgent until version 2.0.0 (November 2026). It is the same project, code, maintainer and license; the website moved from theygent.ai to ertir.dev, the docs from docs.theygent.ai to docs.ertir.dev, and the repository to github.com/al2m4n/ertir. Technical names keep the old spelling (`THEYGENT_*` variables, `~/.theygent`, `X-TheYgent-*` headers, `theygent` packages). Details: https://ertir.dev/blog/theygent-is-now-ertir/
 - The graph is the agent: drag nodes onto a canvas, wire them with edges, configure them in an inspector, and run — no code required. Node types include input, llm, tool, mcp, rag, crawler, router, transform, guardrail, human (approval), subgraph, loop, map, ratelimit, quota, transcribe, speak, imagine (image generation), and output.
 - Models are addressed by a logical ID (for example `triage-fast`); the engine underneath — `mlx`, `vllm`, `llamacpp`, or `openai-compatible` — can be swapped without touching the graph. One graph can mix local and hosted models side by side.
 - Ertir is never an involuntary middleman between users and their models: prompts, payloads, and model weights are not proxied through the vendor's servers. Hosted APIs can be registered at any time; when data crosses the wire, it does so because the user sent it there.
@@ -93,6 +94,7 @@ Thirteen ready-to-run agents ship with Ertir (install from Settings → Samples)
 
 ## Blog
 
+- [TheYgent Is Now Ertir](https://ertir.dev/blog/theygent-is-now-ertir/): TheYgent was renamed Ertir in version 2.0.0 — the same project, code, maintainer and license; the website moved from theygent.ai to ertir.dev, the docs to docs.ertir.dev and the repository to github.com/al2m4n/ertir; technical names (THEYGENT_* variables, ~/.theygent, X-TheYgent-* headers, theygent packages) keep the old spelling, so nothing needs migrating
 - [Letting a Local Model Search the Web Without Letting It Set the Bill](https://ertir.dev/blog/local-models-web-search-crawler-nodes/): crawler nodes measured — every actor field versus the fields a builder exposes (about 13,500 versus 780 prompt tokens on a local model, same accuracy), a model choosing 50 places and a paid add-on, the MLX list-argument crash, result budgets, and how much of the Apify Store converts
 - [Give Your Coding Agent Your Local Models: Ertir as an MCP Server](https://ertir.dev/blog/coding-agents-local-models-mcp/): the MCP server for Claude Code, Codex, and OpenCode — files a local model reads so the coding agent doesn't, building and running agents through tools, indexing a codebase, measured end to end, and what goes where
 - [Running Mixture-of-Experts Models Bigger Than Your Mac’s Memory](https://ertir.dev/blog/run-moe-models-bigger-than-memory-on-a-mac/): expert streaming on MLX — a mixture-of-experts model’s experts read from the SSD per token with a GPU cache, identical answers, measured speed and memory, and the limits
