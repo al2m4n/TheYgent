@@ -44,6 +44,10 @@ added in the control plane gets a page under `templates/`.
   date and version it was checked; re-check and re-date when either product changes. State
   where the other product is the better pick — a comparison that only flatters Ertir is
   neither credible nor honest. Parity is reported as parity.
+- **The rename bar:** every page except the name-change post itself opens with
+  `<aside class="rename-bar">` above the nav ("TheYgent is now Ertir", linking
+  `/blog/theygent-is-now-ertir/`), because the theygent.ai redirects land visitors on any path.
+  A new page copies it with the nav.
 - **Every page is indexable by construction:** a page lives at `<slug>/index.html`, shares
   the nav/footer chrome, loads `styles.css` then `pages.css`, has one `<h1>` and a canonical
   URL, is listed in `sitemap.xml`, and keeps any FAQPage structured data word-for-word equal
